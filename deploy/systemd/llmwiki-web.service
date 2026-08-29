@@ -1,0 +1,16 @@
+[Unit]
+Description=LLMWiki Web
+After=network.target llmwiki-api.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/scottsun/gbrainkg/apps/web
+Environment=PORT=3200
+Environment=HOSTNAME=0.0.0.0
+ExecStart=/home/scottsun/.local/bin/npm run start
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+
+[Install]
+WantedBy=default.target

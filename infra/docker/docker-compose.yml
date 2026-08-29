@@ -1,0 +1,105 @@
+version: '3.8'
+
+services:
+  # ==========================================
+  # Database & Cache
+  # ==========================================
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: llmwiki-postgres
+    environment:
+      POSTGRES_USER: ${DB_USER:-llmwiki}
+      POSTGRES_PASSWORD: ${DB_PASS:-llmwiki_pass}
+      POSTGRES_DB: ${DB_NAME:-llmwiki}
+    ports:
+      - "5433:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-llmwiki} -d ${DB_NAME:-llmwiki}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: llmwiki-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ==========================================
+  # Storage & Git
+  # ==========================================
+  minio:
+    image: minio/minio:latest
+    container_name: llmwiki-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER:-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASS:-password123}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  gitea:
+    image: gitea/gitea:latest
+    container_name: llmwiki-gitea
+    environment:
+      - USER_UID=1000
+      - USER_GID=1000
+      - GITEA__database__DB_TYPE=postgres
+      - GITEA__database__HOST=postgres:5432
+      - GITEA__database__NAME=${DB_NAME:-llmwiki}
+      - GITEA__database__USER=${DB_USER:-llmwiki}
+      - GITEA__database__PASSWD=${DB_PASS:-llmwiki_pass}
+    ports:
+      - "3001:3000"
+      - "2222:22"
+    volumes:
+      - gitea_data:/data
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ==========================================
+  # Model Gateway
+  # ==========================================
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: llmwiki-litellm
+    ports:
+      - "4100:4000"
+    environment:
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-llmwiki-master}
+      - DATABASE_URL=postgresql://${DB_USER:-llmwiki}:${DB_PASS:-llmwiki_pass}@postgres:5432/litellm
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+  redis_data:
+  minio_data:
+  gitea_data:

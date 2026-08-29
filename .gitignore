@@ -1,0 +1,38 @@
+# Dependencies and generated build output
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+dist.stale*/
+**/dist.stale*/
+.next/
+**/.next/
+.turbo/
+**/.turbo/
+*.tsbuildinfo
+coverage/
+**/coverage/
+
+# Local browser/test artifacts
+.playwright-mcp/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Environment and secrets
+.env
+*.env
+!.env.example
+*.key
+*.pem
+
+# Runtime data
+data/
+logs/
+*.log
+
+# OS
+.DS_Store

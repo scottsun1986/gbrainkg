@@ -1,0 +1,15 @@
+[Unit]
+Description=LLMWiki API
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/scottsun/gbrainkg/apps/api
+EnvironmentFile=/home/scottsun/.config/llmwiki/production.env
+ExecStart=/home/scottsun/.local/bin/node /home/scottsun/gbrainkg/apps/api/dist/main.js
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+
+[Install]
+WantedBy=default.target

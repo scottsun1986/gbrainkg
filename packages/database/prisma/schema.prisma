@@ -1,0 +1,347 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+// 用户信息
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  username     String     @unique
+  displayName  String
+  email        String     @unique
+  passwordHash String?
+  status       String     @default("active") // active/disabled
+  source       String     @default("manual") // manual/ldap/oidc
+  createdAt    DateTime   @default(now())
+
+  orgs         UserOrg[]
+  roles        UserRole[]
+  personalKbs  KnowledgeBase[] @relation("PersonalOwner")
+  kbAdmins     KbAdmin[]
+  conversations Conversation[]
+  brainRepo    BrainRepo?
+  compileJobs  CompileJob[]
+  managedOrgs  OrgAdmin[]
+  brainSourceMembers BrainSourceMember[]
+}
+
+// 组织节点
+model OrgNode {
+  id        String    @id @default(uuid()) @db.Uuid
+  parentId  String?   @db.Uuid
+  name      String
+  path      String    // 物化路径
+  sort      Int       @default(0)
+  status    String    @default("active")
+
+  parent    OrgNode?  @relation("OrgHierarchy", fields: [parentId], references: [id])
+  children  OrgNode[] @relation("OrgHierarchy")
+  users     UserOrg[]
+  kbs       KnowledgeBase[]
+  admins    OrgAdmin[]
+}
+
+// 角色
+model Role {
+  id          String     @id @default(uuid()) @db.Uuid
+  name        String     @unique
+  description String?
+  builtin     Boolean    @default(false)
+  permissions Json?
+
+  users       UserRole[]
+}
+
+// 关联表
+model UserOrg {
+  userId    String @db.Uuid
+  orgNodeId String @db.Uuid
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orgNode   OrgNode @relation(fields: [orgNodeId], references: [id], onDelete: Cascade)
+
+  @@id([userId, orgNodeId])
+}
+
+model UserRole {
+  userId String @db.Uuid
+  roleId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+}
+
+model OrgAdmin {
+  orgNodeId String @db.Uuid
+  userId    String @db.Uuid
+  orgNode   OrgNode @relation(fields: [orgNodeId], references: [id], onDelete: Cascade)
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([orgNodeId, userId])
+}
+
+// 知识库
+model KnowledgeBase {
+  id                 String   @id @default(uuid()) @db.Uuid
+  type               String   // personal/org/industry
+  name               String
+  description        String?
+  ownerUserId        String?  @db.Uuid
+  orgNodeId          String?  @db.Uuid
+  gitRepoUrl         String
+  embeddingModelId   String?  @db.Uuid
+  status             String   @default("active")
+  createdAt          DateTime @default(now())
+
+  ownerUser          User?    @relation("PersonalOwner", fields: [ownerUserId], references: [id])
+  orgNode            OrgNode? @relation(fields: [orgNodeId], references: [id])
+  
+  admins             KbAdmin[]
+  grants             IndustryGrant[]
+  documents          Document[]
+  modelOverrides     KbModelOverride[]
+}
+
+model KbAdmin {
+  kbId   String @db.Uuid
+  userId String @db.Uuid
+  kb     KnowledgeBase @relation(fields: [kbId], references: [id], onDelete: Cascade)
+  user   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([kbId, userId])
+}
+
+model IndustryGrant {
+  id          String   @id @default(uuid()) @db.Uuid
+  kbId        String   @db.Uuid
+  subjectType String   // user/role/org
+  subjectId   String   @db.Uuid
+  grantedById String   @db.Uuid
+  expiresAt   DateTime?
+  createdAt   DateTime @default(now())
+
+  kb          KnowledgeBase @relation(fields: [kbId], references: [id], onDelete: Cascade)
+
+  @@index([kbId, subjectType, subjectId])
+  @@index([expiresAt])
+}
+
+// 文档与分块
+model Document {
+  id           String   @id @default(uuid()) @db.Uuid
+  kbId         String   @db.Uuid
+  mdPath       String
+  title        String
+  sourceType   String   // upload/web/obsidian/import
+  rawFileOid   String?  // MinIO object id
+  version      Int      @default(1)
+  gitCommit    String?
+  uploadedById String?  @db.Uuid
+  status       String   @default("parsing") // parsing/parsed/indexing/published/failed
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  kb           KnowledgeBase @relation(fields: [kbId], references: [id], onDelete: Cascade)
+  chunks       Chunk[]
+  citations    Citation[]
+  brainSourceDocuments BrainSourceDocument[]
+
+  @@index([kbId, status])
+}
+
+model Chunk {
+  id           String   @id @default(uuid()) @db.Uuid
+  documentId   String   @db.Uuid
+  kbId         String   @db.Uuid
+  ord          Int
+  content      String
+  tokenCount   Int
+  charStart    Int
+  charEnd      Int
+  
+  // pgvector extension needed for vector field
+  // embedding Unsupported("vector(1024)")?
+  // tsv       Unsupported("tsvector")?
+  metadata     Json?
+
+  document     Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  citations    Citation[]
+
+  @@index([kbId, documentId])
+}
+
+// 会话
+model Conversation {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  title     String
+  kbScope   Json?
+  createdAt DateTime @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages  Message[]
+}
+
+model Message {
+  id               String   @id @default(uuid()) @db.Uuid
+  conversationId   String   @db.Uuid
+  role             String   // user/assistant/system
+  content          String
+  citationsSummary Json?
+  latencyMs        Int?
+  feedback         String?
+  createdAt        DateTime @default(now())
+
+  conversation     Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  citations        Citation[]
+}
+
+model Citation {
+  id         String   @id @default(uuid()) @db.Uuid
+  messageId  String   @db.Uuid
+  chunkId    String?  @db.Uuid
+  documentId String?  @db.Uuid
+  kbId       String?  @db.Uuid
+  snippet    String
+
+  message    Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  chunk      Chunk?   @relation(fields: [chunkId], references: [id], onDelete: SetNull)
+  document   Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+}
+
+// 个人大脑
+model BrainRepo {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @unique @db.Uuid
+  gitRepoUrl     String
+  status         String   @default("active") // initializing/active/archived
+  lastCompileAt  DateTime?
+  createdAt      DateTime @default(now())
+
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topics         BrainTopic[]
+}
+
+model BrainTopic {
+  id             String   @id @default(uuid()) @db.Uuid
+  brainRepoId    String   @db.Uuid
+  topicSlug      String
+  mdPath         String
+  compileStatus  String   @default("clean") // clean/dirty/compiling/failed
+  priority       Int      @default(0)
+  dirtySource    String?
+  dirtyDocIds    Json?
+  lastCompiledAt DateTime?
+  dirtySince     DateTime?
+
+  brainRepo      BrainRepo @relation(fields: [brainRepoId], references: [id], onDelete: Cascade)
+  compileJobs    CompileJob[]
+
+  @@unique([brainRepoId, topicSlug])
+  @@index([brainRepoId, compileStatus])
+}
+
+// GBrain 多用户 source 目录：共享知识库共用 shared source，私密知识按
+// 实际授权人集合生成稳定的 permission-group source。
+model BrainSource {
+  id          String   @id @default(uuid()) @db.Uuid
+  sourceKey   String   @unique
+  kind        String   // shared/private
+  scopeKey    String
+  status      String   @default("active")
+  lastSyncAt  DateTime?
+  createdAt   DateTime @default(now())
+
+  members     BrainSourceMember[]
+  documents   BrainSourceDocument[]
+
+  @@index([kind, status])
+}
+
+model BrainSourceMember {
+  sourceId String @db.Uuid
+  userId   String @db.Uuid
+  source   BrainSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  user     User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([sourceId, userId])
+  @@index([userId])
+}
+
+model BrainSourceDocument {
+  sourceId   String   @db.Uuid
+  documentId String   @db.Uuid
+  syncedVersion Int   @default(0)
+  syncedAt   DateTime @default(now())
+  source     BrainSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@id([sourceId, documentId])
+  @@index([documentId])
+}
+
+model CompileJob {
+  id               String   @id @default(uuid()) @db.Uuid
+  brainTopicId     String   @db.Uuid
+  userId           String   @db.Uuid
+  trigger          String   // knowledge_publish/perm_grant/perm_revoke/org_change/dream/lazy
+  status           String   @default("pending") // pending/running/completed/failed
+  attempt          Int      @default(1)
+  inputEvidenceIds Json?
+  truthDiff        String?
+  tokensUsed       Int      @default(0)
+  durationMs       Int?
+  gitCommit        String?
+  createdAt        DateTime @default(now())
+  completedAt      DateTime?
+
+  brainTopic       BrainTopic @relation(fields: [brainTopicId], references: [id], onDelete: Cascade)
+  user             User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status, createdAt])
+}
+
+// 模型配置
+model ModelProvider {
+  id               String   @id @default(uuid()) @db.Uuid
+  name             String
+  kind             String   // llm/embedding/rerank
+  baseUrl          String
+  apiKeyEncrypted  Bytes?
+  defaultParams    Json?
+  enabled          Boolean  @default(true)
+
+  configs          ModelConfig[]
+}
+
+model ModelConfig {
+  id             String   @id @default(uuid()) @db.Uuid
+  providerId     String   @db.Uuid
+  kind           String   @default("llm") // llm/embedding/rerank
+  modelName      String
+  contextLen     Int
+  dimensions     Int?
+  isDefault      Boolean  @default(false)
+  testStatus     String   @default("untested") // untested/passed/failed
+  createdAt      DateTime @default(now())
+
+  provider       ModelProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  overrides      KbModelOverride[]
+}
+
+model KbModelOverride {
+  id             String   @id @default(uuid()) @db.Uuid
+  kbId           String   @db.Uuid
+  kind           String   // llm/embedding/rerank
+  modelConfigId  String   @db.Uuid
+
+  kb             KnowledgeBase @relation(fields: [kbId], references: [id], onDelete: Cascade)
+  modelConfig    ModelConfig   @relation(fields: [modelConfigId], references: [id], onDelete: Cascade)
+  
+  @@unique([kbId, kind])
+}

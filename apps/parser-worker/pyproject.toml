@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "parser-worker"
+version = "0.1.0"
+description = "Document parsing microservice for LLMWiki"
+readme = "README.md"
+requires-python = ">=3.10"
+# Legacy .doc conversion uses the system/userland antiword executable.
+dependencies = [
+    "fastapi>=0.111.0",
+    "uvicorn>=0.30.0",
+    "pydantic>=2.7.0",
+    "python-multipart>=0.0.9",
+    "minio>=7.2.7",
+    "docling>=1.1.0",
+    # paddleocr might have heavy dependencies, adding placeholders
+    # "paddleocr>=2.7.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/parser_worker"]

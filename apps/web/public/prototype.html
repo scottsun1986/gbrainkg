@@ -1,0 +1,2522 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLMWiki · 企业知识库交互原型</title>
+
+<!-- React + Babel pinned versions, vendored locally (离线可用；原始来源 unpkg.com) -->
+<script src="vendor/react.development.js"></script>
+<script src="vendor/react-dom.development.js"></script>
+<script src="vendor/babel.min.js"></script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,300;8..60,400;8..60,600&family=Noto+Serif+SC:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+:root{
+  --bg:#F7F6F3;
+  --surface:#FFFFFF;
+  --surface-2:#FAF8F3;
+  --ink:#191817;
+  --ink-2:#3D3B36;
+  --ink-3:#6F6B63;
+  --ink-4:#9C978C;
+  --line:#E7E4DD;
+  --line-2:#EFECE5;
+  --evidence:#B7791F;
+  --evidence-soft:#F5E9C9;
+  --evidence-line:#E6CF7E;
+  --kb-personal:#6B6B6B;
+  --kb-org:#3D6B9E;
+  --kb-org-soft:#E1EAF4;
+  --kb-industry:#2C7A7B;
+  --kb-industry-soft:#D6E8E8;
+  --danger:#B23A2A;
+  --success:#2F7D5B;
+  --warn:#A26A1A;
+  --shadow-sm: 0 1px 2px rgba(25,24,23,.04);
+  --shadow-md: 0 4px 14px rgba(25,24,23,.06), 0 1px 2px rgba(25,24,23,.04);
+  --shadow-lg: 0 12px 36px rgba(25,24,23,.08), 0 2px 6px rgba(25,24,23,.05);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;width:100%}
+body{
+  font-family:-apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  font-size:13.5px;
+  background:var(--bg);
+  color:var(--ink);
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+}
+#root{min-height:100vh;height:100vh;display:flex}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+input,textarea,select{font:inherit;color:inherit;outline:none;border:none;background:none}
+a{color:inherit;text-decoration:none}
+ul,ol{list-style:none}
+
+/* === Layout shell === */
+.app{display:flex;width:100vw;height:100vh;background:var(--bg);overflow:hidden}
+.side{
+  width:248px;flex:0 0 248px;background:var(--surface);
+  border-right:1px solid var(--line);
+  display:flex;flex-direction:column;
+}
+.brand{
+  display:flex;align-items:center;gap:10px;padding:20px 22px 16px;
+  font-family:"Source Serif 4","Noto Serif SC",serif;font-weight:600;font-size:18px;
+  letter-spacing:.2px;color:var(--ink);
+}
+.brand-mark{
+  width:22px;height:22px;border-radius:5px;background:var(--evidence);
+  color:#fff;display:inline-flex;align-items:center;justify-content:center;
+  font-family:"Source Serif 4",serif;font-weight:600;font-size:13px;
+  box-shadow:inset 0 -2px 0 rgba(0,0,0,.12);
+}
+.nav{padding:6px 12px;display:flex;flex-direction:column;gap:2px;flex:1;overflow-y:auto}
+.nav-section{margin:18px 12px 6px;font-size:10.5px;color:var(--ink-4);letter-spacing:.8px;text-transform:uppercase;font-weight:600}
+.nav-item{
+  display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:7px;
+  font-size:13px;color:var(--ink-2);cursor:pointer;transition:background .12s,color .12s;
+  position:relative;
+}
+.nav-item:hover{background:var(--surface-2);color:var(--ink)}
+.nav-item.active{background:var(--ink);color:#fff;font-weight:500}
+.nav-item.active .nav-ic{color:var(--evidence-soft)}
+.nav-ic{width:16px;height:16px;color:var(--ink-3);flex:0 0 16px}
+.nav-item.active .nav-ic{color:#fff}
+.nav-badge{
+  margin-left:auto;background:var(--line-2);color:var(--ink-3);
+  font-size:10.5px;padding:1px 6px;border-radius:10px;font-weight:500;
+}
+.nav-item.active .nav-badge{background:rgba(255,255,255,.18);color:#fff}
+
+.side-foot{
+  padding:14px 16px;border-top:1px solid var(--line-2);
+  display:flex;align-items:center;gap:10px;
+}
+.avatar{
+  width:30px;height:30px;border-radius:50%;background:#3D3B36;color:#fff;
+  display:inline-flex;align-items:center;justify-content:center;
+  font-size:12px;font-weight:600;flex:0 0 30px;
+}
+.user-info{flex:1;min-width:0}
+.user-name{font-size:12.5px;color:var(--ink);font-weight:500;line-height:1.2}
+.user-role{font-size:11px;color:var(--ink-3);line-height:1.3;margin-top:2px}
+
+.main{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--bg)}
+.topbar{
+  height:52px;flex:0 0 52px;border-bottom:1px solid var(--line);background:var(--surface);
+  display:flex;align-items:center;padding:0 24px;gap:14px;
+}
+.crumb{font-size:12.5px;color:var(--ink-3)}
+.crumb b{color:var(--ink);font-weight:500}
+.topbar-spacer{flex:1}
+.topbar-actions{display:flex;align-items:center;gap:10px;color:var(--ink-3)}
+.icon-btn{
+  width:30px;height:30px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;
+  color:var(--ink-3);
+}
+.icon-btn:hover{background:var(--surface-2);color:var(--ink)}
+
+.content{flex:1;display:flex;min-height:0}
+
+/* === Chat screen === */
+.chat{flex:1;display:flex;min-width:0}
+.conv-side{
+  width:280px;flex:0 0 280px;background:var(--surface);
+  border-right:1px solid var(--line);display:flex;flex-direction:column;
+}
+.scope{
+  padding:14px 16px;border-bottom:1px solid var(--line-2);
+}
+.scope-label{font-size:10.5px;color:var(--ink-3);letter-spacing:.6px;text-transform:uppercase;font-weight:600;margin-bottom:8px}
+.scope-trigger{
+  width:100%;display:flex;align-items:center;gap:8px;
+  padding:9px 11px;border:1px solid var(--line);border-radius:7px;background:var(--surface);
+  font-size:13px;color:var(--ink);text-align:left;
+}
+.scope-trigger:hover{border-color:var(--ink-4)}
+.scope-dot{width:8px;height:8px;border-radius:50%;background:var(--evidence);flex:0 0 8px}
+.scope-meta{margin-left:auto;font-size:11px;color:var(--ink-3)}
+.conv-head{
+  padding:14px 16px 8px;display:flex;align-items:center;justify-content:space-between;
+}
+.conv-head h4{font-size:12px;color:var(--ink-2);font-weight:600}
+.conv-list{padding:4px 8px;overflow-y:auto;flex:1}
+.conv-item{
+  padding:9px 11px;border-radius:6px;cursor:pointer;font-size:12.5px;color:var(--ink-2);
+  line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+}
+.conv-item:hover{background:var(--surface-2)}
+.conv-item.active{background:var(--surface-2);color:var(--ink);font-weight:500}
+.conv-item .conv-time{font-size:10.5px;color:var(--ink-4);margin-top:2px;display:block;font-weight:400}
+.new-chat{
+  margin:8px 16px 12px;padding:8px 11px;border:1px dashed var(--line);
+  border-radius:7px;color:var(--ink-3);font-size:12.5px;display:flex;align-items:center;gap:6px;
+}
+.new-chat:hover{border-color:var(--ink-4);color:var(--ink-2)}
+
+.chat-main{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
+.chat-scroll{flex:1;overflow-y:auto;padding:32px 0;scroll-behavior:smooth}
+.chat-inner{max-width:780px;margin:0 auto;padding:0 36px}
+
+.welcome{padding:60px 0 40px}
+.welcome h1{
+  font-family:"Source Serif 4","Noto Serif SC",serif;
+  font-size:42px;font-weight:400;line-height:1.15;letter-spacing:-.5px;color:var(--ink);
+}
+.welcome h1 em{font-style:italic;color:var(--evidence)}
+.welcome p{margin-top:12px;font-size:14px;color:var(--ink-3);max-width:520px;line-height:1.6}
+.suggest{margin-top:28px;display:flex;flex-wrap:wrap;gap:8px}
+.suggest button{
+  padding:8px 14px;border:1px solid var(--line);border-radius:18px;
+  background:var(--surface);font-size:12.5px;color:var(--ink-2);
+}
+.suggest button:hover{border-color:var(--ink-4);color:var(--ink)}
+
+.msg{margin:24px 0;display:flex;gap:14px;align-items:flex-start}
+.msg-user{flex-direction:row-reverse}
+.msg-user .bubble{background:var(--ink);color:#fff;border-radius:14px 14px 4px 14px;padding:10px 14px;max-width:520px;font-size:13.5px;line-height:1.6}
+.msg-ai .body{max-width:780px}
+.msg-ai .who{font-size:12px;color:var(--ink-3);margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.msg-ai .who .dot{width:6px;height:6px;border-radius:50%;background:var(--success)}
+.answer{
+  font-size:15px;line-height:1.75;color:var(--ink);white-space:pre-wrap;
+  font-family:"Source Serif 4","Noto Serif SC",Georgia,serif;font-weight:400;
+}
+.cite-chip{
+  display:inline-flex;align-items:center;justify-content:center;
+  min-width:18px;height:18px;padding:0 5px;border-radius:4px;
+  background:var(--evidence-soft);color:var(--evidence);
+  font-size:11.5px;font-weight:600;font-family:-apple-system,sans-serif;
+  margin:0 1px;cursor:pointer;border:1px solid var(--evidence-line);
+  transition:all .12s;
+  vertical-align:text-bottom;line-height:1;
+}
+.cite-chip:hover{background:var(--evidence);color:#fff;border-color:var(--evidence)}
+.cite-chip.active{background:var(--evidence);color:#fff;border-color:var(--evidence);box-shadow:0 0 0 2px rgba(183,121,31,.25)}
+
+.cursor{display:inline-block;width:7px;height:1.05em;background:var(--ink);margin-left:2px;vertical-align:text-bottom;animation:blink 1s steps(2) infinite}
+@keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}}
+
+.actions{margin-top:14px;display:flex;align-items:center;gap:6px}
+.actions button{
+  padding:5px 9px;font-size:11.5px;color:var(--ink-3);border-radius:5px;
+  display:inline-flex;align-items:center;gap:5px;
+}
+.actions button:hover{background:var(--surface-2);color:var(--ink)}
+
+.followup{
+  margin-top:16px;padding:14px 16px;background:var(--surface);
+  border:1px solid var(--line);border-radius:10px;
+}
+.followup h5{font-size:11.5px;color:var(--ink-3);font-weight:600;letter-spacing:.4px;text-transform:uppercase;margin-bottom:8px}
+.followup ul{display:flex;flex-direction:column;gap:6px}
+.followup li{font-size:13px;color:var(--ink-2);cursor:pointer;padding:6px 8px;border-radius:5px}
+.followup li:hover{background:var(--surface-2);color:var(--ink)}
+
+/* Retrieval transparency */
+.retrieval{margin-top:18px;border:1px solid var(--line);border-radius:10px;background:var(--surface);overflow:hidden}
+.retrieval summary{
+  list-style:none;cursor:pointer;padding:10px 14px;font-size:12px;color:var(--ink-3);
+  display:flex;align-items:center;gap:8px;
+}
+.retrieval summary::-webkit-details-marker{display:none}
+.retrieval summary:hover{background:var(--surface-2);color:var(--ink-2)}
+.retrieval summary b{color:var(--ink);font-weight:600}
+.retrieval-body{padding:6px 14px 14px;display:flex;flex-direction:column;gap:10px;border-top:1px solid var(--line-2)}
+.ret-step{display:flex;gap:10px;align-items:flex-start;font-size:12px;color:var(--ink-3)}
+.ret-step .n{width:18px;height:18px;border-radius:50%;background:var(--line-2);color:var(--ink-2);font-size:10.5px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;flex:0 0 18px;margin-top:1px}
+.ret-step .txt{flex:1;line-height:1.5}
+.ret-step .txt b{color:var(--ink);font-weight:600}
+.ret-step .v{color:var(--ink-2);font-variant-numeric:tabular-nums;font-size:11.5px;background:var(--surface-2);padding:1px 6px;border-radius:4px;flex:0 0 auto;align-self:flex-start}
+
+/* Composer */
+.composer{
+  border-top:1px solid var(--line);background:var(--surface);
+  padding:14px 36px 18px;
+}
+.composer-inner{max-width:780px;margin:0 auto}
+.composer-box{
+  background:var(--surface);border:1px solid var(--line);border-radius:12px;
+  padding:12px 14px 10px;transition:border-color .15s,box-shadow .15s;
+}
+.composer-box:focus-within{border-color:var(--ink-4);box-shadow:0 0 0 3px rgba(25,24,23,.05)}
+.composer textarea{
+  width:100%;min-height:24px;max-height:200px;resize:none;
+  font-size:14px;line-height:1.55;color:var(--ink);
+}
+.composer-foot{display:flex;align-items:center;gap:8px;margin-top:8px}
+.comp-chip{
+  display:inline-flex;align-items:center;gap:6px;padding:5px 10px;
+  border-radius:16px;background:var(--surface-2);font-size:11.5px;color:var(--ink-2);
+  border:1px solid transparent;
+}
+.comp-chip:hover{border-color:var(--line);color:var(--ink)}
+.comp-chip .kbd{font-family:-apple-system,sans-serif;font-size:10px;color:var(--ink-4);background:#fff;padding:1px 5px;border-radius:3px;border:1px solid var(--line-2);margin-left:4px}
+.send-btn{
+  margin-left:auto;width:34px;height:30px;border-radius:7px;
+  background:var(--ink);color:#fff;display:inline-flex;align-items:center;justify-content:center;
+}
+.send-btn:hover{background:#000}
+.send-btn:disabled{background:var(--line-2);color:var(--ink-4);cursor:not-allowed}
+.foot-note{margin-top:10px;font-size:11px;color:var(--ink-4);text-align:center}
+
+/* Citation panel (right) */
+.cite-panel{
+  width:360px;flex:0 0 360px;background:var(--surface);
+  border-left:1px solid var(--line);display:flex;flex-direction:column;min-width:0;
+}
+.cite-head{
+  padding:16px 20px 12px;border-bottom:1px solid var(--line-2);
+  display:flex;align-items:center;justify-content:space-between;
+}
+.cite-head h4{font-size:13px;font-weight:600;color:var(--ink)}
+.cite-head .count{font-size:11px;color:var(--ink-3);background:var(--surface-2);padding:2px 8px;border-radius:10px;margin-left:8px;font-weight:500}
+.cite-sort{font-size:11.5px;color:var(--ink-3);display:flex;align-items:center;gap:4px;cursor:pointer}
+.cite-body{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:10px}
+.cite-card{
+  border:1px solid var(--line);border-radius:9px;padding:12px 13px;
+  background:var(--surface);transition:all .15s;cursor:pointer;
+}
+.cite-card:hover{border-color:var(--ink-4);box-shadow:var(--shadow-sm)}
+.cite-card.active{border-color:var(--evidence);box-shadow:0 0 0 2px rgba(183,121,31,.18),var(--shadow-sm)}
+.cite-card .top{display:flex;align-items:flex-start;gap:8px;margin-bottom:6px}
+.cite-card .num{
+  flex:0 0 18px;width:18px;height:18px;border-radius:4px;background:var(--evidence-soft);
+  color:var(--evidence);font-size:11px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;
+  font-family:-apple-system,sans-serif;
+}
+.cite-card.active .num{background:var(--evidence);color:#fff}
+.cite-card .ttl{font-size:13px;font-weight:500;color:var(--ink);line-height:1.4;flex:1}
+.cite-card .meta{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ink-3);margin:4px 0 8px}
+.cite-card .score{font-variant-numeric:tabular-nums;background:var(--surface-2);padding:1px 6px;border-radius:3px}
+.cite-card .snippet{font-size:12.5px;color:var(--ink-2);line-height:1.55;background:var(--surface-2);padding:8px 10px;border-radius:6px;border-left:3px solid var(--evidence-line)}
+.cite-card .snippet mark{background:var(--evidence-soft);color:var(--ink);padding:0 1px}
+.cite-card .evid-line{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--evidence);margin-top:7px;padding-top:7px;border-top:1px dashed var(--line-2)}
+.cite-card .acts{display:flex;gap:6px;margin-top:10px}
+.cite-card .acts button{
+  flex:1;padding:6px 8px;font-size:11.5px;border:1px solid var(--line);border-radius:5px;
+  color:var(--ink-2);background:var(--surface);
+}
+.cite-card .acts button:hover{border-color:var(--ink-4);color:var(--ink)}
+.cite-card .acts .primary{background:var(--ink);color:#fff;border-color:var(--ink)}
+.cite-card .acts .primary:hover{background:#000;color:#fff}
+
+/* Badge (kb type) */
+.badge{
+  display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:4px;
+  font-size:10.5px;font-weight:500;line-height:1.4;letter-spacing:.2px;
+  white-space:nowrap;
+}
+.badge.personal{background:#EDEBE6;color:#5A5751}
+.badge.org{background:var(--kb-org-soft);color:var(--kb-org)}
+.badge.industry{background:var(--kb-industry-soft);color:var(--kb-industry)}
+.badge.evidence{background:var(--evidence-soft);color:var(--evidence)}
+
+/* === Scope picker popover === */
+.scope-pop{
+  position:absolute;top:60px;left:16px;width:300px;background:var(--surface);
+  border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow-lg);z-index:50;overflow:hidden;
+}
+.scope-pop h5{padding:12px 14px 8px;font-size:12px;font-weight:600;color:var(--ink);border-bottom:1px solid var(--line-2)}
+.scope-pop .group{padding:8px 0}
+.scope-pop .gh{padding:6px 14px;font-size:10.5px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.5px;font-weight:600;display:flex;align-items:center;justify-content:space-between}
+.scope-pop .gi{padding:6px 14px;display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2);cursor:pointer}
+.scope-pop .gi:hover{background:var(--surface-2)}
+.scope-pop .gi input{accent-color:var(--ink)}
+.scope-pop .gname{flex:1}
+.scope-pop .gvis{font-size:10.5px;color:var(--ink-4)}
+.scope-pop .foot{padding:10px 14px;border-top:1px solid var(--line-2);display:flex;justify-content:space-between;align-items:center;background:var(--surface-2)}
+.scope-pop .foot button{padding:6px 12px;border-radius:6px;font-size:12px;color:var(--ink-2);background:var(--surface);border:1px solid var(--line)}
+.scope-pop .foot button.primary{background:var(--ink);color:#fff;border-color:var(--ink)}
+
+/* === Libraries screen === */
+.lib{flex:1;display:flex;min-width:0;overflow:hidden}
+.lib-list{
+  width:420px;flex:0 0 420px;background:var(--surface);
+  border-right:1px solid var(--line);display:flex;flex-direction:column;
+}
+.lib-head{padding:16px 20px 12px;border-bottom:1px solid var(--line-2)}
+.lib-head h3{font-size:16px;font-weight:600;color:var(--ink)}
+.lib-head p{font-size:12px;color:var(--ink-3);margin-top:2px}
+.lib-tabs{display:flex;gap:0;padding:8px 16px 0;border-bottom:1px solid var(--line-2)}
+.lib-tab{
+  padding:9px 12px;font-size:12.5px;color:var(--ink-3);position:relative;
+  border-bottom:2px solid transparent;display:flex;align-items:center;gap:6px;
+}
+.lib-tab.active{color:var(--ink);border-bottom-color:var(--ink);font-weight:500}
+.lib-tab .n{font-size:10.5px;color:var(--ink-4);background:var(--surface-2);padding:1px 6px;border-radius:8px;font-weight:500}
+.lib-tab.active .n{background:var(--ink);color:#fff}
+.lib-body{flex:1;overflow-y:auto;padding:10px 14px;display:flex;flex-direction:column;gap:8px}
+.kb-card{
+  border:1px solid var(--line);border-radius:10px;padding:14px;background:var(--surface);
+  cursor:pointer;transition:all .12s;
+}
+.kb-card:hover{border-color:var(--ink-4);box-shadow:var(--shadow-sm)}
+.kb-card.active{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink)}
+.kb-card .row1{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.kb-card .nm{font-size:14px;font-weight:500;color:var(--ink);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kb-card .desc{font-size:12px;color:var(--ink-3);line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:10px}
+.kb-card .row2{display:flex;align-items:center;gap:10px;font-size:11.5px;color:var(--ink-3)}
+.kb-card .row2 .vis{color:var(--ink-2);font-size:11.5px;display:flex;align-items:center;gap:4px}
+.kb-card .row2 .vis b{color:var(--ink);font-weight:500}
+.kb-card .row2 .admins{display:flex}
+.kb-card .row2 .admins .avatar{width:20px;height:20px;font-size:9.5px;border:1.5px solid var(--surface);margin-left:-6px}
+.kb-card .row2 .admins .avatar:first-child{margin-left:0}
+
+.lib-detail{flex:1;display:flex;flex-direction:column;min-width:0}
+.detail-head{padding:18px 28px 16px;border-bottom:1px solid var(--line);background:var(--surface);display:flex;align-items:flex-start;gap:14px}
+.detail-head .ttl{font-size:20px;font-weight:600;color:var(--ink);font-family:"Source Serif 4","Noto Serif SC",serif}
+.detail-head .sub{font-size:12.5px;color:var(--ink-3);margin-top:4px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.detail-head .actions{margin-left:auto;display:flex;gap:8px;margin-top:0}
+.btn{
+  padding:7px 14px;border:1px solid var(--line);border-radius:7px;
+  font-size:12.5px;color:var(--ink-2);background:var(--surface);
+}
+.btn:hover{border-color:var(--ink-4);color:var(--ink)}
+.btn.primary{background:var(--ink);color:#fff;border-color:var(--ink)}
+.btn.primary:hover{background:#000;color:#fff}
+.btn.evidence{background:var(--evidence);color:#fff;border-color:var(--evidence)}
+.btn.danger{color:var(--danger);border-color:#E8C9C3;background:#FCF6F5}
+
+.detail-tabs{display:flex;gap:24px;padding:0 28px;border-bottom:1px solid var(--line);background:var(--surface)}
+.detail-tab{padding:12px 0;font-size:13px;color:var(--ink-3);position:relative;border-bottom:2px solid transparent}
+.detail-tab.active{color:var(--ink);border-bottom-color:var(--ink);font-weight:500}
+
+.detail-body{flex:1;overflow-y:auto;padding:20px 28px;background:var(--bg)}
+
+.dropzone{
+  border:1.5px dashed var(--line);border-radius:10px;padding:24px;text-align:center;
+  background:var(--surface);margin-bottom:20px;
+}
+.dropzone:hover{border-color:var(--ink-4);background:var(--surface-2)}
+.dropzone .ic{width:28px;height:28px;color:var(--ink-3);margin:0 auto 6px;display:block}
+.dropzone h5{font-size:13px;color:var(--ink);font-weight:500}
+.dropzone p{font-size:11.5px;color:var(--ink-3);margin-top:3px}
+
+.kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:9px;padding:12px 14px}
+.kpi .lbl{font-size:11px;color:var(--ink-3);letter-spacing:.4px;text-transform:uppercase;font-weight:600}
+.kpi .val{font-size:22px;color:var(--ink);font-weight:500;margin-top:4px;font-family:"Source Serif 4","Noto Serif SC",serif;font-variant-numeric:tabular-nums}
+.kpi .sub{font-size:11px;color:var(--ink-3);margin-top:2px}
+
+.doc-table{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.doc-row{
+  display:grid;grid-template-columns:30px 1fr 110px 90px 70px;align-items:center;gap:14px;
+  padding:11px 16px;border-bottom:1px solid var(--line-2);font-size:12.5px;
+}
+.doc-row:last-child{border-bottom:none}
+.doc-row.head{background:var(--surface-2);font-size:10.5px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.5px;font-weight:600;padding:9px 16px}
+.doc-row .ic{color:var(--ink-4);width:18px;height:18px}
+.doc-row .ttl{color:var(--ink);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.doc-row .sub{color:var(--ink-3);font-size:11px;margin-top:2px}
+.status{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--ink-2);font-weight:500}
+.status .d{width:6px;height:6px;border-radius:50%}
+.status.published .d{background:var(--success)}
+.status.indexing .d{background:var(--evidence);animation:pulse 1.4s ease-in-out infinite}
+.status.parsing .d{background:#6B8FB0;animation:pulse 1.4s ease-in-out infinite}
+.status.failed .d{background:var(--danger)}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(1.4)}}
+
+/* === Admin screen === */
+.admin{flex:1;display:flex;min-width:0;overflow:hidden}
+.admin-side{
+  width:220px;flex:0 0 220px;background:var(--surface);
+  border-right:1px solid var(--line);padding:14px 12px;
+  overflow-y:auto;
+}
+.admin-side h5{font-size:10.5px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.5px;font-weight:600;padding:8px 12px;margin-bottom:4px}
+.a-nav{display:flex;flex-direction:column;gap:1px}
+.a-nav-i{padding:8px 12px;font-size:12.5px;color:var(--ink-2);border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:8px}
+.a-nav-i:hover{background:var(--surface-2);color:var(--ink)}
+.a-nav-i.active{background:var(--ink);color:#fff;font-weight:500}
+.a-nav-i.active .a-ic{color:#fff}
+.a-ic{width:14px;height:14px;color:var(--ink-3)}
+.admin-main{flex:1;overflow-y:auto;padding:24px 32px;background:var(--bg)}
+.h1{font-size:22px;font-weight:500;color:var(--ink);font-family:"Source Serif 4","Noto Serif SC",serif;letter-spacing:-.2px}
+.subline{font-size:13px;color:var(--ink-3);margin-top:4px;margin-bottom:22px}
+
+/* Org tree */
+.org-tree{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px 20px;max-width:720px}
+.org-node{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;font-size:13px;color:var(--ink-2)}
+.org-node:hover{background:var(--surface-2);color:var(--ink)}
+.org-node.root{font-weight:500;color:var(--ink);font-size:14px}
+.org-node .ic{width:14px;height:14px;color:var(--ink-3);transition:transform .15s}
+.org-node .ic.open{transform:rotate(90deg)}
+.org-node .nm{flex:1}
+.org-node .ct{font-size:11px;color:var(--ink-4);background:var(--surface-2);padding:1px 6px;border-radius:8px}
+.org-node .tag{font-size:10.5px;color:var(--evidence);background:var(--evidence-soft);padding:1px 6px;border-radius:4px;font-weight:500}
+.org-children{margin-left:20px;border-left:1px dashed var(--line-2)}
+
+/* Grant wizard */
+.grant{
+  background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px 20px;max-width:760px;
+}
+.grant h6{font-size:11.5px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.4px;font-weight:600;margin-bottom:8px}
+.g-tabs{display:flex;gap:4px;margin-bottom:14px;background:var(--surface-2);padding:3px;border-radius:8px;width:fit-content}
+.g-tabs button{padding:6px 14px;font-size:12px;color:var(--ink-3);border-radius:6px}
+.g-tabs button.on{background:var(--surface);color:var(--ink);font-weight:500;box-shadow:var(--shadow-sm)}
+.g-input{display:flex;gap:8px;margin-bottom:14px}
+.g-input select,.g-input input{
+  padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface);font-size:12.5px;color:var(--ink);
+}
+.g-input select{min-width:160px}
+.g-list{border-top:1px solid var(--line-2);padding-top:12px;margin-top:6px}
+.g-row{display:grid;grid-template-columns:1fr 100px 110px 30px;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line-2);font-size:12.5px}
+.g-row:last-child{border-bottom:none}
+.g-row .subj{color:var(--ink);display:flex;align-items:center;gap:8px}
+.g-row .subj .avatar{width:22px;height:22px;font-size:10px;flex:0 0 22px}
+.g-row .type-stamp{font-size:10.5px;color:var(--ink-3);background:var(--surface-2);padding:2px 7px;border-radius:4px;font-weight:500;width:fit-content}
+.g-row .exp{color:var(--ink-3);font-size:11.5px;font-variant-numeric:tabular-nums}
+.g-row .x{color:var(--ink-4);font-size:14px;cursor:pointer;text-align:center}
+.g-row .x:hover{color:var(--danger)}
+
+/* Model config */
+.mc{display:flex;flex-direction:column;gap:14px;max-width:780px}
+.mc-cat{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px 20px}
+.mc-cat-head{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.mc-cat-head .tag{
+  display:inline-flex;align-items:center;gap:6px;padding:4px 10px;
+  border-radius:6px;font-size:11px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;
+}
+.mc-cat.llm .tag{background:#EDE7F8;color:#5D429A}
+.mc-cat.embed .tag{background:var(--kb-industry-soft);color:var(--kb-industry)}
+.mc-cat.rerank .tag{background:#FCE9D6;color:#A35A1E}
+.mc-cat-head h4{font-size:14px;font-weight:600;color:var(--ink)}
+.mc-cat-head .hint{font-size:11.5px;color:var(--ink-3);margin-left:auto}
+.mc-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+.mc-card{
+  border:1px solid var(--line);border-radius:8px;padding:12px 14px;background:var(--surface);
+  display:flex;align-items:center;gap:10px;
+}
+.mc-card.default{border-color:var(--ink);background:var(--surface-2)}
+.mc-card .dot{width:8px;height:8px;border-radius:50%;background:var(--ink-4);flex:0 0 8px}
+.mc-card.default .dot{background:var(--success)}
+.mc-card .info{flex:1;min-width:0}
+.mc-card .nm{font-size:13px;font-weight:500;color:var(--ink)}
+.mc-card .meta{font-size:11px;color:var(--ink-3);margin-top:2px;display:flex;align-items:center;gap:6px}
+.mc-card .stamp{font-size:10.5px;color:var(--ink-4);background:var(--surface-2);padding:1px 6px;border-radius:3px}
+.mc-card .test{padding:5px 10px;font-size:11.5px;color:var(--ink-2);border:1px solid var(--line);border-radius:5px;background:var(--surface)}
+.mc-card .test:hover{border-color:var(--ink-4);color:var(--ink)}
+.mc-card .test.testing{color:var(--ink-3);pointer-events:none}
+.mc-card .test.ok{color:var(--success);border-color:#BFE0CC;background:#F4FAF6}
+.mc-card .tbadge{font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500;display:inline-flex;align-items:center;gap:4px;background:#F4FAF6;color:var(--success)}
+.warn-strip{
+  margin-top:10px;padding:8px 12px;background:var(--evidence-soft);
+  border:1px solid var(--evidence-line);border-radius:6px;
+  font-size:11.5px;color:var(--evidence);display:flex;align-items:center;gap:8px;
+}
+
+/* Audit log */
+.audit{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:6px 20px;max-width:780px}
+.audit-row{display:grid;grid-template-columns:120px 1fr 110px;gap:14px;padding:11px 0;border-bottom:1px solid var(--line-2);font-size:12.5px;align-items:start}
+.audit-row:last-child{border-bottom:none}
+.audit-row .when{color:var(--ink-3);font-variant-numeric:tabular-nums;font-size:11.5px}
+.audit-row .what{color:var(--ink-2);line-height:1.55}
+.audit-row .what b{color:var(--ink);font-weight:500}
+.audit-row .what .who{color:var(--ink)}
+.audit-row .actor{color:var(--ink-3);font-size:11.5px;text-align:right}
+.audit-row .ic-block{color:var(--danger);font-weight:500;display:inline-flex;align-items:center;gap:4px;background:#FCF1EF;padding:1px 7px;border-radius:4px;font-size:10.5px;margin-left:6px}
+
+/* === Admin tables (users / roles / industry KBs / providers) === */
+.admin-table{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;max-width:900px}
+.at-row{display:grid;align-items:center;gap:14px;padding:11px 16px;border-bottom:1px solid var(--line-2);font-size:12.5px}
+.at-row:last-child{border-bottom:none}
+.at-row.head{background:var(--surface-2);font-size:10.5px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.5px;font-weight:600;padding:9px 16px}
+.at-row .ppl{display:flex;align-items:center;gap:9px}
+.at-row .ppl .avatar{width:26px;height:26px;font-size:10.5px;flex:0 0 26px}
+.at-row .ppl .nm{color:var(--ink);font-weight:500;line-height:1.2}
+.at-row .ppl .sub{font-size:11px;color:var(--ink-3);margin-top:2px}
+.at-row .nm-bold{color:var(--ink);font-weight:500}
+.at-row .path{color:var(--ink-3);font-size:11.5px}
+.at-row .actions{margin-left:auto;display:flex;gap:6px;justify-self:end}
+.at-row .actions button{padding:5px 9px;font-size:11.5px;color:var(--ink-3);border-radius:5px}
+.at-row .actions button:hover{background:var(--surface-2);color:var(--ink)}
+.at-row .actions .danger:hover{color:var(--danger);background:#FCF1EF}
+.status-pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--ink-2);background:var(--surface-2);padding:2px 8px;border-radius:10px;font-weight:500}
+.status-pill.active{color:var(--success);background:#F0F7F3}
+.status-pill.inactive{color:var(--ink-3);background:var(--surface-2)}
+.role-tags{display:flex;flex-wrap:wrap;gap:4px}
+.role-tag{font-size:10.5px;color:var(--ink-3);background:var(--surface-2);padding:1px 7px;border-radius:10px;border:1px solid var(--line-2)}
+
+/* === Modal === */
+.modal-mask{position:fixed;inset:0;background:rgba(25,24,23,.42);z-index:200;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(2px);animation:fadeIn .15s}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.modal{background:var(--surface);border-radius:12px;box-shadow:var(--shadow-lg);max-width:520px;width:calc(100% - 40px);max-height:80vh;display:flex;flex-direction:column;animation:slideUp .2s ease-out}
+@keyframes slideUp{from{transform:translateY(12px);opacity:0}to{transform:translateY(0);opacity:1}}
+.modal-head{padding:16px 20px 14px;border-bottom:1px solid var(--line-2);display:flex;align-items:center}
+.modal-head h3{font-size:15px;font-weight:600;color:var(--ink);font-family:"Source Serif 4","Noto Serif SC",serif}
+.modal-head .x{margin-left:auto;width:24px;height:24px;border-radius:5px;color:var(--ink-3);display:inline-flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer}
+.modal-head .x:hover{background:var(--surface-2);color:var(--ink)}
+.modal-body{padding:18px 20px;overflow-y:auto;flex:1}
+.modal-foot{padding:12px 20px;border-top:1px solid var(--line-2);display:flex;justify-content:flex-end;gap:8px;background:var(--surface-2);border-radius:0 0 12px 12px}
+.field{margin-bottom:14px}
+.field label{display:block;font-size:11.5px;color:var(--ink-3);margin-bottom:5px;font-weight:500;letter-spacing:.3px}
+.field label .req{color:var(--danger);margin-left:2px}
+.field input,.field textarea,.field select{
+  width:100%;padding:8px 11px;border:1px solid var(--line);border-radius:6px;
+  background:var(--surface);font-size:12.5px;color:var(--ink);
+}
+.field input:focus,.field textarea:focus,.field select:focus{border-color:var(--ink-4);box-shadow:0 0 0 3px rgba(25,24,23,.05)}
+.field input[type=checkbox]{width:auto;padding:0;border:none;background:transparent;margin:0 8px 0 0;accent-color:var(--ink);flex:0 0 auto}
+.tag-input input{width:auto;padding:0;border:none;background:transparent}
+.field textarea{min-height:60px;resize:vertical;font-family:inherit}
+.field-hint{font-size:11px;color:var(--ink-3);margin-top:4px;line-height:1.4}
+.field-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.field-row-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+
+/* Admin picker (multi-select chips for managers / roles) */
+.tag-input{border:1px solid var(--line);border-radius:6px;background:var(--surface);padding:6px 8px;display:flex;flex-wrap:wrap;gap:6px;min-height:36px;cursor:text}
+.tag-input .chip{font-size:11.5px;color:var(--ink-2);background:var(--surface-2);padding:2px 8px;border-radius:12px;display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line-2)}
+.tag-input .chip .x{font-size:11px;color:var(--ink-3);cursor:pointer}
+.tag-input .chip .x:hover{color:var(--danger)}
+.tag-input .ph{font-size:12px;color:var(--ink-4);align-self:center}
+.tag-suggest{position:absolute;background:var(--surface);border:1px solid var(--line);border-radius:7px;box-shadow:var(--shadow-md);max-height:180px;overflow-y:auto;z-index:30;min-width:200px}
+.tag-suggest .ts{padding:7px 11px;font-size:12px;cursor:pointer;color:var(--ink-2)}
+.tag-suggest .ts:hover{background:var(--surface-2);color:var(--ink)}
+
+/* Permission preview block */
+.perm-list{background:var(--surface-2);border:1px solid var(--line-2);border-radius:7px;padding:10px 12px;font-family:'SF Mono',Menlo,monospace;font-size:11.5px;color:var(--ink-2);line-height:1.7}
+.perm-list code{background:var(--surface);padding:1px 5px;border-radius:3px;color:var(--ink);font-size:11px;margin-right:4px}
+
+/* === Org node action button === */
+.org-acts{display:flex;gap:6px;opacity:0;margin-left:8px;transition:opacity .12s}
+.org-node:hover .org-acts{opacity:1}
+.org-node .act{padding:3px 8px;font-size:11px;color:var(--ink-3);border:1px solid var(--line);border-radius:5px;background:var(--surface)}
+.org-node:hover .act{opacity:1}
+.org-node .act:hover{color:var(--ink);border-color:var(--ink-4);background:var(--surface-2)}
+
+/* === Tabs row (sub nav within a panel) === */
+.subtabs{display:flex;gap:24px;margin-bottom:18px;border-bottom:1px solid var(--line)}
+.subtab{padding:9px 0;font-size:13px;color:var(--ink-3);position:relative;border-bottom:2px solid transparent;cursor:pointer}
+.subtab.active{color:var(--ink);border-bottom-color:var(--ink);font-weight:500}
+.subtab .n{font-size:10.5px;color:var(--ink-4);background:var(--surface-2);padding:1px 6px;border-radius:8px;margin-left:5px;font-weight:500}
+.subtab.active .n{background:var(--ink);color:#fff}
+
+/* Search input */
+.search-input{
+  width:280px;padding:7px 11px 7px 32px;border:1px solid var(--line);border-radius:7px;
+  background:var(--surface);font-size:12.5px;color:var(--ink);
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%239C978C' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:11px center;
+}
+.search-input:focus{border-color:var(--ink-4)}
+
+/* === Reader === */
+.reader{flex:1;display:flex;min-width:0;overflow:hidden}
+.r-toc{
+  width:220px;flex:0 0 220px;background:var(--surface);
+  border-right:1px solid var(--line);padding:20px 16px;overflow-y:auto;
+}
+.r-toc h6{font-size:10.5px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-bottom:10px}
+.r-toc a{display:block;padding:5px 8px;font-size:12px;color:var(--ink-3);border-radius:4px;border-left:2px solid transparent;margin-bottom:2px}
+.r-toc a:hover{background:var(--surface-2);color:var(--ink-2)}
+.r-toc a.active{color:var(--ink);border-left-color:var(--evidence);background:var(--surface-2);font-weight:500}
+.r-toc a.lv3{padding-left:22px;font-size:11.5px}
+
+.r-main{flex:1;overflow-y:auto;background:var(--bg);position:relative}
+.r-bar{
+  height:50px;background:var(--surface);border-bottom:1px solid var(--line);
+  display:flex;align-items:center;padding:0 28px;gap:14px;position:sticky;top:0;z-index:5;
+}
+.r-bar .crumb{font-size:12.5px;color:var(--ink-3)}
+.r-bar .crumb b{color:var(--ink);font-weight:500}
+.r-bar .right{margin-left:auto;display:flex;gap:8px;align-items:center}
+.r-body{max-width:760px;margin:0 auto;padding:32px 28px 60px}
+.r-body h1{font-size:32px;font-weight:500;color:var(--ink);font-family:"Source Serif 4","Noto Serif SC",serif;line-height:1.25;letter-spacing:-.3px;margin-bottom:6px}
+.r-body .doc-meta{font-size:12px;color:var(--ink-3);display:flex;align-items:center;gap:10px;margin-bottom:24px;padding-bottom:18px;border-bottom:1px solid var(--line)}
+.r-body h2{font-size:20px;font-weight:600;color:var(--ink);font-family:"Source Serif 4","Noto Serif SC",serif;margin-top:32px;margin-bottom:12px;padding-top:18px;border-top:1px solid var(--line-2);display:flex;align-items:center;gap:10px}
+.r-body h2 .stamp{font-size:10px;padding:2px 8px;background:var(--ink);color:#fff;border-radius:4px;text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+.r-body h2 .ev-stamp{font-size:10px;padding:2px 8px;background:var(--evidence-soft);color:var(--evidence);border:1px solid var(--evidence-line);border-radius:4px;text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+.r-body p{font-size:15.5px;line-height:1.85;color:var(--ink-2);font-family:"Source Serif 4","Noto Serif SC",serif;margin-bottom:14px}
+.r-body p strong{color:var(--ink);font-weight:600}
+.r-body ul{margin:8px 0 16px 20px}
+.r-body ul li{font-size:14.5px;line-height:1.8;color:var(--ink-2);font-family:"Source Serif 4","Noto Serif SC",serif;list-style:disc;margin-bottom:2px}
+.r-body .cited{
+  background:linear-gradient(transparent 60%,var(--evidence-soft) 60%);
+  padding:0 2px;border-radius:2px;
+  animation:citePulse 2.4s ease-in-out 1;
+  position:relative;
+}
+@keyframes citePulse {
+  0%{background:linear-gradient(transparent 60%,var(--evidence) 60%);box-shadow:0 0 0 4px rgba(183,121,31,.3)}
+  60%{background:linear-gradient(transparent 60%,var(--evidence-soft) 60%);box-shadow:0 0 0 0 rgba(183,121,31,0)}
+  100%{background:linear-gradient(transparent 60%,var(--evidence-soft) 60%)}
+}
+.r-body .tl-row{
+  display:grid;grid-template-columns:90px 1fr;gap:14px;padding:10px 0;border-bottom:1px dashed var(--line-2);
+  font-family:-apple-system,"PingFang SC",sans-serif;
+}
+.r-body .tl-row:last-child{border-bottom:none}
+.r-body .tl-when{font-size:11.5px;color:var(--ink-3);font-variant-numeric:tabular-nums;padding-top:2px}
+.r-body .tl-what{font-size:13px;color:var(--ink-2);line-height:1.6}
+.r-body .tl-what b{color:var(--ink);font-weight:500}
+.r-body .tl-what .src{font-size:11px;color:var(--ink-3);background:var(--surface-2);padding:1px 6px;border-radius:3px;margin-left:6px}
+
+/* Spinner */
+.spinner{width:11px;height:11px;border:1.5px solid var(--line);border-top-color:var(--ink-3);border-radius:50%;animation:rot .6s linear infinite;display:inline-block;vertical-align:middle}
+@keyframes rot{to{transform:rotate(360deg)}}
+
+/* utility */
+.flex{display:flex}.ai-c{align-items:center}.gap-8{gap:8px}.gap-12{gap:12px}
+
+/* Toast（编译反馈等全局提示） */
+.toast{
+  position:fixed;bottom:28px;left:50%;transform:translateX(-50%);
+  background:var(--ink);color:#fff;padding:10px 18px;border-radius:9px;
+  font-size:12.5px;box-shadow:var(--shadow-lg);z-index:300;
+  display:flex;align-items:center;gap:8px;max-width:560px;
+  animation:toastIn .25s ease-out;
+}
+.toast .tdot{width:7px;height:7px;border-radius:50%;background:var(--evidence);flex:0 0 7px;animation:pulse 1.2s ease-in-out infinite}
+@keyframes toastIn{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
+
+/* === Empty / placeholder === */
+.empty{padding:60px 20px;text-align:center;color:var(--ink-3)}
+.empty h5{font-size:14px;color:var(--ink-2);font-weight:500;margin-bottom:6px}
+.empty p{font-size:12.5px;color:var(--ink-3);max-width:300px;margin:0 auto;line-height:1.5}
+
+/* dark mode disabled; only one surface */
+</style>
+</head>
+<body>
+
+<!--
+  LLMWiki · 企业知识库交互原型 · v0.1
+  设计风格：类 Glean / Onyx 企业搜索风（暖白底、墨色 CTA、琥珀色=证据签名）
+  基础：单文件 inline React(Babel) + pinned versions
+  假设（已写进 mock）：
+  - 用户为陈昱（合规部，普通用户）
+  - 当前焦点：金融行业库 + 合规部组织库 + 个人库
+  - 默认问题：数据出境安全评估的新规
+  - 字体：UI 系统栈 + 阅读区 Source Serif 4 + Noto Serif SC（已加 CDN 失败降级系统字体）
+  - 内容真实感来自项目方案文档（金融行业库/数据合规/出境评估等场景）
+  - 三类库徽章：个人=石墨 / 组织=钢蓝 / 行业=深青（避紫色渐变）
+  - 验证强度：手工 + Playwright 截图 + console 错误检查
+  待办（不在本期）：
+  - 移动端响应式
+  - 深色模式
+  - 连接器配置（Confluence/飞书同步）
+  - 文档级 ACL 细粒度
+-->
+
+<div id="root"></div>
+
+<script type="text/babel">
+const {useState, useEffect, useRef, useMemo} = React;
+
+/* ============== 设计系统常量 ============== */
+const COLORS = {
+  evidence:'#B7791F',
+  evidenceSoft:'#F5E9C9',
+};
+
+/* ============== 内联 SVG 图标（克制使用·承载信息） ============== */
+const Icon = ({name, size=16, stroke=1.6, color='currentColor'}) => {
+  const s = size, sw = stroke;
+  const paths = {
+    chat: <><path d="M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 0 1-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></>,
+    book: <><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></>,
+    shield: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></>,
+    setting: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></>,
+    search: <><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></>,
+    send: <><path d="m22 2-7 20-4-9-9-4 20-7z"/></>,
+    upload: <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></>,
+    user: <><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></>,
+    users: <><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>,
+    folder: <><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></>,
+    file: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></>,
+    doc: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="14" y2="17"/></>,
+    chevron: <><polyline points="9 18 15 12 9 6"/></>,
+    history: <><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></>,
+    list: <><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></>,
+    model: <><circle cx="12" cy="12" r="3"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="5" cy="5" r="2"/><circle cx="19" cy="19" r="2"/><path d="M10.4 14.6 7 19"/><path d="m13.6 9.4 4.4-2.9"/><path d="M10.4 9.4 7 5"/><path d="m13.6 14.6 4.4 2.9"/></>,
+    bell: <><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></>,
+    copy: <><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></>,
+    plus: <><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></>,
+    check: <><polyline points="20 6 9 17 4 12"/></>,
+    alert: <><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></>,
+    refresh: <><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></>,
+    spark: <><polygon points="12 2 15 8.5 22 9.3 17 14.1 18.2 21 12 17.8 5.8 21 7 14.1 2 9.3 9 8.5 12 2"/></>,
+    pin: <><path d="M12 17v5"/><path d="M9 10.76V6h6v4.76l3 3.34V17H6v-2.9l3-3.34z"/></>,
+    share: <><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></>,
+    more: <><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></>,
+    lock: <><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></>,
+    help: <><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></>,
+    arrowleft: <><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></>,
+  };
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" style={{flex:'0 0 auto',display:'inline-block'}}>
+      {paths[name]}
+    </svg>
+  );
+};
+
+/* ============== Mock 数据 ============== */
+const KNOWLEDGE_BASES = [
+  {id:'p1', type:'personal', name:'陈昱 · 笔记', desc:'个人阅读笔记、合规学习记录、项目复盘', docs:47, admins:[{n:'陈昱', i:'CY'}], visibility:'仅本人', owner:'陈昱'},
+  {id:'p2', type:'personal', name:'陈昱 · 法规摘录', desc:'日常关注法规条款摘录与标注', docs:128, admins:[{n:'陈昱', i:'CY'}], visibility:'仅本人', owner:'陈昱'},
+  {id:'o1', type:'org', name:'合规部知识库', orgNode:'合规部', desc:'部门制度、合规手册、审计报告、出境评估材料', docs:312, admins:[{n:'林珂',i:'LK'},{n:'陈昱',i:'CY'}], visibility:'合规部 及下级', owner:'林珂'},
+  {id:'o2', type:'org', name:'研发中心知识库', orgNode:'研发中心', desc:'架构文档、技术规范、AI 平台设计', docs:580, admins:[{n:'李航',i:'LH'},{n:'赵明',i:'ZM'}], visibility:'研发中心 及下级', owner:'李航'},
+  {id:'o3', type:'org', name:'市场部知识库', orgNode:'市场部', desc:'品牌手册、活动方案、客户洞察', docs:189, admins:[{n:'吴悦',i:'WY'}], visibility:'市场部 及下级', owner:'吴悦'},
+  {id:'i1', type:'industry', name:'金融行业知识库', desc:'金融监管法规、跨境数据流动指引、行业最佳实践', docs:1240, admins:[{n:'林珂',i:'LK'}], visibility:'对 12 主体授权', owner:'超级管理员'},
+  {id:'i2', type:'industry', name:'医疗行业知识库', desc:'医疗数据合规、患者信息保护相关规范', docs:640, admins:[{n:'林珂',i:'LK'}], visibility:'对 5 主体授权', owner:'超级管理员'},
+];
+
+const CONVERSATIONS = [
+  {id:'c1', title:'数据出境安全评估的新规对申报材料有什么要求？', t:'今天 14:08', active:true},
+  {id:'c2', title:'集团跨境数据传输合规清单更新', t:'昨天 18:22'},
+  {id:'c3', title:'RAGFlow 与 FastGPT 选型对比', t:'昨天 11:05'},
+  {id:'c4', title:'研发中心 AI 平台架构设计规范', t:'8月26日'},
+  {id:'c5', title:'个人 GDPR 工作法梳理', t:'8月24日'},
+  {id:'c6', title:'金融行业跨境数据指引合规自查', t:'8月22日'},
+  {id:'c7', title:'Casbin 模型在多库场景下的改造', t:'8月20日'},
+];
+
+const CURRENT_ANSWER_PARTS = [
+  '根据国家网信办最新发布的《数据出境安全评估办法》（2026 修订）',
+  '[1]',
+  '，申报材料需围绕「出境必要性」「数据敏感性」「接收方保护能力」三大维度组织',
+  '[1]',
+  '。具体而言：\n\n',
+  '**必要性论证**：需提供业务场景说明、替代方案评估、跨境传输频次与数据量级；',
+  '[2]',
+  '\n\n**数据敏感识别**：按「重要数据识别指南」逐项标注所涉字段类别与规模，',
+  '[3]',
+  '必要时附第三方评估报告；\n\n**接收方保障**：合同条款、',
+  '技术与组织措施（TOMs）',
+  '、东道国法律环境分析，',
+  '其中向未通过充分性评估的国家/地区传输需额外补充监督机构意见',
+  '。',
+  '\n\n结合我之前在「2026-04 出境评估项目复盘」',
+  '[3]',
+  ' 中整理的实操经验',
+  '，申报材料建议提前 60 个工作日完成内部合规自评',
+  '，',
+  '并在提交前与监管部门做一次预沟通',
+  '，',
+  '可显著缩短评估周期',
+  '。',
+];
+
+const CITATIONS = [
+  {
+    id:'c1',
+    title:'数据出境安全评估（主题页）',
+    truth:'v5',
+    evidences:2,
+    lastUpdate:'今天',
+    kb:'i1', kbName:'金融行业库',
+    score:0.94,
+    snippet:'【Compiled Truth】申报材料围绕「出境必要性」「数据敏感性」「接收方保护能力」三大维度组织；敏感识别需逐字段标注类别与规模，必要时附第三方评估报告。本结论已吸收 2 条最新证据（2026-08-26 修订版、08-28 实操复盘）。',
+    path:'/我的大脑/主题/数据出境安全评估.md',
+    snippetRanges:[[12,20],[42,48]],
+  },
+  {
+    id:'c2',
+    title:'出境评估材料清单（主题页）',
+    truth:'v3',
+    evidences:1,
+    lastUpdate:'昨天',
+    kb:'o1', kbName:'合规部库',
+    score:0.87,
+    snippet:'【Compiled Truth】清单 = 业务必要性论证 + 替代方案对比 + 跨境频次与量级 + 合同范本 + 接收方 TOMs 调查表。证据源：合规操作手册 v3.2（合规部库）。',
+    path:'/我的大脑/主题/出境评估材料清单.md',
+    snippetRanges:[[14,28]],
+  },
+  {
+    id:'c3',
+    title:'出境评估项目复盘（个人经验页）',
+    truth:'v2',
+    evidences:1,
+    lastUpdate:'8月28日',
+    kb:'p1', kbName:'我的笔记',
+    score:0.71,
+    snippet:'【Compiled Truth】预沟通可显著缩短评估周期：上轮材料交齐后第 23 个工作日收到反馈，比前一轮提前 12 天。证据源：我的笔记 · 2026-04 复盘（个人库）。',
+    path:'/我的大脑/主题/出境评估项目复盘.md',
+    snippetRanges:[[0,20]],
+  },
+];
+
+const FOLLOWUPS = [
+  '「重要数据识别指南」对内部文档标注的具体颗粒度？',
+  '接收方 TOMs 调查表应包含哪些项？',
+  '内部合规自评的标准流程与模板',
+];
+
+const DOCS = [
+  {name:'数据出境申报指南（2026 修订）解读.md',type:'md',size:'18 KB',status:'published',uploader:'林珂',t:'今天 09:12',path:'/金融监管/2026 修订/出境评估解读.md'},
+  {name:'数据出境申报材料清单 v3.2.pdf',type:'pdf',size:'2.4 MB',status:'published',uploader:'林珂',t:'昨天 17:30',path:'/金融监管/2026 修订/材料清单 v3.2.pdf'},
+  {name:'Q2 跨境数据评估总结报告.docx',type:'docx',size:'580 KB',status:'published',uploader:'陈昱',t:'8月28日',path:'/内部/Q2 跨境评估/Q2 总结.docx'},
+  {name:'域外接收方法律环境比较表.xlsx',type:'xlsx',size:'120 KB',status:'indexing',uploader:'林珂',t:'今天 14:50',path:'/金融监管/比较表.xlsx'},
+  {name:'第三季度合规审计要求.pdf',type:'pdf',size:'1.1 MB',status:'parsing',uploader:'陈昱',t:'刚刚',path:'/内部/Q3 审计/Q3 要求.pdf'},
+  {name:'AI 平台架构规范 v2.md',type:'md',size:'42 KB',status:'published',uploader:'李航',t:'8月27日',path:'/架构/AI 平台规范 v2.md'},
+  {name:'历史问答归档（脱敏）.csv',type:'csv',size:'8.6 MB',status:'published',uploader:'陈昱',t:'8月26日',path:'/内部/归档/历史问答.csv'},
+  {name:'客户合规自查问卷（含法律附录）.pdf',type:'pdf',size:'3.2 MB',status:'failed',uploader:'林珂',t:'8月25日',path:'/金融监管/自查问卷.pdf'},
+];
+
+const ORG_TREE = {
+  name:'集团总部', kbs:['i1'], expanded:true, children:[
+    {name:'合规部', kbs:['o1'], admins:['林珂','陈昱'], expanded:true, children:[
+      {name:'合规一组', kbs:[], admins:[]},
+      {name:'合规二组', kbs:[], admins:[]},
+    ]},
+    {name:'研发中心', kbs:['o2'], admins:['李航'], expanded:false, children:[
+      {name:'平台研发组', kbs:[], admins:[]},
+      {name:'算法组', kbs:[], admins:[]},
+    ]},
+    {name:'市场部', kbs:['o3'], admins:['吴悦'], expanded:false, children:[]},
+  ]
+};
+
+const GRANTS = [
+  {subj:'金融行业组', type:'role', avatar:null, exp:'2027-08-12', scope:'12 人'},
+  {subj:'研发中心', type:'org', avatar:null, exp:'永久', scope:'126 人'},
+  {subj:'合规部', type:'org', avatar:null, exp:'永久', scope:'24 人'},
+  {subj:'陈昱', type:'user', avatar:'CY', exp:'2026-12-31', scope:'1 人'},
+  {subj:'法务接口人组', type:'role', avatar:null, exp:'2026-11-30', scope:'6 人'},
+];
+
+const MODELS = {
+  llm:[
+    {id:'m1', name:'qwen3-max', provider:'LiteLLM 网关 · 内网', ctx:'128K', default:true, tested:true},
+    {id:'m2', name:'GPT-5', provider:'OpenAI 直连 · 公网', ctx:'200K', default:false, tested:true},
+    {id:'m3', name:'DeepSeek V4', provider:'DeepSeek 官方 · 公网', ctx:'128K', default:false, tested:false},
+  ],
+  embedding:[
+    {id:'e1', name:'bge-m3', provider:'TEI 自托管 · 内网', dim:'1024 维', default:true, tested:true},
+    {id:'e2', name:'text-embedding-3-large', provider:'OpenAI · 公网', dim:'3072 维', default:false, tested:true},
+  ],
+  rerank:[
+    {id:'r1', name:'bge-reranker-v2-m3', provider:'TEI 自托管 · 内网', default:true, tested:true},
+    {id:'r2', name:'cohere-rerank-v3.5', provider:'Cohere · 公网', default:false, tested:false},
+  ],
+};
+
+const AUDIT = [
+  {when:'今天 14:32', what:<><b>Brain Compiler</b> 为 <b>24 位可见者</b>完成「出境合规培训」主题编译（Truth v1 → v2，吸收 1 条新证据）</>, actor:'编译引擎'},
+  {when:'今天 14:31', what:<><b>林珂</b> 发布《2026 Q3 出境合规培训材料.pdf》→ 触发 24 人增量编译</>, actor:'林珂'},
+  {when:'今天 14:12', what:<><b>陈昱</b> 尝试访问「市场部知识库」但被拒绝 <span className="ic-block"><Icon name="lock" size={11}/> 越权</span></>, actor:'系统'},
+  {when:'今天 14:08', what:<><b>陈昱</b> 大脑查询命中 3 个主题页（Truth v5 / v3 / v2），引用 4 条 Timeline 证据</>, actor:'陈昱'},
+  {when:'今天 10:42', what:<><b>林珂</b> 向「金融行业库」新增授权 <b>法务接口人组（6 人）</b>，有效期至 2026-11-30 → <b>触发 6 人大脑重编译</b></>, actor:'林珂'},
+  {when:'今天 09:18', what:<>「数据出境申报指南（2026 修订）解读.md」已编译进 38 位可见者的主题页（Truth v4 → v5）</>, actor:'编译引擎'},
+  {when:'昨天 17:30', what:<><b>林珂</b> 上传《数据出境申报材料清单 v3.2.pdf》并发布</>, actor:'林珂'},
+  {when:'昨天 11:05', what:<><b>超级管理员</b> 修改全局 Embedding 模型为 <b>bge-m3</b>，触发全量重建索引任务</>, actor:'超级管理员'},
+  {when:'昨天 03:00', what:<><b>Dream Cycle</b> 面向全员夜间整理：检出矛盾 2 处、过期提醒 5 条、合并重复主题 3 组、修复交叉引用 17 处</>, actor:'编译引擎'},
+];
+
+/* ============ 新增 Mock 数据 ============ */
+const USERS = [
+  {id:'u1', name:'陈昱', initials:'CY', org:'合规部', orgPath:'集团/合规部', roles:['合规审核员','金融业务组'], status:'active', t:'今天活跃'},
+  {id:'u2', name:'林珂', initials:'LK', org:'合规部', orgPath:'集团/合规部', roles:['合规主管','法务接口人组'], status:'active', t:'30 分钟前'},
+  {id:'u3', name:'李航', initials:'LH', org:'研发中心', orgPath:'集团/研发中心', roles:['研发主管','系统管理员'], status:'active', t:'2 小时前'},
+  {id:'u4', name:'赵明', initials:'ZM', org:'研发中心·平台研发组', orgPath:'集团/研发中心/平台研发组', roles:['系统管理员'], status:'active', t:'今天 11:02'},
+  {id:'u5', name:'张睿', initials:'ZR', org:'研发中心·算法组', orgPath:'集团/研发中心/算法组', roles:['研究员'], status:'active', t:'昨天'},
+  {id:'u6', name:'吴悦', initials:'WY', org:'市场部', orgPath:'集团/市场部', roles:['市场主管'], status:'active', t:'今天 09:30'},
+  {id:'u7', name:'王楠', initials:'WN', org:'合规部·合规一组', orgPath:'集团/合规部/合规一组', roles:['合规审核员'], status:'active', t:'今天 14:50'},
+  {id:'u8', name:'周航', initials:'ZH', org:'集团总部', orgPath:'集团', roles:['超级管理员'], status:'active', t:'今天 08:00'},
+  {id:'u9', name:'何静', initials:'HJ', org:'研发中心·平台研发组', orgPath:'集团/研发中心/平台研发组', roles:['研究员'], status:'inactive', t:'30 天未登录'},
+];
+
+const ROLES = [
+  {id:'r1', name:'超级管理员', builtin:true, desc:'平台全部权限，含用户/组织/行业库/模型配置/审计', users:1, perms:['*']},
+  {id:'r2', name:'合规主管', builtin:false, desc:'维护合规部组织库与金融行业库，授权本部门可见', users:1, perms:['kb.org.合规部.manage','kb.industry.金融行业.manage','kb.industry.金融行业.authorize','org.dept.合规部.read']},
+  {id:'r3', name:'合规审核员', builtin:false, desc:'阅读合规部组织库，提问与查阅引用', users:2, perms:['kb.org.合规部.read']},
+  {id:'r4', name:'研发主管', builtin:false, desc:'维护研发中心组织库', users:1, perms:['kb.org.研发中心.manage']},
+  {id:'r5', name:'系统管理员', builtin:true, desc:'用户/角色/模型配置等系统级管理', users:2, perms:['users.manage','roles.manage','models.manage','audit.read']},
+  {id:'r6', name:'法务接口人组', builtin:false, desc:'可访问金融行业库，出境评估专用', users:6, perms:['kb.industry.金融行业.read']},
+  {id:'r7', name:'金融业务组', builtin:false, desc:'一线金融业务人员，可访问金融行业库', users:24, perms:['kb.industry.金融行业.read']},
+  {id:'r8', name:'市场主管', builtin:false, desc:'维护市场部组织库', users:1, perms:['kb.org.市场部.manage']},
+  {id:'r9', name:'研究员', builtin:false, desc:'通用阅读权限，无知识库管理权', users:2, perms:['kb.*.read']},
+];
+
+const INDUSTRY_KBS = [
+  {id:'i1', name:'金融行业知识库', desc:'金融监管法规、跨境数据流动指引、行业最佳实践', docs:1240, admins:[{n:'林珂',i:'LK'},{n:'周航',i:'ZH'}], grants:5, status:'active', created:'2024-03-12'},
+  {id:'i2', name:'医疗行业知识库', desc:'医疗数据合规、患者信息保护相关规范', docs:640, admins:[{n:'林珂',i:'LK'}], grants:2, status:'active', created:'2024-05-08'},
+  {id:'i3', name:'跨境贸易合规库', desc:'海关、税务、外汇相关法规与申报实务', docs:380, admins:[{n:'李航',i:'LH'}], grants:3, status:'active', created:'2024-09-21'},
+  {id:'i4', name:'AI 治理与伦理库', desc:'国内外 AI 治理框架、伦理审查要点、合规案例', docs:215, admins:[{n:'赵明',i:'ZM'}], grants:1, status:'active', created:'2025-01-15'},
+];
+
+const KB_ADMIN_LIST = {
+  // 组织库与行业库的管理员
+  'o1': [{n:'林珂',i:'LK'},{n:'陈昱',i:'CY'}],  // 合规部
+  'o2': [{n:'李航',i:'LH'},{n:'赵明',i:'ZM'}],  // 研发中心
+  'o3': [{n:'吴悦',i:'WY'}],                     // 市场部
+  'i1': [{n:'林珂',i:'LK'},{n:'周航',i:'ZH'}],
+  'i2': [{n:'林珂',i:'LK'}],
+  'i3': [{n:'李航',i:'LH'}],
+  'i4': [{n:'赵明',i:'ZM'}],
+};
+
+const PROVIDERS = [
+  {id:'pv1', name:'LiteLLM 网关', kind:'gateway', url:'https://litellm.internal/v1', keyMask:'sk-internal-****a3f2', note:'内网统一网关，路由多模型供应商'},
+  {id:'pv2', name:'TEI 自托管', kind:'selfhost', url:'https://tei.internal:8080', keyMask:'(无密钥)', note:'HuggingFace text-embeddings-inference，承载 bge 系列'},
+  {id:'pv3', name:'OpenAI 直连', kind:'external', url:'https://api.openai.com/v1', keyMask:'sk-****8c1d', note:'官方 OpenAI API（公合规））'},
+  {id:'pv4', name:'DeepSeek 官方', kind:'external', url:'https://api.deepseek.com/v1', keyMask:'sk-****2b9e', note:'DeepSeek 系列'},
+];
+
+const TYPE_LABEL = {personal:'个人', org:'组织', industry:'行业', user:'人员', role:'角色'};
+const TYPE_BADGE = (type) => <span className={`badge ${type}`}>{TYPE_LABEL[type] || type}</span>;
+
+/* ============== 通用组件 ============== */
+
+function SideNav({active, setActive}){
+  const items = [
+    {key:'chat', label:'对话', icon:'chat', badge:null},
+    {key:'libs', label:'知识库', icon:'book', badge:'7'},
+    {key:'reader', label:'阅读器', icon:'file', badge:null},
+  ];
+  return (
+    <aside className="side">
+      <div className="brand">
+        <span className="brand-mark">[</span>
+        <span>LLM Wiki</span>
+      </div>
+      <nav className="nav">
+        <div className="nav-section">工作</div>
+        {items.map(it => (
+          <div key={it.key} className={`nav-item ${active===it.key?'active':''}`} onClick={()=>setActive(it.key)}>
+            <Icon name={it.icon} size={16} className="nav-ic"/>
+            <span>{it.label}</span>
+            {it.badge && <span className="nav-badge">{it.badge}</span>}
+          </div>
+        ))}
+        <div className="nav-section">管理</div>
+        <div className={`nav-item ${active==='admin'?'active':''}`} onClick={()=>setActive('admin')}>
+          <Icon name="shield" size={16} className="nav-ic"/>
+          <span>管理后台</span>
+        </div>
+        <div className="nav-item" style={{opacity:.6}}>
+          <Icon name="setting" size={16} className="nav-ic"/>
+          <span>系统设置</span>
+        </div>
+      </nav>
+      <div className="side-foot">
+        <div className="avatar">CY</div>
+        <div className="user-info">
+          <div className="user-name">陈昱</div>
+          <div className="user-role">合规部 · 普通用户</div>
+        </div>
+        <Icon name="more" size={14} color="var(--ink-4)"/>
+      </div>
+    </aside>
+  );
+}
+
+/* ============== Modal ============== */
+function Modal({title, onClose, children, foot}){
+  useEffect(()=>{
+    const onKey = (e)=>{ if(e.key==='Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return ()=>document.removeEventListener('keydown', onKey);
+  },[]);
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal" onClick={e=>e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>{title}</h3>
+          <span className="x" onClick={onClose}>×</span>
+        </div>
+        <div className="modal-body">{children}</div>
+        <div className="modal-foot">{foot}</div>
+      </div>
+    </div>
+  );
+}
+
+/* Tag picker - multi-select with chips */
+function TagPicker({placeholder, items, selected, setSelected}){
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState(false);
+  const filtered = items.filter(it => !selected.find(s=>s.id===it.id) && ((it.name||'').includes(q) || (it.n||'').includes(q)));
+  return (
+    <div style={{position:'relative'}}>
+      <div className="tag-input" onClick={()=>setOpen(true)}>
+        {selected.map(s=>(
+          <span key={s.id} className="chip">
+            {s.n || s.name}
+            <span className="x" onClick={(e)=>{e.stopPropagation(); setSelected(selected.filter(x=>x.id!==s.id));}}>×</span>
+          </span>
+        ))}
+        <input
+          placeholder={selected.length===0 ? placeholder : ''}
+          value={q}
+          onChange={e=>{setQ(e.target.value); setOpen(true);}}
+          onFocus={()=>setOpen(true)}
+          onBlur={()=>setTimeout(()=>setOpen(false), 150)}
+          style={{flex:1,minWidth:80,border:'none',outline:'none',background:'transparent',fontSize:'12.5px',padding:'4px 4px'}}
+        />
+      </div>
+      {open && filtered.length>0 && (
+        <div className="tag-suggest" style={{top:38,left:0,right:0}}>
+          {filtered.map(it=>(
+            <div key={it.id} className="ts" onMouseDown={()=>{ setSelected([...selected, it]); setQ(''); }}>
+              <span style={{color:'var(--ink)',fontWeight:500}}>{it.n || it.name}</span>
+              <span style={{color:'var(--ink-4)',marginLeft:6,fontSize:11}}>{it.sub || it.org || ''}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* Confirm modal */
+function ConfirmModal({title, msg, onConfirm, onClose}){
+  return (
+    <Modal title={title} onClose={onClose} foot={
+      <>
+        <button className="btn" onClick={onClose}>取消</button>
+        <button className="btn danger" onClick={()=>{onConfirm(); onClose();}}>确认删除</button>
+      </>
+    }>
+      <div style={{fontSize:13,color:'var(--ink-2)',lineHeight:1.6}}>{msg}</div>
+    </Modal>
+  );
+}
+
+function TopBar({title, sub}){
+  return (
+    <div className="topbar">
+      <div className="crumb"><b>{title}</b>{sub && <> · <span style={{color:'var(--ink-3)'}}>{sub}</span></>}</div>
+      <div className="topbar-spacer"/>
+      <div className="topbar-actions">
+        <button className="icon-btn" title="搜索"><Icon name="search" size={16}/></button>
+        <button className="icon-btn" title="通知"><Icon name="bell" size={16}/></button>
+        <button className="icon-btn" title="帮助"><Icon name="help" size={16}/></button>
+      </div>
+    </div>
+  );
+}
+
+/* ============== 范围选择器 ============== */
+function ScopePicker({visibleKbs, selected, setSelected, open, setOpen}){
+  const wrapRef = useRef(null);
+  useEffect(()=>{
+    const onDoc = (e)=>{ if(wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    const onKey = (e)=>{ if(e.key==='Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return ()=>{ document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
+  },[]);
+  const groups = [
+    {label:'个人库', items: visibleKbs.filter(k=>k.type==='personal')},
+    {label:'组织库', items: visibleKbs.filter(k=>k.type==='org')},
+    {label:'行业库', items: visibleKbs.filter(k=>k.type==='industry')},
+  ];
+  const totalSel = selected.length;
+  const totalAll = visibleKbs.length;
+  const scopeLabel = totalSel===totalAll ? '我可见的全部' : (totalSel===0 ? '未选择任何库' : `已选 ${totalSel} 库`);
+  return (
+    <div ref={wrapRef} style={{position:'relative'}}>
+      <button className="scope-trigger" onClick={()=>setOpen(!open)} title="调整本次对话的检索范围">
+        <span className="scope-dot" style={{background: totalSel===0 ? 'var(--ink-4)' : 'var(--evidence)'}}/>
+        <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{scopeLabel}</span>
+        <span className="scope-meta">{totalSel}/{totalAll} 库</span>
+        <Icon name="chevron" size={14} color="var(--ink-3)" style={{transform: open?'rotate(-90deg)':'rotate(90deg)', transition:'transform .15s'}}/>
+      </button>
+      {open && (
+        <div className="scope-pop">
+          <h5>选择查询范围</h5>
+          <div style={{maxHeight:340,overflowY:'auto'}}>
+            {groups.map(g => (
+              <div className="group" key={g.label}>
+                <div className="gh">
+                  <span>{g.label}</span>
+                  <span>{g.items.length} 个</span>
+                </div>
+                {g.items.map(k => {
+                  const checked = selected.includes(k.id);
+                  return (
+                      <div key={k.id} className="gi" onClick={()=>{
+                        setSelected(checked ? selected.filter(x=>x!==k.id) : [...selected, k.id]);
+                      }}>
+                        <input type="checkbox" checked={checked} onChange={()=>{}} style={{accentColor:'var(--ink)'}}/>
+                        <span className="gname">{k.name}</span>
+                        <span className="gvis">{k.visibility || '—'}</span>
+                      </div>
+                    );
+                })}
+              </div>
+            ))}
+          </div>
+          <div className="foot">
+            <button onClick={()=>setSelected(visibleKbs.map(k=>k.id))}>全选</button>
+            <div style={{display:'flex',gap:8}}>
+              <button onClick={()=>setSelected([])}>清空</button>
+              <button className="primary" onClick={()=>setOpen(false)}>应用</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============== 对话屏 ============== */
+function ChatScreen({onOpenReader}){
+  const visibleKbs = KNOWLEDGE_BASES;
+  const [selected, setSelected] = useState(visibleKbs.map(k=>k.id));
+  const [open, setOpen] = useState(false);
+  const [input, setInput] = useState('');
+  const [messages, setMessages] = useState([]);   // {role:'user'|'ai', text, done}
+  const [streaming, setStreaming] = useState(false);
+  const [activeCite, setActiveCite] = useState(null);
+  const [activeConv, setActiveConv] = useState('c1');
+  const taRef = useRef(null);
+  const scrollRef = useRef(null);
+
+  const allSel = selected.length === visibleKbs.length;
+  const scopeLabel = allSel ? '我可见的全部' : (selected.length === 0 ? '未选择任何库' : `已选 ${selected.length} 库`);
+
+  // 流式输出状态机
+  useEffect(()=>{
+    if(!streaming) return;
+    const full = CURRENT_ANSWER_PARTS.join('');
+    let i = 0;
+    const t = setInterval(()=>{
+      i += 3;
+      const done = i >= full.length;
+      const slice = done ? full : full.slice(0, i);
+      setMessages(ms=>{
+        const cp = [...ms];
+        cp[cp.length-1] = {...cp[cp.length-1], text: slice, done};
+        return cp;
+      });
+      if(done){
+        clearInterval(t);
+        setStreaming(false);
+        setTimeout(()=>{ if(taRef.current) taRef.current.focus(); }, 60);
+      }
+    }, 36);
+    return ()=>clearInterval(t);
+  },[streaming]);
+
+  // 流式期间自动滚底
+  useEffect(()=>{
+    const el = scrollRef.current;
+    if(el) el.scrollTop = el.scrollHeight;
+  },[messages]);
+
+  const send = (preset)=>{
+    const text = (preset ?? input).trim();
+    if(!text || streaming || selected.length===0) return;
+    setMessages(ms=>[...ms, {role:'user', text}, {role:'ai', text:'', done:false}]);
+    setInput('');
+    setActiveCite(null);
+    setStreaming(true);
+    if(taRef.current) taRef.current.style.height = 'auto';
+  };
+
+  const newChat = ()=>{
+    setMessages([]); setStreaming(false); setActiveCite(null); setInput('');
+    if(taRef.current){ taRef.current.style.height = 'auto'; taRef.current.focus(); }
+  };
+
+  const focusInput = ()=>{ if(taRef.current) taRef.current.focus(); };
+
+  const autoGrow = (el)=>{
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+  };
+
+  const renderAnswer = (typed) => {
+    // 渲染 typed 文本：处理 **粗体** 与 [n] 引用 chip
+    const out = [];
+    let key = 0;
+    const segs = typed.split(/(\*\*[^*]+\*\*)/g);
+    segs.forEach(seg => {
+      if(!seg) return;
+      const isBold = /^\*\*[^*]+\*\*$/.test(seg);
+      const text = isBold ? seg.slice(2,-2) : seg;
+      const wrap = (s, k) => isBold ? <strong key={k}>{s}</strong> : <span key={k}>{s}</span>;
+      const re = /\[(\d+)\]/g; let last = 0; let m;
+      while((m = re.exec(text)) !== null){
+        if(m.index > last) out.push(wrap(text.slice(last, m.index), key++));
+        const n = parseInt(m[1],10);
+        out.push(<button key={key++} className={`cite-chip ${activeCite===n?'active':''}`} onClick={()=>setActiveCite(n)}>{n}</button>);
+        last = m.index + m[0].length;
+      }
+      if(last < text.length) out.push(wrap(text.slice(last), key++));
+    });
+    return out;
+  };
+
+  const answerDone = messages.length>0 && messages[messages.length-1].done;
+
+  return (
+    <div className="chat">
+      <div className="conv-side">
+        <div className="scope">
+          <div className="scope-label">查询范围</div>
+          <ScopePicker visibleKbs={visibleKbs} selected={selected} setSelected={setSelected} open={open} setOpen={setOpen}/>
+        </div>
+        <div className="conv-head">
+          <h4>最近会话</h4>
+          <button className="icon-btn" title="new"><Icon name="plus" size={14}/></button>
+        </div>
+        <div className="conv-list">
+          {CONVERSATIONS.map(c => (
+            <div key={c.id} className={`conv-item ${activeConv===c.id?'active':''}`} onClick={()=>setActiveConv(c.id)}>
+              <span>{c.title}</span>
+              <span className="conv-time">{c.t}</span>
+            </div>
+          ))}
+        </div>
+        <div className="new-chat" onClick={newChat} title="开始一段新对话">
+          <Icon name="plus" size={12}/> 新建会话
+        </div>
+      </div>
+
+      <div className="chat-main">
+        <div className="chat-scroll" ref={scrollRef}>
+          <div className="chat-inner">
+            {messages.length===0 && (
+              <div className="welcome">
+                <h1>问你的大脑。<em>答案可溯源</em>。</h1>
+                <p>这不是搜索碎片——是一份<b>为你持续整理的个人大脑</b>：每当有新知识入库或权限变更，后台都会为你重新编译主题页（Compiled Truth + Timeline 证据链）。回答来自整理好的结论，每条引用可回溯原始文档。</p>
+                <div className="suggest">
+                  {['数据出境安全评估的新规对申报材料有什么要求？','研发中心的 AI 平台架构是怎样的？','我之前参与过哪些出境评估项目？','Casbin 模型如何支持三级知识库？'].map((q,i)=>(
+                    <button key={i} onClick={()=>send(q)}>{q}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {messages.map((msg, mi)=>{
+              const isLast = mi === messages.length-1;
+              if(msg.role==='user'){
+                return (
+                  <div key={mi} className="msg msg-user">
+                    <div className="bubble">{msg.text}</div>
+                  </div>
+                );
+              }
+              return (
+                <div key={mi} className="msg msg-ai">
+                  <div className="body">
+                    <div className="who">
+                      <span className="dot"/>
+                      <span>LLMWiki · 大脑综述</span>
+                      <span style={{color:'var(--ink-4)'}}>· 你的大脑 · {scopeLabel}{allSel ? `（${selected.length} 库）` : ''}</span>
+                    </div>
+                    <div className="answer">
+                      {renderAnswer(msg.text)}
+                      {!msg.done && <span className="cursor"/>}
+                    </div>
+                    {msg.done && (
+                      <>
+                        <div className="actions">
+                          <button><Icon name="copy" size={12}/> 复制</button>
+                          <button><Icon name="refresh" size={12}/> 重写</button>
+                          <button><Icon name="share" size={12}/> 分享</button>
+                          <button style={{marginLeft:'auto'}}><Icon name="check" size={12}/> 有用</button>
+                        </div>
+
+                        <details className="retrieval">
+                          <summary>
+                            <Icon name="spark" size={12} color="var(--evidence)"/>
+                            <span>大脑整理与查询 ·</span>
+                            <b>命中主题页 × 3 · Compiled Truth 作答</b>
+                            <span style={{marginLeft:'auto',fontSize:11}}>展开 ▾</span>
+                          </summary>
+                          <div className="retrieval-body">
+                            <div className="ret-step"><span className="n">1</span><span className="txt"><b>权限视图</b> · 你的大脑边界 = 可见 {selected.length}/{visibleKbs.length} 库（范围：{scopeLabel}）· 权限变更会触发大脑重编译</span><span className="v">{selected.length} 库</span></div>
+                            <div className="ret-step"><span className="n">2</span><span className="txt"><b>大脑查询</b> · gbrain 语义查询命中 3 个主题页（数据出境安全评估 Truth v5 · 材料清单 v3 · 项目复盘 v2）</span><span className="v">3 页</span></div>
+                            <div className="ret-step"><span className="n">3</span><span className="txt"><b>Compiled Truth 作答</b> · 结论已在编译期消化 4 条 Timeline 证据（最新 08-28），非现场碎片拼装</span><span className="v">4 证据</span></div>
+                            <div className="ret-step"><span className="n">4</span><span className="txt"><b>证据链对齐</b> · 回答 [n] ↔ 知识页 Timeline ↔ 原始文档，逐条可审计</span><span className="v">~0.9s</span></div>
+                          </div>
+                        </details>
+
+                        {isLast && (
+                          <div className="followup">
+                            <h5>建议追问</h5>
+                            <ul>
+                              {FOLLOWUPS.map((q,i)=>(
+                                <li key={i} onClick={()=>{setInput(q); focusInput();}}>→ {q}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+
+          </div>
+        </div>
+
+        <div className="composer">
+          <div className="composer-inner">
+            <div className="composer-box">
+              <textarea
+                ref={taRef}
+                placeholder={selected.length===0 ? '请先在左侧选择至少一个知识库…' : '向你的知识库提问…（Enter 发送，Shift+Enter 换行）'}
+                value={input}
+                onChange={e=>{setInput(e.target.value); autoGrow(e.target);}}
+                onKeyDown={e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send();} }}
+                rows={1}
+              />
+              <div className="composer-foot">
+                <div className="comp-chip" onClick={()=>setOpen(true)} style={{cursor:'pointer'}} title="调整查询范围">
+                  <span className="scope-dot" style={{width:6,height:6}}/>
+                  范围 · {scopeLabel}
+                  <span className="kbd">⌘K</span>
+                </div>
+                <div className="comp-chip" style={{opacity:.7}}>
+                  <Icon name="pin" size={11}/> 上传附件
+                </div>
+                <button className="send-btn" onClick={()=>send()} disabled={!input.trim() || streaming || selected.length===0} title={streaming?'回答生成中…':'发送 (Enter)'}><Icon name="send" size={14} color="#fff"/></button>
+              </div>
+            </div>
+            <div className="foot-note">回答来自你的个人大脑（Compiled Truth）· 新知识入库与权限变更均触发面向你的重编译 · 引用可回溯原始文档</div>
+          </div>
+        </div>
+      </div>
+
+      {answerDone && (
+        <div className="cite-panel">
+          <div className="cite-head">
+            <div style={{display:'flex',alignItems:'center'}}>
+              <h4>大脑引用</h4><span className="count">{CITATIONS.length}</span>
+            </div>
+            <div className="cite-sort"><span>主题相关度</span><Icon name="chevron" size={11} color="var(--ink-3)" style={{transform:'rotate(90deg)'}}/></div>
+          </div>
+          <div className="cite-body">
+            {CITATIONS.map((c, idx) => {
+              const n = idx+1;
+              const kb = KNOWLEDGE_BASES.find(k=>k.id===c.kb);
+              return (
+                <div key={c.id} className={`cite-card ${activeCite===n?'active':''}`} onMouseEnter={()=>setActiveCite(n)} onClick={()=>setActiveCite(n)}>
+                  <div className="top">
+                    <span className="num">{n}</span>
+                    <div className="ttl">{c.title}</div>
+                  </div>
+                  <div className="meta">
+                    {TYPE_BADGE(kb.type)} <span style={{color:'var(--ink-4)'}}>·</span> <span>{c.kbName}</span> <span style={{flex:1}}/>
+                    <span className="badge evidence" style={{fontSize:10,padding:'1px 6px'}} title="编译版本：该主题页在你大脑中的第 N 次整理">Truth {c.truth}</span>
+                  </div>
+                  <div className="snippet">{c.snippet}</div>
+                  <div className="evid-line" title="该主题页 Timeline 中的证据条目">
+                    <Icon name="list" size={11} color="var(--evidence)"/> Timeline · {c.evidences} 条证据 · 最近更新 {c.lastUpdate}
+                  </div>
+                  <div className="acts">
+                    <button className="primary" onClick={(e)=>{e.stopPropagation(); onOpenReader(c);}}>查看知识页</button>
+                    <button onClick={(e)=>e.stopPropagation()}>原始文件</button>
+                    <button onClick={(e)=>e.stopPropagation()}>Obsidian</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============== 知识库屏 ============== */
+function LibrariesScreen(){
+  const [filter, setFilter] = useState('all');
+  const filtered = filter==='all' ? KNOWLEDGE_BASES : KNOWLEDGE_BASES.filter(k=>k.type===filter);
+  const [sel, setSel] = useState(KNOWLEDGE_BASES.find(k=>k.id==='i1'));
+  const [tab, setTab] = useState('docs');
+  const [docs, setDocs] = useState(DOCS);
+  const [uploading, setUploading] = useState(false);
+  const UP_NAME = '2026 Q3 出境合规培训材料.pdf';
+
+  // 模拟上传状态机：解析中 → 索引中 → 已发布 → 面向可见者大脑编译
+  const simulateUpload = ()=>{
+    if(uploading) return;
+    setUploading(true);
+    setDocs(ds=>[{name:UP_NAME,type:'pdf',size:'1.8 MB',status:'parsing',uploader:'陈昱',t:'刚刚',path:'/内部/Q3 培训/培训材料.pdf'}, ...ds]);
+    setTimeout(()=>setDocs(ds=>ds.map(d=>d.name===UP_NAME?{...d,status:'indexing'}:d)), 2400);
+    setTimeout(()=>setDocs(ds=>ds.map(d=>d.name===UP_NAME?{...d,status:'published'}:d)), 5600);
+    setTimeout(()=>{
+      setUploading(false);
+      window.dispatchEvent(new CustomEvent('app-toast', {detail:'已发布 · 正在为 24 位可见者编译大脑（更新「出境合规培训」主题页 Truth）…'}));
+    }, 5800);
+  };
+
+  return (
+    <div className="lib">
+      <div className="lib-list">
+        <div className="lib-head">
+          <h3>知识库</h3>
+          <p>共 {KNOWLEDGE_BASES.length} 个 · 你可见 {KNOWLEDGE_BASES.length} 个</p>
+        </div>
+        <div className="lib-tabs">
+          {[
+            {k:'all', l:'全部', n:KNOWLEDGE_BASES.length},
+            {k:'personal', l:'个人', n:KNOWLEDGE_BASES.filter(k=>k.type==='personal').length},
+            {k:'org', l:'组织', n:KNOWLEDGE_BASES.filter(k=>k.type==='org').length},
+            {k:'industry', l:'行业', n:KNOWLEDGE_BASES.filter(k=>k.type==='industry').length},
+          ].map(t=>(
+            <div key={t.k} className={`lib-tab ${filter===t.k?'active':''}`} onClick={()=>setFilter(t.k)}>
+              <span>{t.l}</span><span className="n">{t.n}</span>
+            </div>
+          ))}
+        </div>
+        <div className="lib-body">
+          {filtered.map(k=>(
+            <div key={k.id} className={`kb-card ${sel.id===k.id?'active':''}`} onClick={()=>setSel(k)}>
+              <div className="row1">
+                <span className="nm">{k.name}</span>
+                {TYPE_BADGE(k.type)}
+              </div>
+              <div className="desc">{k.desc}</div>
+              <div className="row2">
+                <span><Icon name="doc" size={12}/> {k.docs} 文档</span>
+                <span className="vis" title="可见范围"><Icon name={k.type==='personal'?'lock':k.type==='org'?'users':'shield'} size={11}/> <b>{k.visibility}</b></span>
+                <span style={{flex:1}}/>
+                <span className="admins">
+                  {k.admins.map((a,i)=>(<div key={i} className="avatar" style={{background: i%2===0?'#3D6B9E':'#2C7A7B'}}>{a.i}</div>))}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="lib-detail">
+        <div className="detail-head">
+          <div>
+            <div className="ttl">{sel.name}</div>
+            <div className="sub">
+              {TYPE_BADGE(sel.type)}
+              <span><Icon name={sel.type==='personal'?'lock':sel.type==='org'?'users':'shield'} size={11}/> 可见范围：{sel.visibility}</span>
+              <span><Icon name="doc" size={11}/> {sel.docs} 文档</span>
+              <span>· Embedding：<b style={{color:'var(--ink)'}}>bge-m3</b> · 1024 维</span>
+            </div>
+          </div>
+          <div className="actions">
+            <button className="btn">导出</button>
+            <button className="btn">{sel.type==='personal'?'编辑权限':'管理授权'}</button>
+            <button className="btn primary" onClick={simulateUpload} disabled={uploading}><Icon name="upload" size={12}/> {uploading?'解析中…':'上传文档'}</button>
+          </div>
+        </div>
+        <div className="detail-tabs">
+          <div className={`detail-tab ${tab==='docs'?'active':''}`} onClick={()=>setTab('docs')}>文档（{sel.docs + docs.length - DOCS.length}）</div>
+          <div className={`detail-tab ${tab==='health'?'active':''}`} onClick={()=>setTab('health')}>健康度</div>
+          <div className={`detail-tab ${tab==='settings'?'active':''}`} onClick={()=>setTab('settings')}>设置</div>
+        </div>
+        <div className="detail-body">
+          <div className="dropzone" onClick={simulateUpload} style={{cursor: uploading?'default':'pointer', opacity: uploading?.85:1}}>
+            <Icon name="upload" size={26} className="ic" color="var(--ink-3)"/>
+            <h5>{uploading ? '已接收 · 正在解析为 Markdown…' : '拖拽文件到此处，或点击选择'}</h5>
+            <p>{uploading ? '解析中 → 索引中 → 自动发布（演示状态机约 6 秒）' : '支持 Markdown / Word / PDF / Excel / PPT / 图片 · 自动 OCR · 自动解析为 Markdown 入库'}</p>
+          </div>
+
+          <div className="kpi-row">
+            <div className="kpi"><div className="lbl">总文档</div><div className="val">{sel.docs + docs.length - DOCS.length}</div><div className="sub">本月 + {6 + docs.length - DOCS.length}</div></div>
+            <div className="kpi"><div className="lbl">已发布</div><div className="val">{docs.filter(d=>d.status==='published').length + sel.docs - DOCS.length}</div><div className="sub">健康度 98.4%</div></div>
+            <div className="kpi"><div className="lbl">处理中</div><div className="val">{docs.filter(d=>d.status==='indexing'||d.status==='parsing').length}</div><div className="sub">解析 / 索引队列</div></div>
+            <div className="kpi"><div className="lbl">解析失败</div><div className="val" style={{color: docs.filter(d=>d.status==='failed').length? 'var(--danger)':'var(--ink)'}}>{docs.filter(d=>d.status==='failed').length}</div><div className="sub">需人工介入</div></div>
+          </div>
+
+          <div className="doc-table">
+            <div className="doc-row head">
+              <div></div>
+              <div>文档</div>
+              <div>状态</div>
+              <div>上传者</div>
+              <div>大小</div>
+            </div>
+            {docs.map((d,i)=>(
+              <div key={i} className="doc-row">
+                <Icon name="doc" size={14} className="ic"/>
+                <div>
+                  <div className="ttl">{d.name}</div>
+                  <div className="sub">{d.path}</div>
+                </div>
+                <div>
+                  <span className={`status ${d.status}`}>
+                    <span className="d"/>
+                    {d.status==='published'?'已发布':d.status==='indexing'?'索引中':d.status==='parsing'?'解析中':'失败'}
+                  </span>
+                </div>
+                <div style={{color:'var(--ink-2)'}}>{d.uploader} · {d.t}</div>
+                <div style={{color:'var(--ink-3)',fontVariantNumeric:'tabular-nums'}}>{d.size}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============== 管理后台 ============== */
+/* ============== Admin: 人员管理 ============== */
+function UsersPanel(){
+  const [search, setSearch] = useState('');
+  const [open, setOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const filtered = USERS.filter(u => !search || u.name.includes(search) || u.org.includes(search) || u.orgPath.includes(search));
+  return (
+    <>
+      <div style={{display:'flex',alignItems:'flex-start',marginBottom:20}}>
+        <div style={{flex:1}}>
+          <div className="h1">人员管理</div>
+          <div className="subline">用户归属多组织节点，可绑定多角色 · 来自 LDAP/OIDC 的用户可在「来源」中查看</div>
+        </div>
+        <input className="search-input" placeholder="搜索姓名 / 组织..." value={search} onChange={e=>setSearch(e.target.value)} style={{marginRight:12}}/>
+        <button className="btn primary" onClick={()=>{setEditTarget(null); setOpen(true);}}><Icon name="plus" size={12}/> 新增人员</button>
+      </div>
+
+      <div className="admin-table">
+        <div className="at-row head" style={{gridTemplateColumns:'1.6fr 1.4fr 1.4fr 90px 120px'}}>
+          <div>人员</div><div>归属组织</div><div>角色</div><div>状态</div><div style={{textAlign:'right'}}>操作</div>
+        </div>
+        {filtered.map(u=>(
+          <div key={u.id} className="at-row" style={{gridTemplateColumns:'1.6fr 1.4fr 1.4fr 90px 120px'}}>
+            <div className="ppl">
+              <div className="avatar">{u.initials}</div>
+              <div>
+                <div className="nm">{u.name}</div>
+                <div className="sub">{u.t}</div>
+              </div>
+            </div>
+            <div>
+              <div className="nm-bold">{u.org}</div>
+              <div className="path">{u.orgPath}</div>
+            </div>
+            <div className="role-tags">
+              {u.roles.map((r,i)=>(<span key={i} className="role-tag">{r}</span>))}
+            </div>
+            <div>
+              <span className={`status-pill ${u.status}`}><span className="d" style={{width:5,height:5,borderRadius:'50%',background:u.status==='active'?'var(--success)':'var(--ink-4)'}}/>{u.status==='active'?'启用':'停用'}</span>
+            </div>
+            <div className="actions">
+              <button onClick={()=>{setEditTarget(u); setOpen(true);}}>编辑</button>
+              <button className="danger" onClick={()=>setConfirmDel(u)}>删除</button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {open && <UserFormModal target={editTarget} onClose={()=>setOpen(false)}/>}
+      {confirmDel && <ConfirmModal title="删除人员" msg={<>确认删除 <b style={{color:'var(--ink)'}}>{confirmDel.name}</b>？该用户将被立即停用，相关引用与历史保留。</>} onConfirm={()=>{}} onClose={()=>setConfirmDel(null)}/>}
+    </>
+  );
+}
+
+function UserFormModal({target, onClose}){
+  const isEdit = !!target;
+  const [roles, setRoles] = useState(isEdit && target ? ROLES.filter(r=>target.roles.includes(r.name)).map(r=>({id:r.id,n:r.name,sub:`${r.users} 人`})) : []);
+  return (
+    <Modal title={isEdit?`编辑人员 · ${target.name}`:'新增人员'} onClose={onClose} foot={
+      <>
+        <button className="btn" onClick={onClose}>取消</button>
+        <button className="btn primary">{isEdit?'保存':'创建'}</button>
+      </>
+    }>
+      <div className="field-row">
+        <div className="field"><label>姓名<span className="req">*</span></label><input defaultValue={target?.name||''} placeholder="如：陈昱"/></div>
+        <div className="field"><label>用户名<span className="req">*</span></label><input defaultValue={target?.initials?.toLowerCase()||''} placeholder="登录账号"/></div>
+      </div>
+      <div className="field-row">
+        <div className="field"><label>邮箱</label><input defaultValue="" placeholder="user@example.com"/></div>
+        <div className="field"><label>电话</label><input defaultValue="" placeholder="可选"/></div>
+      </div>
+      <div className="field">
+        <label>归属组织节点<span className="req">*</span></label>
+        <select defaultValue="">
+          <option value="">选择组织节点…</option>
+          <option>集团 / 合规部</option>
+          <option>集团 / 合规部 / 合规一组</option>
+          <option>集团 / 研发中心</option>
+          <option>集团 / 研发中心 / 平台研发组</option>
+          <option>集团 / 研发中心 / 算法组</option>
+          <option>集团 / 市场部</option>
+          <option>集团总部</option>
+        </select>
+        <div className="field-hint">人员归属多个组织节点时，可见性取并集。可在用户详情中绑定多组织。</div>
+      </div>
+      <div className="field">
+        <label>绑定角色</label>
+        <TagPicker placeholder="搜索并选择角色..." items={ROLES.map(r=>({id:r.id,n:r.name,sub:`${r.users} 人 · ${r.builtin?'内置':r.perms.length+' 权限'}`}))} selected={roles} setSelected={setRoles}/>
+        <div className="field-hint">角色决定默认权限范围；额外授权可在「权限授权」单独配置。</div>
+      </div>
+      <div className="field">
+        <label>状态</label>
+        <select defaultValue="active"><option value="active">启用</option><option value="inactive">停用</option></select>
+      </div>
+    </Modal>
+  );
+}
+
+/* ============== Admin: 角色管理 ============== */
+function RolesPanel(){
+  const [open, setOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  return (
+    <>
+      <div style={{display:'flex',alignItems:'flex-start',marginBottom:20}}>
+        <div style={{flex:1}}>
+          <div className="h1">角色管理</div>
+          <div className="subline">角色是权限的模板，可绑定多权限码，分配给人员 · 内置角色不可删除</div>
+        </div>
+        <button className="btn primary" onClick={()=>{setEditTarget(null); setOpen(true);}}><Icon name="plus" size={12}/> 新增角色</button>
+      </div>
+
+      <div className="admin-table">
+        <div className="at-row head" style={{gridTemplateColumns:'1.4fr 2.6fr 90px 100px 140px'}}>
+          <div>角色</div><div>描述</div><div>人员</div><div>类型</div><div style={{textAlign:'right'}}>操作</div>
+        </div>
+        {ROLES.map(r=>(
+          <div key={r.id} className="at-row" style={{gridTemplateColumns:'1.4fr 2.6fr 90px 100px 140px'}}>
+            <div>
+              <div className="nm-bold">{r.name}</div>
+              <div className="role-tags" style={{marginTop:4}}>
+                {r.perms.slice(0,3).map((p,i)=>(<span key={i} className="role-tag" style={{fontFamily:'SF Mono,Menlo,monospace'}}>{p}</span>))}
+                {r.perms.length>3 && <span className="role-tag" style={{color:'var(--ink-3)'}}>+{r.perms.length-3}</span>}
+              </div>
+            </div>
+            <div style={{color:'var(--ink-2)',fontSize:12,lineHeight:1.5}}>{r.desc}</div>
+            <div className="nm-bold" style={{fontVariantNumeric:'tabular-nums'}}>{r.users}</div>
+            <div>
+              <span className="badge" style={{background: r.builtin?'var(--ink)':'var(--surface-2)', color: r.builtin?'#fff':'var(--ink-3)'}}>{r.builtin?'内置':'自定义'}</span>
+            </div>
+            <div className="actions">
+              <button onClick={()=>{setEditTarget(r); setOpen(true);}}>编辑</button>
+              {!r.builtin && <button className="danger" onClick={()=>setConfirmDel(r)}>删除</button>}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {open && <RoleFormModal target={editTarget} onClose={()=>setOpen(false)}/>}
+      {confirmDel && <ConfirmModal title="删除角色" msg={<>确认删除自定义角色 <b style={{color:'var(--ink)'}}>{confirmDel.name}</b>？绑定该角色的 {confirmDel.users} 名人员将失去该角色带来的权限。</>} onConfirm={()=>{}} onClose={()=>setConfirmDel(null)}/>}
+    </>
+  );
+}
+
+const ALL_PERMS = [
+  {group:'知识库', items:[
+    {code:'kb.org.<node>.read',desc:'阅读指定组织库'},
+    {code:'kb.org.<node>.manage',desc:'维护指定组织库（含上传/编辑/删除/管理员）'},
+    {code:'kb.industry.<kb>.read',desc:'阅读指定行业库'},
+    {code:'kb.industry.<kb>.manage',desc:'维护指定行业库'},
+    {code:'kb.industry.<kb>.authorize',desc:'向其他主体授权行业库'},
+  ]},
+  {group:'人员与组织', items:[
+    {code:'users.read',desc:'查看用户列表'},
+    {code:'users.manage',desc:'新增/编辑/删除用户'},
+    {code:'org.read',desc:'查看组织架构'},
+    {code:'org.manage',desc:'维护组织架构（增删/调整）'},
+  ]},
+  {group:'系统', items:[
+    {code:'roles.manage',desc:'管理角色'},
+    {code:'models.manage',desc:'管理模型配置'},
+    {code:'audit.read',desc:'查看审计日志'},
+    {code:'*',desc:'超级权限（含全部）'},
+  ]},
+];
+
+function RoleFormModal({target, onClose}){
+  const isEdit = !!target;
+  const [picked, setPicked] = useState(isEdit && target ? target.perms : []);
+  const toggle = (code) => {
+    if(code==='*'){ setPicked(picked.includes('*') ? [] : ['*']); return; }
+    const np = picked.filter(p=>p!=='*');
+    setPicked(np.includes(code) ? np.filter(p=>p!==code) : [...np, code]);
+  };
+  return (
+    <Modal title={isEdit?`编辑角色 · ${target.name}`:'新增角色'} onClose={onClose} foot={
+      <>
+        <button className="btn" onClick={onClose}>取消</button>
+        <button className="btn primary">{isEdit?'保存':'创建'}</button>
+      </>
+    }>
+      <div className="field-row">
+        <div className="field"><label>角色名称<span className="req">*</span></label><input defaultValue={target?.name||''} placeholder="如：合规审核员"/></div>
+        <div className="field"><label>类型</label><input value={target?.builtin?'内置（不可改）':'自定义'} disabled style={{background:'var(--surface-2)',color:'var(--ink-3)'}}/></div>
+      </div>
+      <div className="field"><label>描述</label><textarea defaultValue={target?.desc||''} placeholder="该角色的职责与适用人群"/></div>
+      <div className="field">
+        <label>权限码（勾选授予）</label>
+        <div style={{border:'1px solid var(--line)',borderRadius:7,background:'var(--surface)',maxHeight:260,overflowY:'auto',padding:'8px 12px'}}>
+          {ALL_PERMS.map(g=>(
+            <div key={g.group} style={{marginBottom:10}}>
+              <div style={{fontSize:10.5,color:'var(--ink-3)',textTransform:'uppercase',letterSpacing:.4,fontWeight:600,marginBottom:5}}>{g.group}</div>
+              {g.items.map(p=>(
+                <label key={p.code} style={{display:'flex',alignItems:'flex-start',padding:'5px 0',cursor:p.code==='*' && target?.builtin ? 'not-allowed':'pointer',opacity: p.code==='*' && target?.builtin ? .5 : 1}}>
+                  <input type="checkbox" checked={picked.includes(p.code)} disabled={p.code==='*' && target?.builtin} onChange={()=>toggle(p.code)} style={{marginTop:2,marginRight:8,accentColor:'var(--ink)'}}/>
+                  <div style={{flex:1}}>
+                    <code style={{background:'var(--surface-2)',padding:'1px 6px',borderRadius:3,fontSize:11,color:'var(--ink)',fontFamily:'SF Mono,Menlo,monospace',marginRight:6}}>{p.code}</code>
+                    <span style={{fontSize:11.5,color:'var(--ink-3)'}}>{p.desc}</span>
+                  </div>
+                </label>
+              ))}
+            </div>
+          ))}
+        </div>
+        <div className="field-hint">已选 {picked.filter(p=>p!=='*').length} 条权限{picked.includes('*') && ' · 含超级权限 *'}</div>
+      </div>
+    </Modal>
+  );
+}
+
+/* ============== Admin: 行业库管理（含动态新增） ============== */
+function IndustryKBPanel({onOpenGrant}){
+  const [openNew, setOpenNew] = useState(false);
+  const [adminTarget, setAdminTarget] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  return (
+    <>
+      <div style={{display:'flex',alignItems:'flex-start',marginBottom:20}}>
+        <div style={{flex:1}}>
+          <div className="h1">行业库管理</div>
+          <div className="subline">动态新增 / 维护行业知识库 · 超级管理员可创建 · 设置管理员后可独立维护</div>
+        </div>
+        <button className="btn primary" onClick={()=>setOpenNew(true)}><Icon name="plus" size={12}/> 新建行业库</button>
+      </div>
+
+      <div className="admin-table">
+        <div className="at-row head" style={{gridTemplateColumns:'1.8fr 2fr 130px 110px 150px'}}>
+          <div>行业库</div><div>描述</div><div>管理员</div><div>授权主体</div><div style={{textAlign:'right'}}>操作</div>
+        </div>
+        {INDUSTRY_KBS.map(k=>(
+          <div key={k.id} className="at-row" style={{gridTemplateColumns:'1.8fr 2fr 130px 110px 150px'}}>
+            <div>
+              <div className="nm-bold">{k.name}</div>
+              <div style={{marginTop:3,display:'flex',alignItems:'center',gap:6}}>
+                <span className="badge industry">行业库</span>
+                <span style={{fontSize:11,color:'var(--ink-3)'}}>{k.docs} 文档 · 创建于 {k.created}</span>
+              </div>
+            </div>
+            <div style={{color:'var(--ink-2)',fontSize:12,lineHeight:1.5}}>{k.desc}</div>
+            <div className="admins" style={{display:'flex'}}>
+              {k.admins.map((a,i)=>(<div key={i} className="avatar" title={a.n} style={{width:24,height:24,fontSize:10,border:'1.5px solid var(--surface)',marginLeft:i>0?-6:0, marginLeft: i===0?0:-6, background:'#2C7A7B'}}>{a.i}</div>))}
+            </div>
+            <div className="nm-bold" style={{fontVariantNumeric:'tabular-nums',color:'var(--ink-2)'}}>{k.grants} 个主体</div>
+            <div className="actions">
+              <button onClick={()=>setAdminTarget(k)}>管理员</button>
+              <button onClick={()=>onOpenGrant(k)}>授权</button>
+              <button className="danger" onClick={()=>setConfirmDel(k)}>删除</button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {openNew && <NewIndustryKBModal onClose={()=>setOpenNew(false)}/>}
+      {adminTarget && <KBAdminModal kb={adminTarget} onClose={()=>setAdminTarget(null)}/>}
+      {confirmDel && <ConfirmModal title="删除行业库" msg={<>确认删除 <b style={{color:'var(--ink)'}}>{confirmDel.name}</b>？共 <b>{confirmDel.docs}</b> 份文档将被清除（Git 历史保留 90 天内可恢复）。已授权主体将无法再访问。</>} onConfirm={()=>{}} onClose={()=>setConfirmDel(null)}/>}
+    </>
+  );
+}
+
+function NewIndustryKBModal({onClose}){
+  const [admins, setAdmins] = useState([]);
+  return (
+    <Modal title="新建行业知识库" onClose={onClose} foot={
+      <>
+        <button className="btn" onClick={onClose}>取消</button>
+        <button className="btn primary"><Icon name="plus" size={12}/> 创建并初始化</button>
+      </>
+    }>
+      <div className="field"><label>库名称<span className="req">*</span></label><input placeholder="如：跨境贸易合规库 / AI 治理与伦理库"/></div>
+      <div className="field"><label>库描述<span className="req">*</span></label><textarea placeholder="说明本库的范围、用途、收录规范"/></div>
+      <div className="field-row-3">
+        <div className="field"><label>归属行业</label><input placeholder="如：金融 / 医疗 / 教育"/></div>
+        <div className="field"><label>关联标签</label><input placeholder="逗号分隔"/></div>
+        <div className="field"><label>Embedding 模型</label>
+          <select><option>bge-m3 (默认)</option><option>text-embedding-3-large</option></select>
+        </div>
+      </div>
+      <div className="field">
+        <label>管理员（1 人或多人）<span className="req">*</span></label>
+        <TagPicker placeholder="搜索并选择管理员..." items={USERS.map(u=>({id:u.id,n:u.name,sub:u.org}))} selected={admins} setSelected={setAdmins}/>
+        <div className="field-hint">管理员拥有该库的全部维护权限：上传/编辑/删除文档、设置授权主体。</div>
+      </div>
+      <div className="field">
+        <label>默认可见范围</label>
+        <select><option>暂不授权（创建后由超级管理员手动分配）</option><option>授予集团总部全员</option><option>授予特定角色</option></select>
+      </div>
+      <div className="warn-strip"><Icon name="alert" size={12}/>创建后系统将自动初始化 Git 仓库、索引队列与文档解析 Worker，约 1-2 分钟可用。</div>
+    </Modal>
+  );
+}
+
+function KBAdminModal({kb, onClose}){
+  const currentAdmins = USERS.filter(u => kb.admins.some(a=>a.n===u.name));
+  const [picked, setPicked] = useState(currentAdmins.map(u=>({id:u.id,n:u.name,sub:u.org})));
+  const remove = currentAdmins.filter(u => !picked.find(p=>p.id===u.id));
+  return (
+    <Modal title={`管理员设置 · ${kb.name}`} onClose={onClose} foot={
+      <>
+        <button className="btn" onClick={onClose}>取消</button>
+        <button className="btn primary">保存设置</button>
+      </>
+    }>
+      <div style={{fontSize:12.5,color:'var(--ink-3)',marginBottom:14,lineHeight:1.5}}>
+        管理员拥有该库的<strong style={{color:'var(--ink)'}}>全部维护权限</strong>：上传 / 编辑 / 删除文档、设置授权主体、配置检索参数。支持多人共管，任免均有审计记录。
+      </div>
+      <div className="field">
+        <label>当前管理员（{picked.length} 人）</label>
+        <TagPicker placeholder="搜索并添加管理员..." items={USERS.map(u=>({id:u.id,n:u.name,sub:u.org}))} selected={picked} setSelected={setPicked}/>
+      </div>
+      {remove.length>0 && (
+        <div className="warn-strip">
+          <Icon name="alert" size={12}/>
+          即将移除 {remove.length} 名管理员：{remove.map(u=>u.name).join('、')} · 他们的管理权限将立即失效。
+        </div>
+      )}
+      <div style={{marginTop:14,padding:12,background:'var(--surface-2)',borderRadius:7,fontSize:12,color:'var(--ink-3)',lineHeight:1.55}}>
+        <b style={{color:'var(--ink)'}}>提示</b>：管理员可被授予但不能自我免除；至少保留 1 名管理员，避免「无主知识库」。如需彻底取消管理，请联系超级管理员。
+      </div>
+    </Modal>
+  );
+}
+
+/* ============== Admin: 模型配置（供应商 + 模型 CRUD） ============== */
+function ModelPanel(){
+  const [sub, setSub] = useState('models');
+  const [openNewPv, setOpenNewPv] = useState(false);
+  const [openNewM, setOpenNewM] = useState(false);
+  const [confirmDelPv, setConfirmDelPv] = useState(null);
+  const [confirmDelM, setConfirmDelM] = useState(null);
+  const [testStates, setTestStates] = useState({});
+  const test = (id) => {
+    setTestStates(s=>({...s, [id]:'testing'}));
+    setTimeout(()=>setTestStates(s=>({...s, [id]:'ok'})), 1500);
+  };
+  return (
+    <>
+      <div style={{display:'flex',alignItems:'flex-start',marginBottom:18}}>
+        <div style={{flex:1}}>
+          <div className="h1">模型配置</div>
+          <div className="subline">供应商注册 → 模型配置 → 测试连接 → 设为默认；切换 Embedding 需重建索引</div>
+        </div>
+      </div>
+      <div className="subtabs">
+        <div className={`subtab ${sub==='models'?'active':''}`} onClick={()=>setSub('models')}>模型配置<span className="n">{MODELS.llm.length+MODELS.embedding.length+MODELS.rerank.length}</span></div>
+        <div className={`subtab ${sub==='providers'?'active':''}`} onClick={()=>setSub('providers')}>供应商<span className="n">{PROVIDERS.length}</span></div>
+      </div>
+
+      {sub==='models' && (
+        <div className="mc">
+          <div className="mc-cat llm">
+            <div className="mc-cat-head">
+              <span className="tag">LLM · 生成</span>
+              <h4>大语言模型</h4>
+              <span className="hint">用于答案生成与查询改写</span>
+              <button className="btn" style={{marginLeft:'auto',padding:'5px 10px',fontSize:11.5}} onClick={()=>setOpenNewM({kind:'llm'})}><Icon name="plus" size={11}/> 新增模型</button>
+            </div>
+            {MODELS.llm.map(m=>{
+              const state = testStates[m.id] || (m.tested?'ok':'idle');
+              return (
+                <div key={m.id} className={`mc-card ${m.default?'default':''}`}>
+                  <span className="dot"/>
+                  <div className="info">
+                    <div className="nm">{m.name}{m.default && <span style={{marginLeft:8,fontSize:10.5,color:'var(--success)',fontWeight:500}}>· 默认</span>}</div>
+                    <div className="meta"><span className="stamp">{m.provider}</span><span>上下文 {m.ctx}</span></div>
+                  </div>
+                  <button className={`test ${state==='testing'?'testing':''} ${state==='ok'?'ok':''}`} onClick={()=>test(m.id)}>
+                    {state==='testing' ? <><span className="spinner"/> 测试中</> : state==='ok' ? <><Icon name="check" size={11}/> 连接正常</> : '测试连接'}
+                  </button>
+                  <button className="btn" style={{padding:'5px 9px',fontSize:11.5,marginLeft:6}} onClick={()=>setConfirmDelM({...m,kind:'llm'})}>删除</button>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="mc-cat embed">
+            <div className="mc-cat-head">
+              <span className="tag">EMBEDDING · 向量</span>
+              <h4>嵌入模型</h4>
+              <span className="hint">每库绑定 · 切换需全量重建索引</span>
+              <button className="btn" style={{marginLeft:'auto',padding:'5px 10px',fontSize:11.5}} onClick={()=>setOpenNewM({kind:'embedding'})}><Icon name="plus" size={11}/> 新增模型</button>
+            </div>
+            {MODELS.embedding.map(m=>{
+              const state = testStates[m.id] || (m.tested?'ok':'idle');
+              return (
+                <div key={m.id} className={`mc-card ${m.default?'default':''}`}>
+                  <span className="dot"/>
+                  <div className="info">
+                    <div className="nm">{m.name}{m.default && <span style={{marginLeft:8,fontSize:10.5,color:'var(--success)',fontWeight:500}}>· 默认</span>}</div>
+                    <div className="meta"><span className="stamp">{m.provider}</span><span>{m.dim}</span></div>
+                  </div>
+                  <button className={`test ${state==='testing'?'testing':''} ${state==='ok'?'ok':''}`} onClick={()=>test(m.id)}>
+                    {state==='testing' ? <><span className="spinner"/> 测试中</> : state==='ok' ? <><Icon name="check" size={11}/> 连接正常</> : '测试连接'}
+                  </button>
+                  <button className="btn" style={{padding:'5px 9px',fontSize:11.5,marginLeft:6}} onClick={()=>setConfirmDelM({...m,kind:'embedding'})}>删除</button>
+                </div>
+              );
+            })}
+            <div className="warn-strip">
+              <Icon name="alert" size={12}/>
+              切换 Embedding 模型将触发异步全量重建索引，期间查询降级为关键词检索。
+            </div>
+          </div>
+
+          <div className="mc-cat rerank">
+            <div className="mc-cat-head">
+              <span className="tag">RERANKER · 重排</span>
+              <h4>重排模型</h4>
+              <span className="hint">混合检索后精排 · 提升引用质量</span>
+              <button className="btn" style={{marginLeft:'auto',padding:'5px 10px',fontSize:11.5}} onClick={()=>setOpenNewM({kind:'rerank'})}><Icon name="plus" size={11}/> 新增模型</button>
+            </div>
+            {MODELS.rerank.map(m=>{
+              const state = testStates[m.id] || (m.tested?'ok':'idle');
+              return (
+                <div key={m.id} className={`mc-card ${m.default?'default':''}`}>
+                  <span className="dot"/>
+                  <div className="info">
+                    <div className="nm">{m.name}{m.default && <span style={{marginLeft:8,fontSize:10.5,color:'var(--success)',fontWeight:500}}>· 默认</span>}</div>
+                    <div className="meta"><span className="stamp">{m.provider}</span></div>
+                  </div>
+                  <button className={`test ${state==='testing'?'testing':''} ${state==='ok'?'ok':''}`} onClick={()=>test(m.id)}>
+                    {state==='testing' ? <><span className="spinner"/> 测试中</> : state==='ok' ? <><Icon name="check" size={11}/> 连接正常</> : '测试连接'}
+                  </button>
+                  <button className="btn" style={{padding:'5px 9px',fontSize:11.5,marginLeft:6}} onClick={()=>setConfirmDelM({...m,kind:'rerank'})}>删除</button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {sub==='providers' && (
+        <>
+          <div style={{display:'flex',justifyContent:'flex-end',marginBottom:14}}>
+            <button className="btn primary" onClick={()=>setOpenNewPv(true)}><Icon name="plus" size={12}/> 新增供应商</button>
+          </div>
+          <div className="admin-table">
+            <div className="at-row head" style={{gridTemplateColumns:'1.4fr 2.4fr 1fr 1fr 130px'}}>
+              <div>名称</div><div>Base URL</div><div>类型</div><div>API Key</div><div style={{textAlign:'right'}}>操作</div>
+            </div>
+            {PROVIDERS.map(p=>(
+              <div key={p.id} className="at-row" style={{gridTemplateColumns:'1.4fr 2.4fr 1fr 1fr 130px'}}>
+                <div>
+                  <div className="nm-bold">{p.name}</div>
+                  <div className="path" style={{marginTop:2}}>{p.note}</div>
+                </div>
+                <div className="path" style={{fontFamily:'SF Mono,Menlo,monospace'}}>{p.url}</div>
+                <div>
+                  <span className="badge" style={{background: p.kind==='gateway'?'#EDE7F8':p.kind==='selfhost'?'var(--kb-industry-soft)':'var(--surface-2)', color: p.kind==='gateway'?'#5D429A':p.kind==='selfhost'?'var(--kb-industry)':'var(--ink-3)'}}>
+                    {p.kind==='gateway'?'网关':p.kind==='selfhost'?'自托管':'外部API'}
+                  </span>
+                </div>
+                <div style={{fontFamily:'SF Mono,Menlo,monospace',fontSize:11.5,color:'var(--ink-3)'}}>{p.keyMask}</div>
+                <div className="actions">
+                  <button>编辑</button>
+                  <button className="danger" onClick={()=>setConfirmDelPv(p)}>删除</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {openNewPv && <NewProviderModal onClose={()=>setOpenNewPv(false)}/>}
+      {openNewM && <NewModelModal kind={openNewM.kind} onClose={()=>setOpenNewM(false)}/>}
+      {confirmDelPv && <ConfirmModal title="删除供应商" msg={<>确认删除供应商 <b style={{color:'var(--ink)'}}>{confirmDelPv.name}</b>？引用此供应商的所有模型将变为不可用状态，需先迁移。</>} onConfirm={()=>{}} onClose={()=>setConfirmDelPv(null)}/>}
+      {confirmDelM && <ConfirmModal title="删除模型" msg={<>确认删除模型 <b style={{color:'var(--ink)'}}>{confirmDelM.name}</b>？知识库中绑定此模型的将需要回退到默认。</>} onConfirm={()=>{}} onClose={()=>setConfirmDelM(null)}/>}
+    </>
+  );
+}
+
+function NewProviderModal({onClose}){
+  const [kind, setKind] = useState('gateway');
+  return (
+    <Modal title="新增供应商" onClose={onClose} foot={
+      <>
+        <button className="btn" onClick={onClose}>取消</button>
+        <button className="btn primary">保存</button>
+      </>
+    }>
+      <div className="field"><label>名称<span className="req">*</span></label><input placeholder="如：内部自建 vLLM"/></div>
+      <div className="field"><label>类型<span className="req">*</span></label>
+        <select value={kind} onChange={e=>setKind(e.target.value)}>
+          <option value="gateway">网关（统一代理多个上游）</option>
+          <option value="selfhost">自托管（TEI / vLLM / Ollama 等）</option>
+          <option value="external">外部API（OpenAI / DeepSeek 等）</option>
+        </select>
+      </div>
+      <div className="field"><label>Base URL<span className="req">*</span></label><input placeholder="https://..."/></div>
+      <div className="field"><label>API Key</label><input type="password" placeholder={kind==='selfhost'?'(自托管通常不需要)':'sk-...'}/></div>
+      <div className="field"><label>备注</label><textarea placeholder="该供应商用途、限速、协议说明"/></div>
+    </Modal>
+  );
+}
+
+function NewModelModal({kind, onClose}){
+  const label = kind==='llm' ? '大语言模型' : kind==='embedding' ? '嵌入模型' : '重排模型';
+  return (
+    <Modal title={`新增${label}`} onClose={onClose} foot={
+      <>
+        <button className="btn" onClick={onClose}>取消</button>
+        <button className="btn primary">保存</button>
+      </>
+    }>
+      <div className="field"><label>模型名称<span className="req">*</span></label><input placeholder="如：qwen3-max / bge-m3 / bge-reranker-v2-m3"/></div>
+      <div className="field"><label>供应商<span className="req">*</span></label>
+        <select><option>选择已注册的供应商…</option>{PROVIDERS.map(p=><option key={p.id}>{p.name}</option>)}</select>
+      </div>
+      {kind==='llm' && (
+        <div className="field-row">
+          <div className="field"><label>上下文长度</label><input placeholder="如：128K"/></div>
+          <div className="field"><label>最大输出</label><input placeholder="如：8K"/></div>
+        </div>
+      )}
+      {kind==='embedding' && (
+        <div className="field-row">
+          <div className="field"><label>向量维度<span className="req">*</span></label><input placeholder="如：1024"/></div>
+          <div className="field"><label>批处理上限</label><input placeholder="如：64"/></div>
+        </div>
+      )}
+      <div className="field">
+        <label>默认参数（JSON）</label>
+        <textarea placeholder='{"temperature": 0.7, "top_p": 0.9}' style={{fontFamily:'SF Mono,Menlo,monospace'}}/>
+      </div>
+      <div className="field">
+        <label>设为默认</label>
+        <select><option>否</option><option>是（将替换现有默认）</option></select>
+      </div>
+    </Modal>
+  );
+}
+
+/* ============== AdminScreen（汇总） ============== */
+function AdminScreen({onOpenGrant}){
+  const [tab, setTab] = useState('org');
+  const [grantKb, setGrantKb] = useState('i1');
+  // 组织树 state：支持无限层级新增
+  const [orgTree, setOrgTree] = useState(()=>{
+    const init = (n) => ({...n, id: n.id || ('on_' + Math.random().toString(36).slice(2,9)), children: (n.children||[]).map(init)});
+    return init(ORG_TREE);
+  });
+  // 展开状态受控（新增子组织后自动展开父节点）
+  const [expandedIds, setExpandedIds] = useState(()=>{
+    const s = new Set();
+    const walk = (n)=>{ if(n.expanded) s.add(n.id); (n.children||[]).forEach(walk); };
+    walk(orgTree);   // 注意：walk id 化后的树，保证 id 与渲染一致
+    return s;
+  });
+  const [adminModal, setAdminModal] = useState(null); // 设置管理员的节点
+  const [addModal, setAddModal] = useState(null);     // 新增子组织的父节点
+
+  const toggleNode = (id) => setExpandedIds(s=>{ const ns = new Set(s); ns.has(id) ? ns.delete(id) : ns.add(id); return ns; });
+
+  const addChildOrg = (parentId, name) => {
+    const rec = (n) => {
+      if(n.id === parentId){
+        return {...n, children: [...(n.children||[]), {id:'on_'+Math.random().toString(36).slice(2,9), name, children: []}]};
+      }
+      return {...n, children: (n.children||[]).map(rec)};
+    };
+    setExpandedIds(s=>new Set(s).add(parentId));   // 确保父节点展开，新节点立即可见
+    setOrgTree(t=>rec(t));
+  };
+  return (
+    <div className="admin">
+      <div className="admin-side">
+        <h5>管理后台</h5>
+        <div className="a-nav">
+          <div className="nav-section" style={{padding:'8px 12px',margin:0,fontSize:10,color:'var(--ink-4)',letterSpacing:.6,textTransform:'uppercase',fontWeight:600}}>组织与人员</div>
+          {[
+            {k:'org', l:'组织架构', ic:'users'},
+            {k:'users', l:'人员管理', ic:'user'},
+            {k:'roles', l:'角色管理', ic:'shield'},
+          ].map(it=>(
+            <div key={it.k} className={`a-nav-i ${tab===it.k?'active':''}`} onClick={()=>setTab(it.k)}>
+              <Icon name={it.ic} size={14} className="a-ic"/>
+              <span>{it.l}</span>
+            </div>
+          ))}
+          <div className="nav-section" style={{padding:'8px 12px',margin:'12px 0 0',fontSize:10,color:'var(--ink-4)',letterSpacing:.6,textTransform:'uppercase',fontWeight:600}}>知识与权限</div>
+          {[
+            {k:'industry', l:'行业库管理', ic:'book'},
+            {k:'grant', l:'权限授权', ic:'shield'},
+          ].map(it=>(
+            <div key={it.k} className={`a-nav-i ${tab===it.k?'active':''}`} onClick={()=>setTab(it.k)}>
+              <Icon name={it.ic} size={14} className="a-ic"/>
+              <span>{it.l}</span>
+            </div>
+          ))}
+          <div className="nav-section" style={{padding:'8px 12px',margin:'12px 0 0',fontSize:10,color:'var(--ink-4)',letterSpacing:.6,textTransform:'uppercase',fontWeight:600}}>系统</div>
+          {[
+            {k:'model', l:'模型配置', ic:'model'},
+            {k:'audit', l:'审计日志', ic:'history'},
+          ].map(it=>(
+            <div key={it.k} className={`a-nav-i ${tab===it.k?'active':''}`} onClick={()=>setTab(it.k)}>
+              <Icon name={it.ic} size={14} className="a-ic"/>
+              <span>{it.l}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="admin-main">
+        {tab==='org' && (
+          <>
+            <div style={{display:'flex',alignItems:'flex-start',marginBottom:20}}>
+              <div style={{flex:1}}>
+                <div className="h1">组织架构</div>
+                <div className="subline">支持无限层级 · 组织树变更会自动刷新用户可见库缓存 · 每一级组织都可设置知识库管理员</div>
+              </div>
+              <button className="btn primary" onClick={()=>setAddModal(orgTree)}><Icon name="plus" size={12}/> 新增一级组织</button>
+            </div>
+            <div className="org-tree">
+              <OrgNode node={orgTree} depth={0} expandedIds={expandedIds} onToggle={toggleNode}
+                onAddChild={(n)=>setAddModal(n)} onSetAdmin={(n)=>setAdminModal(n)}/>
+            </div>
+          </>
+        )}
+        {tab==='users' && <UsersPanel/>}
+        {tab==='roles' && <RolesPanel/>}
+        {tab==='industry' && <IndustryKBPanel onOpenGrant={(k)=>{setGrantKb(k.id); setTab('grant');}}/>}
+        {tab==='grant' && <GrantPanel kbId={grantKb} setKbId={setGrantKb}/>}
+        {tab==='model' && <ModelPanel/>}
+        {tab==='audit' && (
+          <>
+            <div className="h1">审计日志</div>
+            <div className="subline">查询 · 知识变更 · 权限变更 · 大脑编译记录 · Dream Cycle · 越权拦截 · 留存 ≥ 1 年</div>
+            <div className="audit">
+              {AUDIT.map((a,i)=>(
+                <div key={i} className="audit-row">
+                  <div className="when">{a.when}</div>
+                  <div className="what">{a.what}</div>
+                  <div className="actor">{a.actor}</div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {adminModal && <OrgAdminModal node={adminModal} onClose={()=>setAdminModal(null)}/>}
+        {addModal && <AddOrgModal parent={addModal} onAdd={(name)=>{addChildOrg(addModal.id, name); setAddModal(null);}} onClose={()=>setAddModal(null)}/>}
+      </div>
+    </div>
+  );
+}
+
+/* 新增子组织弹窗（支持无限层级） */
+function AddOrgModal({parent, onAdd, onClose}){
+  const [name, setName] = useState('');
+  return (
+    <Modal title={`新增子组织 · ${parent.name}`} onClose={onClose} foot={
+      <>
+        <button className="btn" onClick={onClose}>取消</button>
+        <button className="btn primary" disabled={!name.trim()} onClick={()=>onAdd(name.trim())}>创建</button>
+      </>
+    }>
+      <div className="field">
+        <label>组织名称<span className="req">*</span></label>
+        <input autoFocus value={name} onChange={e=>setName(e.target.value)} placeholder="如：合规三组 / 华东分部" onKeyDown={e=>{if(e.key==='Enter' && name.trim()) onAdd(name.trim());}}/>
+      </div>
+      <div style={{padding:12,background:'var(--surface-2)',borderRadius:7,fontSize:12,color:'var(--ink-3)',lineHeight:1.6}}>
+        <b style={{color:'var(--ink)'}}>继承规则</b>：新组织自动挂到「{parent.name}」之下，其成员自动继承{parent.name === '集团总部' ? '全部组织库' : `「${parent.name}」及其上级`}的可见范围；可在创建后为该组织单独设置知识库管理员。
+      </div>
+    </Modal>
+  );
+}
+
+/* 组织节点管理员设置（每一级组织都可设置；建库后自动生效） */
+function OrgAdminModal({node, onClose}){
+  const pickedInit = (node.admins||[]).map(nm => USERS.find(u=>u.name===nm)).filter(Boolean).map(u=>({id:u.id,n:u.name,sub:u.org}));
+  const [picked, setPicked] = useState(pickedInit);
+  const hasKb = node.kbs && node.kbs.length>0;
+  return (
+    <Modal title={`知识库管理员 · ${node.name}`} onClose={onClose} foot={
+      <>
+        <button className="btn" onClick={onClose}>取消</button>
+        <button className="btn primary">保存设置</button>
+      </>
+    }>
+      {hasKb ? (
+        <div style={{fontSize:12.5,color:'var(--ink-3)',marginBottom:14,lineHeight:1.55}}>
+          「<b style={{color:'var(--ink)'}}>{node.name}知识库</b>」由以下管理员共同维护。<b style={{color:'var(--ink)'}}>同层及下层组织</b>的用户默认可阅读本库；管理员拥有上传 / 编辑 / 删除 / 发布权限。
+        </div>
+      ) : (
+        <div className="warn-strip" style={{marginBottom:14}}>
+          <Icon name="alert" size={12}/>
+          该组织节点当前暂无知识库。管理员将绑定到组织上——在此节点创建组织库时，他们自动成为库管理员。
+        </div>
+      )}
+      <div className="field">
+        <label>管理员（{picked.length} 人）</label>
+        <TagPicker placeholder="搜索并选择管理员..." items={USERS.map(u=>({id:u.id,n:u.name,sub:u.org}))} selected={picked} setSelected={setPicked}/>
+        <div className="field-hint">建议至少 2 人，避免单人离职导致知识库无人维护。任免记录进入审计日志。</div>
+      </div>
+      <div className="field">
+        <label>可见范围预览</label>
+        <div className="perm-list">
+          {hasKb ? (
+            <>
+              <div><code>read</code>{node.name} 及全部下级组织成员（无需授权，自动继承）</div>
+              <div><code>write</code>仅上列管理员</div>
+              <div><code>投稿</code>下级组织成员可投稿，管理员审核后发布（P1）</div>
+            </>
+          ) : (
+            <>
+              <div><code>bind</code>管理员绑定组织节点，建库后自动生效</div>
+              <div><code>read</code>上级组织的库对本组织默认可见（继承）</div>
+            </>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/* GrantPanel extracted for reuse + selectedKb pre-fill */
+function GrantPanel({kbId, setKbId}){
+  const [grantTab, setGrantTab] = useState('user');
+  return (
+    <>
+      <div className="h1">行业库授权</div>
+      <div className="subline">行业库可向特定主体授权 · 支持人员 / 角色 / 组织三类主体 · 可设置有效期</div>
+      <div className="grant">
+        <h6>目标库</h6>
+        <div className="g-input">
+          <select value={kbId} onChange={e=>setKbId && setKbId(e.target.value)}>
+            {INDUSTRY_KBS.map(k=><option key={k.id} value={k.id}>{k.name}</option>)}
+          </select>
+        </div>
+
+        <h6>添加授权</h6>
+        <div className="g-tabs">
+          {[{k:'user',l:'人员'},{k:'role',l:'角色'},{k:'org',l:'组织'}].map(g=>(
+            <button key={g.k} className={grantTab===g.k?'on':''} onClick={()=>setGrantTab(g.k)}>{g.l}</button>
+          ))}
+        </div>
+        <div className="g-input">
+          <select>
+            {grantTab==='user' && <><option>选择用户…</option>{USERS.map(u=><option key={u.id}>{u.name}</option>)}</>}
+            {grantTab==='role' && <><option>选择角色…</option>{ROLES.map(r=><option key={r.id}>{r.name}</option>)}</>}
+            {grantTab==='org' && <><option>选择组织…</option><option>合规部</option><option>研发中心</option><option>市场部</option><option>集团总部</option></>}
+          </select>
+          <select defaultValue="forever">
+            <option value="forever">永久</option>
+            <option>30 天</option>
+            <option>90 天</option>
+            <option>1 年</option>
+            <option>自定义…</option>
+          </select>
+          <button className="btn primary" style={{padding:'7px 14px'}} onClick={()=>{
+            const kbName = document.querySelector('.grant .g-input select option:checked').textContent;
+            window.dispatchEvent(new CustomEvent('app-toast', {detail:`授权已生效 · 正在为新增可见者重编译大脑：${kbName}（权限撤销类变更将即时移出对应内容）`}));
+          }}><Icon name="plus" size={12}/> 添加</button>
+        </div>
+
+        <div className="g-list">
+          <h6>当前授权</h6>
+          {GRANTS.map((g,i)=>(
+            <div key={i} className="g-row">
+              <div className="subj">
+                {g.avatar ? <div className="avatar">{g.avatar}</div> : <Icon name={g.type==='role'?'users':'folder'} size={14} color="var(--ink-3)"/>}
+                <span>{g.subj}</span>
+                <span style={{fontSize:11,color:'var(--ink-4)',marginLeft:6}}>· {g.scope}</span>
+              </div>
+              <span className="type-stamp">{g.type==='user'?'人员':g.type==='role'?'角色':'组织'}</span>
+              <span className="exp">至 {g.exp}</span>
+              <span className="x">×</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function OrgNode({node, depth, expandedIds, onToggle, onAddChild, onSetAdmin}){
+  const open = expandedIds.has(node.id);
+  const hasChildren = node.children && node.children.length>0;
+  const isRoot = depth===0;
+  const hasKb = node.kbs && node.kbs.length>0;
+  const adminNames = node.admins || [];
+  return (
+    <div>
+      <div className={`org-node ${isRoot?'root':''}`} onClick={()=>onToggle(node.id)}>
+        {hasChildren ? (
+          <Icon name="chevron" size={11} className={`ic ${open?'open':''}`}/>
+        ) : (
+          <span style={{width:11,display:'inline-block'}}/>
+        )}
+        <span className="nm">{node.name}</span>
+        {adminNames.length>0 && <span style={{fontSize:11,color:'var(--ink-3)'}}>· {adminNames.join('、')}</span>}
+        {hasKb && <span className="tag">{node.kbs.length} 库</span>}
+        <span className="ct">{hasChildren?`${node.children.length} 个下级`:'—'}</span>
+        <span className="org-acts" onClick={e=>e.stopPropagation()}>
+          <button className="act" onClick={()=>onSetAdmin(node)} title="设置本组织的知识库管理员">管理员</button>
+          <button className="act" onClick={()=>onAddChild(node)} title="在此组织下新增子组织">+ 子组织</button>
+        </span>
+      </div>
+      {open && hasChildren && (
+        <div className="org-children">
+          {node.children.map((c,i)=>(
+            <OrgNode key={c.id||i} node={c} depth={depth+1} expandedIds={expandedIds} onToggle={onToggle} onAddChild={onAddChild} onSetAdmin={onSetAdmin}/>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============== 阅读器 ============== */
+function ReaderScreen({initialCite, onBack}){
+  const [activeSection, setActiveSection] = useState('compiled');
+  const mainRef = useRef(null);
+  const TOC = [
+    {label:'结论（Compiled Truth）', id:'sec-compiled', lv:'lv2'},
+    {label:'必要性论证要点', id:'sec-ev1', lv:'lv3'},
+    {label:'数据敏感识别清单', id:'sec-ev2', lv:'lv3'},
+    {label:'接收方保障要求', id:'sec-ev3', lv:'lv3'},
+    {label:'证据链（Timeline）', id:'sec-timeline', lv:'lv2'},
+  ];
+  const goto = (id)=>{
+    setActiveSection(id);
+    const main = mainRef.current;
+    const el = document.getElementById(id);
+    if(main && el) main.scrollTo({top: el.offsetTop - 70, behavior:'smooth'});
+  };
+  return (
+    <div className="reader">
+      <div className="r-toc">
+        <h6>文档大纲</h6>
+        {TOC.map(t=>(
+          <a key={t.id} className={`${t.lv} ${activeSection===t.id?'active':''}`} onClick={()=>goto(t.id)}>{t.label}</a>
+        ))}
+      </div>
+      <div className="r-main" ref={mainRef}>
+        <div className="r-bar">
+          {onBack && (
+            <button className="btn" onClick={onBack} style={{display:'inline-flex',alignItems:'center',gap:6}}>
+              <Icon name="arrowleft" size={13}/> 返回会话
+            </button>
+          )}
+          <div className="crumb">
+            <span style={{cursor:'pointer'}}>金融行业库</span> · <span style={{cursor:'pointer'}}>金融监管 / 2026 修订</span> · <b>出境评估解读</b>
+          </div>
+          <div className="right">
+            <span className="badge industry">行业库</span>
+            {initialCite && <span className="badge evidence">被引用 [{CITATIONS.findIndex(c=>c.id===initialCite.id)+1 || 1}]</span>}
+            <button className="btn">原始文件</button>
+            <button className="btn">在 Obsidian 中打开</button>
+            <button className="btn primary">编辑</button>
+          </div>
+        </div>
+
+        <div className="r-body">
+          <h1>数据出境安全评估申报指南（2026 修订）解读</h1>
+          <div className="doc-meta">
+            <span><Icon name="doc" size={11}/> 出境评估解读.md</span>
+            <span>·</span>
+            <span>上传者 <b style={{color:'var(--ink)'}}>林珂</b></span>
+            <span>·</span>
+            <span>今天 09:12</span>
+            <span>·</span>
+            <span>修订 v3</span>
+            <span>·</span>
+            <span>git commit <code style={{background:'var(--surface-2)',padding:'1px 5px',borderRadius:3}}>a8f2c1d</code></span>
+          </div>
+
+          <h2 id="sec-compiled"><span className="stamp">Compiled Truth</span> 申报材料三大维度</h2>
+          <p>根据 <strong>国家网信办 2026 修订</strong>的《数据出境安全评估办法》，申报材料围绕<strong className="cited">「出境必要性」「数据敏感性」「接收方保护能力」</strong>三大维度组织。各维度均需提供客观证据与论证文档，<strong className="cited">「数据敏感识别」</strong>需逐字段标注类别与规模，必要时附第三方评估报告。</p>
+
+          <h2 id="sec-ev1"><span className="ev-stamp">Evidence</span> 必要性论证要点</h2>
+          <p>必要性论证包括：业务场景说明、替代方案评估、跨境传输频次与数据量级。论证应基于实际业务需求，避免"为出境而出境"的合规漏洞。</p>
+          <ul>
+            <li>业务场景描述（含数据流图）</li>
+            <li>替代方案对比（本地化处理、加密传输、分级存储）</li>
+            <li>跨境频次与数据量级预估</li>
+            <li>不可替代性的关键论据</li>
+          </ul>
+
+          <h2 id="sec-ev2"><span className="ev-stamp">Evidence</span> 数据敏感识别清单</h2>
+          <p>按「重要数据识别指南」逐项标注所涉字段类别与规模，重点关注个人信息、敏感个人信息、重要数据三类。识别结果应与公司内部的数据分级清单保持一致。</p>
+
+          <h2 id="sec-ev3"><span className="ev-stamp">Evidence</span> 接收方保障要求</h2>
+          <p>接收方保障包括合同条款、技术与组织措施（TOMs）、东道国法律环境分析。其中向未通过充分性评估的国家/地区传输需额外补充监督机构意见。</p>
+
+          <h2 id="sec-timeline"><span className="stamp">Timeline</span> 证据链</h2>
+          <div className="tl-row">
+            <div className="tl-when">2026-08-12</div>
+            <div className="tl-what"><b>初稿发布</b> · 基于 2025 版评估办法整理<span className="src">v1 @ c3e1a2f</span></div>
+          </div>
+          <div className="tl-row">
+            <div className="tl-when">2026-08-26</div>
+            <div className="tl-what"><b>依据 2026 修订版更新</b> · 新增「数据敏感识别」要求章节，删除已废止的「国家安全评估前置条件」<span className="src">v2 @ 9b7e4d2</span></div>
+          </div>
+          <div className="tl-row">
+            <div className="tl-when">2026-08-28</div>
+            <div className="tl-what"><b>补充实操清单</b> · 由合规部陈昱反馈「预沟通可缩短评估周期」<span className="src">v3 @ a8f2c1d</span></div>
+          </div>
+          <div className="tl-row">
+            <div className="tl-when">今天 09:12</div>
+            <div className="tl-what"><b>最新版本入库</b> · 林珂提交，已成功嵌入索引（bge-m3，1024 维）<span className="src">v3 @ a8f2c1d</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============== App 入口 ============== */
+function App(){
+  const [screen, setScreen] = useState('chat');
+  const [readerCite, setReaderCite] = useState(null);
+  const [toast, setToast] = useState(null);
+  const toastTimer = useRef(null);
+
+  useEffect(()=>{
+    const h = (e)=>{
+      setToast(e.detail);
+      if(toastTimer.current) clearTimeout(toastTimer.current);
+      toastTimer.current = setTimeout(()=>setToast(null), 4000);
+    };
+    window.addEventListener('app-toast', h);
+    return ()=>window.removeEventListener('app-toast', h);
+  },[]);
+
+  const titles = {
+    chat: {t:'对话', s:'你的大脑 · 7 个可见知识库'},
+    libs: {t:'知识库', s:`${KNOWLEDGE_BASES.length} 个知识库`},
+    reader: {t:'阅读器', s:'你的大脑 / 主题页'},
+    admin: {t:'管理后台', s:'组织 · 人员 · 角色 · 行业库 · 授权 · 模型 · 审计'},
+  };
+
+  const openReader = (cite) => { setReaderCite(cite); setScreen('reader'); };
+
+  return (
+    <div className="app">
+      <SideNav active={screen} setActive={setScreen}/>
+      <div className="main">
+        <TopBar title={titles[screen].t} sub={titles[screen].s}/>
+        <div className="content">
+          {/* 四屏常驻挂载：跨屏切换不丢会话/表单状态（UX 评审修复） */}
+          <div style={{display: screen==='chat'?'flex':'none', flex:1, minWidth:0}}>
+            <ChatScreen onOpenReader={openReader}/>
+          </div>
+          <div style={{display: screen==='libs'?'flex':'none', flex:1, minWidth:0}}>
+            <LibrariesScreen/>
+          </div>
+          <div style={{display: screen==='reader'?'flex':'none', flex:1, minWidth:0}}>
+            <ReaderScreen initialCite={readerCite} onBack={readerCite ? ()=>setScreen('chat') : null}/>
+          </div>
+          <div style={{display: screen==='admin'?'flex':'none', flex:1, minWidth:0}}>
+            <AdminScreen onOpenGrant={(k)=>{ /* 跳到授权 tab 时可预选 k */ }}/>
+          </div>
+        </div>
+      </div>
+      {toast && <div className="toast"><span className="tdot"/>{toast}</div>}
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App/>);
+</script>
+
+</body>
+</html>
