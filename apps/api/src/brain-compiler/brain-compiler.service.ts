@@ -6,6 +6,7 @@ import { PermissionService } from '../permission/permission.service';
 import { BrainRepoAdapter } from '@llmwiki/gbrain-adapter';
 import { ModelConfigService } from '../model-config.service';
 import { createHash } from 'node:crypto';
+import { readCanonicalDocument } from './canonical-document';
 
 export enum CompilePriority {
   CRITICAL = 1, // 权限撤销
@@ -20,6 +21,7 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(BrainCompilerService.name);
   private prisma = new PrismaClient();
   private gbrain = new BrainRepoAdapter(process.env.BRAIN_REPO_BASE_PATH || '/tmp/llmwiki/brain_repos');
+  private readonly uploadRoot = process.env.UPLOAD_ROOT || '/tmp/llmwiki/uploads';
   private queueEvents: QueueEvents;
 
   constructor(
@@ -151,9 +153,24 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
       return changedSet.has(doc.id) || !previous || doc.version > previous.syncedVersion || doc.updatedAt > previous.syncedAt;
     });
     if (toSync.length) {
-      const documents = await this.prisma.document.findMany({ where: { id: { in: toSync.map((doc) => doc.id) } }, include: { chunks: { orderBy: { ord: 'asc' }, select: { content: true } } } });
+      const documents = await this.prisma.document.findMany({
+        where: { id: { in: toSync.map((doc) => doc.id) } },
+        include: {
+          kb: { select: { name: true, type: true } },
+          chunks: { orderBy: { ord: 'asc' }, select: { content: true, charStart: true, charEnd: true, metadata: true } },
+        },
+      });
       for (const document of documents) {
-        const evidences = document.chunks.map((chunk) => ({ text: chunk.content, kbId: document.kbId, topic: document.title.replace(/\.[^.]+$/, ''), slug: `docs/${document.id}` }));
+        const text = await readCanonicalDocument(this.uploadRoot, document.id, document.chunks);
+        const evidences = [{
+          text,
+          sourceFile: document.title,
+          kbId: document.kbId,
+          kbName: document.kb.name,
+          kbType: document.kb.type,
+          topic: document.title.replace(/\.[^.]+$/, ''),
+          slug: `docs/${document.id}`,
+        }];
         await this.gbrain.ingest(`gbrain://source/${definition.sourceKey}`, evidences);
         await db.brainSourceDocument.upsert({ where: { sourceId_documentId: { sourceId: source.id, documentId: document.id } }, create: { sourceId: source.id, documentId: document.id, syncedVersion: document.version, syncedAt: new Date() }, update: { syncedVersion: document.version, syncedAt: new Date() } });
       }

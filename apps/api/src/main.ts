@@ -1,7 +1,10 @@
 import { NestFactory } from '@nestjs/core';
+import { ValidationPipe, Logger } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import helmet from 'helmet';
+import * as express from 'express';
 
 function loadLocalEnv() {
   try {
@@ -19,11 +22,19 @@ function loadLocalEnv() {
 async function bootstrap() {
   loadLocalEnv();
   const app = await NestFactory.create(AppModule);
+  
+  app.use(helmet());
+  app.use(express.json({ limit: '10mb' }));
+
   const configuredOrigins = process.env.WEB_ORIGIN?.split(',').map((origin) => origin.trim()).filter(Boolean);
   app.enableCors({
     origin: configuredOrigins?.length ? configuredOrigins : ['http://localhost:3001'],
     credentials: true,
   });
-  await app.listen(Number(process.env.PORT || 3000), process.env.HOST || '0.0.0.0');
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: false }));
+  
+  const port = Number(process.env.PORT || 3000);
+  await app.listen(port, process.env.HOST || '0.0.0.0');
+  Logger.log(`Application is running on port ${port}`, 'Bootstrap');
 }
 bootstrap();

@@ -4,13 +4,18 @@ After=network.target llmwiki-api.service
 
 [Service]
 Type=simple
-WorkingDirectory=/home/scottsun/gbrainkg/apps/web
+WorkingDirectory=%h/gbrainkg/apps/web
 Environment=PORT=3200
 Environment=HOSTNAME=0.0.0.0
-ExecStart=/home/scottsun/.local/bin/npm run start
+ExecStart=%h/.local/bin/npm run start
 Restart=always
 RestartSec=5
 TimeoutStopSec=15
+
+# Limits and Logging
+MemoryMax=1G
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=default.target

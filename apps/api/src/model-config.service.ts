@@ -43,6 +43,9 @@ export class ModelConfigService implements OnModuleDestroy {
       process.env.LLM_BASE_URL = llm.provider.baseUrl;
       process.env.LLM_MODEL = llm.modelName;
       if (llm.provider.apiKey) process.env.DEEPSEEK_API_KEY = llm.provider.apiKey;
+      process.env.GBRAIN_CHAT_MODEL = `deepseek:${llm.modelName}`;
+      process.env.GBRAIN_EXPANSION_MODEL = `deepseek:${llm.modelName}`;
+      process.env.GBRAIN_DEEPSEEK_BASE_URL = llm.provider.baseUrl;
     }
     if (embedding) {
       // SiliconFlow exposes the OpenAI-compatible /embeddings contract.
@@ -55,6 +58,11 @@ export class ModelConfigService implements OnModuleDestroy {
       process.env.LLMWIKI_RERANK_BASE_URL = rerank.provider.baseUrl;
       process.env.LLMWIKI_RERANK_MODEL = rerank.modelName;
       if (rerank.provider.apiKey) process.env.LLMWIKI_RERANK_API_KEY = rerank.provider.apiKey;
+      // SiliconFlow's /v1/rerank contract matches GBrain's configurable
+      // OpenAI-style reranker recipe.
+      process.env.GBRAIN_RERANK_MODEL = `llama-server-reranker:${rerank.modelName}`;
+      process.env.LLAMA_SERVER_RERANKER_BASE_URL = rerank.provider.baseUrl;
+      if (rerank.provider.apiKey) process.env.LLAMA_SERVER_RERANKER_API_KEY = rerank.provider.apiKey;
     }
     this.logger.debug(`Applied DB model routes (llm=${llm?.modelName ?? 'none'}, embedding=${embedding?.modelName ?? 'none'}, rerank=${rerank?.modelName ?? 'none'}).`);
   }

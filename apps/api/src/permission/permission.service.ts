@@ -138,6 +138,13 @@ export class PermissionService implements OnModuleInit {
     });
     if (!kb || kb.status !== 'active') return false;
     if (kb.type === 'org' && kb.orgNodeId) return this.canManageOrganization(userId, kb.orgNodeId);
+    // An industry-library creator retains resource-level administration
+    // (administrator assignment and archive/delete), but knowledge writes
+    // belong to the currently assigned library administrators. This keeps
+    // ownership and day-to-day content maintenance intentionally separate.
+    if (kb.type === 'industry') {
+      return Boolean(await this.prisma.kbAdmin.findFirst({ where: { kbId, userId }, select: { kbId: true } }));
+    }
     if (kb.ownerUserId === userId) return true;
     return Boolean(await this.prisma.kbAdmin.findFirst({ where: { kbId, userId }, select: { kbId: true } }));
   }
@@ -277,15 +284,101 @@ export class PermissionService implements OnModuleInit {
     if (!kb) return [];
     if (kb.type === 'personal') return kb.ownerUserId ? [kb.ownerUserId] : [];
 
-    const users = await this.prisma.user.findMany({
-      where: { status: 'active' },
+    const visibleUserIds = new Set<string>();
+
+    const systemAdmins = await this.prisma.user.findMany({
+      where: {
+        status: 'active',
+        roles: { some: { role: { OR: [{ builtin: true }, { name: '超级管理员' }, { name: '系统管理员' }] } } },
+      },
       select: { id: true },
     });
-    const visible: string[] = [];
-    for (const user of users) {
-      if ((await this.getVisibleKnowledgeBases(user.id)).includes(kbId)) visible.push(user.id);
+    for (const admin of systemAdmins) visibleUserIds.add(admin.id);
+
+    if (kb.type === 'org' && kb.orgNodeId) {
+      const nodes = await this.prisma.orgNode.findMany({
+        where: { status: 'active' },
+        select: { id: true, parentId: true },
+      });
+      const descendantIds = new Set<string>([kb.orgNodeId]);
+      const queue = [kb.orgNodeId];
+      while (queue.length) {
+        const current = queue.shift()!;
+        for (const node of nodes) {
+          if (node.parentId === current && !descendantIds.has(node.id)) {
+            descendantIds.add(node.id);
+            queue.push(node.id);
+          }
+        }
+      }
+      const users = await this.prisma.user.findMany({
+        where: { status: 'active', orgs: { some: { orgNodeId: { in: [...descendantIds] } } } },
+        select: { id: true },
+      });
+      for (const user of users) visibleUserIds.add(user.id);
+    } else if (kb.type === 'industry') {
+      const kbWithAdmins = await this.prisma.knowledgeBase.findUnique({
+        where: { id: kbId },
+        select: { ownerUserId: true, admins: { select: { userId: true } } },
+      });
+      const directUserIds = [];
+      if (kbWithAdmins?.ownerUserId) directUserIds.push(kbWithAdmins.ownerUserId);
+      if (kbWithAdmins?.admins) {
+        for (const admin of kbWithAdmins.admins) directUserIds.push(admin.userId);
+      }
+      if (directUserIds.length) {
+        const activeDirectUsers = await this.prisma.user.findMany({
+          where: { id: { in: directUserIds }, status: 'active' },
+          select: { id: true },
+        });
+        for (const user of activeDirectUsers) visibleUserIds.add(user.id);
+      }
+
+      const grants = await this.prisma.industryGrant.findMany({
+        where: {
+          kbId,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+        },
+        select: { subjectType: true, subjectId: true },
+      });
+
+      const userGrants = grants.filter(g => g.subjectType === 'user').map(g => g.subjectId);
+      const roleGrants = grants.filter(g => g.subjectType === 'role').map(g => g.subjectId);
+      const orgGrants = grants.filter(g => g.subjectType === 'org').map(g => g.subjectId);
+
+      const conditions: any[] = [];
+      if (userGrants.length) conditions.push({ id: { in: userGrants } });
+      if (roleGrants.length) conditions.push({ roles: { some: { roleId: { in: roleGrants } } } });
+
+      if (orgGrants.length) {
+        const nodes = await this.prisma.orgNode.findMany({
+          where: { status: 'active' },
+          select: { id: true, parentId: true },
+        });
+        const descendantIds = new Set<string>(orgGrants);
+        const queue = [...orgGrants];
+        while (queue.length) {
+          const current = queue.shift()!;
+          for (const node of nodes) {
+            if (node.parentId === current && !descendantIds.has(node.id)) {
+              descendantIds.add(node.id);
+              queue.push(node.id);
+            }
+          }
+        }
+        conditions.push({ orgs: { some: { orgNodeId: { in: [...descendantIds] } } } });
+      }
+
+      if (conditions.length) {
+        const users = await this.prisma.user.findMany({
+          where: { status: 'active', OR: conditions },
+          select: { id: true },
+        });
+        for (const user of users) visibleUserIds.add(user.id);
+      }
     }
-    return visible;
+
+    return Array.from(visibleUserIds);
   }
 
   /**

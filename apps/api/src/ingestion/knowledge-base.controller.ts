@@ -1,4 +1,4 @@
-import { Controller, Get, NotFoundException, Param, Query, Req, Res, UnauthorizedException } from '@nestjs/common';
+import { Controller, Get, NotFoundException, Param, Query, Req, Res, UnauthorizedException, UseGuards } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import type { Response } from 'express';
 import { readFile } from 'node:fs/promises';
@@ -6,6 +6,7 @@ import { extname } from 'node:path';
 import { PermissionService } from '../permission/permission.service';
 import { AuthService } from '../auth/auth.service';
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { AuthGuard } from '../auth/auth.guard';
 
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -54,6 +55,7 @@ function onlyOfficeDocumentType(filename: string): 'word' | 'cell' | 'slide' | '
   return 'word';
 }
 
+@UseGuards(AuthGuard)
 @Controller('api/v1/kbs')
 export class KnowledgeBaseController {
   private readonly prisma = new PrismaClient();
@@ -77,7 +79,10 @@ export class KnowledgeBaseController {
       this.prisma.knowledgeBase.count({ where }),
     ]);
     const writePermissions = await Promise.all(items.map((item) => this.permissionService.canManageKnowledgeBase(userId, item.id)));
-    return { items: items.map(({ _count, ...item }, index) => ({ ...item, documentCount: _count.documents, canWrite: writePermissions[index], canDelete: isSystemAdmin || item.ownerUserId === userId })), total, page: pageNumber, limit: pageSize };
+    const deletePermissions = await Promise.all(items.map((item) => item.type === 'industry'
+      ? this.permissionService.canManageKnowledgeBase(userId, item.id)
+      : isSystemAdmin || item.ownerUserId === userId));
+    return { items: items.map(({ _count, ...item }, index) => ({ ...item, documentCount: _count.documents, canWrite: writePermissions[index], canDelete: deletePermissions[index] })), total, page: pageNumber, limit: pageSize };
   }
 
   @Get(':kbId/documents')

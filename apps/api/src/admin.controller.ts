@@ -1,14 +1,15 @@
-import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, NotFoundException, Param, Patch, Post, Req } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, NotFoundException, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { PermissionService } from './permission/permission.service';
 import { AuthService } from './auth/auth.service';
 import { BrainCompilerService } from './brain-compiler/brain-compiler.service';
 import { ModelConfigService } from './model-config.service';
+import { AdminGuard } from './auth/auth.guard';
 
-const prisma = new PrismaClient();
-
+@UseGuards(AdminGuard)
 @Controller('api/v1/admin')
 export class AdminController {
+  private readonly prisma = new PrismaClient();
   constructor(private readonly permissionService: PermissionService, private readonly authService: AuthService, private readonly brainCompilerService: BrainCompilerService, private readonly modelConfigService: ModelConfigService) {}
 
   @Get('data')
@@ -17,7 +18,7 @@ export class AdminController {
     const capabilities = await this.permissionService.getCapabilities(adminId);
     const isSystemAdmin = capabilities.includes('*');
     const managedOrgIds = await this.permissionService.getManagedOrgIds(adminId);
-    const directIndustryScopeCount = await prisma.knowledgeBase.count({ where: { type: 'industry', status: 'active', OR: [{ ownerUserId: adminId }, { admins: { some: { userId: adminId } } }] } });
+    const directIndustryScopeCount = await this.prisma.knowledgeBase.count({ where: { type: 'industry', status: 'active', OR: [{ ownerUserId: adminId }, { admins: { some: { userId: adminId } } }] } });
     const canReadOrg = isSystemAdmin || capabilities.includes('org.read') || capabilities.includes('org.user.read');
     // 行业库管理菜单是角色能力，不是某个具体行业库的管理员关系。
     // 具体行业库的列表仍在 industryScopeKbs 中按资源范围收敛。
@@ -28,28 +29,31 @@ export class AdminController {
     // 页面维护自己负责的库；但这不应让他看到行业库管理菜单。
     if (!canReadOrg && !canReadIndustry && !canReadRoles && !canReadAudit && directIndustryScopeCount === 0) throw new ForbiddenException('No administration permission.');
 
-    const users = await prisma.user.findMany({
+    const users = await this.prisma.user.findMany({
       include: { roles: { include: { role: true } }, orgs: { include: { orgNode: true } } },
       orderBy: { createdAt: 'asc' },
     });
-    const allOrgs = await prisma.orgNode.findMany({ where: { status: 'active' }, include: { admins: { include: { user: { select: { id: true, displayName: true, username: true } } } }, kbs: { where: { status: 'active' }, select: { id: true, name: true, status: true, description: true, orgNodeId: true, admins: { include: { user: { select: { displayName: true, username: true } } } } } } }, orderBy: [{ path: 'asc' }, { sort: 'asc' }] });
+    const allOrgs = await this.prisma.orgNode.findMany({ where: { status: 'active' }, include: { admins: { include: { user: { select: { id: true, displayName: true, username: true } } } }, kbs: { where: { status: 'active' }, select: { id: true, name: true, status: true, description: true, orgNodeId: true, admins: { include: { user: { select: { displayName: true, username: true } } } } } } }, orderBy: [{ path: 'asc' }, { sort: 'asc' }] });
     const orgs = (canReadOrg || canReadIndustry) ? allOrgs.filter((org) => isSystemAdmin || canReadIndustry || managedOrgIds.has(org.id)).map((org) => ({
       ...org,
       canManage: isSystemAdmin || managedOrgIds.has(org.id),
       canCreateChild: isSystemAdmin || managedOrgIds.has(org.id),
-      canSetAdmin: isSystemAdmin,
+      // Organization administrators may delegate administration within their
+      // own subtree. They never receive access to a parent or sibling node
+      // because managedOrgIds is rooted at their assigned organization(s).
+      canSetAdmin: isSystemAdmin || managedOrgIds.has(org.id),
     })) : [];
-    const kbs = await prisma.knowledgeBase.findMany({
+    const kbs = await this.prisma.knowledgeBase.findMany({
       where: { status: 'active' },
       include: { admins: { include: { user: true } }, _count: { select: { documents: true } } },
     });
     const [roles, grants, providers, configs, compileJobs, documents] = await Promise.all([
-      prisma.role.findMany({ include: { _count: { select: { users: true } } }, orderBy: { name: 'asc' } }),
-      prisma.industryGrant.findMany({ include: { kb: { select: { id: true, name: true } } }, orderBy: { createdAt: 'desc' } }),
-      prisma.modelProvider.findMany({ orderBy: { name: 'asc' } }),
-      prisma.modelConfig.findMany({ include: { provider: true }, orderBy: { createdAt: 'asc' } }),
-      prisma.compileJob.findMany({ include: { user: { select: { displayName: true, username: true } }, brainTopic: { select: { topicSlug: true } } }, orderBy: { createdAt: 'desc' }, take: 100 }),
-      prisma.document.findMany({ include: { kb: { select: { name: true } } }, orderBy: { updatedAt: 'desc' }, take: 100 }),
+      this.prisma.role.findMany({ include: { _count: { select: { users: true } } }, orderBy: { name: 'asc' } }),
+      this.prisma.industryGrant.findMany({ include: { kb: { select: { id: true, name: true } } }, orderBy: { createdAt: 'desc' } }),
+      this.prisma.modelProvider.findMany({ orderBy: { name: 'asc' } }),
+      this.prisma.modelConfig.findMany({ include: { provider: true }, orderBy: { createdAt: 'asc' } }),
+      this.prisma.compileJob.findMany({ include: { user: { select: { displayName: true, username: true } }, brainTopic: { select: { topicSlug: true } } }, orderBy: { createdAt: 'desc' }, take: 100 }),
+      this.prisma.document.findMany({ include: { kb: { select: { name: true } } }, orderBy: { updatedAt: 'desc' }, take: 100 }),
     ]);
     const safeProviders = (isSystemAdmin ? providers : []).map(({ apiKeyEncrypted, ...provider }) => ({
       ...provider,
@@ -85,10 +89,10 @@ export class AdminController {
       users: safeUsers,
       orgs,
       roles: canReadRoles ? roles.map(({ _count, ...role }) => ({ ...role, users: _count.users, perms: Array.isArray(role.permissions) ? role.permissions : [] })) : [],
-      kbs: visibleKbs.map(({ _count, ...kb }, index) => ({ ...kb, documentCount: _count.documents, canWrite: writePermissions[index], canManage: isSystemAdmin || (kb.type === 'industry' && (kb.ownerUserId === adminId || kb.admins.some((admin) => admin.userId === adminId))), canGrant: isSystemAdmin || (kb.type === 'industry' && (kb.ownerUserId === adminId || kb.admins.some((admin) => admin.userId === adminId))), canDelete: isSystemAdmin || (kb.type === 'personal' && kb.ownerUserId === adminId) || (kb.type === 'industry' && kb.ownerUserId === adminId) })),
+      kbs: visibleKbs.map(({ _count, ...kb }, index) => ({ ...kb, documentCount: _count.documents, canWrite: writePermissions[index], canManage: isSystemAdmin || (kb.type === 'industry' && (kb.ownerUserId === adminId || kb.admins.some((admin) => admin.userId === adminId))), canGrant: isSystemAdmin || (kb.type === 'industry' && (kb.ownerUserId === adminId || kb.admins.some((admin) => admin.userId === adminId))), canDelete: isSystemAdmin || (kb.type === 'personal' && kb.ownerUserId === adminId) || (kb.type === 'industry' && (kb.ownerUserId === adminId || kb.admins.some((admin) => admin.userId === adminId))) })),
       // 管理后台的行业库页只消费这一组，避免“可阅读但不可管理”的行业库
       // 因阅读权限混入行业库管理列表。
-      managedIndustryKbs: industryScopeKbs.map(({ _count, ...kb }, index) => ({ ...kb, documentCount: _count.documents, canWrite: managedIndustryWritePermissions[index], canManage: isSystemAdmin || kb.ownerUserId === adminId || kb.admins.some((admin) => admin.userId === adminId), canGrant: isSystemAdmin || kb.ownerUserId === adminId || kb.admins.some((admin) => admin.userId === adminId), canDelete: isSystemAdmin || kb.ownerUserId === adminId })),
+      managedIndustryKbs: industryScopeKbs.map(({ _count, ...kb }, index) => ({ ...kb, documentCount: _count.documents, canWrite: managedIndustryWritePermissions[index], canManage: isSystemAdmin || kb.ownerUserId === adminId || kb.admins.some((admin) => admin.userId === adminId), canGrant: isSystemAdmin || kb.ownerUserId === adminId || kb.admins.some((admin) => admin.userId === adminId), canDelete: isSystemAdmin || kb.ownerUserId === adminId || kb.admins.some((admin) => admin.userId === adminId) })),
       grants: safeGrants,
       providers: safeProviders,
       models: isSystemAdmin ? configs.map(({ provider, ...config }) => ({ ...config, provider })) : [],
@@ -109,21 +113,33 @@ export class AdminController {
     if (parentId && !/^[0-9a-f-]{36}$/i.test(parentId)) throw new BadRequestException('Invalid parent organization.');
 
     const parent = parentId
-      ? await prisma.orgNode.findFirst({ where: { id: parentId, status: 'active' } })
+      ? await this.prisma.orgNode.findFirst({ where: { id: parentId, status: 'active' } })
       : null;
     if (parentId && !parent) throw new NotFoundException('Parent organization not found.');
     if (!parentId && !(await this.permissionService.isSystemAdmin(userId))) throw new ForbiddenException('Only a system administrator can create a root organization.');
     if (parentId && !(await this.permissionService.canManageOrganization(userId, parentId))) throw new ForbiddenException('You can only create child organizations within your managed scope.');
 
-    const siblingCount = await prisma.orgNode.count({
+    const siblingCount = await this.prisma.orgNode.count({
       where: { parentId, status: 'active' },
     });
     const basePath = parent ? `${parent.path}/${name}` : `/${name}`;
-    const duplicate = await prisma.orgNode.findFirst({ where: { path: basePath, status: 'active' } });
+    const duplicate = await this.prisma.orgNode.findFirst({ where: { path: basePath, status: 'active' } });
     if (duplicate) throw new BadRequestException('An organization with the same path already exists.');
 
-    const org = await prisma.orgNode.create({
-      data: { name, parentId, path: basePath, sort: siblingCount },
+    const adminUserIds: string[] = Array.isArray(body?.adminUserIds)
+      ? Array.from(new Set<string>(body.adminUserIds.map((value: unknown): string => String(value)).filter((value: string) => Boolean(value))))
+      : [];
+    if (adminUserIds.length) {
+      const activeUsers = await this.prisma.user.findMany({ where: { id: { in: adminUserIds }, status: 'active' }, select: { id: true } });
+      if (activeUsers.length !== adminUserIds.length) throw new BadRequestException('Organization administrators must be active users.');
+    }
+
+    const org = await this.prisma.orgNode.create({
+      data: {
+        name, parentId, path: basePath, sort: siblingCount,
+        admins: adminUserIds.length ? { create: adminUserIds.map((userId: string) => ({ userId })) } : undefined,
+      },
+      include: { admins: { select: { userId: true } } },
     });
     return { organization: org };
   }
@@ -132,12 +148,12 @@ export class AdminController {
   async updateOrgAdmins(@Req() req: any, @Param('id') id: string, @Body() body: any) {
     const operatorId = await this.authService.userIdFromRequest(req);
     if (!(await this.permissionService.canManageOrganization(operatorId, id))) throw new ForbiddenException('You can only manage administrators within your organization scope.');
-    const org = await prisma.orgNode.findFirst({ where: { id, status: 'active' }, include: { kbs: { select: { id: true } } } });
+    const org = await this.prisma.orgNode.findFirst({ where: { id, status: 'active' }, include: { kbs: { select: { id: true } } } });
     if (!org) throw new NotFoundException('Organization not found.');
     const userIds = Array.isArray(body?.userIds) ? body.userIds : [];
-    const activeUsers = await prisma.user.findMany({ where: { id: { in: userIds }, status: 'active' }, select: { id: true } });
+    const activeUsers = await this.prisma.user.findMany({ where: { id: { in: userIds }, status: 'active' }, select: { id: true } });
     if (activeUsers.length !== new Set(userIds).size) throw new BadRequestException('Organization administrators must be active users.');
-    await prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx) => {
       await tx.orgAdmin.deleteMany({ where: { orgNodeId: id } });
       if (userIds.length) await tx.orgAdmin.createMany({ data: userIds.map((userId: string) => ({ orgNodeId: id, userId })) });
       for (const kb of org.kbs) {
@@ -152,9 +168,9 @@ export class AdminController {
   async archiveOrg(@Req() req: any, @Param('id') id: string) {
     const operatorId = await this.authService.userIdFromRequest(req);
     if (!(await this.permissionService.canManageOrganization(operatorId, id))) throw new ForbiddenException('You can only archive organizations within your organization scope.');
-    const childCount = await prisma.orgNode.count({ where: { parentId: id, status: 'active' } });
+    const childCount = await this.prisma.orgNode.count({ where: { parentId: id, status: 'active' } });
     if (childCount) throw new BadRequestException('Move or archive child organizations first.');
-    const org = await prisma.orgNode.update({ where: { id }, data: { status: 'archived' } });
+    const org = await this.prisma.orgNode.update({ where: { id }, data: { status: 'archived' } });
     return { organization: org };
   }
 
@@ -166,15 +182,15 @@ export class AdminController {
   async activateOrganizationKnowledgeBase(@Req() req: any, @Param('id') id: string, @Body() body: any) {
     const userId = await this.authService.userIdFromRequest(req);
     if (!(await this.canManageOrganization(userId, id))) throw new BadRequestException('Only a system administrator or an administrator of this organization or its parent can activate the organization knowledge base.');
-    const org = await prisma.orgNode.findFirst({ where: { id, status: 'active' }, include: { admins: { select: { userId: true } } } });
+    const org = await this.prisma.orgNode.findFirst({ where: { id, status: 'active' }, include: { admins: { select: { userId: true } } } });
     if (!org) throw new NotFoundException('Organization not found.');
     const name = String(body?.name || `${org.name}知识库`).trim();
-    const existing = await prisma.knowledgeBase.findFirst({ where: { type: 'org', orgNodeId: id }, include: { admins: true, _count: { select: { documents: true } } } });
+    const existing = await this.prisma.knowledgeBase.findFirst({ where: { type: 'org', orgNodeId: id }, include: { admins: true, _count: { select: { documents: true } } } });
     const adminIds = [...new Set([userId, ...org.admins.map((item) => item.userId), ...(existing?.admins || []).map((item) => item.userId)])];
     const kb = existing
-      ? await prisma.knowledgeBase.update({ where: { id: existing.id }, data: { status: 'active', name, description: body?.description !== undefined ? String(body.description) : existing.description } })
-      : await prisma.knowledgeBase.create({ data: { type: 'org', orgNodeId: id, name, description: String(body?.description || `${org.name}组织成员共享的知识库`), gitRepoUrl: `db://org/${id}` } });
-    await prisma.kbAdmin.createMany({ data: adminIds.map((adminId) => ({ kbId: kb.id, userId: adminId })), skipDuplicates: true });
+      ? await this.prisma.knowledgeBase.update({ where: { id: existing.id }, data: { status: 'active', name, description: body?.description !== undefined ? String(body.description) : existing.description } })
+      : await this.prisma.knowledgeBase.create({ data: { type: 'org', orgNodeId: id, name, description: String(body?.description || `${org.name}组织成员共享的知识库`), gitRepoUrl: `db://org/${id}` } });
+    await this.prisma.kbAdmin.createMany({ data: adminIds.map((adminId) => ({ kbId: kb.id, userId: adminId })), skipDuplicates: true });
     return { knowledgeBase: { ...kb, status: 'active' } };
   }
 
@@ -182,9 +198,9 @@ export class AdminController {
   async deactivateOrganizationKnowledgeBase(@Req() req: any, @Param('id') id: string) {
     const userId = await this.authService.userIdFromRequest(req);
     if (!(await this.canManageOrganization(userId, id))) throw new BadRequestException('Only a system administrator or an administrator of this organization or its parent can deactivate the organization knowledge base.');
-    const kb = await prisma.knowledgeBase.findFirst({ where: { type: 'org', orgNodeId: id, status: 'active' } });
+    const kb = await this.prisma.knowledgeBase.findFirst({ where: { type: 'org', orgNodeId: id, status: 'active' } });
     if (!kb) throw new NotFoundException('Organization knowledge base is not active.');
-    return { knowledgeBase: await prisma.knowledgeBase.update({ where: { id: kb.id }, data: { status: 'archived' } }) };
+    return { knowledgeBase: await this.prisma.knowledgeBase.update({ where: { id: kb.id }, data: { status: 'archived' } }) };
   }
 
   @Post('users')
@@ -196,7 +212,7 @@ export class AdminController {
     if (!username || !displayName) throw new BadRequestException('Username and display name are required.');
     const orgIds: string[] = Array.isArray(body?.orgIds) ? Array.from(new Set<string>(body.orgIds.map((id: string) => String(id)))) : [];
     if (!orgIds.length) throw new BadRequestException('At least one organization is required.');
-    const orgs = await prisma.orgNode.findMany({ where: { id: { in: orgIds }, status: 'active' }, select: { id: true } });
+    const orgs = await this.prisma.orgNode.findMany({ where: { id: { in: orgIds }, status: 'active' }, select: { id: true } });
     if (orgs.length !== orgIds.length) throw new BadRequestException('One or more organizations are invalid.');
     if (!(await this.permissionService.isSystemAdmin(operatorId))) {
       const managedOrgIds = await this.permissionService.getManagedOrgIds(operatorId);
@@ -204,10 +220,10 @@ export class AdminController {
     }
     const roleIds: string[] = Array.isArray(body?.roleIds) ? Array.from(new Set<string>(body.roleIds.map((id: string) => String(id)))) : [];
     await this.validateAssignableRoles(operatorId, roleIds);
-    const basicRole = await prisma.role.findUnique({ where: { name: '普通用户' }, select: { id: true } });
+    const basicRole = await this.prisma.role.findUnique({ where: { name: '普通用户' }, select: { id: true } });
     const finalRoleIds = roleIds.length ? roleIds : (basicRole ? [basicRole.id] : []);
     const password = String(body?.password || 'LLMwiki@2026');
-    const user = await prisma.user.create({ data: {
+    const user = await this.prisma.user.create({ data: {
       username, displayName, email, passwordHash: this.authService.hashPassword(password), status: body?.status === 'disabled' ? 'disabled' : 'active',
       orgs: { create: orgIds.map((orgNodeId: string) => ({ orgNodeId })) },
       roles: { create: finalRoleIds.map((roleId: string) => ({ roleId })) },
@@ -219,7 +235,7 @@ export class AdminController {
   @Patch('users/:id')
   async updateUser(@Req() req: any, @Param('id') id: string, @Body() body: any) {
     const operatorId = await this.authService.userIdFromRequest(req);
-    const exists = await prisma.user.findUnique({ where: { id }, include: { orgs: true } });
+    const exists = await this.prisma.user.findUnique({ where: { id }, include: { orgs: true } });
     if (!exists) throw new NotFoundException('User not found.');
     if (!(await this.permissionService.canManageUser(operatorId, id))) throw new ForbiddenException('You can only manage users in your organization or its descendants.');
     const data: any = {};
@@ -234,14 +250,14 @@ export class AdminController {
     const orgIds: string[] | null = Array.isArray(body?.orgIds) ? Array.from(new Set<string>(body.orgIds.map((orgNodeId: string) => String(orgNodeId)))) : null;
     if (orgIds) {
       if (!orgIds.length) throw new BadRequestException('At least one organization is required.');
-      const validOrgs = await prisma.orgNode.findMany({ where: { id: { in: orgIds }, status: 'active' }, select: { id: true } });
+      const validOrgs = await this.prisma.orgNode.findMany({ where: { id: { in: orgIds }, status: 'active' }, select: { id: true } });
       if (validOrgs.length !== orgIds.length) throw new BadRequestException('One or more organizations are invalid.');
       if (!isSystemAdmin) {
         const managedOrgIds = await this.permissionService.getManagedOrgIds(operatorId);
         if (orgIds.some((orgId) => !managedOrgIds.has(orgId))) throw new ForbiddenException('You can only assign users to your organization or its descendants.');
       }
     }
-    const user = await prisma.$transaction(async (tx) => {
+    const user = await this.prisma.$transaction(async (tx) => {
       await tx.user.update({ where: { id }, data });
       if (orgIds) {
         await tx.userOrg.deleteMany({ where: { userId: id } });
@@ -260,12 +276,12 @@ export class AdminController {
   async disableUser(@Req() req: any, @Param('id') id: string) {
     const operatorId = await this.authService.userIdFromRequest(req);
     if (!(await this.permissionService.canManageUser(operatorId, id))) throw new ForbiddenException('You can only manage users in your organization or its descendants.');
-    return { user: await prisma.user.update({ where: { id }, data: { status: 'disabled' } }) };
+    return { user: await this.prisma.user.update({ where: { id }, data: { status: 'disabled' } }) };
   }
 
   private async validateAssignableRoles(operatorId: string, roleIds: string[]) {
     if (await this.permissionService.isSystemAdmin(operatorId)) return;
-    const roles = await prisma.role.findMany({ where: { id: { in: roleIds } }, select: { id: true, builtin: true, permissions: true } });
+    const roles = await this.prisma.role.findMany({ where: { id: { in: roleIds } }, select: { id: true, builtin: true, permissions: true } });
     if (roles.length !== roleIds.length || roles.some((role) => role.builtin || (Array.isArray(role.permissions) && role.permissions.some((permission) => permission !== 'chat.use' && permission !== 'kb.read')))) {
       throw new ForbiddenException('Organization administrators cannot assign privileged roles.');
     }
@@ -276,24 +292,24 @@ export class AdminController {
     await this.authService.adminUserIdFromRequest(req);
     const name = String(body?.name || '').trim();
     if (!name) throw new BadRequestException('Role name is required.');
-    return { role: await prisma.role.create({ data: { name, description: String(body?.description || ''), builtin: false, permissions: Array.isArray(body?.permissions) ? body.permissions : [] } }) };
+    return { role: await this.prisma.role.create({ data: { name, description: String(body?.description || ''), builtin: false, permissions: Array.isArray(body?.permissions) ? body.permissions : [] } }) };
   }
 
   @Patch('roles/:id')
   async updateRole(@Req() req: any, @Param('id') id: string, @Body() body: any) {
     await this.authService.adminUserIdFromRequest(req);
-    const role = await prisma.role.findUnique({ where: { id } });
+    const role = await this.prisma.role.findUnique({ where: { id } });
     if (!role) throw new NotFoundException('Role not found.');
-    return { role: await prisma.role.update({ where: { id }, data: { name: role.builtin ? role.name : String(body?.name ?? role.name), description: String(body?.description ?? (role.description || '')), permissions: Array.isArray(body?.permissions) ? body.permissions : role.permissions } }) };
+    return { role: await this.prisma.role.update({ where: { id }, data: { name: role.builtin ? role.name : String(body?.name ?? role.name), description: String(body?.description ?? (role.description || '')), permissions: Array.isArray(body?.permissions) ? body.permissions : role.permissions } }) };
   }
 
   @Delete('roles/:id')
   async deleteRole(@Req() req: any, @Param('id') id: string) {
     await this.authService.adminUserIdFromRequest(req);
-    const role = await prisma.role.findUnique({ where: { id } });
+    const role = await this.prisma.role.findUnique({ where: { id } });
     if (!role) throw new NotFoundException('Role not found.');
     if (role.builtin) throw new BadRequestException('Built-in roles cannot be deleted.');
-    await prisma.role.delete({ where: { id } });
+    await this.prisma.role.delete({ where: { id } });
     return { ok: true };
   }
 
@@ -311,32 +327,36 @@ export class AdminController {
     } else {
       if (!body?.orgNodeId || !(await this.permissionService.canManageOrganization(adminId, String(body.orgNodeId)))) throw new ForbiddenException('You can only create organization knowledge bases within your managed scope.');
     }
-    const kb = await prisma.knowledgeBase.create({ data: { name, type, description: String(body?.description || ''), gitRepoUrl: String(body?.gitRepoUrl || `db://${name}`), orgNodeId: type === 'org' ? String(body.orgNodeId) : undefined, ownerUserId: type === 'personal' || type === 'industry' ? adminId : undefined, admins: type === 'personal' ? undefined : { create: [{ userId: adminId }] } }, include: { admins: { include: { user: true } }, _count: { select: { documents: true } } } });
+    const kb = await this.prisma.knowledgeBase.create({ data: { name, type, description: String(body?.description || ''), gitRepoUrl: String(body?.gitRepoUrl || `db://${name}`), orgNodeId: type === 'org' ? String(body.orgNodeId) : undefined, ownerUserId: type === 'personal' || type === 'industry' ? adminId : undefined, admins: type === 'personal' ? undefined : { create: [{ userId: adminId }] } }, include: { admins: { include: { user: true } }, _count: { select: { documents: true } } } });
     return { knowledgeBase: { ...kb, documentCount: kb._count.documents } };
   }
 
   @Delete('kbs/:id')
   async archiveKnowledgeBase(@Req() req: any, @Param('id') id: string) {
     const userId = await this.authService.userIdFromRequest(req);
-    const kb = await prisma.knowledgeBase.findUnique({ where: { id }, select: { id: true, type: true, ownerUserId: true } });
+    const kb = await this.prisma.knowledgeBase.findUnique({ where: { id }, select: { id: true, type: true, ownerUserId: true } });
     if (!kb) throw new NotFoundException('Knowledge base not found.');
-    const allowed = kb.type === 'personal' || kb.type === 'industry' ? kb.ownerUserId === userId : false;
+    const allowed = kb.type === 'personal'
+      ? kb.ownerUserId === userId
+      : kb.type === 'industry'
+        ? await this.permissionService.canManageIndustryKb(userId, id)
+        : false;
     if (!(await this.permissionService.isSystemAdmin(userId)) && !allowed) throw new ForbiddenException('Knowledge base management permission required.');
-    return { knowledgeBase: await prisma.knowledgeBase.update({ where: { id }, data: { status: 'archived' } }) };
+    return { knowledgeBase: await this.prisma.knowledgeBase.update({ where: { id }, data: { status: 'archived' } }) };
   }
 
   @Post('kbs/:id/admins')
   async updateKbAdmins(@Req() req: any, @Param('id') id: string, @Body() body: any) {
     const userId = await this.authService.userIdFromRequest(req);
-    const kb = await prisma.knowledgeBase.findUnique({ where: { id }, select: { id: true, type: true, ownerUserId: true, status: true } });
+    const kb = await this.prisma.knowledgeBase.findUnique({ where: { id }, select: { id: true, type: true, ownerUserId: true, status: true } });
     if (!kb) throw new NotFoundException('Knowledge base not found.');
     if (kb.type === 'personal') throw new ForbiddenException('Personal knowledge bases cannot be shared or assigned administrators.');
     if (!(await this.permissionService.canManageIndustryKb(userId, id)) && !(await this.permissionService.isSystemAdmin(userId))) throw new ForbiddenException('Knowledge base administrator permission required.');
     const userIds = Array.isArray(body?.userIds) ? body.userIds : [];
     if (!userIds.length) throw new BadRequestException('At least one administrator is required.');
-    const activeUsers = await prisma.user.findMany({ where: { id: { in: userIds }, status: 'active' }, select: { id: true } });
+    const activeUsers = await this.prisma.user.findMany({ where: { id: { in: userIds }, status: 'active' }, select: { id: true } });
     if (activeUsers.length !== new Set(userIds).size) throw new BadRequestException('Knowledge base administrators must be active users.');
-    await prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx) => {
       await tx.kbAdmin.deleteMany({ where: { kbId: id } });
       await tx.kbAdmin.createMany({ data: userIds.map((userId: string) => ({ kbId: id, userId })) });
     });
@@ -350,24 +370,24 @@ export class AdminController {
     const subjectId = String(body?.subjectId || '');
     const kbId = String(body?.kbId || '');
     if (!['user', 'role', 'org'].includes(subjectType) || !subjectId || !kbId) throw new BadRequestException('Invalid grant.');
-    const kb = await prisma.knowledgeBase.findUnique({ where: { id: kbId }, select: { id: true, type: true, status: true } });
+    const kb = await this.prisma.knowledgeBase.findUnique({ where: { id: kbId }, select: { id: true, type: true, status: true } });
     if (!kb || kb.type !== 'industry' || kb.status !== 'active') throw new NotFoundException('Industry knowledge base not found.');
     if (!(await this.permissionService.canGrantIndustryKb(grantedById, kbId))) throw new ForbiddenException('Industry knowledge base authorization permission required.');
-    if (subjectType === 'user' && !(await prisma.user.findFirst({ where: { id: subjectId, status: 'active' }, select: { id: true } }))) throw new BadRequestException('Authorized user is invalid.');
-    if (subjectType === 'role' && !(await prisma.role.findUnique({ where: { id: subjectId }, select: { id: true } }))) throw new BadRequestException('Authorized role is invalid.');
-    if (subjectType === 'org' && !(await prisma.orgNode.findFirst({ where: { id: subjectId, status: 'active' }, select: { id: true } }))) throw new BadRequestException('Authorized organization is invalid.');
-    const duplicate = await prisma.industryGrant.findFirst({ where: { kbId, subjectType, subjectId } });
+    if (subjectType === 'user' && !(await this.prisma.user.findFirst({ where: { id: subjectId, status: 'active' }, select: { id: true } }))) throw new BadRequestException('Authorized user is invalid.');
+    if (subjectType === 'role' && !(await this.prisma.role.findUnique({ where: { id: subjectId }, select: { id: true } }))) throw new BadRequestException('Authorized role is invalid.');
+    if (subjectType === 'org' && !(await this.prisma.orgNode.findFirst({ where: { id: subjectId, status: 'active' }, select: { id: true } }))) throw new BadRequestException('Authorized organization is invalid.');
+    const duplicate = await this.prisma.industryGrant.findFirst({ where: { kbId, subjectType, subjectId } });
     if (duplicate) throw new BadRequestException('This authorization already exists.');
-    return { grant: await prisma.industryGrant.create({ data: { kbId, subjectType, subjectId, grantedById, expiresAt: body?.expiresAt ? new Date(body.expiresAt) : null } }) };
+    return { grant: await this.prisma.industryGrant.create({ data: { kbId, subjectType, subjectId, grantedById, expiresAt: body?.expiresAt ? new Date(body.expiresAt) : null } }) };
   }
 
   @Delete('grants/:id')
   async deleteGrant(@Req() req: any, @Param('id') id: string) {
     const userId = await this.authService.userIdFromRequest(req);
-    const grant = await prisma.industryGrant.findUnique({ where: { id }, select: { id: true, kbId: true } });
+    const grant = await this.prisma.industryGrant.findUnique({ where: { id }, select: { id: true, kbId: true } });
     if (!grant) throw new NotFoundException('Authorization not found.');
     if (!(await this.permissionService.canGrantIndustryKb(userId, grant.kbId))) throw new ForbiddenException('Industry knowledge base authorization permission required.');
-    await prisma.industryGrant.delete({ where: { id } });
+    await this.prisma.industryGrant.delete({ where: { id } });
     return { ok: true };
   }
 
@@ -377,7 +397,7 @@ export class AdminController {
     const name = String(body?.name || '').trim();
     const baseUrl = String(body?.baseUrl || '').trim();
     if (!name || !baseUrl) throw new BadRequestException('Provider name and base URL are required.');
-    const provider = await prisma.modelProvider.create({ data: { name, kind: String(body?.kind || 'external'), baseUrl, apiKeyEncrypted: body?.apiKey ? Buffer.from(String(body.apiKey)) : undefined, defaultParams: body?.defaultParams || undefined } });
+    const provider = await this.prisma.modelProvider.create({ data: { name, kind: String(body?.kind || 'external'), baseUrl, apiKeyEncrypted: body?.apiKey ? Buffer.from(String(body.apiKey)) : undefined, defaultParams: body?.defaultParams || undefined } });
     await this.modelConfigService.applyRuntimeConfig();
     return { provider };
   }
@@ -385,16 +405,16 @@ export class AdminController {
   @Delete('providers/:id')
   async deleteProvider(@Req() req: any, @Param('id') id: string) {
     await this.authService.adminUserIdFromRequest(req);
-    await prisma.modelProvider.delete({ where: { id } });
+    await this.prisma.modelProvider.delete({ where: { id } });
     return { ok: true };
   }
 
   @Patch('providers/:id')
   async updateProvider(@Req() req: any, @Param('id') id: string, @Body() body: any) {
     await this.authService.adminUserIdFromRequest(req);
-    const provider = await prisma.modelProvider.findUnique({ where: { id } });
+    const provider = await this.prisma.modelProvider.findUnique({ where: { id } });
     if (!provider) throw new NotFoundException('Provider not found.');
-    const updated = await prisma.modelProvider.update({ where: { id }, data: {
+    const updated = await this.prisma.modelProvider.update({ where: { id }, data: {
       name: body?.name !== undefined ? String(body.name).trim() : provider.name,
       kind: body?.kind !== undefined ? String(body.kind) : provider.kind,
       baseUrl: body?.baseUrl !== undefined ? String(body.baseUrl).trim() : provider.baseUrl,
@@ -411,11 +431,11 @@ export class AdminController {
     const providerId = String(body?.providerId || '');
     const modelName = String(body?.modelName || '').trim();
     if (!providerId || !modelName) throw new BadRequestException('Provider and model name are required.');
-    const provider = await prisma.modelProvider.findUnique({ where: { id: providerId } });
+    const provider = await this.prisma.modelProvider.findUnique({ where: { id: providerId } });
     if (!provider) throw new NotFoundException('Provider not found.');
     const kind = ['llm', 'embedding', 'rerank'].includes(body?.kind) ? body.kind : 'llm';
-    if (body?.isDefault) await prisma.modelConfig.updateMany({ where: { kind }, data: { isDefault: false } });
-    const model = await prisma.modelConfig.create({ data: { providerId, kind, modelName, contextLen: Number(body?.contextLen || 8192), dimensions: body?.dimensions ? Number(body.dimensions) : undefined, isDefault: Boolean(body?.isDefault) } });
+    if (body?.isDefault) await this.prisma.modelConfig.updateMany({ where: { kind }, data: { isDefault: false } });
+    const model = await this.prisma.modelConfig.create({ data: { providerId, kind, modelName, contextLen: Number(body?.contextLen || 8192), dimensions: body?.dimensions ? Number(body.dimensions) : undefined, isDefault: Boolean(body?.isDefault) } });
     await this.modelConfigService.applyRuntimeConfig();
     return { model };
   }
@@ -423,12 +443,12 @@ export class AdminController {
   @Patch('models/:id')
   async updateModel(@Req() req: any, @Param('id') id: string, @Body() body: any) {
     await this.authService.adminUserIdFromRequest(req);
-    const existing = await prisma.modelConfig.findUnique({ where: { id } });
+    const existing = await this.prisma.modelConfig.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('Model not found.');
     const kind = body?.kind !== undefined ? String(body.kind) : existing.kind;
     if (!['llm', 'embedding', 'rerank'].includes(kind)) throw new BadRequestException('Invalid model kind.');
-    if (body?.isDefault) await prisma.modelConfig.updateMany({ where: { kind }, data: { isDefault: false } });
-    const model = await prisma.modelConfig.update({ where: { id }, data: {
+    if (body?.isDefault) await this.prisma.modelConfig.updateMany({ where: { kind }, data: { isDefault: false } });
+    const model = await this.prisma.modelConfig.update({ where: { id }, data: {
       providerId: body?.providerId ? String(body.providerId) : existing.providerId,
       kind,
       modelName: body?.modelName !== undefined ? String(body.modelName).trim() : existing.modelName,
@@ -443,7 +463,7 @@ export class AdminController {
   @Delete('models/:id')
   async deleteModel(@Req() req: any, @Param('id') id: string) {
     await this.authService.adminUserIdFromRequest(req);
-    await prisma.modelConfig.delete({ where: { id } });
+    await this.prisma.modelConfig.delete({ where: { id } });
     await this.modelConfigService.applyRuntimeConfig();
     return { ok: true };
   }
@@ -451,7 +471,7 @@ export class AdminController {
   @Post('models/:id/test')
   async testModel(@Req() req: any, @Param('id') id: string) {
     await this.authService.adminUserIdFromRequest(req);
-    const config = await prisma.modelConfig.findUnique({ where: { id }, include: { provider: true } });
+    const config = await this.prisma.modelConfig.findUnique({ where: { id }, include: { provider: true } });
     if (!config) throw new NotFoundException('Model not found.');
     let status = 'failed';
     try {
@@ -459,7 +479,7 @@ export class AdminController {
       const response = await fetch(`${config.provider.baseUrl.replace(/\/$/, '')}/models`, { headers: key ? { Authorization: `Bearer ${key}` } : {} });
       status = response.ok ? 'passed' : 'failed';
     } catch { status = 'failed'; }
-    const model = await prisma.modelConfig.update({ where: { id }, data: { testStatus: status } });
+    const model = await this.prisma.modelConfig.update({ where: { id }, data: { testStatus: status } });
     return { ok: status === 'passed', status, model };
   }
 }

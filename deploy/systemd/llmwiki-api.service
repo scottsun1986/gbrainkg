@@ -4,12 +4,17 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/scottsun/gbrainkg/apps/api
-EnvironmentFile=/home/scottsun/.config/llmwiki/production.env
-ExecStart=/home/scottsun/.local/bin/node /home/scottsun/gbrainkg/apps/api/dist/main.js
+WorkingDirectory=%h/gbrainkg/apps/api
+EnvironmentFile=%h/.config/llmwiki/production.env
+ExecStart=%h/.local/bin/node %h/gbrainkg/apps/api/dist/main.js
 Restart=always
 RestartSec=5
 TimeoutStopSec=15
+
+# Limits and Logging
+MemoryMax=2G
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=default.target

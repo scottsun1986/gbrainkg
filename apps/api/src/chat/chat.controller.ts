@@ -1,10 +1,12 @@
-import { Controller, Post, Body, MessageEvent, Req, Res, NotFoundException } from '@nestjs/common';
+import { Controller, Post, Body, MessageEvent, Req, Res, NotFoundException, UseGuards } from '@nestjs/common';
 import { ChatService } from './chat.service';
 import { Observable } from 'rxjs';
 import { Response } from 'express';
 import { AuthService } from '../auth/auth.service';
 import { PrismaClient } from '@prisma/client';
+import { AuthGuard } from '../auth/auth.guard';
 
+@UseGuards(AuthGuard)
 @Controller('api/v1/chat')
 export class ChatController {
   constructor(

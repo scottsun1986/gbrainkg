@@ -68,10 +68,11 @@ const Icon = ({name, size=16, stroke=1.6, color='currentColor', ...svgProps}: an
     more: <><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></>,
     lock: <><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></>,
     logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></>,
+    sun: <><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="6.34" y2="6.34"/><line x1="17.66" y1="17.66" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="6.34" y2="17.66"/><line x1="17.66" y1="6.34" x2="19.07" y2="4.93"/></>,
+    moon: <><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></>,
     help: <><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></>,
     arrowleft: <><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></>,
   };
-  if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
   return (
     <svg {...svgProps} width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" style={{flex:'0 0 auto',display:'inline-block', ...(svgProps.style || {})}}>
       {paths[name]}
@@ -111,12 +112,12 @@ function SideNav({active, setActive, user, onLogout, kbCount=0, capabilities=[]}
   ].filter(item => hasCapability(item.key === 'chat' ? 'chat.use' : 'kb.read', capabilities));
   const canAdmin = capabilities.includes('*') || ['org.read','org.user.read','role.read','kb.industry.read','kb.industry.create','kb.industry.grant','audit.read'].some(permission => capabilities.includes(permission));
   const canSettings = hasCapability('system.settings.read', capabilities) || hasCapability('system.settings.manage', capabilities);
-  if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
   return (
     <aside className="side">
       <div className="brand">
-        <span className="brand-mark">[</span>
-        <span>LLM Wiki</span>
+        <span className="brand-mark">G</span>
+        <span className="brand-name">GBrain</span>
+        <span className="brand-sub">企业级知识库</span>
       </div>
       <nav className="nav">
         <div className="nav-section">工作</div>
@@ -159,7 +160,6 @@ function Modal({title, onClose, children, foot}){
     document.addEventListener('keydown', onKey);
   return ()=>document.removeEventListener('keydown', onKey);
   },[]);
-  if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
   return (
     <div className="modal-mask" onClick={onClose}>
       <div className="modal" onClick={e=>e.stopPropagation()}>
@@ -228,7 +228,6 @@ function TagPicker({placeholder, items, selected, setSelected}){
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
   const filtered = items.filter(it => !selected.find(s=>s.id===it.id) && ((it.name||'').includes(q) || (it.n||'').includes(q)));
-  if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
   return (
     <div style={{position:'relative'}}>
       <div className="tag-input" onClick={()=>setOpen(true)}>
@@ -263,7 +262,6 @@ function TagPicker({placeholder, items, selected, setSelected}){
 
 /* Confirm modal */
 function ConfirmModal({title, msg, onConfirm, onClose}){
-  if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
   return (
     <Modal title={title} onClose={onClose} foot={
       <>
@@ -276,16 +274,204 @@ function ConfirmModal({title, msg, onConfirm, onClose}){
   );
 }
 
-function TopBar({title, sub}){
-  if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
+function TopBar({title, sub, theme, onToggleTheme, onOpenPalette, onOpenHelp, onOpenNotifications}){
   return (
     <div className="topbar">
       <div className="crumb"><b>{title}</b>{sub && <> · <span style={{color:'var(--ink-3)'}}>{sub}</span></>}</div>
       <div className="topbar-spacer"/>
+      <button className="topbar-search-trigger" onClick={onOpenPalette} title="搜索 / 命令面板 (⌘K)">
+        <Icon name="search" size={14}/>
+        <span>搜索知识库、文档、命令…</span>
+        <span className="kbd">⌘K</span>
+      </button>
       <div className="topbar-actions">
-        <button className="icon-btn" title="搜索" onClick={()=>window.dispatchEvent(new CustomEvent('app-toast',{detail:'请使用当前页面的知识库筛选或会话列表搜索'}))}><Icon name="search" size={16}/></button>
-        <button className="icon-btn" title="通知" onClick={()=>window.dispatchEvent(new CustomEvent('app-toast',{detail:'当前没有未读通知'}))}><Icon name="bell" size={16}/></button>
-        <button className="icon-btn" title="帮助" onClick={()=>window.dispatchEvent(new CustomEvent('app-toast',{detail:'可从知识库上传文档，再在对话中选择可见范围提问'}))}><Icon name="help" size={16}/></button>
+        <button className="icon-btn" title={theme==='dark'?'切换为亮色模式':'切换为暗色模式'} aria-label={theme==='dark'?'切换为亮色模式':'切换为暗色模式'} onClick={onToggleTheme}><Icon name={theme==='dark'?'sun':'moon'} size={16}/></button>
+        <button className="icon-btn" title="通知" onClick={onOpenNotifications}><Icon name="bell" size={16}/></button>
+        <button className="icon-btn" title="快捷键与帮助 (?)" onClick={onOpenHelp}><Icon name="help" size={16}/></button>
+      </div>
+    </div>
+  );
+}
+
+/* ============== 命令面板 / Spotlight ============== */
+function CommandPalette({open, onClose, onNav, onNewChat, onNewKb, onUpload, conversations = [], knowledgeBases = [], initialQuery = ''}){
+  const [query, setQuery] = useState(initialQuery);
+  const [highlight, setHighlight] = useState(0);
+  const inputRef = useRef(null);
+
+  useEffect(() => { if (open) { setQuery(''); setHighlight(0); setTimeout(() => inputRef.current?.focus(), 30); } }, [open]);
+  useEffect(() => { setQuery(initialQuery); setHighlight(0); }, [initialQuery]);
+
+  const items = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const groups = [];
+    groups.push({ label: '导航', items: [
+      { id: 'nav-chat', label: '去对话', hint: '⌘1', icon: 'chat', run: () => onNav('chat') },
+      { id: 'nav-libs', label: '去知识库', hint: '⌘2', icon: 'book', run: () => onNav('libs') },
+      { id: 'nav-graph', label: '去知识图谱', hint: '⌘3', icon: 'share', run: () => onNav('graph') },
+      ...(CAPABILITIES.includes('*') || CAPABILITIES.some((p) => ['org.read','org.user.read','role.read','kb.industry.read','kb.industry.create','kb.industry.grant','audit.read'].includes(p)) ? [{ id: 'nav-admin', label: '去管理后台', hint: '⌘4', icon: 'shield', run: () => onNav('admin') }] : []),
+    ].filter((i) => !q || i.label.toLowerCase().includes(q)) });
+    groups.push({ label: '动作', items: [
+      { id: 'act-new-chat', label: '新建对话', hint: '⌘N', icon: 'plus', run: onNewChat },
+      { id: 'act-new-kb', label: '新建个人库', hint: '', icon: 'book', run: onNewKb },
+      { id: 'act-upload', label: '上传文档到当前知识库', hint: '', icon: 'upload', run: onUpload },
+    ].filter((i) => !q || i.label.toLowerCase().includes(q)) });
+    if (knowledgeBases.length > 0) {
+      groups.push({ label: '知识库', items: knowledgeBases
+        .filter((kb) => !q || kb.name.toLowerCase().includes(q))
+        .slice(0, 8)
+        .map((kb) => ({ id: `kb-${kb.id}`, label: kb.name, sub: kb.desc || TYPE_LABEL[kb.type] || '', icon: 'book', run: () => onNav('libs', { kbId: kb.id }) })) });
+    }
+    if (conversations.length > 0) {
+      groups.push({ label: '最近会话', items: conversations
+        .filter((c) => !q || (c.title || '').toLowerCase().includes(q))
+        .slice(0, 8)
+        .map((c) => ({ id: `conv-${c.id}`, label: c.title || '未命名会话', sub: c.createdAt ? new Date(c.createdAt).toLocaleDateString('zh-CN') : '', icon: 'chat', run: () => onNav('chat', { convId: c.id }) })) });
+    }
+    return groups;
+  }, [query, conversations, knowledgeBases, onNav, onNewChat, onNewKb, onUpload]);
+
+  const flat = useMemo(() => items.flatMap((g) => g.items), [items]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setHighlight((h) => Math.min(flat.length - 1, h + 1)); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlight((h) => Math.max(0, h - 1)); }
+      else if (e.key === 'Enter') { e.preventDefault(); flat[highlight]?.run?.(); onClose(); }
+      else if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, flat, highlight, onClose]);
+
+  if (!open) return null;
+  let cursor = 0;
+  return (
+    <div className="cmdk-mask" onClick={onClose}>
+      <div className="cmdk" onClick={(e) => e.stopPropagation()}>
+        <div className="cmdk-input">
+          <Icon name="search" size={16} color="var(--ink-3)"/>
+          <input ref={inputRef} value={query} onChange={(e) => { setQuery(e.target.value); setHighlight(0); }} placeholder="搜索知识库、会话，或输入命令…" />
+          <span className="kbd">ESC</span>
+        </div>
+        <div className="cmdk-list">
+          {flat.length === 0 ? (
+            <div className="cmdk-empty">
+              没有匹配项。试试「对话」「新建」「知识图谱」。
+            </div>
+          ) : items.map((g) => (
+            <div className="cmdk-group" key={g.label}>
+              <div className="cmdk-group-label">{g.label}</div>
+              {g.items.map((it) => {
+                const isHl = cursor === highlight;
+                const idx = cursor;
+                cursor++;
+                return (
+                  <div key={it.id} className={`cmdk-item ${isHl ? 'hl' : ''}`} onMouseEnter={() => setHighlight(idx)} onClick={() => { it.run?.(); onClose(); }}>
+                    <Icon name={it.icon} size={14} color="var(--ink-3)"/>
+                    <div className="cmdk-item-body">
+                      <div className="cmdk-item-label">{it.label}</div>
+                      {it.sub && <div className="cmdk-item-sub">{it.sub}</div>}
+                    </div>
+                    {it.hint && <span className="kbd">{it.hint}</span>}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+        <div className="cmdk-foot">
+          <span><span className="kbd">↑↓</span> 选择</span>
+          <span><span className="kbd">↵</span> 执行</span>
+          <span><span className="kbd">⌘K</span> 关闭</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============== 通知面板 ============== */
+function NotificationsPanel({open, onClose}){
+  if (!open) return null;
+  const notifications = [
+    { id: 'n1', title: '欢迎使用企业级 GBrain 知识库', body: '上传文档 → 知识图谱会自动编译主题与关系。', when: '刚刚', icon: 'spark' },
+    { id: 'n2', title: '快捷键已启用', body: '按 ⌘K 打开命令面板；按 ? 查看所有快捷键。', when: '刚刚', icon: 'help' },
+  ];
+  return (
+    <div className="cmdk-mask" onClick={onClose}>
+      <div className="notif-panel" onClick={(e) => e.stopPropagation()}>
+        <div className="notif-head">
+          <h3>通知</h3>
+          <span className="x" onClick={onClose}>×</span>
+        </div>
+        <div className="notif-body">
+          {notifications.map((n) => (
+            <div key={n.id} className="notif-item">
+              <Icon name={n.icon} size={14} color="var(--evidence)"/>
+              <div>
+                <div className="notif-item-title">{n.title}</div>
+                <div className="notif-item-body">{n.body}</div>
+                <div className="notif-item-when">{n.when}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============== 快捷键速查浮层 ============== */
+function HelpOverlay({open, onClose}){
+  if (!open) return null;
+  const groups = [
+    { label: '导航', items: [
+      { keys: ['⌘', 'K'], label: '打开命令面板' },
+      { keys: ['⌘', '1'], label: '切换到对话' },
+      { keys: ['⌘', '2'], label: '切换到知识库' },
+      { keys: ['⌘', '3'], label: '切换到知识图谱' },
+      { keys: ['⌘', '4'], label: '切换到管理后台' },
+    ] },
+    { label: '动作', items: [
+      { keys: ['⌘', 'N'], label: '新建对话' },
+      { keys: ['⌘', 'F'], label: '聚焦当前页搜索' },
+      { keys: ['⌘', '\\'], label: '折叠侧栏' },
+      { keys: ['?'], label: '本速查表' },
+      { keys: ['Esc'], label: '关闭弹窗 / 取消选择' },
+    ] },
+    { label: '图谱', items: [
+      { keys: ['滚轮'], label: '以光标为中心缩放' },
+      { keys: ['拖拽空白'], label: '平移画布' },
+      { keys: ['拖拽节点'], label: '调整布局' },
+      { keys: ['点击'], label: '查看节点详情' },
+      { keys: ['双击'], label: '打开原始文档/知识库' },
+    ] },
+    { label: '对话', items: [
+      { keys: ['Enter'], label: '发送消息' },
+      { keys: ['Shift', 'Enter'], label: '在输入框中换行' },
+    ] },
+  ];
+  return (
+    <div className="cmdk-mask" onClick={onClose}>
+      <div className="help-overlay" onClick={(e) => e.stopPropagation()}>
+        <div className="help-head">
+          <h3>快捷键速查</h3>
+          <span className="x" onClick={onClose}>×</span>
+        </div>
+        <div className="help-body">
+          {groups.map((g) => (
+            <div className="help-group" key={g.label}>
+              <div className="help-group-label">{g.label}</div>
+              {g.items.map((it, i) => (
+                <div key={i} className="help-row">
+                  <div className="help-keys">{it.keys.map((k, j) => <span className="kbd" key={j}>{k}</span>)}</div>
+                  <div className="help-label">{it.label}</div>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -309,7 +495,6 @@ function ScopePicker({visibleKbs, selected, setSelected, open, setOpen}){
   const totalSel = selected.length;
   const totalAll = visibleKbs.length;
   const scopeLabel = totalSel===totalAll ? '我可见的全部' : (totalSel===0 ? '未选择任何库' : `已选 ${totalSel} 库`);
-  if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
   return (
     <div ref={wrapRef} style={{position:'relative'}}>
       <button className="scope-trigger" onClick={()=>setOpen(!open)} title="调整本次对话的检索范围">
@@ -330,8 +515,7 @@ function ScopePicker({visibleKbs, selected, setSelected, open, setOpen}){
                 </div>
                 {g.items.map(k => {
                   const checked = selected.includes(k.id);
-                  if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
-  return (
+                  return (
                       <div key={k.id} className="gi" onClick={()=>{
                         setSelected(checked ? selected.filter(x=>x!==k.id) : [...selected, k.id]);
                       }}>
@@ -357,6 +541,40 @@ function ScopePicker({visibleKbs, selected, setSelected, open, setOpen}){
   );
 }
 
+/* ============== 右键菜单 ============== */
+function ContextMenu({x, y, items, onClose}){
+  const ref = useRef(null);
+  useEffect(() => {
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
+  }, [onClose]);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const vw = window.innerWidth; const vh = window.innerHeight;
+    let nx = x; let ny = y;
+    if (x + r.width > vw) nx = vw - r.width - 6;
+    if (y + r.height > vh) ny = vh - r.height - 6;
+    el.style.left = nx + 'px'; el.style.top = ny + 'px';
+  }, [x, y, items]);
+  if (!items || items.length === 0) return null;
+  return (
+    <div ref={ref} className="ctx-menu" role="menu">
+      {items.map((it, i) => (
+        <button key={i} type="button" role="menuitem" className={`ctx-item ${it.danger ? 'danger' : ''}`} disabled={it.disabled} onClick={() => { it.onClick?.(); onClose(); }}>
+          {it.icon && <Icon name={it.icon} size={12}/>}
+          <span>{it.label}</span>
+          {it.shortcut && <span className="kbd" style={{marginLeft:'auto'}}>{it.shortcut}</span>}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /* ============== 对话屏 ============== */
 function ChatScreen(){
   const visibleKbs = KNOWLEDGE_BASES;
@@ -368,11 +586,19 @@ function ChatScreen(){
   const [activeCite, setActiveCite] = useState(null);
   const [activeConv, setActiveConv] = useState(null);
   const [conversationList, setConversationList] = useState(CONVERSATIONS);
+  const [convSearch, setConvSearch] = useState('');
   const [citations, setCitations] = useState([]);
   const [onlinePreview, setOnlinePreview] = useState(null);
+  const [citeCollapsed, setCiteCollapsed] = useState(true);
+  const [feedbackMap, setFeedbackMap] = useState({});
+  const [rewriting, setRewriting] = useState(false);
+  const [autoStick, setAutoStick] = useState(true);
+  const [ctxMenu, setCtxMenu] = useState(null);
+  const [hiddenConvs, setHiddenConvs] = useState(() => new Set());
   const taRef = useRef(null);
   const scrollRef = useRef(null);
   const chatFileRef = useRef(null);
+  const streamController = useRef(null);
 
   const allSel = selected.length === visibleKbs.length;
   const scopeLabel = allSel ? '我可见的全部' : (selected.length === 0 ? '未选择任何库' : `已选 ${selected.length} 库`);
@@ -387,9 +613,22 @@ function ChatScreen(){
   }, [visibleKbs.length]);
 
   useEffect(() => {
+    const onOpen = (e) => { if (e.detail) void openConversation(e.detail); };
+    window.addEventListener('app-open-conversation', onOpen);
+    return () => window.removeEventListener('app-open-conversation', onOpen);
+  }, []);
+
+  useEffect(() => {
+    const onNew = () => { newChat(); };
+    window.addEventListener('app-new-chat', onNew);
+    return () => window.removeEventListener('app-new-chat', onNew);
+  }, []);
+
+  useEffect(() => {
     if (!streaming) return;
     let active = true;
     const controller = new AbortController();
+    streamController.current = controller;
 
     const updateAssistant = (text, done) => {
       if (!active) return;
@@ -477,14 +716,37 @@ function ChatScreen(){
          }
       }
     })();
-    return () => { active = false; controller.abort(); };
+    return () => { active = false; streamController.current = null; controller.abort(); };
   }, [streaming]);
 
-  // 流式期间自动滚底
+  // 流式期间自动滚底（除非用户主动上滑）
   useEffect(()=>{
+    if (!autoStick) return;
     const el = scrollRef.current;
     if(el) el.scrollTop = el.scrollHeight;
-  },[messages]);
+  },[messages, autoStick]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return undefined;
+    const onScroll = () => {
+      const dist = el.scrollHeight - el.clientHeight - el.scrollTop;
+      setAutoStick(dist < 80);
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
+
+  const stopStream = () => {
+    streamController.current?.abort();
+    setStreaming(false);
+  };
+  const scrollToBottom = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    setAutoStick(true);
+  };
 
   const send = (preset?: string)=>{
     const text = (preset ?? input).trim();
@@ -493,6 +755,7 @@ function ChatScreen(){
     setInput('');
     setActiveCite(null);
     setCitations([]);
+    setAutoStick(true);
     setStreaming(true);
     if(taRef.current) taRef.current.style.height = 'auto';
   };
@@ -503,7 +766,7 @@ function ChatScreen(){
   };
 
   const copyAnswer = async (text) => { try { await navigator.clipboard.writeText(text); window.dispatchEvent(new CustomEvent('app-toast',{detail:'回答已复制'})); } catch { window.dispatchEvent(new CustomEvent('app-toast',{detail:'复制失败，请检查浏览器权限'})); } };
-  const shareConversation = async () => { const url = window.location.href; try { if (navigator.share) await navigator.share({title:'LLM Wiki 对话',url}); else await navigator.clipboard.writeText(url); window.dispatchEvent(new CustomEvent('app-toast',{detail:navigator.share?'已打开分享面板':'会话链接已复制'})); } catch {} };
+  const shareConversation = async () => { const url = window.location.href; try { if (navigator.share) await navigator.share({title:'GBrain 对话',url}); else await navigator.clipboard.writeText(url); window.dispatchEvent(new CustomEvent('app-toast',{detail:navigator.share?'已打开分享面板':'会话链接已复制'})); } catch {} };
   const saveFeedback = async (feedback) => {
     if (!activeConv) return;
     try {
@@ -553,6 +816,31 @@ function ChatScreen(){
     } catch (error) { window.dispatchEvent(new CustomEvent('app-toast', {detail: error.message || '会话加载失败'})); }
   };
 
+  const hideConversation = (conv) => {
+    const id = conv?.id;
+    if (!id) return;
+    const next = new Set(hiddenConvs); next.add(id); setHiddenConvs(next);
+    if (activeConv === id) { setMessages([]); setActiveConv(null); setCitations([]); }
+    const onUndo = () => { const r = new Set(hiddenConvs); r.delete(id); setHiddenConvs(r); };
+    const evt = new CustomEvent('app-undoable', { detail: { message: `已隐藏会话：${(conv.title || '未命名').slice(0, 20)}`, undoLabel: '撤销', undo: onUndo } });
+    window.dispatchEvent(evt);
+  };
+
+  const showConvMenu = (e, conv) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setCtxMenu({
+      x: e.clientX, y: e.clientY,
+      items: [
+        { label: '打开', icon: 'chat', onClick: () => openConversation(conv.id) },
+        { label: '复制标题', icon: 'copy', onClick: async () => { try { await navigator.clipboard.writeText(conv.title || ''); window.dispatchEvent(new CustomEvent('app-toast', { detail: '已复制标题' })); } catch {} } },
+        { label: '置顶', icon: 'pin', disabled: true, onClick: () => window.dispatchEvent(new CustomEvent('app-toast', { detail: '置顶功能即将上线' })) },
+        { label: '重命名', icon: 'spark', disabled: true, onClick: () => window.dispatchEvent(new CustomEvent('app-toast', { detail: '重命名功能即将上线' })) },
+        { label: '隐藏（可撤销）', icon: 'logout', danger: true, onClick: () => hideConversation(conv) },
+      ],
+    });
+  };
+
   const focusInput = ()=>{ if(taRef.current) taRef.current.focus(); };
 
   const autoGrow = (el)=>{
@@ -584,7 +872,6 @@ function ChatScreen(){
 
   const answerDone = messages.length>0 && messages[messages.length-1].done;
 
-  if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
   return (
     <div className="chat">
       <div className="conv-side">
@@ -594,23 +881,52 @@ function ChatScreen(){
         </div>
         <div className="conv-head">
           <h4>最近会话</h4>
-          <button className="icon-btn" title="new" onClick={newChat}><Icon name="plus" size={14}/></button>
+          <button className="icon-btn" title="新建会话 (⌘N)" onClick={newChat}><Icon name="plus" size={14}/></button>
+        </div>
+        <div className="conv-search">
+          <Icon name="search" size={12}/>
+          <input value={convSearch} onChange={(e) => setConvSearch(e.target.value)} placeholder="搜索会话标题…" />
+          {convSearch && <button type="button" className="conv-search-clear" onClick={() => setConvSearch('')} aria-label="清除">×</button>}
         </div>
         <div className="conv-list">
-          {conversationList.map(c => (
-            <div key={c.id} className={`conv-item ${activeConv===c.id?'active':''}`} onClick={()=>openConversation(c.id)}>
-              <span>{c.title}</span>
-              <span className="conv-time">{c.createdAt ? new Date(c.createdAt).toLocaleDateString('zh-CN') : ''}</span>
-            </div>
-          ))}
+          {(() => {
+            const q = convSearch.trim().toLowerCase();
+            const visibleList = conversationList.filter((c) => !hiddenConvs.has(c.id));
+            const filtered = q ? visibleList.filter((c) => (c.title || '').toLowerCase().includes(q)) : visibleList;
+            const now = Date.now();
+            const groups = [
+              { label: '今天', items: filtered.filter((c) => c.createdAt && (now - new Date(c.createdAt).getTime() < 24 * 3600 * 1000)) },
+              { label: '近 7 天', items: filtered.filter((c) => c.createdAt && (now - new Date(c.createdAt).getTime() < 7 * 24 * 3600 * 1000) && (now - new Date(c.createdAt).getTime() >= 24 * 3600 * 1000)) },
+              { label: '更早', items: filtered.filter((c) => c.createdAt && (now - new Date(c.createdAt).getTime() >= 7 * 24 * 3600 * 1000)) },
+              { label: '未分类', items: filtered.filter((c) => !c.createdAt) },
+            ].filter((g) => g.items.length > 0);
+            if (groups.length === 0) return <div className="conv-empty">{q ? '没有匹配的会话' : '暂无会话'}</div>;
+            return groups.map((g) => (
+              <div key={g.label} className="conv-group">
+                <div className="conv-group-label">{g.label} <em>· {g.items.length}</em></div>
+                {g.items.map((c) => (
+                  <div key={c.id} className={`conv-item ${activeConv===c.id?'active':''}`} onClick={()=>openConversation(c.id)} onContextMenu={(e) => showConvMenu(e, c)}>
+                    <span className="conv-title">{c.title || '未命名会话'}</span>
+                    <span className="conv-time">{c.createdAt ? new Date(c.createdAt).toLocaleDateString('zh-CN') : ''}</span>
+                  </div>
+                ))}
+              </div>
+            ));
+          })()}
         </div>
-        <div className="new-chat" onClick={newChat} title="开始一段新对话">
+        <div className="new-chat" onClick={newChat} title="开始一段新对话 (⌘N)">
           <Icon name="plus" size={12}/> 新建会话
         </div>
       </div>
 
       <div className="chat-main">
         <div className="chat-scroll" ref={scrollRef}>
+          {!autoStick && messages.length > 0 && (
+            <button type="button" className="scroll-to-bottom" onClick={scrollToBottom} title="回到底部">
+              <span>↓ 回到底部</span>
+              {streaming && <span className="streaming-dot" />}
+            </button>
+          )}
           <div className="chat-inner">
             {messages.length===0 && (
               <div className="welcome">
@@ -627,20 +943,18 @@ function ChatScreen(){
             {messages.map((msg, mi)=>{
               const isLast = mi === messages.length-1;
               if(msg.role==='user'){
-                if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
-  return (
+                return (
                   <div key={mi} className="msg msg-user">
                     <div className="bubble">{msg.text}</div>
                   </div>
                 );
               }
-              if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
-  return (
+              return (
                 <div key={mi} className="msg msg-ai">
                   <div className="body">
                     <div className="who">
                       <span className="dot"/>
-                      <span>LLMWiki · 大脑综述</span>
+                      <span>GBrain · 大脑综述</span>
                       <span style={{color:'var(--ink-4)'}}>· 你的大脑 · {scopeLabel}{allSel ? `（${selected.length} 库）` : ''}</span>
                     </div>
                     <div className="answer">
@@ -713,7 +1027,15 @@ function ChatScreen(){
                 <div className="comp-chip" style={{opacity:KNOWLEDGE_BASES.find(k => k.id === selected[0])?.canWrite ? .7 : .4,cursor:KNOWLEDGE_BASES.find(k => k.id === selected[0])?.canWrite ? 'pointer' : 'not-allowed'}} onClick={()=>KNOWLEDGE_BASES.find(k => k.id === selected[0])?.canWrite && chatFileRef.current?.click()}>
                   <Icon name="pin" size={11}/> 上传附件
                 </div>
-                <button className="send-btn" onClick={()=>send()} disabled={!input.trim() || streaming || selected.length===0} title={streaming?'回答生成中…':'发送 (Enter)'}><Icon name="send" size={14} color="#fff"/></button>
+                {streaming ? (
+                  <button type="button" className="send-btn stop" onClick={stopStream} title="停止生成 (Esc)" aria-label="停止生成">
+                    <span className="stop-icon" aria-hidden="true" />
+                  </button>
+                ) : (
+                  <button type="button" className="send-btn" onClick={()=>send()} disabled={!input.trim() || selected.length===0} title="发送 (Enter)" aria-label="发送">
+                    <Icon name="send" size={14} color="var(--on-ink)"/>
+                  </button>
+                )}
               </div>
             </div>
             <div className="foot-note">回答来自你的个人大脑（Compiled Truth）· 新知识入库与权限变更均触发面向你的重编译 · 引用可回溯原始文档</div>
@@ -722,49 +1044,58 @@ function ChatScreen(){
       </div>
 
       {answerDone && (
-        <div className="cite-panel">
-          <div className="cite-head">
-            <div style={{display:'flex',alignItems:'center'}}>
-              <h4>大脑引用</h4><span className="count">{citations.length}</span>
+        <div className={`cite-panel ${citeCollapsed ? 'collapsed' : 'open'}`}>
+          <button type="button" className="cite-rail" onClick={() => setCiteCollapsed(false)} title={citeCollapsed ? '展开引用面板' : '收起'}>
+            <Icon name="book" size={14} color="#fff"/>
+            <span className="cite-rail-label">引用</span>
+            <span className="cite-rail-count">{citations.length}</span>
+          </button>
+          <div className="cite-drawer">
+            <div className="cite-head">
+              <div style={{display:'flex',alignItems:'center'}}>
+                <h4>大脑引用</h4><span className="count">{citations.length}</span>
+              </div>
+              <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                <div className="cite-sort"><span>主题相关度</span><Icon name="chevron" size={11} color="var(--ink-3)" style={{transform:'rotate(90deg)'}}/></div>
+                <button type="button" className="cite-close" onClick={() => setCiteCollapsed(true)} title="收起面板" aria-label="收起引用面板">×</button>
+              </div>
             </div>
-            <div className="cite-sort"><span>主题相关度</span><Icon name="chevron" size={11} color="var(--ink-3)" style={{transform:'rotate(90deg)'}}/></div>
-          </div>
-          <div className="cite-body">
-            {citations.map((c, idx) => {
-              const n = idx+1;
-              // 原型引用中的 i1/o1 等旧 ID 可能与数据库真实 UUID 不同；
-              // 引用仍应可读，不能因为元数据未匹配而让整页崩溃。
-              const kb = KNOWLEDGE_BASES.find(k=>k.id===c.kb) || {
-                type: 'industry',
-                name: c.kbName || '知识库',
-              };
-              if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
-  return (
-                <div key={c.id} className={`cite-card ${activeCite===n?'active':''}`} onMouseEnter={()=>setActiveCite(n)} onClick={()=>setActiveCite(n)}>
-                  <div className="top">
-                    <span className="num">{n}</span>
-                    <div className="ttl">{c.title}</div>
+            <div className="cite-body">
+              {citations.map((c, idx) => {
+                const n = idx+1;
+                // 原型引用中的 i1/o1 等旧 ID 可能与数据库真实 UUID 不同；
+                // 引用仍应可读，不能因为元数据未匹配而让整页崩溃。
+                const kb = KNOWLEDGE_BASES.find(k=>k.id===c.kb) || {
+                  type: 'industry',
+                  name: c.kbName || '知识库',
+                };
+return (
+                  <div key={c.id} className={`cite-card ${activeCite===n?'active':''}`} onMouseEnter={()=>setActiveCite(n)} onClick={()=>setActiveCite(n)}>
+                    <div className="top">
+                      <span className="num">{n}</span>
+                      <div className="ttl">{c.title}</div>
+                    </div>
+                    <div className="meta">
+                      {TYPE_BADGE(kb.type)} <span style={{color:'var(--ink-4)'}}>·</span> <span>{c.kbName}</span> <span style={{flex:1}}/>
+                      <span className="badge evidence" style={{fontSize:10,padding:'1px 6px'}} title="编译版本：该主题页在你大脑中的第 N 次整理">Truth {c.truth}</span>
+                    </div>
+                    <div className="snippet">{c.snippet}</div>
+                    <div className="evid-line" title="该主题页 Timeline 中的证据条目">
+                      <Icon name="list" size={11} color="var(--evidence)"/> Timeline · {c.evidences} 条证据 · 最近更新 {c.lastUpdate}
+                    </div>
+                    <div className="acts">
+                      <button className="primary" onClick={(e)=>{e.stopPropagation(); void previewCitation(c);}}>打开原始文档</button>
+                      <button disabled={!c.documentId} title={c.documentId ? '打开原始文件预览' : '当前历史引用未返回原始文件信息'} onClick={(e)=>{e.stopPropagation(); void previewCitation(c);}}>原始文件</button>
+                    </div>
                   </div>
-                  <div className="meta">
-                    {TYPE_BADGE(kb.type)} <span style={{color:'var(--ink-4)'}}>·</span> <span>{c.kbName}</span> <span style={{flex:1}}/>
-                    <span className="badge evidence" style={{fontSize:10,padding:'1px 6px'}} title="编译版本：该主题页在你大脑中的第 N 次整理">Truth {c.truth}</span>
-                  </div>
-                  <div className="snippet">{c.snippet}</div>
-                  <div className="evid-line" title="该主题页 Timeline 中的证据条目">
-                    <Icon name="list" size={11} color="var(--evidence)"/> Timeline · {c.evidences} 条证据 · 最近更新 {c.lastUpdate}
-                  </div>
-                  <div className="acts">
-                    <button className="primary" onClick={(e)=>{e.stopPropagation(); void previewCitation(c);}}>打开原始文档</button>
-                    <button disabled={!c.documentId} title={c.documentId ? '打开原始文件预览' : '当前历史引用未返回原始文件信息'} onClick={(e)=>{e.stopPropagation(); void previewCitation(c);}}>原始文件</button>
-                    <button disabled title="当前部署未配置 Obsidian URI" onClick={(e)=>e.stopPropagation()}>Obsidian</button>
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         </div>
       )}
       <OnlinePreviewModal preview={onlinePreview} onClose={()=>setOnlinePreview(null)}/>
+      {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={() => setCtxMenu(null)}/>}
     </div>
   );
 }
@@ -782,6 +1113,7 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
   const [confirmDoc, setConfirmDoc] = useState(null);
   const [confirmKb, setConfirmKb] = useState(null);
   const [newPersonalOpen, setNewPersonalOpen] = useState(false);
+  const [newTextOpen, setNewTextOpen] = useState(false);
   const fileInputRef = useRef(null);
   const current = sel || filtered[0] || null;
   const loadDocuments = async (kbId) => {
@@ -790,10 +1122,22 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
       const response = await fetch(`${API_BASE_URL}/api/v1/kbs/${kbId}/documents`, {headers:apiHeaders()});
       if (!response.ok) throw new Error('文档列表加载失败');
       const result = await response.json();
-      setDocs((result.items || []).map((doc: any) => ({
-        id: doc.id, name: doc.title, type: doc.title.split('.').pop() || 'file', size: '—', status: doc.status,
-        uploader: doc.uploadedBy?.displayName || doc.uploadedBy?.username || '—', t: new Date(doc.updatedAt || doc.createdAt).toLocaleString('zh-CN'), path: doc.mdPath,
-      })));
+      setDocs((result.items || []).map((doc: any) => {
+        const path = doc.mdPath || '';
+        const baseName = path.split('/').pop() || path;
+        const original = doc.title && !doc.title.includes('/') ? doc.title : baseName;
+        const ext = original.split('.').pop() || 'file';
+        return {
+          id: doc.id,
+          name: original,
+          type: ext,
+          size: doc.sizeBytes ? `${(doc.sizeBytes / 1024).toFixed(1)} KB` : '—',
+          status: doc.status,
+          uploader: doc.uploadedBy?.displayName || doc.uploadedBy?.username || '—',
+          t: new Date(doc.updatedAt || doc.createdAt).toLocaleString('zh-CN'),
+          path,
+        };
+      }));
     } catch (error) { window.dispatchEvent(new CustomEvent('app-toast', {detail: error.message || '文档加载失败'})); }
   };
   useEffect(() => { if (!current && filtered[0]) setSel(filtered[0]); }, [filtered.length]);
@@ -853,9 +1197,24 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
     } catch (error) { window.dispatchEvent(new CustomEvent('app-toast', {detail:error.message || '删除失败'})); }
   };
 
-  if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
-  if (!current) return <div style={{padding:40,textAlign:"center",color:"#999"}}>当前账号暂无可见知识库。</div>;
-  return (
+  const addTextDocument = async ({title, content}) => {
+    if (!current?.id || !current.canWrite) return;
+    setUploading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/kbs/${current.id}/documents/text`, {
+        method: 'POST', headers: {'Content-Type':'application/json', ...apiHeaders()},
+        body: JSON.stringify({title, content}),
+      });
+      const result = await response.json().catch(()=>({}));
+      if (!response.ok) throw new Error(result.message || '文本知识保存失败');
+      setNewTextOpen(false);
+      await loadDocuments(current.id);
+      window.dispatchEvent(new CustomEvent('app-toast',{detail:'文本知识已保存并进入解析与索引流程'}));
+    } catch (error) { window.dispatchEvent(new CustomEvent('app-toast',{detail:error.message || '文本知识保存失败'})); }
+    finally { setUploading(false); }
+  };
+
+return (
     <div className="lib">
       <div className="lib-list">
         <div className="lib-head" style={{display:'flex',alignItems:'center',gap:12}}>
@@ -881,7 +1240,7 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
                 <span className="nm">{k.name}</span>
                 {TYPE_BADGE(k.type)}
               </div>
-              <div className="desc">{k.desc}</div>
+              <div className="desc">{k.desc || '暂无描述'}</div>
               <div className="row2">
                 <span><Icon name="doc" size={12}/> {k.docs} 文档</span>
                 <span className="vis" title="可见范围"><Icon name={k.type==='personal'?'lock':k.type==='org'?'users':'shield'} size={11}/> <b>{k.visibility}</b></span>
@@ -912,6 +1271,7 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
             {current.type==='personal' && <button className="btn" onClick={()=>window.dispatchEvent(new CustomEvent('app-toast',{detail:'个人库不可共享，权限仅随账号生效'}))}>查看权限</button>}
             {current.type==='personal' && current.canDelete && <button className="btn danger" onClick={()=>setConfirmKb(current)}>删除知识库</button>}
             <input ref={fileInputRef} type="file" hidden onChange={(event)=>{const file=event.target.files?.[0]; if(file) uploadDocument(file); event.target.value='';}} accept=".md,.txt,.csv,.html,.htm,.doc,.docx,.pdf,.xlsx,.pptx,.png,.jpg,.jpeg"/>
+            {current.canWrite && <button className="btn" onClick={()=>setNewTextOpen(true)} disabled={uploading}><Icon name="plus" size={12}/> 添加文本</button>}
             {current.canWrite && <button className="btn primary" onClick={()=>fileInputRef.current?.click()} disabled={uploading}><Icon name="upload" size={12}/> {uploading?'解析中…':'上传文档'}</button>}
           </div>
         </div>
@@ -945,11 +1305,11 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
               <div>操作</div>
             </div>
             {docs.map((d,i)=>(
-              <div key={i} className="doc-row" style={{gridTemplateColumns:'30px 1fr 110px 90px 70px 120px'}}>
-                <Icon name="doc" size={14} className="ic"/>
+              <div key={i} className="doc-row" style={{gridTemplateColumns:'32px 1fr 110px 110px 80px 120px'}}>
+                <div className="doc-type-icon" data-type={d.type}><Icon name="doc" size={14} color="var(--ink-3)"/></div>
                 <div>
-                  <div className="ttl">{d.name}</div>
-                  <div className="sub">{d.path}</div>
+                  <div className="ttl" title={d.name}>{d.name}</div>
+                  <div className="sub" title={d.path}>{d.path}</div>
                 </div>
                 <div>
                   <span className={`status ${d.status}`}>
@@ -957,12 +1317,12 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
                     {d.status==='published'?'已发布':d.status==='indexing'?'索引中':d.status==='parsing'?'解析中':'失败'}
                   </span>
                 </div>
-                <div style={{color:'var(--ink-2)'}}>{d.uploader} · {d.t}</div>
+                <div style={{color:'var(--ink-2)'}}>{d.uploader}<div style={{fontSize:10.5,color:'var(--ink-4)'}}>{d.t}</div></div>
                 <div style={{color:'var(--ink-3)',fontVariantNumeric:'tabular-nums'}}>{d.size}</div>
-                <div className="actions" style={{display:'flex',gap:6}}>
-                  <button onClick={()=>previewDocument(d)}>预览</button>
-                  {current.canWrite && d.status==='failed' && !String(d.id).startsWith('temp-') && <button onClick={async()=>{try{const response=await fetch(`${API_BASE_URL}/api/v1/kbs/${current.id}/documents/${d.id}/retry`,{method:'POST',headers:apiHeaders()}); const result=await response.json().catch(()=>({})); if(!response.ok) throw new Error(result.message||'重试失败'); window.dispatchEvent(new CustomEvent('app-toast',{detail:'已重新提交解析'})); await loadDocuments(current.id);}catch(error){window.dispatchEvent(new CustomEvent('app-toast',{detail:error.message||'重试失败'}));}}}>重试</button>}
-                  {current.canWrite && !String(d.id).startsWith('temp-') && <button className="danger" onClick={()=>setConfirmDoc(d)}>删除</button>}
+                <div className="actions" style={{display:'flex',gap:6,justifyContent:'flex-end'}}>
+                  <button className="icon-btn" title="预览" onClick={()=>previewDocument(d)} aria-label="预览"><Icon name="search" size={14}/></button>
+                  {current.canWrite && d.status==='failed' && !String(d.id).startsWith('temp-') && <button className="icon-btn" title="重试" onClick={async()=>{try{const response=await fetch(`${API_BASE_URL}/api/v1/kbs/${current.id}/documents/${d.id}/retry`,{method:'POST',headers:apiHeaders()}); const result=await response.json().catch(()=>({})); if(!response.ok) throw new Error(result.message||'重试失败'); window.dispatchEvent(new CustomEvent('app-toast',{detail:'已重新提交解析'})); await loadDocuments(current.id);}catch(error){window.dispatchEvent(new CustomEvent('app-toast',{detail:error.message||'重试失败'}));}}} aria-label="重试"><Icon name="refresh" size={14}/></button>}
+                  {current.canWrite && !String(d.id).startsWith('temp-') && <button className="icon-btn danger" title="删除" onClick={()=>setConfirmDoc(d)} aria-label="删除"><Icon name="logout" size={14} style={{transform:'scaleX(-1)'}}/></button>}
                 </div>
               </div>
             ))}
@@ -976,6 +1336,7 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
       <OnlinePreviewModal preview={onlinePreview} onClose={()=>setOnlinePreview(null)}/>
       {confirmDoc && <ConfirmModal title="删除知识" msg={<>确认删除 <b style={{color:'var(--ink)'}}>{confirmDoc.name}</b>？删除后将从当前知识库移除。</>} onConfirm={()=>deleteDocument(confirmDoc)} onClose={()=>setConfirmDoc(null)}/>} 
       {confirmKb && <ConfirmModal title="删除个人知识库" msg={<>确认删除个人知识库 <b style={{color:'var(--ink)'}}>{confirmKb.name}</b>？其中的知识将一并删除。</>} onConfirm={async()=>{const response=await fetch(`${API_BASE_URL}/api/v1/admin/kbs/${confirmKb.id}`,{method:'DELETE',headers:apiHeaders()}); const result=await response.json().catch(()=>({})); if(!response.ok) throw new Error(result.message||'删除失败'); setConfirmKb(null); setSel(null); window.dispatchEvent(new CustomEvent('app-data-refresh'));}} onClose={()=>setConfirmKb(null)}/>} 
+      {newTextOpen && <TextKnowledgeModal onClose={()=>setNewTextOpen(false)} onSave={addTextDocument}/>}
       {newPersonalOpen && <NewPersonalKBModal onClose={()=>setNewPersonalOpen(false)} onSaved={()=>{setNewPersonalOpen(false); window.dispatchEvent(new CustomEvent('app-data-refresh'));}}/>}
     </div>
   );
@@ -1020,7 +1381,6 @@ function UsersPanel({orgOptions = [], canManage = false}){
   const [editTarget, setEditTarget] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
   const filtered = USERS.filter(u => !search || u.name.includes(search) || u.org.includes(search) || u.orgPath.includes(search));
-  if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
   return (
     <>
       <div style={{display:'flex',alignItems:'flex-start',marginBottom:20}}>
@@ -1092,7 +1452,6 @@ function UserFormModal({target, orgOptions = [], onClose, onSaved}){
     } catch (error) { window.dispatchEvent(new CustomEvent('app-toast', {detail:error.message || '保存失败'})); }
     finally { setSaving(false); }
   };
-  if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
   return (
     <Modal title={isEdit?`编辑人员 · ${target.name}`:'新增人员'} onClose={onClose} foot={
       <>
@@ -1131,7 +1490,6 @@ function RolesPanel({canManage = false}){
   const [open, setOpen] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
-  if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
   return (
     <>
       <div style={{display:'flex',alignItems:'flex-start',marginBottom:20}}>
@@ -1224,7 +1582,6 @@ function RoleFormModal({target, onClose, onSaved}){
     } catch (error) { window.dispatchEvent(new CustomEvent('app-toast', {detail:error.message || '保存失败'})); }
     finally { setSaving(false); }
   };
-  if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
   return (
     <Modal title={isEdit?`编辑角色 · ${target.name}`:'新增角色'} onClose={onClose} foot={
       <>
@@ -1261,12 +1618,28 @@ function RoleFormModal({target, onClose, onSaved}){
   );
 }
 
+function TextKnowledgeModal({onClose, onSave}){
+  const [title, setTitle] = useState('');
+  const [content, setContent] = useState('');
+  const [saving, setSaving] = useState(false);
+  const save = async () => {
+    if (!content.trim() || saving) return;
+    setSaving(true);
+    try { await onSave({title: title.trim(), content: content.trim()}); }
+    finally { setSaving(false); }
+  };
+  return <Modal title="添加文本知识" onClose={onClose} foot={<><button className="btn" onClick={onClose}>取消</button><button className="btn primary" disabled={!content.trim() || saving} onClick={save}>{saving?'保存中…':'保存并索引'}</button></>}>
+    <div className="field"><label>标题（可选）</label><input value={title} onChange={e=>setTitle(e.target.value)} placeholder="不填写则显示为“未命名文本知识”" maxLength={200}/></div>
+    <div className="field"><label>内容<span className="req">*</span></label><textarea value={content} onChange={e=>setContent(e.target.value)} placeholder="记录制度、经验、账号备注等文本知识……" style={{minHeight:220}} maxLength={10000000}/></div>
+    <div className="field-hint">内容会经过统一解析、分块、向量化和 GBrain 索引，保存后即可用于问答。</div>
+  </Modal>;
+}
+
 /* ============== Admin: 行业库管理（含动态新增） ============== */
 function IndustryKBPanel({onOpenGrant, canCreate = false}){
   const [openNew, setOpenNew] = useState(false);
   const [adminTarget, setAdminTarget] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
-  if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
   return (
     <>
       <div style={{display:'flex',alignItems:'flex-start',marginBottom:20}}>
@@ -1328,7 +1701,6 @@ function NewIndustryKBModal({onClose, onSaved}){
     } catch(error) { window.dispatchEvent(new CustomEvent('app-toast',{detail:error.message || '创建失败'})); }
     finally { setSaving(false); }
   };
-  if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
   return (
     <Modal title="新建行业知识库" onClose={onClose} foot={
       <>
@@ -1358,7 +1730,6 @@ function KBAdminModal({kb, onClose, onSaved}){
     if (!response.ok) { window.dispatchEvent(new CustomEvent('app-toast',{detail:result.message || '保存失败'})); return; }
     window.dispatchEvent(new CustomEvent('app-toast',{detail:'管理员设置已保存'})); onSaved?.();
   };
-  if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
   return (
     <Modal title={`管理员设置 · ${kb.name}`} onClose={onClose} foot={
       <>
@@ -1404,7 +1775,6 @@ function ModelPanel(){
       window.dispatchEvent(new CustomEvent('app-toast',{detail:result.status==='passed'?'连接测试成功':'连接测试失败'}));
     } catch { setTestStates(s=>({...s, [id]:'failed'})); }
   };
-  if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
   return (
     <>
       <div style={{display:'flex',alignItems:'flex-start',marginBottom:18}}>
@@ -1429,8 +1799,7 @@ function ModelPanel(){
             </div>
             {MODELS.llm.map(m=>{
               const state = testStates[m.id] || (m.tested?'ok':'idle');
-              if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
-  return (
+              return (
                 <div key={m.id} className={`mc-card ${m.default?'default':''}`}>
                   <span className="dot"/>
                   <div className="info">
@@ -1455,8 +1824,7 @@ function ModelPanel(){
             </div>
             {MODELS.embedding.map(m=>{
               const state = testStates[m.id] || (m.tested?'ok':'idle');
-              if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
-  return (
+              return (
                 <div key={m.id} className={`mc-card ${m.default?'default':''}`}>
                   <span className="dot"/>
                   <div className="info">
@@ -1485,8 +1853,7 @@ function ModelPanel(){
             </div>
             {MODELS.rerank.map(m=>{
               const state = testStates[m.id] || (m.tested?'ok':'idle');
-              if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
-  return (
+              return (
                 <div key={m.id} className={`mc-card ${m.default?'default':''}`}>
                   <span className="dot"/>
                   <div className="info">
@@ -1548,7 +1915,6 @@ function NewProviderModal({target, onClose, onSaved}){
   const [kind, setKind] = useState(target?.kind || 'gateway');
   const [name, setName] = useState(target?.name || ''); const [baseUrl, setBaseUrl] = useState(target?.url || ''); const [apiKey, setApiKey] = useState(''); const [note, setNote] = useState(''); const [saving, setSaving] = useState(false);
   const save = async () => { if (!name.trim() || !baseUrl.trim()) return; setSaving(true); try { const response=await fetch(`${API_BASE_URL}/api/v1/admin/providers${target ? `/${target.id}` : ''}`,{method:target?'PATCH':'POST',headers:{'Content-Type':'application/json',...apiHeaders()},body:JSON.stringify({name,kind,baseUrl,defaultParams:{note},...(apiKey ? {apiKey} : {})})}); const result=await response.json().catch(()=>({})); if(!response.ok) throw new Error(result.message||'保存失败'); window.dispatchEvent(new CustomEvent('app-toast',{detail:'供应商已保存'})); onSaved?.(); } catch(error){window.dispatchEvent(new CustomEvent('app-toast',{detail:error.message||'保存失败'}));} finally{setSaving(false);} };
-  if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
   return (
     <Modal title={target ? `编辑供应商 · ${target.name}` : '新增供应商'} onClose={onClose} foot={
       <>
@@ -1575,7 +1941,6 @@ function NewModelModal({kind, target, onClose, onSaved}){
   const label = kind==='llm' ? '大语言模型' : kind==='embedding' ? '嵌入模型' : '重排模型';
   const [modelName, setModelName] = useState(target?.modelName || target?.name || ''); const [providerId, setProviderId] = useState(target?.providerId || ''); const [contextLen, setContextLen] = useState(String(target?.contextLen || 8192)); const [dimensions, setDimensions] = useState(target?.dimensions ? String(target.dimensions) : ''); const [isDefault, setIsDefault] = useState(Boolean(target?.isDefault ?? target?.default)); const [saving, setSaving] = useState(false);
   const save = async () => { if (!modelName.trim() || !providerId) return; setSaving(true); try { const response=await fetch(`${API_BASE_URL}/api/v1/admin/models${target ? `/${target.id}` : ''}`,{method:target?'PATCH':'POST',headers:{'Content-Type':'application/json',...apiHeaders()},body:JSON.stringify({kind,modelName,providerId,contextLen,dimensions,isDefault})}); const result=await response.json().catch(()=>({})); if(!response.ok) throw new Error(result.message||'保存失败'); window.dispatchEvent(new CustomEvent('app-toast',{detail:'模型已保存'})); onSaved?.(); } catch(error){window.dispatchEvent(new CustomEvent('app-toast',{detail:error.message||'保存失败'}));} finally{setSaving(false);} };
-  if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
   return (
     <Modal title={`${target ? '编辑' : '新增'}${label}`} onClose={onClose} foot={
       <>
@@ -1649,12 +2014,12 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
 
   const toggleNode = (id) => setExpandedIds(s=>{ const ns = new Set(s); ns.has(id) ? ns.delete(id) : ns.add(id); return ns; });
 
-  const addChildOrg = async (parentId, name) => {
+  const addChildOrg = async (parentId, name, adminUserIds = []) => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/admin/orgs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...apiHeaders() },
-        body: JSON.stringify({ name, parentId: parentId || null }),
+        body: JSON.stringify({ name, parentId: parentId || null, adminUserIds }),
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || `API ${response.status}`);
@@ -1664,11 +2029,11 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
       setOrgTree(t=>{
         const rec = (n) => {
           if(n.id === parentId){
-            return {...n, children: [...(n.children||[]), {...created, children: []}]};
+            return {...n, children: [...(n.children||[]), {...created, admins: adminUserIds.map(id => USERS.find(u=>u.id===id)?.name).filter(Boolean), children: []}]};
           }
           return {...n, children: (n.children||[]).map(rec)};
         };
-        return parentId ? rec(t) : {...created, children: []};
+        return parentId ? rec(t) : {...created, admins: adminUserIds.map(id => USERS.find(u=>u.id===id)?.name).filter(Boolean), children: []};
       });
       window.dispatchEvent(new CustomEvent('app-toast', {detail:`组织「${created.name}」已保存` }));
       return true;
@@ -1702,7 +2067,6 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
       window.dispatchEvent(new CustomEvent('app-data-refresh'));
     } catch (error) { window.dispatchEvent(new CustomEvent('app-toast',{detail:error.message || '去激活失败'})); }
   };
-  if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
   return (
     <div className="admin">
       <div className="admin-side">
@@ -1771,7 +2135,7 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
         )}
 
           {adminModal && <OrgAdminModal node={adminModal} onClose={()=>setAdminModal(null)} onSaved={()=>{setAdminModal(null); window.dispatchEvent(new CustomEvent('app-data-refresh'));}}/>} 
-        {addModal && <AddOrgModal parent={addModal} onAdd={async (name)=>{if (await addChildOrg(addModal.id, name)) setAddModal(null);}} onClose={()=>setAddModal(null)}/>} 
+        {addModal && <AddOrgModal parent={addModal} onAdd={async (name, adminUserIds)=>{if (await addChildOrg(addModal.id, name, adminUserIds)) setAddModal(null);}} onClose={()=>setAddModal(null)}/>} 
       </div>
     </div>
   );
@@ -1780,17 +2144,22 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
 /* 新增子组织弹窗（支持无限层级） */
 function AddOrgModal({parent, onAdd, onClose}){
   const [name, setName] = useState('');
-  if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
+  const [admins, setAdmins] = useState([]);
   return (
     <Modal title={parent.id ? `新增子组织 · ${parent.name}` : '新增一级组织'} onClose={onClose} foot={
       <>
         <button className="btn" onClick={onClose}>取消</button>
-        <button className="btn primary" disabled={!name.trim()} onClick={()=>onAdd(name.trim())}>创建</button>
+        <button className="btn primary" disabled={!name.trim()} onClick={()=>onAdd(name.trim(), admins.map(item=>item.id))}>创建</button>
       </>
     }>
       <div className="field">
         <label>组织名称<span className="req">*</span></label>
         <input autoFocus value={name} onChange={e=>setName(e.target.value)} placeholder="如：合规三组 / 华东分部" onKeyDown={e=>{if(e.key==='Enter' && name.trim()) onAdd(name.trim());}}/>
+      </div>
+      <div className="field">
+        <label>组织管理员（可选）</label>
+        <TagPicker placeholder="创建时直接指定管理员..." items={USERS.map(u=>({id:u.id,n:u.name,sub:u.org}))} selected={admins} setSelected={setAdmins}/>
+        <div className="field-hint">管理员将同时成为该组织知识库管理员；上级组织管理员自动拥有本组织及下级组织的管理权限。被选人员还需具备“组织管理员”角色，角色可在人员/角色管理中配置。</div>
       </div>
       <div style={{padding:12,background:'var(--surface-2)',borderRadius:7,fontSize:12,color:'var(--ink-3)',lineHeight:1.6}}>
         <b style={{color:'var(--ink)'}}>继承规则</b>：{parent.id ? `新组织自动挂到「${parent.name}」之下，其成员自动继承${parent.name === '集团总部' ? '全部组织库' : `「${parent.name}」及其上级`}的可见范围；` : '新组织将作为组织树根节点；'}可在创建后为该组织单独设置知识库管理员。
@@ -1810,7 +2179,6 @@ function OrgAdminModal({node, onClose, onSaved}){
     if (!response.ok) { window.dispatchEvent(new CustomEvent('app-toast',{detail:result.message || '保存失败'})); return; }
     window.dispatchEvent(new CustomEvent('app-toast',{detail:'组织管理员设置已保存'})); onSaved?.();
   };
-  if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
   return (
     <Modal title={`知识库管理员 · ${node.name}`} onClose={onClose} foot={
       <>
@@ -1867,7 +2235,6 @@ function GrantPanel({kbId, setKbId}){
     if (!response.ok) { window.dispatchEvent(new CustomEvent('app-toast',{detail:result.message || '授权失败'})); return; }
     setSubjectId(''); window.dispatchEvent(new CustomEvent('app-toast',{detail:'授权已保存'})); window.dispatchEvent(new CustomEvent('app-data-refresh'));
   };
-  if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
   return (
     <>
       <div className="h1">行业库授权</div>
@@ -1928,7 +2295,6 @@ function OrgNode({node, depth, expandedIds, onToggle, onAddChild, onSetAdmin, on
   const isRoot = depth===0;
   const hasKb = node.kbs && node.kbs.length>0;
   const adminNames = node.admins || [];
-  if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
   return (
     <div>
       <div className={`org-node ${isRoot?'root':''}`} onClick={()=>onToggle(node.id)}>
@@ -1961,13 +2327,96 @@ function OrgNode({node, depth, expandedIds, onToggle, onAddChild, onSetAdmin, on
   );
 }
 
-/* ============== 知识图谱 ============== */
-function KnowledgeGraphScreen(){
+/* ============== 知识图谱（Obsidian 风格力导向布局） ============== */
+
+function runForceLayout(nodes, edges, options) {
+  const opts = options || {};
+  const width = opts.width ?? 900;
+  const height = opts.height ?? 600;
+  const chargeStrength = opts.chargeStrength ?? -380;
+  const linkDistance = opts.linkDistance ?? 60;
+  const iterations = opts.iterations ?? 600;
+  const N = nodes.length;
+  const cx = width / 2;
+  const cy = height / 2;
+  const radiusFor = (n) => (n.type === 'knowledge_base' ? 18 : n.type === 'document' ? 12 : 8);
+  const pos = nodes.map((_, i) => {
+    const ratio = (i + 0.5) / Math.max(N, 1);
+    const ring = Math.floor(Math.sqrt(ratio) * Math.sqrt(N));
+    const angle = ratio * Math.PI * 2 * 4;
+    const r = ring * Math.min(width, height) * 0.04 + 20;
+    return {
+      x: cx + Math.cos(angle) * r + (Math.random() - 0.5) * 8,
+      y: cy + Math.sin(angle) * r + (Math.random() - 0.5) * 8,
+      fx: 0,
+      fy: 0,
+    };
+  });
+  const idx = new Map(nodes.map((n, i) => [n.id, i]));
+  for (let iter = 0; iter < iterations; iter++) {
+    const alpha = Math.max(0.04, 1 - iter / iterations);
+    for (let i = 0; i < N; i++) {
+      pos[i].fx = (cx - pos[i].x) * 0.012 * alpha;
+      pos[i].fy = (cy - pos[i].y) * 0.012 * alpha;
+    }
+    for (let i = 0; i < N; i++) {
+      const a = pos[i]; const aNode = nodes[i];
+      for (let j = i + 1; j < N; j++) {
+        const b = pos[j]; const bNode = nodes[j];
+        let dx = a.x - b.x; let dy = a.y - b.y;
+        let dist2 = dx * dx + dy * dy; if (dist2 < 1) { dist2 = 1; dx = (Math.random() - 0.5); dy = (Math.random() - 0.5); }
+        const dist = Math.sqrt(dist2);
+        const force = chargeStrength / dist2 * alpha;
+        const fx = (dx / dist) * force; const fy = (dy / dist) * force;
+        a.fx += fx; a.fy += fy; b.fx -= fx; b.fy -= fy;
+        const minDist = radiusFor(aNode) + radiusFor(bNode) + 6;
+        if (dist < minDist) {
+          const push = (minDist - dist) / dist * 0.5;
+          a.x += dx * push; a.y += dy * push;
+          b.x -= dx * push; b.y -= dy * push;
+        }
+      }
+    }
+    for (const e of edges) {
+      const si = idx.get(e.source) as number | undefined; const ti = idx.get(e.target) as number | undefined;
+      if (si == null || ti == null) continue;
+      const a = pos[si]; const b = pos[ti];
+      const dx = b.x - a.x; const dy = b.y - a.y;
+      const dist = Math.sqrt(dx * dx + dy * dy) || 0.01;
+      const target = linkDistance + (e.type === 'contains' ? -8 : 0);
+      const diff = (dist - target) / dist;
+      const k = diff * 0.18 * alpha * (1 + Math.min(2, (e.weight || 1) * 0.1));
+      a.fx += dx * k; a.fy += dy * k; b.fx -= dx * k; b.fy -= dy * k;
+    }
+    const step = 1.6;
+    for (let i = 0; i < N; i++) {
+      pos[i].x += pos[i].fx * step;
+      pos[i].y += pos[i].fy * step;
+      pos[i].x = Math.max(40, Math.min(width - 40, pos[i].x));
+      pos[i].y = Math.max(40, Math.min(height - 40, pos[i].y));
+    }
+  }
+  return nodes.map((n, i) => ({ ...n, x: pos[i].x, y: pos[i].y }));
+}
+
+function KnowledgeGraphScreen({ onOpenDocument, onOpenKb }){
   const [graph, setGraph] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(null);
+  const [hovered, setHovered] = useState(null);
+  const [layout, setLayout] = useState(null);
+  const [transform, setTransform] = useState({ x: 0, y: 0, k: 1 });
+  const [types, setTypes] = useState({ knowledge_base: true, document: true, concept: true });
+  const [localRoot, setLocalRoot] = useState(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [params, setParams] = useState({ charge: -320, link: 60, showLabels: 'auto' });
+
+  const svgRef = useRef(null);
+  const dragRef = useRef(null);
+  const panRef = useRef(null);
+  const [canvasSize, setCanvasSize] = useState({ w: 900, h: 600 });
 
   useEffect(() => {
     let active = true;
@@ -1980,57 +2429,458 @@ function KnowledgeGraphScreen(){
     return () => { active = false; };
   }, []);
 
+  const allNodes = graph?.nodes || [];
+  const allEdges = graph?.edges || [];
+
+  const visibleIds = useMemo(() => {
+    const ids = new Set();
+    for (const n of allNodes) if (types[n.type]) ids.add(n.id);
+    return ids;
+  }, [allNodes, types]);
+
+  const filteredNodes = useMemo(() => allNodes.filter((n) => visibleIds.has(n.id)), [allNodes, visibleIds]);
+  const filteredEdges = useMemo(() => allEdges.filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target)), [allEdges, visibleIds]);
+
+  const focusNodes = useMemo(() => {
+    if (!localRoot) return filteredNodes;
+    const depthMap = new Map([[localRoot, 0]]);
+    const adj = new Map();
+    for (const e of filteredEdges) {
+      if (!adj.has(e.source)) adj.set(e.source, []);
+      if (!adj.has(e.target)) adj.set(e.target, []);
+      adj.get(e.source).push(e.target);
+      adj.get(e.target).push(e.source);
+    }
+    const queue = [localRoot];
+    while (queue.length) {
+      const cur = queue.shift();
+      const d = depthMap.get(cur) || 0;
+      if (d >= 2) continue;
+      for (const next of adj.get(cur) || []) {
+        if (!depthMap.has(next)) { depthMap.set(next, d + 1); queue.push(next); }
+      }
+    }
+    return filteredNodes.filter((n) => depthMap.has(n.id));
+  }, [filteredNodes, filteredEdges, localRoot]);
+
+  const focusEdges = useMemo(() => {
+    const ids = new Set(focusNodes.map((n) => n.id));
+    return filteredEdges.filter((e) => ids.has(e.source) && ids.has(e.target));
+  }, [focusNodes, filteredEdges]);
+
+  const degreeMap = useMemo(() => {
+    const m = new Map();
+    for (const e of filteredEdges) { m.set(e.source, (m.get(e.source) || 0) + 1); m.set(e.target, (m.get(e.target) || 0) + 1); }
+    return m;
+  }, [filteredEdges]);
+
+  useEffect(() => {
+    const canvas = svgRef.current?.parentElement;
+    if (!canvas) return undefined;
+    const update = () => {
+      const w = Math.max(canvas.clientWidth - 24, 320);
+      const h = Math.max(canvas.clientHeight - 24, 360);
+      setCanvasSize((prev) => prev.w === w && prev.h === h ? prev : { w, h });
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(canvas);
+    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!graph || filteredNodes.length === 0) { setLayout(null); return; }
+    const { w, h } = canvasSize;
+    const t = setTimeout(() => {
+      setLayout((prev) => {
+        if (prev && localRoot === prev._root && filteredNodes.length === prev._count && prev._w === w && prev._h === h) {
+          const sameParams = prev._charge === params.charge && prev._link === params.link;
+          if (sameParams) return prev;
+        }
+        const positioned = runForceLayout(focusNodes, focusEdges, { width: w, height: h, chargeStrength: params.charge, linkDistance: params.link });
+        return { nodes: positioned, _root: localRoot, _count: focusNodes.length, _charge: params.charge, _link: params.link, _w: w, _h: h };
+      });
+    }, 16);
+    return () => clearTimeout(t);
+  }, [focusNodes, focusEdges, graph, localRoot, params.charge, params.link, canvasSize.w, canvasSize.h]);
+
+  const positions = useMemo(() => {
+    const map = new Map();
+    if (layout) for (const n of layout.nodes) map.set(n.id, { x: n.x, y: n.y });
+    return map;
+  }, [layout]);
+
+  const matchIds = useMemo(() => {
+    const q = query.trim().toLowerCase(); if (!q) return null;
+    const s = new Set();
+    for (const n of filteredNodes) if (n.label.toLowerCase().includes(q)) s.add(n.id);
+    return s;
+  }, [query, filteredNodes]);
+
+  const hoverId = hovered || selected;
+  const neighborIds = useMemo(() => {
+    if (!hoverId) return null;
+    const s = new Set([hoverId]);
+    for (const e of filteredEdges) {
+      if (e.source === hoverId) s.add(e.target);
+      if (e.target === hoverId) s.add(e.source);
+    }
+    return s;
+  }, [hoverId, filteredEdges]);
+
+  const selectedNode = allNodes.find((n) => n.id === selected);
+  const selectedEdges = selected ? allEdges.filter((e) => e.source === selected || e.target === selected) : [];
+  const relatedByType = useMemo(() => {
+    const groups = { contains: [], mentions: [], related_to: [] };
+    for (const e of selectedEdges) {
+      const key = e.type;
+      const bucket = (groups[key] || (groups[key] = []));
+      bucket.push(e);
+    }
+    return groups;
+  }, [selectedEdges, selected]);
+
+  const nodeColor = { knowledge_base: '#7c6cd9', document: '#4c7fd0', concept: '#c08a3e' };
+  const labelText = (n) => n.label.length > 14 ? `${n.label.slice(0, 14)}…` : n.label;
+  const nodeRadius = (n) => {
+    const base = n.type === 'knowledge_base' ? 18 : n.type === 'document' ? 13 : 8;
+    const deg = degreeMap.get(n.id) || 0;
+    return base + Math.min(8, deg * 0.6);
+  };
+  const showLabel = (n) => {
+    if (params.showLabels === 'always') return true;
+    if (params.showLabels === 'off') return false;
+    if (hoverId && neighborIds && neighborIds.has(n.id)) return true;
+    if (matchIds && matchIds.has(n.id)) return true;
+    return transform.k > 1.05;
+  };
+  const edgeActive = (e) => !hoverId || e.source === hoverId || e.target === hoverId;
+
+  const onWheel = (event) => {
+    event.preventDefault();
+    const rect = svgRef.current.getBoundingClientRect();
+    const cx = event.clientX - rect.left; const cy = event.clientY - rect.top;
+    const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
+    const next = Math.max(0.3, Math.min(3.5, transform.k * factor));
+    const ratio = next / transform.k;
+    setTransform({ k: next, x: cx - (cx - transform.x) * ratio, y: cy - (cy - transform.y) * ratio });
+  };
+
+  const onMouseDown = (event) => {
+    if (event.target.closest('.graph-node')) return;
+    panRef.current = { x: event.clientX, y: event.clientY, tx: transform.x, ty: transform.y };
+  };
+  const onMouseMove = (event) => {
+    if (dragRef.current) {
+      const d = dragRef.current;
+      d.node.fx = d.node.x = d.startX + (event.clientX - d.startClientX) / transform.k;
+      d.node.fy = d.node.y = d.startY + (event.clientY - d.startClientY) / transform.k;
+      setLayout({ ...layout, nodes: [...layout.nodes] });
+      return;
+    }
+    if (panRef.current) {
+      setTransform({ ...transform, x: panRef.current.tx + (event.clientX - panRef.current.x), y: panRef.current.ty + (event.clientY - panRef.current.y) });
+    }
+  };
+  const onMouseUp = () => { dragRef.current = null; panRef.current = null; };
+
+  const startNodeDrag = (event, node) => {
+    event.stopPropagation();
+    dragRef.current = { node, startX: node.x, startY: node.y, startClientX: event.clientX, startClientY: event.clientY };
+  };
+  const onNodeClick = (event, node) => { event.stopPropagation(); setSelected(node.id); };
+  const onNodeDouble = (event, node) => {
+    event.stopPropagation();
+    if (node.type === 'document' && node.documentId && node.kbId) onOpenDocument?.(node.kbId, node.documentId, node.label);
+    else if (node.type === 'knowledge_base' && node.kbId) onOpenKb?.(node.kbId);
+  };
+
+  useEffect(() => {
+    const onKey = (event) => {
+      if (event.key === 'Escape') { setSelected(null); setHovered(null); }
+      if (event.key === 'f' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); (document.querySelector('.graph-search input') as HTMLInputElement | null)?.focus(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const fitView = () => {
+    const canvas = svgRef.current?.parentElement;
+    if (!canvas || !layout) return;
+    const xs = layout.nodes.map((n) => n.x); const ys = layout.nodes.map((n) => n.y);
+    const minX = Math.min(...xs); const maxX = Math.max(...xs);
+    const minY = Math.min(...ys); const maxY = Math.max(...ys);
+    const pad = 40;
+    const cw = canvas.clientWidth; const ch = canvas.clientHeight;
+    const bboxW = Math.max(maxX - minX, 1); const bboxH = Math.max(maxY - minY, 1);
+    const kx = (cw - pad * 2) / bboxW; const ky = (ch - pad * 2) / bboxH;
+    const k = Math.min(3, Math.max(0.4, Math.min(kx, ky)));
+    const cx = (minX + maxX) / 2; const cy = (minY + maxY) / 2;
+    setTransform({ k, x: cw / 2 - cx * k, y: ch / 2 - cy * k });
+  };
+
+  const resetView = () => { setTransform({ x: 0, y: 0, k: 1 }); };
+  const rerunLayout = () => setLayout(null);
+
+  const lastFitKey = useRef('');
+  useEffect(() => {
+    if (!layout) return;
+    const key = `${layout._root || 'global'}:${layout._count}:${layout._w}x${layout._h}`;
+    if (key === lastFitKey.current) return;
+    lastFitKey.current = key;
+    requestAnimationFrame(() => fitView());
+  }, [layout]);
+  const centerOnSelected = () => {
+    if (!selected || !positions.has(selected)) return;
+    const p = positions.get(selected);
+    const canvas = svgRef.current?.parentElement;
+    setTransform({ ...transform, x: canvas.clientWidth / 2 - p.x * transform.k, y: canvas.clientHeight / 2 - p.y * transform.k });
+  };
+
+  const counts = useMemo(() => {
+    const c = { knowledge_base: 0, document: 0, concept: 0 };
+    for (const n of filteredNodes) c[n.type] = (c[n.type] || 0) + 1;
+    return c;
+  }, [filteredNodes]);
+
   if (loading) return <div className="graph-page"><div className="graph-state">正在构建你的知识图谱…</div></div>;
   if (error) return <div className="graph-page"><div className="graph-state error">{error}</div></div>;
-  const nodes = graph?.nodes || [];
-  const edges = graph?.edges || [];
-  const normalizedQuery = query.trim().toLowerCase();
-  const visibleNodes = normalizedQuery ? nodes.filter(node => node.label.toLowerCase().includes(normalizedQuery)) : nodes;
-  const visibleIds = new Set(visibleNodes.map(node => node.id));
-  const filteredEdges = edges.filter(edge => visibleIds.has(edge.source) && visibleIds.has(edge.target));
-  const width = 1100;
-  const height = 650;
-  const columns = {knowledge_base: 160, document: 520, concept: 880};
-  const typed = {knowledge_base: nodes.filter(n=>n.type==='knowledge_base'), document: nodes.filter(n=>n.type==='document'), concept: nodes.filter(n=>n.type==='concept')};
-  const positions = new Map();
-  Object.entries(typed).forEach(([type, list]) => list.forEach((node, index) => positions.set(node.id, {x: columns[type], y: 50 + ((index + 1) * (height - 90) / (list.length + 1))})));
-  const selectedNode = nodes.find(node => node.id === selected);
-  const connectedEdges = selected ? edges.filter(edge => edge.source === selected || edge.target === selected) : [];
-  const connectedIds = new Set(connectedEdges.flatMap(edge => [edge.source, edge.target]));
-  const nodeColor = {knowledge_base:'#8b5cf6', document:'#2563eb', concept:'#c47a18'};
+
   return (
     <div className="graph-page">
       <div className="graph-head">
-        <div><div className="h1">知识图谱</div><div className="subline">展示你有权访问的已发布知识：知识库、文档、章节主题和文档间关联。</div></div>
-        <div className="graph-stats"><span>{graph?.stats?.documents || 0} 文档</span><span>{graph?.stats?.concepts || 0} 个主题</span><span>{graph?.stats?.relations || 0} 条关系</span></div>
-      </div>
-      <div className="graph-toolbar"><div className="graph-search"><Icon name="search" size={14}/><input value={query} onChange={event=>setQuery(event.target.value)} placeholder="搜索文档或主题"/></div><span className="graph-hint">关系均保留来源文档证据；仅展示当前账号可见内容</span></div>
-      <div className="graph-layout">
-        <div className="graph-canvas">
-          {nodes.length === 0 ? <div className="graph-state">当前没有可生成图谱的已发布知识。</div> : <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="个人知识图谱">
-            <defs><marker id="graph-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#b9b5ae"/></marker></defs>
-            {filteredEdges.map(edge => { const a=positions.get(edge.source); const b=positions.get(edge.target); if(!a||!b) return null; const active=!selected || edge.source===selected || edge.target===selected; return <g key={edge.id} opacity={active?1:.12}><line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={edge.type==='related_to'?'#c47a18':'#b9b5ae'} strokeWidth={Math.min(3, 1 + edge.weight/3)} markerEnd="url(#graph-arrow)"/><title>{edge.type==='contains'?'包含':edge.type==='mentions'?'提及':'共同主题'} · 权重 {edge.weight}</title></g>; })}
-            {visibleNodes.map(node => { const p=positions.get(node.id); if(!p) return null; const active=!selected || node.id===selected || connectedIds.has(node.id); return <g key={node.id} transform={`translate(${p.x},${p.y})`} opacity={active?1:.22} onClick={()=>setSelected(node.id)} className="graph-node"><circle r={node.type==='knowledge_base'?22:node.type==='document'?17:13} fill={nodeColor[node.type]} stroke={node.id===selected?'#111827':'white'} strokeWidth={node.id===selected?3:2}/><text x="0" y="34" textAnchor="middle">{node.label.length>18?`${node.label.slice(0,18)}…`:node.label}</text></g>; })}
-          </svg>}
+        <div>
+          <div className="h1">知识图谱</div>
+          <div className="subline">展示你有权访问的已发布知识 · 滚轮缩放、拖拽节点、悬停高亮邻居</div>
         </div>
+        <div className="graph-stats">
+          <span>{graph?.stats?.documents || 0} 文档</span>
+          <span>{graph?.stats?.concepts || 0} 个主题</span>
+          <span>{graph?.stats?.relations || 0} 条关系</span>
+        </div>
+      </div>
+
+      <div className="graph-toolbar">
+        <div className="graph-type-filter">
+          {[
+            { k: 'knowledge_base', l: '知识库', c: nodeColor.knowledge_base },
+            { k: 'document', l: '文档', c: nodeColor.document },
+            { k: 'concept', l: '主题', c: nodeColor.concept },
+          ].map((t) => (
+            <button
+              key={t.k}
+              type="button"
+              className={`graph-type-chip ${types[t.k] ? 'on' : ''}`}
+              onClick={() => setTypes({ ...types, [t.k]: !types[t.k] })}
+              aria-pressed={types[t.k]}
+            >
+              <i style={{ background: t.c }} />
+              <span>{t.l}</span>
+              <em>{counts[t.k] || 0}</em>
+            </button>
+          ))}
+        </div>
+        <div className="graph-search">
+          <Icon name="search" size={14} />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索文档或主题（⌘F 聚焦）"
+            onKeyDown={(event) => { if (event.key === 'Enter' && matchIds) { const first = [...matchIds][0]; if (first) setSelected(first); } }}
+          />
+          {matchIds && <span className="graph-search-hint">{matchIds.size} 命中</span>}
+        </div>
+        {localRoot && (
+          <button type="button" className="graph-local-back" onClick={() => { setLocalRoot(null); setSelected(null); }}>
+            ← 返回全局图谱
+          </button>
+        )}
+        <div className="graph-toolbar-spacer" />
+        <button type="button" className="graph-icon-btn" title="重新布局" onClick={rerunLayout}><Icon name="refresh" size={14} /></button>
+        <button type="button" className="graph-icon-btn" title="适应视图" onClick={fitView}><Icon name="search" size={14} /></button>
+        <button type="button" className={`graph-icon-btn ${showSettings ? 'on' : ''}`} title="显示设置" onClick={() => setShowSettings(!showSettings)}><Icon name="setting" size={14} /></button>
+      </div>
+
+      {showSettings && (
+        <div className="graph-settings">
+          <label>斥力强度 <input type="range" min="-400" max="-40" value={params.charge} onChange={(e) => setParams({ ...params, charge: Number(e.target.value) })} /></label>
+          <label>连线距离 <input type="range" min="40" max="160" value={params.link} onChange={(e) => setParams({ ...params, link: Number(e.target.value) })} /></label>
+          <label>标签显示
+            <select value={params.showLabels} onChange={(e) => setParams({ ...params, showLabels: e.target.value })}>
+              <option value="auto">自动（缩放时显示）</option>
+              <option value="always">始终显示</option>
+              <option value="off">始终隐藏</option>
+            </select>
+          </label>
+        </div>
+      )}
+
+      <div className="graph-layout">
+        <div className="graph-canvas" onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}>
+          {filteredNodes.length === 0 ? (
+            <div className="graph-state">
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 14, color: 'var(--ink-2)', marginBottom: 8 }}>当前没有可生成图谱的已发布知识</div>
+                <div style={{ fontSize: 11.5, color: 'var(--ink-4)' }}>去「知识库」上传一份文档，发布后会自动出现在这里</div>
+              </div>
+            </div>
+          ) : (
+            <svg
+              ref={svgRef}
+              viewBox={`0 0 ${canvasSize.w} ${canvasSize.h}`}
+              preserveAspectRatio="xMidYMid meet"
+              role="img"
+              aria-label="个人知识图谱"
+              onWheel={onWheel}
+              onMouseDown={onMouseDown}
+              style={{ cursor: panRef.current ? 'grabbing' : 'grab' }}
+            >
+              <defs>
+                <marker id="graph-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#b9b5ae" />
+                </marker>
+              </defs>
+              <g transform={`translate(${transform.x},${transform.y}) scale(${transform.k})`}>
+                {focusEdges.map((edge) => {
+                  const a = positions.get(edge.source); const b = positions.get(edge.target);
+                  if (!a || !b) return null;
+                  const active = edgeActive(edge);
+                  const opacity = hoverId ? (active ? 0.85 : 0.05) : 0.6;
+                  return (
+                    <g key={edge.id} opacity={opacity}>
+                      <line
+                        x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+                        stroke={edge.type === 'related_to' ? '#c08a3e' : '#9C978C'}
+                        strokeWidth={Math.min(2.2, 0.7 + (edge.weight || 1) * 0.25) / Math.max(1, transform.k * 0.7)}
+                        markerEnd="url(#graph-arrow)"
+                      />
+                      <title>{edge.type === 'contains' ? '包含' : edge.type === 'mentions' ? '提及' : '共同主题'} · 权重 {edge.weight}</title>
+                    </g>
+                  );
+                })}
+                {focusNodes.map((node) => {
+                  const p = positions.get(node.id); if (!p) return null;
+                  const dimmed = hoverId && !(neighborIds.has(node.id));
+                  const isMatch = matchIds && matchIds.has(node.id);
+                  const isSelected = selected === node.id;
+                  return (
+                    <g
+                      key={node.id}
+                      transform={`translate(${p.x},${p.y})`}
+                      opacity={dimmed ? 0.18 : 1}
+                      className={`graph-node ${isSelected ? 'selected' : ''}`}
+                      onMouseEnter={() => setHovered(node.id)}
+                      onMouseLeave={() => setHovered(null)}
+                      onMouseDown={(e) => startNodeDrag(e, node)}
+                      onClick={(e) => onNodeClick(e, node)}
+                      onDoubleClick={(e) => onNodeDouble(e, node)}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      <circle
+                        r={nodeRadius(node)}
+                        fill={nodeColor[node.type]}
+                        stroke={isSelected ? '#111827' : isMatch ? '#B7791F' : 'white'}
+                        strokeWidth={isSelected ? 2.5 : isMatch ? 2 : 1.5}
+                      />
+                      {(isMatch || (showLabel(node))) && (
+                        <text x={nodeRadius(node) + 5} y={4} className="graph-node-label" style={{ fontSize: 11 / transform.k }}>
+                          {labelText(node)}
+                        </text>
+                      )}
+                      <title>{node.label} · {node.type === 'knowledge_base' ? '知识库' : node.type === 'document' ? '文档' : '主题'}</title>
+                    </g>
+                  );
+                })}
+              </g>
+            </svg>
+          )}
+          <div className="graph-zoom-ctl">
+            <button type="button" onClick={() => setTransform({ ...transform, k: Math.min(3.5, transform.k * 1.2) })} aria-label="放大">＋</button>
+            <span className="graph-zoom-pct">{Math.round(transform.k * 100)}%</span>
+            <button type="button" onClick={() => setTransform({ ...transform, k: Math.max(0.3, transform.k / 1.2) })} aria-label="缩小">−</button>
+            <button type="button" onClick={resetView} title="重置视图">⤾</button>
+            {selected && <button type="button" onClick={centerOnSelected} title="居中到选中节点">⊙</button>}
+          </div>
+        </div>
+
         <aside className="graph-detail">
-          {selectedNode ? <><div className="graph-detail-type" style={{color:nodeColor[selectedNode.type]}}>{selectedNode.type==='knowledge_base'?'知识库':selectedNode.type==='document'?'文档':'主题'}</div><h3>{selectedNode.label}</h3><p>{selectedNode.type==='document' ? '该节点来自可见知识库中的已发布文档。' : selectedNode.type==='concept' ? '该主题由章节、标题、显式引用和文档内容共同提取。' : '该节点表示一个可见知识库。'}</p><div className="graph-related"><b>关联关系</b>{connectedEdges.slice(0,12).map(edge=><div key={edge.id}><span>{edge.type==='contains'?'包含':edge.type==='mentions'?'提及':'共同主题'}</span> · {nodes.find(node=>node.id===(edge.source===selected?edge.target:edge.source))?.label || '—'}</div>)}</div></> : <><h3>点击节点查看详情</h3><p>图谱不会显示无权限知识。点击文档或主题节点，可查看它与其他知识的关联。</p></>}
+          {selectedNode ? (
+            <>
+              <div className="graph-detail-type" style={{ color: nodeColor[selectedNode.type] }}>
+                {selectedNode.type === 'knowledge_base' ? '知识库' : selectedNode.type === 'document' ? '文档' : '主题'}
+              </div>
+              <h3>{selectedNode.label}</h3>
+              <div className="graph-detail-actions">
+                {selectedNode.type === 'document' && selectedNode.documentId && selectedNode.kbId && (
+                  <button type="button" className="btn primary" onClick={() => onOpenDocument?.(selectedNode.kbId, selectedNode.documentId, selectedNode.label)}>
+                    打开文档
+                  </button>
+                )}
+                {selectedNode.type === 'knowledge_base' && selectedNode.kbId && (
+                  <button type="button" className="btn primary" onClick={() => onOpenKb?.(selectedNode.kbId)}>
+                    进入知识库
+                  </button>
+                )}
+                <button type="button" className="btn" onClick={() => setLocalRoot(selectedNode.id)}>
+                  展开局部图谱
+                </button>
+              </div>
+              <p>
+                {selectedNode.type === 'document' && '该节点来自可见知识库中的已发布文档。'}
+                {selectedNode.type === 'concept' && '该主题由章节、标题、显式引用和文档内容共同提取。'}
+                {selectedNode.type === 'knowledge_base' && '该节点表示一个可见知识库。'}
+              </p>
+              {(['contains', 'mentions', 'related_to'] as const).map((type) => {
+                const list = relatedByType[type] || [];
+                if (list.length === 0) return null;
+                const label = type === 'contains' ? '包含的文档' : type === 'mentions' ? '提及该主题的文档' : '相关文档';
+                return (
+                  <div className="graph-related" key={type}>
+                    <b>{label} <em>· {list.length}</em></b>
+                    {list.slice(0, 8).map((edge) => {
+                      const otherId = edge.source === selected ? edge.target : edge.source;
+                      const other = allNodes.find((n) => n.id === otherId);
+                      return (
+                        <div key={edge.id} className="graph-related-row" onClick={() => setSelected(otherId)}>
+                          <span style={{ color: nodeColor[type === 'contains' ? 'document' : 'concept'] }}>·</span>
+                          {other?.label || '—'}
+                        </div>
+                      );
+                    })}
+                    {list.length > 8 && <div className="graph-related-more">还有 {list.length - 8} 条…</div>}
+                  </div>
+                );
+              })}
+            </>
+          ) : (
+            <>
+              <h3>点击节点查看详情</h3>
+              <p>图谱不会显示无权限知识。点击文档或主题节点，可查看它与其他知识的关联；双击可直达原始文档或知识库。</p>
+              <div className="graph-detail-hints">
+                <div><kbd>滚轮</kbd> 缩放 · <kbd>拖拽空白</kbd> 平移 · <kbd>拖拽节点</kbd> 布局</div>
+                <div><kbd>悬停</kbd> 高亮邻居 · <kbd>点击</kbd> 查看 · <kbd>双击</kbd> 打开</div>
+                <div><kbd>⌘F</kbd> 聚焦搜索 · <kbd>Esc</kbd> 取消选择</div>
+              </div>
+            </>
+          )}
         </aside>
       </div>
-      <div className="graph-legend"><span><i style={{background:nodeColor.knowledge_base}}/>知识库</span><span><i style={{background:nodeColor.document}}/>文档</span><span><i style={{background:nodeColor.concept}}/>主题 / 实体</span><span>线条粗细代表关联出现次数</span></div>
     </div>
   );
 }
 
 /* ============== App 入口 ============== */
 function LoginScreen({ onSubmit, error, loading }) {
-  const [username, setUsername] = useState('CY');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   return (
     <div className="login-shell">
       <form className="login-card" onSubmit={(event) => { event.preventDefault(); onSubmit(username, password); }}>
-        <div style={{fontSize:24,fontWeight:600,marginBottom:8}}>LLM Wiki</div>
-        <div style={{color:'#756f66',fontSize:14,marginBottom:28}}>登录你的企业知识大脑</div>
+        <div style={{display:'flex',alignItems:'baseline',gap:8,marginBottom:10}}>
+          <span style={{fontSize:28,fontWeight:700,letterSpacing:'-0.02em',color:'#191817'}}>GBrain</span>
+          <span style={{fontSize:12,color:'#9C978C',letterSpacing:'0.04em'}}>企业级知识库</span>
+        </div>
+        <div style={{color:'#756f66',fontSize:14,marginBottom:28}}>登录你的企业大脑</div>
         <label style={{display:'block',fontSize:13,marginBottom:6}}>账号</label>
         <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" style={{width:'100%',boxSizing:'border-box',padding:'11px 12px',border:'1px solid #d8d2c8',borderRadius:7,marginBottom:16}} />
         <label style={{display:'block',fontSize:13,marginBottom:6}}>密码</label>
@@ -2049,6 +2899,20 @@ function App(){
   const [authState, setAuthState] = useState('checking');
   const [loginError, setLoginError] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
+  const [theme, setTheme] = useState(null);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem('llmwiki_theme');
+    setTheme(saved === 'dark' || saved === 'light'
+      ? saved
+      : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+  }, []);
+
+  useEffect(() => {
+    if (!theme) return;
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem('llmwiki_theme', theme);
+  }, [theme]);
 
   const loadAdminData = async (token) => {
     const res = await fetch(`${API_BASE_URL}/api/v1/admin/data`, { headers: { Authorization: `Bearer ${token}` } });
@@ -2202,16 +3066,82 @@ function App(){
   const [libraryKbId, setLibraryKbId] = useState(null);
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
+  const [graphOnlinePreview, setGraphOnlinePreview] = useState(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
+
+  const openGraphDocument = async (kbId, documentId, title) => {
+    try {
+      const config = await fetchOnlinePreviewConfig(kbId, documentId);
+      setGraphOnlinePreview({ title: title || '原始文档', ...config });
+    } catch (error) {
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: error.message || '原始文档预览失败' }));
+    }
+  };
+  const openGraphKb = (kbId) => {
+    setLibraryKbId(kbId);
+    setScreen('libs');
+  };
+
+  const paletteNav = (target, payload) => {
+    setScreen(target);
+    if (payload?.kbId) setLibraryKbId(payload.kbId);
+    if (payload?.convId) {
+      const evt = new CustomEvent('app-open-conversation', { detail: payload.convId });
+      window.dispatchEvent(evt);
+    }
+  };
+  const paletteNewChat = () => {
+    setScreen('chat');
+    window.dispatchEvent(new CustomEvent('app-new-chat'));
+  };
+  const paletteNewKb = () => {
+    setScreen('libs');
+    setAdminTab('newkb');
+    window.dispatchEvent(new CustomEvent('app-new-kb'));
+  };
+  const paletteUpload = () => {
+    setScreen('libs');
+    setTimeout(() => window.dispatchEvent(new CustomEvent('app-focus-upload')), 120);
+  };
 
   useEffect(()=>{
     const h = (e)=>{
-      setToast(e.detail);
+      setToast({ text: e.detail, undo: null });
       if(toastTimer.current) clearTimeout(toastTimer.current);
       toastTimer.current = setTimeout(()=>setToast(null), 4000);
     };
     window.addEventListener('app-toast', h);
-  return ()=>window.removeEventListener('app-toast', h);
+  const u = (e)=>{
+      const d = e.detail || {};
+      setToast({ text: d.message || '已操作', undo: d.undo ? { label: d.undoLabel || '撤销', fn: d.undo } : null });
+      if(toastTimer.current) clearTimeout(toastTimer.current);
+      toastTimer.current = setTimeout(()=>setToast(null), 5000);
+    };
+    window.addEventListener('app-undoable', u);
+  return ()=>{ window.removeEventListener('app-toast', h); window.removeEventListener('app-undoable', u); };
   },[]);
+
+  useEffect(() => {
+    const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+    const onKey = (e) => {
+      const tag = (e.target?.tagName || '').toLowerCase();
+      const inEditable = tag === 'input' || tag === 'textarea' || e.target?.isContentEditable;
+      const mod = isMac ? e.metaKey : e.ctrlKey;
+      if (mod && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); setPaletteOpen((v) => !v); return; }
+      if (e.key === 'Escape') { if (paletteOpen) { setPaletteOpen(false); e.preventDefault(); } return; }
+      if (inEditable) return;
+      if (e.key === '?' && !mod && !e.altKey) { e.preventDefault(); setHelpOpen(true); return; }
+      if (mod && (e.key === '1')) { e.preventDefault(); setScreen('chat'); return; }
+      if (mod && (e.key === '2')) { e.preventDefault(); setScreen('libs'); return; }
+      if (mod && (e.key === '3')) { e.preventDefault(); setScreen('graph'); return; }
+      if (mod && (e.key === '4')) { e.preventDefault(); setScreen('admin'); return; }
+      if (mod && (e.key === 'n' || e.key === 'N')) { e.preventDefault(); paletteNewChat(); return; }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [paletteOpen]);
 
   const titles = {
     chat: {t:'对话', s:`你的大脑 · ${KNOWLEDGE_BASES.length} 个可见知识库`},
@@ -2232,7 +3162,15 @@ function App(){
     <div className="app">
       <SideNav active={visibleScreen} setActive={setScreen} user={currentUser} onLogout={handleLogout} kbCount={KNOWLEDGE_BASES.length} capabilities={CAPABILITIES}/>
       <div className="main">
-        <TopBar title={titles[visibleScreen].t} sub={titles[visibleScreen].s}/>
+        <TopBar
+          title={titles[visibleScreen].t}
+          sub={titles[visibleScreen].s}
+          theme={theme || 'light'}
+          onToggleTheme={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')}
+          onOpenPalette={() => setPaletteOpen(true)}
+          onOpenHelp={() => setHelpOpen(true)}
+          onOpenNotifications={() => setNotifOpen(true)}
+        />
         <div className="content">
           {/* 四屏常驻挂载：跨屏切换不丢会话/表单状态（UX 评审修复） */}
           <div style={{display: visibleScreen==='chat'?'flex':'none', flex:1, minWidth:0}}>
@@ -2242,14 +3180,35 @@ function App(){
             <LibrariesScreen initialKbId={libraryKbId} capabilities={CAPABILITIES} onManageGrant={(kb)=>{setAdminTab('grant'); setScreen('admin');}}/>
           </div>
           <div style={{display: visibleScreen==='graph'?'flex':'none', flex:1, minWidth:0}}>
-            <KnowledgeGraphScreen/>
+            <KnowledgeGraphScreen onOpenDocument={openGraphDocument} onOpenKb={openGraphKb}/>
           </div>
           <div style={{display: visibleScreen==='admin' || visibleScreen==='settings'?'flex':'none', flex:1, minWidth:0}}>
             <AdminScreen initialTab={visibleScreen==='settings' ? 'model' : visibleScreen==='admin' ? adminTab : undefined} capabilities={CAPABILITIES} onOpenGrant={(k)=>{setAdminTab('grant'); setScreen('admin');}} onManageKb={(kbId)=>{setLibraryKbId(kbId); setScreen('libs');}}/>
           </div>
         </div>
       </div>
-      {toast && <div className="toast"><span className="tdot"/>{toast}</div>}
+      {toast && (
+        <div className="toast">
+          <span className="tdot"/>
+          <span>{typeof toast === 'string' ? toast : toast.text}</span>
+          {typeof toast !== 'string' && toast.undo && (
+            <button type="button" className="toast-undo" onClick={() => { toast.undo.fn(); setToast(null); }}>{toast.undo.label}</button>
+          )}
+        </div>
+      )}
+      {graphOnlinePreview && <OnlinePreviewModal preview={graphOnlinePreview} onClose={() => setGraphOnlinePreview(null)}/>}
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onNav={paletteNav}
+        onNewChat={paletteNewChat}
+        onNewKb={paletteNewKb}
+        onUpload={paletteUpload}
+        conversations={CONVERSATIONS}
+        knowledgeBases={KNOWLEDGE_BASES}
+      />
+      <HelpOverlay open={helpOpen} onClose={() => setHelpOpen(false)}/>
+      <NotificationsPanel open={notifOpen} onClose={() => setNotifOpen(false)}/>
     </div>
   );
 }

@@ -1,8 +1,10 @@
-import { Controller, Get, Req } from '@nestjs/common';
+import { Controller, Get, Req, UseGuards } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { PermissionService } from '../permission/permission.service';
 import { AuthService } from './auth.service';
+import { AuthGuard } from './auth.guard';
 
+@UseGuards(AuthGuard)
 @Controller('api/v1/session')
 export class SessionController {
   private readonly prisma = new PrismaClient();

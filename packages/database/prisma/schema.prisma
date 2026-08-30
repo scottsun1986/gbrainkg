@@ -44,6 +44,8 @@ model OrgNode {
   users     UserOrg[]
   kbs       KnowledgeBase[]
   admins    OrgAdmin[]
+
+  @@index([parentId])
 }
 
 // 角色
@@ -97,6 +99,7 @@ model KnowledgeBase {
   embeddingModelId   String?  @db.Uuid
   status             String   @default("active")
   createdAt          DateTime @default(now())
+  updatedAt          DateTime @default(now()) @updatedAt
 
   ownerUser          User?    @relation("PersonalOwner", fields: [ownerUserId], references: [id])
   orgNode            OrgNode? @relation(fields: [orgNodeId], references: [id])
@@ -105,6 +108,10 @@ model KnowledgeBase {
   grants             IndustryGrant[]
   documents          Document[]
   modelOverrides     KbModelOverride[]
+
+  @@index([ownerUserId])
+  @@index([orgNodeId])
+  @@index([type, status])
 }
 
 model KbAdmin {
@@ -164,6 +171,10 @@ model Chunk {
   charStart    Int
   charEnd      Int
   
+  // NOTE: Prisma doesn't natively support pgvector types yet.
+  // The embedding and tsv fields are added via a raw SQL migration
+  // (see prisma/migrations/add_vector_fields.sql) and are omitted here
+  // to avoid Prisma schema validation errors.
   // pgvector extension needed for vector field
   // embedding Unsupported("vector(1024)")?
   // tsv       Unsupported("tsvector")?
@@ -185,6 +196,8 @@ model Conversation {
 
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   messages  Message[]
+
+  @@index([userId])
 }
 
 model Message {
@@ -199,6 +212,8 @@ model Message {
 
   conversation     Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   citations        Citation[]
+
+  @@index([conversationId, createdAt])
 }
 
 model Citation {
@@ -212,6 +227,8 @@ model Citation {
   message    Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
   chunk      Chunk?   @relation(fields: [chunkId], references: [id], onDelete: SetNull)
   document   Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+
+  @@index([messageId])
 }
 
 // 个人大脑
@@ -304,6 +321,7 @@ model CompileJob {
   user             User       @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, status, createdAt])
+  @@index([status, createdAt])
 }
 
 // 模型配置
@@ -344,4 +362,21 @@ model KbModelOverride {
   modelConfig    ModelConfig   @relation(fields: [modelConfigId], references: [id], onDelete: Cascade)
   
   @@unique([kbId, kind])
+}
+
+// 审计日志
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String?  @db.Uuid
+  action     String   // login/logout/kb_create/kb_update/kb_delete/doc_upload/doc_delete/permission_grant/permission_revoke/model_config_change/user_create/user_update/query
+  resource   String?  // e.g. 'knowledge_base', 'document', 'user'
+  resourceId String?  @db.Uuid
+  details    Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
+  @@index([resourceId])
 }

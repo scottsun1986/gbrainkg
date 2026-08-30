@@ -1,7 +1,8 @@
-import { Controller, Get, Query, Req } from '@nestjs/common';
+import { Controller, Get, Query, Req, UseGuards } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { AuthService } from './auth/auth.service';
 import { PermissionService } from './permission/permission.service';
+import { AuthGuard } from './auth/auth.guard';
 
 type GraphNode = {
   id: string;
@@ -45,6 +46,7 @@ function extractTerms(title: string, chunks: Array<{ content: string; metadata: 
   return [...terms].slice(0, 40);
 }
 
+@UseGuards(AuthGuard)
 @Controller('api/v1/knowledge-graph')
 export class KnowledgeGraphController {
   private readonly prisma = new PrismaClient();

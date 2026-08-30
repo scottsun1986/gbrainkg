@@ -1,4 +1,4 @@
-import { BadRequestException, Controller, Delete, ForbiddenException, Headers, NotFoundException, OnModuleInit, Param, Post, Req, UnauthorizedException, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, ForbiddenException, Headers, NotFoundException, OnModuleInit, Param, Post, Req, UnauthorizedException, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { PrismaClient } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
@@ -8,14 +8,16 @@ import { PermissionService } from '../permission/permission.service';
 import { AuthService } from '../auth/auth.service';
 import { BrainCompilerService } from '../brain-compiler/brain-compiler.service';
 import { splitMarkdownIntoChunks } from './markdown-chunker';
+import { AuthGuard } from '../auth/auth.guard';
 
 function normalizeUploadFilename(value: unknown): string {
   const raw = String(value || 'upload.bin').replace(/[\\/]/g, '_');
-  // Some multipart clients expose a UTF-8 filename as a Latin-1 string, e.g. "æµè¯.pdf".
-  if (/[ÃÂà-ÿ]/.test(raw)) {
-    const decoded = Buffer.from(raw, 'latin1').toString('utf8');
-    if (!decoded.includes('�')) return decoded.replace(/[\\/]/g, '_');
+  // Some multipart clients expose a UTF-8 filename as a Latin-1 string, e.g. "æµ‹è¯•.pdf".
+    if (/[ÃÂà-ÿ]/.test(raw)) {
+      const decoded = Buffer.from(raw, 'latin1').toString('utf8');
+      if (decoded !== raw && !decoded.includes('\uFFFD')) return decoded.replace(/[\\/]/g, '_');
   }
+
   try {
     if (/%[0-9a-f]{2}/i.test(raw)) return decodeURIComponent(raw).replace(/[\\/]/g, '_');
   } catch { /* keep the original filename when it is not valid URI encoding */ }
@@ -26,6 +28,7 @@ function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
+@UseGuards(AuthGuard)
 @Controller('api/v1/kbs')
 export class IngestionController implements OnModuleInit {
   private readonly prisma = new PrismaClient();
@@ -91,6 +94,26 @@ export class IngestionController implements OnModuleInit {
     return { documents: [document], status: 'accepted' };
   }
 
+  @Post(':kbId/documents/text')
+  async addTextDocument(@Param('kbId') kbId: string, @Body() body: { title?: string; content?: string }, @Req() req: any) {
+    const userId = await this.authService.userIdFromRequest(req);
+    const kb = await this.prisma.knowledgeBase.findUnique({ where: { id: kbId }, select: { id: true, status: true } });
+    if (!kb || kb.status !== 'active') throw new NotFoundException('Knowledge base not found.');
+    if (!(await this.permissionService.getVisibleKnowledgeBases(userId)).includes(kbId)) throw new ForbiddenException('Knowledge base is not visible to this user.');
+    if (!(await this.permissionService.canManageKnowledgeBase(userId, kbId))) throw new ForbiddenException('Only the knowledge base owner or administrator can add knowledge.');
+    const content = String(body?.content || '').trim();
+    if (!content) throw new BadRequestException('Text content is required.');
+    if (Buffer.byteLength(content, 'utf8') > 10 * 1024 * 1024) throw new BadRequestException('Text content cannot exceed 10 MB.');
+    const title = String(body?.title || '').trim().slice(0, 200) || '未命名文本知识';
+    const documentId = randomUUID();
+    const rawPath = `${documentId}/${normalizeUploadFilename(`${title}.txt`)}`;
+    await mkdir(join(this.uploadRoot, documentId), { recursive: true });
+    await writeFile(join(this.uploadRoot, rawPath), content, 'utf8');
+    const document = await this.prisma.document.create({ data: { id: documentId, kbId, mdPath: `${documentId}/content.md`, title, sourceType: 'text', rawFileOid: join(this.uploadRoot, rawPath), uploadedById: userId, status: 'parsing' } });
+    void this.parseAndPublish(document.id, kbId, title, Buffer.from(content, 'utf8'));
+    return { documents: [document], status: 'accepted' };
+  }
+
   @Post(':kbId/documents/:docId/retry')
   async retryDocument(
     @Param('kbId') kbId: string,
@@ -134,6 +157,7 @@ export class IngestionController implements OnModuleInit {
     await this.compilerService.onKnowledgeDeleted(kbId, docId);
     await this.prisma.document.delete({ where: { id: docId } });
     if (document.rawFileOid) await unlink(document.rawFileOid).catch(() => undefined);
+    await unlink(join(this.uploadRoot, docId, 'content.md')).catch(() => undefined);
     return { ok: true, documentId: docId };
   }
 
@@ -160,6 +184,10 @@ export class IngestionController implements OnModuleInit {
 
       const markdown = String(parsed.markdown || '').trim();
       if (!markdown) throw new Error('Parser returned empty Markdown.');
+      // Preserve one lossless canonical Markdown body. Database chunks remain
+      // useful for preview/ACL metadata, while GBrain receives this original
+      // body and performs its own recursive/semantic chunking exactly once.
+      await writeFile(join(this.uploadRoot, documentId, 'content.md'), markdown, 'utf8');
       const chunks = splitMarkdownIntoChunks(markdown);
       if (!chunks.length) throw new Error('Parser returned no indexable content.');
       await this.prisma.$transaction([

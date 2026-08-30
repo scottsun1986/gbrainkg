@@ -1,4 +1,11 @@
+# IMPORTANT: Don't forget to copy .env.example to .env and set all required passwords before deploying!
 version: '3.8'
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "20m"
+    max-file: "5"
 
 services:
   # ==========================================
@@ -12,10 +19,15 @@ services:
       POSTGRES_PASSWORD: ${DB_PASS:-llmwiki_pass}
       POSTGRES_DB: ${DB_NAME:-llmwiki}
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
     restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 2G
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-llmwiki} -d ${DB_NAME:-llmwiki}"]
       interval: 5s
@@ -25,12 +37,17 @@ services:
   redis:
     image: redis:7-alpine
     container_name: llmwiki-redis
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASS:-}
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 1G
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -41,18 +58,23 @@ services:
   # Storage & Git
   # ==========================================
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
     container_name: llmwiki-minio
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_USER:-admin}
       MINIO_ROOT_PASSWORD: ${MINIO_PASS:-password123}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
       - minio_data:/data
     restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 1G
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
@@ -60,7 +82,7 @@ services:
       retries: 3
 
   gitea:
-    image: gitea/gitea:latest
+    image: gitea/gitea:1.22.3
     container_name: llmwiki-gitea
     environment:
       - USER_UID=1000
@@ -71,8 +93,8 @@ services:
       - GITEA__database__USER=${DB_USER:-llmwiki}
       - GITEA__database__PASSWD=${DB_PASS:-llmwiki_pass}
     ports:
-      - "3001:3000"
-      - "2222:22"
+      - "127.0.0.1:3001:3000"
+      - "127.0.0.1:2222:22"
     volumes:
       - gitea_data:/data
       - /etc/timezone:/etc/timezone:ro
@@ -81,15 +103,20 @@ services:
       postgres:
         condition: service_healthy
     restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 1G
 
   # ==========================================
   # Model Gateway
   # ==========================================
   litellm:
-    image: ghcr.io/berriai/litellm:main-latest
+    image: ghcr.io/berriai/litellm:main-v1.51.4.dev4
     container_name: llmwiki-litellm
     ports:
-      - "4100:4000"
+      - "127.0.0.1:4100:4000"
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-llmwiki-master}
       - DATABASE_URL=postgresql://${DB_USER:-llmwiki}:${DB_PASS:-llmwiki_pass}@postgres:5432/litellm
@@ -97,6 +124,11 @@ services:
       postgres:
         condition: service_healthy
     restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 1G
 
 volumes:
   pg_data:

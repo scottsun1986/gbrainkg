@@ -9,6 +9,8 @@ export interface BrainEvidence {
   text: string;
   sourceFile?: string;
   kbId?: string;
+  kbName?: string;
+  kbType?: string;
   topic?: string;
   slug?: string;
 }
@@ -16,7 +18,8 @@ export interface BrainEvidence {
 export interface BrainQueryResult {
   topics: string[];
   answer: string;
-  citations: Array<{ topic: string; kbId?: string; docId?: string; docTitle?: string; snippet: string }>;
+  citations: Array<{ topic: string; kbId?: string; docId?: string; docTitle?: string; snippet: string; context?: string }>;
+  reranked?: boolean;
 }
 
 function safePart(value: string): string {
@@ -37,11 +40,39 @@ function stripPrismaUrl(value: string): string {
   }
 }
 
+function yamlString(value: string): string {
+  return JSON.stringify(value);
+}
+
+function canonicalPage(slug: string, items: BrainEvidence[]): string {
+  const first = items[0];
+  const title = (first.topic || first.sourceFile || slug).replace(/\.[^.]+$/, '').trim();
+  const body = items.map((item) => item.text.trim()).filter(Boolean).join('\n\n');
+  const aliases = [...new Set([first.sourceFile, first.topic].filter((value): value is string => Boolean(value && value !== title)))];
+  const documentId = slug.startsWith('docs/') ? slug.slice('docs/'.length) : slug;
+  const frontmatter = [
+    '---',
+    `title: ${yamlString(title)}`,
+    'type: source',
+    `aliases: ${JSON.stringify(aliases)}`,
+    `source_uri: ${yamlString(`llmwiki://knowledge-bases/${first.kbId || 'unknown'}/documents/${documentId}`)}`,
+    `kb_id: ${yamlString(first.kbId || '')}`,
+    `kb_name: ${yamlString(first.kbName || '')}`,
+    `kb_type: ${yamlString(first.kbType || '')}`,
+    `document_id: ${yamlString(documentId)}`,
+    '---',
+  ].join('\n');
+  const heading = body.startsWith(`# ${title}`) ? '' : `# ${title}\n\n`;
+  return `${frontmatter}\n\n${heading}${body}`.trim();
+}
+
 /** Production bridge to the official garrytan/gbrain CLI. */
 export class BrainRepoAdapter {
   private readonly gbrainBin = process.env.GBRAIN_BIN || '/home/scottsun/.bun/bin/gbrain';
   private readonly gbrainHome = process.env.GBRAIN_HOME || '/home/scottsun/.config/gbrain';
   private readonly sourceRoot: string;
+  private searchConfigSignature = '';
+  private searchConfigPromise: Promise<void> | null = null;
 
   constructor(basePath: string) {
     this.sourceRoot = join(basePath, 'gbrain-sources');
@@ -93,7 +124,48 @@ export class BrainRepoAdapter {
       const child = spawn('git', args, { cwd, stdio: 'ignore' });
       child.on('error', reject);
       child.on('close', (code: number) => code === 0 ? resolve() : reject(new Error(`git ${args.join(' ')} failed`)));
+    }).catch((err) => {
+      if (args[0] === 'commit') return;
+      throw err;
     });
+  }
+
+  private async ensureSearchConfig(): Promise<void> {
+    const embeddingModel = process.env.GBRAIN_EMBEDDING_MODEL || '';
+    const embeddingDimensions = process.env.GBRAIN_EMBEDDING_DIMENSIONS || '';
+    const embeddingBaseUrl = process.env.OPENAI_BASE_URL || '';
+    const reranker = process.env.GBRAIN_RERANK_MODEL || '';
+    const rerankerBaseUrl = process.env.LLAMA_SERVER_RERANKER_BASE_URL || '';
+    const chatModel = process.env.GBRAIN_CHAT_MODEL || '';
+    const expansionModel = process.env.GBRAIN_EXPANSION_MODEL || '';
+    const deepseekBaseUrl = process.env.GBRAIN_DEEPSEEK_BASE_URL || '';
+    const signature = [embeddingModel, embeddingDimensions, embeddingBaseUrl, reranker, rerankerBaseUrl, chatModel, expansionModel, deepseekBaseUrl].join('|');
+    if (this.searchConfigSignature === signature) return;
+    if (this.searchConfigPromise) await this.searchConfigPromise;
+    if (this.searchConfigSignature === signature) return;
+
+    this.searchConfigPromise = (async () => {
+      await this.run(['config', 'set', 'search.mode', 'balanced']);
+      // Enterprise questions are often phrased differently from the source.
+      // Let GBrain expand queries generically instead of adding application-level
+      // rules for article numbers, filenames, or individual question patterns.
+      await this.run(['config', 'set', 'search.expansion', 'true']);
+      // GBrain intentionally rejects embedding model/dimension writes through
+      // the DB config plane because they size the vector schema. The adapter
+      // supplies both as child-process environment values from platform DB;
+      // the existing 1024-wide schema already matches BAAI/bge-m3.
+      if (embeddingBaseUrl) await this.run(['config', 'set', 'provider_base_urls.openai', embeddingBaseUrl]);
+      if (reranker) {
+        await this.run(['config', 'set', 'search.reranker.model', reranker]);
+        await this.run(['config', 'set', 'search.reranker.enabled', 'true']);
+      }
+      if (rerankerBaseUrl) await this.run(['config', 'set', 'provider_base_urls.llama-server-reranker', rerankerBaseUrl]);
+      if (chatModel) await this.run(['config', 'set', 'chat_model', chatModel]);
+      if (expansionModel) await this.run(['config', 'set', 'expansion_model', expansionModel]);
+      if (deepseekBaseUrl) await this.run(['config', 'set', 'provider_base_urls.deepseek', deepseekBaseUrl]);
+      this.searchConfigSignature = signature;
+    })();
+    try { await this.searchConfigPromise; } finally { this.searchConfigPromise = null; }
   }
 
   private async ensureSource(sourceId: string): Promise<string> {
@@ -101,11 +173,11 @@ export class BrainRepoAdapter {
     await mkdir(sourcePath, { recursive: true });
     try { await access(join(sourcePath, '.git')); } catch {
       await writeFile(join(sourcePath, '.gbrain-source'), `${sourceId}\n`, 'utf8');
-      await this.runGit(['init', '-q'], sourcePath);
-      await this.runGit(['config', 'user.email', 'llmwiki@local'], sourcePath);
-      await this.runGit(['config', 'user.name', 'LLMWiki'], sourcePath);
-      await this.runGit(['add', '.gbrain-source'], sourcePath);
-      await this.runGit(['commit', '-qm', 'initialize source'], sourcePath);
+      await this.runGit(['init', '-q'], sourcePath).catch(() => undefined);
+      await this.runGit(['config', 'user.email', 'llmwiki@local'], sourcePath).catch(() => undefined);
+      await this.runGit(['config', 'user.name', 'LLMWiki'], sourcePath).catch(() => undefined);
+      await this.runGit(['add', '.gbrain-source'], sourcePath).catch(() => undefined);
+      await this.runGit(['commit', '-qm', 'initialize source', '--allow-empty'], sourcePath).catch(() => undefined);
     }
     try {
       await this.run(['sources', 'add', sourceId, '--path', sourcePath, '--force']);
@@ -130,21 +202,25 @@ export class BrainRepoAdapter {
 
   async ingest(repoPath: string, evidence: BrainEvidence[]): Promise<void> {
     const sourceId = this.sourceId(repoPath);
-    await this.ensureSource(sourceId);
+    const sourcePath = await this.ensureSource(sourceId);
     const grouped = new Map<string, BrainEvidence[]>();
     for (const item of evidence) {
       const slug = item.slug || `docs/${safePart(item.topic || 'document')}`;
       grouped.set(slug, [...(grouped.get(slug) || []), item]);
     }
     for (const [slug, items] of grouped) {
-      const content = items.map((item) => item.text.trim()).filter(Boolean).join('\n\n');
+      const content = canonicalPage(slug, items);
       if (content) {
-        await this.run(['capture', '--stdin', '--slug', slug, '--type', 'analysis', '--source', sourceId], content);
-        // Capture writes the page/chunks; explicitly embed it so newly
-        // published documents are searchable immediately in production.
-        await this.run(['embed', slug, '--source', sourceId]);
+        // capture delegates to GBrain put_page: one canonical markdown page is
+        // recursively chunked, embedded and graph-linked by GBrain itself.
+        await this.run(['capture', '--stdin', '--slug', slug, '--type', 'source', '--source', sourceId, '--quiet'], content);
       }
     }
+    // GBrain's documented system of record is the source repository. Capture
+    // writes through to that repository; commit the incremental batch so a
+    // later sync/restore sees exactly the same canonical pages as Postgres.
+    await this.runGit(['add', '-A'], sourcePath);
+    await this.runGit(['commit', '-qm', 'sync knowledge documents'], sourcePath);
   }
 
   async replace(repoPath: string, evidence: BrainEvidence[]): Promise<void> {
@@ -164,66 +240,65 @@ export class BrainRepoAdapter {
 
   async query(repoPath: string, question: string): Promise<BrainQueryResult> {
     const sourceId = this.sourceId(repoPath);
-    // Keep enough candidates for enumeration questions. The application still
-    // applies its database ACL after this retrieval step.
-    const isFullDocument = /(全文|全篇|整篇|全部章节|完整内容|全部内容|逐条|逐项|多少|几条|总数|一共|共有|条款|条数|数量|完整|全部)/u.test(question);
-    const runQuery = async (candidate: string) => {
-      const { stdout } = await this.run(['query', candidate, '--no-expand', '--source-id', sourceId, '--limit', isFullDocument ? '40' : '24', '--detail', 'high', '--snippet-chars', '0', '--autocut', 'false', '--json']);
+    await this.ensureSearchConfig();
+    // Use GBrain's official balanced retrieval stack as designed: query
+    // expansion + vector/BM25/RRF + graph signals + reranker + autocut.
+    // No application-side keyword rules or language-specific retries.
+    const { stdout } = await this.run([
+      'query', question,
+      '--source-id', sourceId,
+      '--mode', 'balanced',
+      '--limit', '30',
+      '--detail', 'high',
+      '--snippet-chars', '1800',
+      '--json',
+    ]);
+    let rawRows: Array<{ slug: string; title: string; chunk_text?: string; source_id?: string; rerank_score?: number }> = [];
+    try { rawRows = JSON.parse(stdout || '[]'); } catch { rawRows = []; }
+
+    // GBrain can return multiple high-scoring chunks from one page. Collapse
+    // them into one citation while retaining all distinct evidence snippets.
+    const bySlug = new Map<string, { slug: string; title: string; chunk_text: string; source_id?: string }>();
+    for (const row of rawRows) {
+      if (!row.slug) continue;
+      const previous = bySlug.get(row.slug);
+      const snippet = String(row.chunk_text || '').trim();
+      if (!previous) bySlug.set(row.slug, { ...row, chunk_text: snippet });
+      else if (snippet && !previous.chunk_text.includes(snippet)) previous.chunk_text = `${previous.chunk_text}\n\n${snippet}`.trim();
+    }
+    const rows = [...bySlug.values()];
+
+    // Generic parent-document retrieval: hydrate the top matched pages within
+    // a fixed context budget. This gives the answer model complete policy
+    // context for details, totals and cross-section questions without trying
+    // to classify every possible wording in application code.
+    const pageBudget = Math.max(8_000, Number(process.env.GBRAIN_CONTEXT_MAX_CHARS || 80_000));
+    const maxParents = Math.max(1, Number(process.env.GBRAIN_CONTEXT_MAX_PARENTS || 3));
+    let remaining = pageBudget;
+    const pageContext = new Map<string, string>();
+    for (const row of rows.slice(0, maxParents)) {
       try {
-        return JSON.parse(stdout || '[]') as Array<{ slug: string; title: string; chunk_text?: string; source_id?: string }>;
-      } catch {
-        return [];
-      }
-    };
-    let rows = await runQuery(question);
-    // GBrain's keyword arm can treat a continuous Chinese question such as
-    // "合规管理办法第一条是什么" as one long token. Retry progressively
-    // shorter Han prefixes so title phrases remain searchable while the
-    // retrieval engine is still exclusively GBrain (no DB text fallback).
-    if (/[\p{Script=Han}]/u.test(question)) {
-      const hanRun = ((question.match(/[\p{Script=Han}]{4,}/gu) || []).sort((a, b) => b.length - a.length)[0] || '')
-        .replace(/^(请问|请告诉我|帮我查一下|帮我查询|请帮我)/u, '');
-      const lengths = [16, 14, 12, 10, 8, 6, 5, 4].filter((length) => length <= hanRun.length);
-      const bySlug = new Map(rows.map((row) => [row.slug, row]));
-      for (const length of lengths) {
-        const candidate = hanRun.slice(0, length);
-        const variants = await runQuery(candidate);
-        const relevant = variants.filter((row) => `${row.title || ''}\n${row.chunk_text || ''}`.includes(candidate));
-        for (const row of relevant) if (!bySlug.has(row.slug)) bySlug.set(row.slug, row);
-        // Once a title/content-bearing variant is found, shorter prefixes are
-        // less precise and can only add noisy candidates.
-        if (relevant.length) break;
-      }
-      rows = [...bySlug.values()];
-    }
-    // Hybrid query is intentionally top-K. For enumeration/complete-document
-    // questions, recover the canonical full GBrain pages for the matched docs;
-    // otherwise a five-hundred-line policy can be mistaken for a partial answer.
-    if (isFullDocument) {
-      const pageCache = new Map<string, string>();
-      for (const row of rows) {
-        if (!row.slug || pageCache.has(row.slug)) continue;
-        try {
-          const page = await this.getPage(repoPath, row.slug);
-          if (page) pageCache.set(row.slug, page);
-        } catch {
-          // Retrieval remains usable when an old index points to a removed page.
+        const page = await this.getPage(repoPath, row.slug);
+        if (page && page.length <= remaining) {
+          pageContext.set(row.slug, page);
+          remaining -= page.length;
         }
-      }
-      for (const row of rows) {
-        const full = pageCache.get(row.slug);
-        if (full) row.chunk_text = full;
+      } catch {
+        // A stale page pointer degrades to the retrieved GBrain chunk.
       }
     }
+    const citations = rows.map((row) => ({
+      topic: row.title || row.slug,
+      docId: /^docs\/[^/]+$/.test(row.slug) ? row.slug.slice('docs/'.length) : undefined,
+      docTitle: row.title,
+      snippet: row.chunk_text || '',
+      context: pageContext.get(row.slug) || row.chunk_text || '',
+    }));
     return {
-      topics: rows.map((row) => row.title || row.slug),
-      answer: rows.map((row) => row.chunk_text || '').filter(Boolean).join('\n\n'),
-      citations: rows.map((row) => ({
-        topic: row.title || row.slug,
-        docId: row.slug.startsWith('docs/') ? row.slug.slice('docs/'.length) : undefined,
-        docTitle: row.title,
-        snippet: row.chunk_text || '',
-      })),
+      topics: citations.map((citation) => citation.topic),
+      answer: citations.map((citation) => citation.context).filter(Boolean).join('\n\n'),
+      citations,
+      reranked: rawRows.some((row) => typeof row.rerank_score === 'number'),
     };
   }
 
@@ -250,8 +325,9 @@ export class BrainRepoAdapter {
     const merged = [...unique.values()].slice(0, 20);
     return {
       topics: merged.map((citation) => citation.topic),
-      answer: merged.map((citation) => citation.snippet).filter(Boolean).join('\n\n'),
+      answer: merged.map((citation) => citation.context || citation.snippet).filter(Boolean).join('\n\n'),
       citations: merged,
+      reranked: results.every((result) => result.reranked),
     };
   }
 }

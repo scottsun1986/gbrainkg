@@ -6,12 +6,14 @@ import { PrismaClient } from '@prisma/client';
 import { PermissionService } from '../permission/permission.service';
 import { ModelConfigService } from '../model-config.service';
 import { BrainCompilerService } from './brain-compiler.service';
+import { readCanonicalDocument } from './canonical-document';
 
 @Processor('dirty-compiler-queue')
 export class BrainCompilerProcessor extends WorkerHost {
   private readonly logger = new Logger(BrainCompilerProcessor.name);
   private prisma = new PrismaClient();
   private gbrain = new BrainRepoAdapter(process.env.BRAIN_REPO_BASE_PATH || '/tmp/llmwiki/brain_repos');
+  private readonly uploadRoot = process.env.UPLOAD_ROOT || '/tmp/llmwiki/uploads';
 
   constructor(@Optional() private readonly permissionService?: PermissionService, @Optional() private readonly modelConfigService?: ModelConfigService, @Optional() private readonly compilerService?: BrainCompilerService) {
     super();
@@ -29,26 +31,31 @@ export class BrainCompilerProcessor extends WorkerHost {
       const visibleKbIds = this.permissionService
         ? await this.permissionService.getVisibleKnowledgeBases(userId)
         : [];
-      const rawChunks = this.prisma.chunk?.findMany && visibleKbIds.length > 0
-        ? await this.prisma.chunk.findMany({
+      const documents = this.prisma.document?.findMany && visibleKbIds.length > 0
+        ? await this.prisma.document.findMany({
             where: {
               kbId: { in: visibleKbIds },
-              document: { status: 'published' },
+              status: 'published',
               ...(docIds.length > 0
-                ? { documentId: { in: docIds } }
-                : { content: { contains: topicSlug, mode: 'insensitive' } }),
+                ? { id: { in: docIds } }
+                : { OR: [{ title: { contains: topicSlug, mode: 'insensitive' } }, { chunks: { some: { content: { contains: topicSlug, mode: 'insensitive' } } } }] }),
             },
-            include: { document: { select: { title: true, mdPath: true } } },
-            take: 100,
+            include: {
+              kb: { select: { name: true, type: true } },
+              chunks: { orderBy: { ord: 'asc' }, select: { content: true, charStart: true, charEnd: true, metadata: true } },
+            },
+            take: 20,
           })
         : [];
-      const evidences = rawChunks.map((chunk) => ({
-        text: chunk.content,
-        sourceFile: chunk.document.mdPath || chunk.document.title,
-        kbId: chunk.kbId,
-        topic: topicSlug,
-        slug: `docs/${chunk.documentId}`,
-      }));
+      const evidences = await Promise.all(documents.map(async (document) => ({
+        text: await readCanonicalDocument(this.uploadRoot, document.id, document.chunks),
+        sourceFile: document.title,
+        kbId: document.kbId,
+        kbName: document.kb.name,
+        kbType: document.kb.type,
+        topic: document.title.replace(/\.[^.]+$/, ''),
+        slug: `docs/${document.id}`,
+      })));
 
       // Published knowledge is written incrementally to its shared source or
       // private permission-group source. No per-user full rebuild is performed.

@@ -84,7 +84,7 @@ describe('ChatService', () => {
     expect(events.some(e => (e.data as any).type === 'done')).toBeTruthy();
   });
 
-  it('should send the current conversation history to the LLM', async () => {
+  it('should preserve conversation context without sending stale assistant turns as live messages', async () => {
     mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(['kb-1']);
     mockCompilerService.ensureUserBrainRepo.mockResolvedValue({ id: 'repo-1', gitRepoUrl: '/tmp/repo' });
     mockPrisma.document.findMany.mockResolvedValue([{ id: 'doc-1', kbId: 'kb-1', title: '规则.md' }]);
@@ -95,21 +95,25 @@ describe('ChatService', () => {
     ]);
     process.env.DEEPSEEK_API_KEY = 'test-key';
     const originalFetch = global.fetch;
-    const fetchMock = jest.fn().mockResolvedValue({
+    const fetchMock = jest.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: '{"query":"当前问题"}' } }] }),
+      })
+      .mockResolvedValueOnce({
       ok: true,
       body: { getReader: () => ({ read: async () => ({ done: true, value: undefined }) }) },
-    });
+      });
     (global as any).fetch = fetchMock;
 
     try {
       const stream$ = await service.handleChatStream('user-1', '当前问题', ['kb-1'], 'conversation-1');
       await lastValueFrom(stream$.pipe(toArray()));
-      const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
-      expect(requestBody.messages.slice(1)).toEqual([
-        { role: 'user', content: '上一轮问题' },
-        { role: 'assistant', content: '上一轮回答' },
-        { role: 'user', content: '当前问题' },
-      ]);
+      const requestBody = JSON.parse(fetchMock.mock.calls[1][1].body);
+      expect(requestBody.messages.slice(1)).toEqual([{ role: 'user', content: '当前问题' }]);
+      expect(requestBody.messages[0].content).toContain('上一轮问题');
+      expect(requestBody.messages[0].content).toContain('上一轮回答');
+      expect(requestBody.messages[0].content).toContain('Current compiled truth (authoritative)');
     } finally {
       (global as any).fetch = originalFetch;
       delete process.env.DEEPSEEK_API_KEY;

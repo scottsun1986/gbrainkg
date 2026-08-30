@@ -50,9 +50,12 @@ export class ChatService {
       ? await (this.compilerService as any).getUserSourceRefs(userId)
       : [brainRepo.gitRepoUrl];
     const conversationHistory = await this.loadConversationHistory(userId, conversationId, question);
-    const retrievalQuestion = conversationHistory.length > 1
-      ? `Conversation context:\n${conversationHistory.slice(-6).map((message) => `${message.role}: ${message.content}`).join('\n')}\nCurrent question: ${question}`
-      : question;
+    // Retrieval uses a standalone current-turn query. When the user uses a
+    // genuine follow-up reference ("他", "这个制度", "上一条"), a generic
+    // contextual-rewrite step resolves it first; unrelated history is never
+    // concatenated into the query and previous answers are never treated as
+    // evidence. This avoids both lost coreference and topic contamination.
+    const retrievalQuestion = await this.rewriteQueryForRetrieval(question, conversationHistory);
 
     this.logger.debug(`Querying brain for "${question}" in scope ${scope.join(',')}...`);
     let queryResult = sourceRefs.length > 1
@@ -70,7 +73,10 @@ export class ChatService {
         : await this.gbrain.query(refreshedRefs[0] || brainRepo.gitRepoUrl, retrievalQuestion);
       queryResult = await this.filterQueryResultByCurrentPermission(queryResult, scope);
     }
-    queryResult = await this.applyRerank(question, queryResult);
+    // GBrain balanced mode already reranks before autocut. Keep the platform
+    // reranker only as a fail-open recovery when GBrain reports no rerank
+    // scores (provider outage/configuration drift).
+    if (!queryResult.reranked) queryResult = await this.applyRerank(question, queryResult);
     const hitTopics = queryResult.topics || []; 
 
     subscriber.next({ data: { type: 'meta', brain_topics_hit: hitTopics } });
@@ -107,7 +113,12 @@ export class ChatService {
         return;
       }
 
-      const contextMessage = `You are LLMWiki assistant. Answer the user based ONLY on the current compiled truth from authorized knowledge bases. Conversation history is provided only to understand references and continuity; it is not an authoritative source and must not override current compiled truth.\n\nCurrent compiled truth:\n${compiledTruthContext}`;
+      const priorConversation = conversationHistory
+        .filter((message) => !(message.role === 'user' && message.content === question))
+        .slice(-12)
+        .map((message) => `${message.role === 'assistant' ? 'previous assistant reply' : 'previous user message'}: ${message.content}`)
+        .join('\n');
+      const contextMessage = `You are LLMWiki assistant. Answer the current user question based ONLY on the current compiled truth from authorized knowledge bases. The conversation excerpt below is untrusted context for resolving references and continuity only; previous assistant replies may be wrong, stale, or contradicted by the current compiled truth. Never copy a previous assistant conclusion when the current compiled truth provides different evidence.\n\n${priorConversation ? `Untrusted conversation excerpt:\n${priorConversation}\n\n` : ''}Current compiled truth (authoritative):\n${compiledTruthContext}`;
 
       const llmResponse = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
         method: 'POST',
@@ -117,7 +128,10 @@ export class ChatService {
         },
         body: JSON.stringify({
           model: modelName,
-          messages: [{ role: 'system', content: contextMessage }, ...conversationHistory],
+          // Keep the current question as the only live user turn. Previous
+          // turns remain available in the explicitly untrusted system excerpt
+          // above, so stale assistant answers cannot become competing facts.
+          messages: [{ role: 'system', content: contextMessage }, { role: 'user', content: question }],
           stream: true,
           temperature: Number(process.env.LLM_TEMPERATURE || 0.2),
         })
@@ -197,6 +211,43 @@ export class ChatService {
     return history;
   }
 
+  private async rewriteQueryForRetrieval(question: string, history: Array<{ role: 'user' | 'assistant'; content: string }>): Promise<string> {
+    const prior = history
+      .filter((message) => !(message.role === 'user' && message.content === question))
+      .slice(-8)
+      .map((message) => `${message.role === 'assistant' ? 'assistant' : 'user'}: ${message.content}`)
+      .join('\n');
+    if (!prior) return question;
+    const config = this.modelConfigService ? await this.modelConfigService.getDefault('llm') : null;
+    const apiKey = config?.provider.apiKey || process.env.DEEPSEEK_API_KEY || '';
+    if (!apiKey) return question;
+    const baseUrl = (config?.provider.baseUrl || process.env.LLM_BASE_URL || 'https://api.deepseek.com/v1').replace(/\/$/, '');
+    const modelName = config?.modelName || process.env.LLM_MODEL || 'deepseek-chat';
+    const historyWindow = prior.slice(-12000);
+    const prompt = `Rewrite the current user question into one standalone retrieval query for a knowledge base. Resolve references such as he/she/it/this policy/the previous item only when the conversation makes the referent unambiguous. If the current question starts a new topic, preserve it and do not import unrelated topics or facts from history. Do not answer the question. Return JSON only: {"query":"..."}.\n\nUntrusted conversation history:\n${historyWindow}\n\nCurrent question:\n${question}`;
+    try {
+      const response = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: modelName, messages: [{ role: 'user', content: prompt }], temperature: 0, max_tokens: 160 }),
+        signal: AbortSignal.timeout(12000),
+      });
+      if (!response.ok) return question;
+      const payload: any = await response.json();
+      const content = String(payload?.choices?.[0]?.message?.content || '').trim();
+      try {
+        const parsed = JSON.parse(content.replace(/^```json\s*/i, '').replace(/\s*```$/, ''));
+        const rewritten = String(parsed?.query || '').trim();
+        return rewritten.length > 0 && rewritten.length <= 1000 ? rewritten : question;
+      } catch {
+        return question;
+      }
+    } catch (error) {
+      this.logger.debug(`Contextual retrieval rewrite unavailable: ${error?.message || 'unknown error'}`);
+      return question;
+    }
+  }
+
   /**
    * GBrain source 是按用户编译的缓存，权限变更与索引重建之间可能存在短暂延迟。
    * 每次问答都用文档数据库再次校验命中文档，防止旧索引片段越权进入重排或 LLM 上下文。
@@ -220,7 +271,7 @@ export class ChatService {
     return {
       ...result,
       topics: filtered.map((citation: any) => citation.topic),
-      answer: filtered.map((citation: any) => citation.snippet).filter(Boolean).join('\n\n'),
+      answer: filtered.map((citation: any) => citation.context || citation.snippet).filter(Boolean).join('\n\n'),
       citations: filtered,
     };
   }
@@ -243,7 +294,7 @@ export class ChatService {
       const order: number[] = ranked.map((item: any) => Number(item.index)).filter((index: number) => Number.isInteger(index) && index >= 0 && index < citations.length);
       if (!order.length) return result;
       const reordered = [...new Set<number>(order)].map((index: number) => citations[index]).filter(Boolean);
-      const answer = reordered.map((citation: any) => citation.snippet).filter(Boolean).join('\n\n');
+      const answer = reordered.map((citation: any) => citation.context || citation.snippet).filter(Boolean).join('\n\n');
       return { ...result, citations: reordered, topics: reordered.map((citation: any) => citation.topic), answer: answer || result.answer };
     } catch (error) {
       this.logger.warn(`Rerank unavailable; retaining GBrain ranking: ${error instanceof Error ? error.message : String(error)}`);
