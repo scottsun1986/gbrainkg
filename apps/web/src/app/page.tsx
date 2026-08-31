@@ -23,8 +23,7 @@ const dbData = true;
 // 必须使用当前访问地址，避免高位端口部署时错误回落到开发 API 端口 3202。
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || (
   typeof window !== 'undefined'
-    ? ((['3000', '3001', '3200', '3202'].includes(window.location.port) &&
-        ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname))
+    ? (['3000', '3001', '3200'].includes(window.location.port)
       ? `${window.location.protocol}//${window.location.hostname}:3202`
       : window.location.origin)
     : 'http://localhost:3202'
