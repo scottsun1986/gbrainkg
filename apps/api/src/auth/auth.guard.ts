@@ -17,6 +17,8 @@ export class AuthGuard implements CanActivate {
     const request = context.switchToHttp().getRequest();
     try {
       const userId = await this.authService.userIdFromRequest(request);
+      const passwordChangeEndpoint = String(request.path || '').endsWith('/auth/change-password') || String(request.path || '').endsWith('/auth/me');
+      if (!passwordChangeEndpoint && await this.authService.isPasswordChangeRequired(userId)) return false;
       request.user = { id: userId };
       return true;
     } catch {
@@ -33,6 +35,7 @@ export class AdminGuard implements CanActivate {
     const request = context.switchToHttp().getRequest();
     try {
       const userId = await this.authService.userIdFromRequest(request);
+      if (await this.authService.isPasswordChangeRequired(userId)) return false;
       const capabilities = await this.permissionService.getCapabilities(userId);
       if (!capabilities.includes('*') && !ADMIN_CAPABILITIES.some((permission) => capabilities.includes(permission))) return false;
       request.user = { id: userId, isAdmin: capabilities.includes('*') };

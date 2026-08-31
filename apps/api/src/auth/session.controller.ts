@@ -19,7 +19,7 @@ export class SessionController {
     const userId = await this.authService.userIdFromRequest(req);
     const visibleIds = await this.permissionService.getVisibleKnowledgeBases(userId);
     const [user, kbs, capabilities, managedOrgIds, systemAdmin] = await Promise.all([
-      this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, username: true, displayName: true, email: true, roles: { include: { role: true } }, orgs: { include: { orgNode: true } } } }),
+      this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, username: true, displayName: true, email: true, mustChangePassword: true, roles: { include: { role: true } }, orgs: { include: { orgNode: true } } } }),
       this.prisma.knowledgeBase.findMany({ where: { id: { in: visibleIds }, status: 'active' }, include: { _count: { select: { documents: true } } }, orderBy: { createdAt: 'desc' } }),
       this.permissionService.getCapabilities(userId),
       this.permissionService.getManagedOrgIds(userId),

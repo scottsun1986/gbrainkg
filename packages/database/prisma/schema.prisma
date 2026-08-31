@@ -15,6 +15,7 @@ model User {
   displayName  String
   email        String     @unique
   passwordHash String?
+  mustChangePassword Boolean @default(false)
   status       String     @default("active") // active/disabled
   source       String     @default("manual") // manual/ldap/oidc
   createdAt    DateTime   @default(now())
@@ -28,6 +29,7 @@ model User {
   compileJobs  CompileJob[]
   managedOrgs  OrgAdmin[]
   brainSourceMembers BrainSourceMember[]
+  brainScopeMembers  BrainScopeMember[]
 }
 
 // 组织节点
@@ -300,6 +302,97 @@ model BrainSourceDocument {
 
   @@id([sourceId, documentId])
   @@index([documentId])
+}
+
+// 权限 Scope 维度管理：在用户可见权限范围内构建复用 Scope
+model BrainScope {
+  id              String   @id @default(uuid()) @db.Uuid
+  fingerprint     String   @unique
+  name            String?
+  sourceKeys      Json     @default("[]")
+  aclEpoch        Int      @default(1)
+  knowledgeEpoch  Int      @default(1)
+  strategy        String   @default("eager") // eager / lazy
+  status          String   @default("active") // active / dirty / compiling / archived
+  lastCompileAt   DateTime?
+  lastAccessAt    DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  members         BrainScopeMember[]
+  derivedPages    BrainDerivedPage[]
+
+  @@index([fingerprint])
+  @@index([status])
+  @@index([lastAccessAt])
+}
+
+model BrainScopeMember {
+  scopeId   String    @db.Uuid
+  userId    String    @db.Uuid
+  validFrom DateTime  @default(now())
+  validTo   DateTime?
+  createdAt DateTime  @default(now())
+
+  scope     BrainScope @relation(fields: [scopeId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([scopeId, userId])
+  @@index([userId])
+}
+
+// 跨 source 派生智能产物：全局总结、概念、事实卡片与缺口分析（带严密来源追踪）
+model BrainDerivedPage {
+  id               String   @id @default(uuid()) @db.Uuid
+  scopeId          String   @db.Uuid
+  slug             String
+  title            String
+  kind             String   @default("summary") // summary / concept / fact / gap / graph
+  content          String
+  derivedFrom      Json     @default("[]") // [{ docId, chunkOrd, snippet, title }]
+  inputFingerprint String
+  modelVersion     String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  scope            BrainScope @relation(fields: [scopeId], references: [id], onDelete: Cascade)
+
+  @@unique([scopeId, slug])
+  @@index([scopeId, kind])
+}
+
+// 变更事件总线 Outbox：确保数据变更与 GBrain 状态同步的事务可靠性
+model BrainChangeEvent {
+  id             String    @id @default(uuid()) @db.Uuid
+  eventType      String    // doc_change / doc_delete / perm_grant / perm_revoke / org_change / role_change / schema_change
+  resourceType   String    // document / knowledge_base / user / role / org_node
+  resourceId     String?
+  payload        Json?     @default("{}")
+  status         String    @default("pending") // pending / processing / completed / failed
+  affectedScopes Json?     @default("[]")
+  retryCount     Int       @default(0)
+  errorMessage   String?
+  createdAt      DateTime  @default(now())
+  processedAt    DateTime?
+
+  @@index([status, createdAt])
+  @@index([eventType, resourceId])
+}
+
+// 细粒度运维与 Compile Truth 审计日志
+model BrainOperationLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  operation  String   // sync / dream / scope_compile / synthesize / query
+  scopeId    String?
+  phase      String?
+  counts     Json?    @default("{}")
+  durationMs Int?
+  status     String   @default("success") // success / warning / failed / skipped
+  error      String?
+  createdAt  DateTime @default(now())
+
+  @@index([operation, createdAt])
+  @@index([scopeId, createdAt])
 }
 
 // GBrain Dream Cycle 的持久化运行记录。队列日志会随保留策略清理，

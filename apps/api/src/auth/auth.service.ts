@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 
@@ -70,6 +70,35 @@ export class AuthService {
     const user = await this.prisma.user.findFirst({ where: { id: payload.sub, status: 'active' }, select: { id: true } });
     if (!user) throw new UnauthorizedException('User is inactive or does not exist.');
     return user.id;
+  }
+
+  async isPasswordChangeRequired(userId: string): Promise<boolean> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { mustChangePassword: true },
+    });
+    return Boolean(user?.mustChangePassword);
+  }
+
+  async changePassword(userId: string, currentPassword: string, newPassword: string) {
+    if (newPassword.length < 12) {
+      throw new BadRequestException('New password must contain at least 12 characters.');
+    }
+    if (currentPassword === newPassword) {
+      throw new BadRequestException('New password must be different from the current password.');
+    }
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { passwordHash: true },
+    });
+    if (!user?.passwordHash || !this.verifyPassword(currentPassword, user.passwordHash)) {
+      throw new UnauthorizedException('Current password is incorrect.');
+    }
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash: this.hashPassword(newPassword), mustChangePassword: false },
+    });
+    return { ok: true };
   }
 
   async adminUserIdFromRequest(req: any): Promise<string> {

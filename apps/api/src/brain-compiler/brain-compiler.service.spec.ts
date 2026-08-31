@@ -37,6 +37,8 @@ describe("BrainCompilerService source isolation", () => {
       {} as any,
       permission as any,
       {} as any,
+      {} as any,
+      {} as any,
     );
 
     const plan = await (service as any).getSourcePlan("u1");

@@ -24,6 +24,9 @@ import {
   maskModelCredential,
 } from "./model-credential";
 
+import { BrainOutboxService } from "./brain-compiler/brain-outbox.service";
+import { execSync } from "node:child_process";
+
 @UseGuards(AdminGuard)
 @Controller("api/v1/admin")
 export class AdminController {
@@ -33,6 +36,7 @@ export class AdminController {
     private readonly authService: AuthService,
     private readonly brainCompilerService: BrainCompilerService,
     private readonly modelConfigService: ModelConfigService,
+    private readonly brainOutboxService?: BrainOutboxService,
   ) {}
 
   private async scheduleAccessReconciliation() {
@@ -352,8 +356,271 @@ export class AdminController {
       dream: isSystemAdmin || canReadAudit
         ? await this.brainCompilerService.getDreamTelemetry()
         : null,
+      systemStatus: isSystemAdmin || canReadAudit
+        ? await this.getSystemStatusTelemetryData()
+        : null,
       capabilities,
       managedOrgIds: [...managedOrgIds],
+    };
+  }
+
+  @Get("system/status-telemetry")
+  async getSystemStatusTelemetry(@Req() req: any) {
+    const adminId = await this.authService.userIdFromRequest(req);
+    const capabilities = await this.permissionService.getCapabilities(adminId);
+    const isSystemAdmin = capabilities.includes("*");
+    if (!isSystemAdmin && !capabilities.includes("audit.read") && !capabilities.includes("system.settings.read")) {
+      throw new ForbiddenException("No administration permission to view system telemetry.");
+    }
+    return this.getSystemStatusTelemetryData();
+  }
+
+  private async getSystemStatusTelemetryData() {
+    const db: any = this.prisma as any;
+
+    // 1. Ingestion & Document Quality
+    const [totalDocs, publishedDocs, failedDocs, parsingDocs, totalChunks, sampleChunks, failedDocList, kbs] = await Promise.all([
+      this.prisma.document.count(),
+      this.prisma.document.count({ where: { status: "published" } }),
+      this.prisma.document.count({ where: { status: "failed" } }),
+      this.prisma.document.count({ where: { status: { in: ["parsing", "uploading", "pending"] } } }),
+      this.prisma.chunk.count(),
+      this.prisma.chunk.findMany({ select: { content: true }, take: 100 }),
+      this.prisma.document.findMany({
+        where: { status: "failed" },
+        include: { kb: true },
+        take: 20,
+        orderBy: { createdAt: "desc" }
+      }),
+      this.prisma.knowledgeBase.findMany({
+        where: { status: "active" },
+        include: {
+          _count: { select: { documents: true } },
+          documents: {
+            select: { id: true, status: true, _count: { select: { chunks: true } } }
+          }
+        },
+        orderBy: { createdAt: "asc" }
+      })
+    ]);
+
+    const avgChunkLength = sampleChunks.length
+      ? Math.round(sampleChunks.reduce((acc, c) => acc + c.content.length, 0) / sampleChunks.length)
+      : 0;
+    const parseSuccessRate = totalDocs ? Math.round((publishedDocs / totalDocs) * 1000) / 10 : 100;
+
+    // Docling Worker probe
+    let doclingOnline = false;
+    let doclingLatencyMs = 0;
+    const doclingUrl = process.env.PARSER_WORKER_URL || "http://127.0.0.1:8100";
+    try {
+      const t0 = Date.now();
+      const doclingRes = await fetch(`${doclingUrl.replace(/\/$/, "")}/health`, { signal: AbortSignal.timeout(2000) });
+      doclingLatencyMs = Date.now() - t0;
+      doclingOnline = doclingRes.ok;
+    } catch {
+      doclingOnline = false;
+    }
+
+    // 2. GBrain Sources & Disk Materialization
+    const repoBasePath = process.env.BRAIN_REPO_BASE_PATH || "/home/scottsun/.local/share/llmwiki/brain_repos";
+    const uploadRoot = process.env.UPLOAD_ROOT || "/home/scottsun/.local/share/llmwiki/uploads";
+    let repoBytes = 0;
+    let uploadBytes = 0;
+    try {
+      const duOut = execSync(`du -sb "${repoBasePath}" 2>/dev/null || du -sk "${repoBasePath}" 2>/dev/null`, { encoding: "utf8" });
+      repoBytes = parseInt(duOut.trim().split(/\s+/)[0], 10) * (duOut.includes("-sb") ? 1 : 1024);
+    } catch {}
+    try {
+      const duOut2 = execSync(`du -sb "${uploadRoot}" 2>/dev/null || du -sk "${uploadRoot}" 2>/dev/null`, { encoding: "utf8" });
+      uploadBytes = parseInt(duOut2.trim().split(/\s+/)[0], 10) * (duOut2.includes("-sb") ? 1 : 1024);
+    } catch {}
+
+    const sources = await db.brainSource.findMany({
+      where: { status: "active" },
+      include: {
+        _count: { select: { members: true, documents: true } }
+      },
+      orderBy: { sourceKey: "asc" }
+    });
+
+    // 3. Scope Brain Quality & Derived Intelligence
+    const [totalUsers, scopes, derivedPages] = await Promise.all([
+      this.prisma.user.count({ where: { status: "active" } }),
+      db.brainScope.findMany({
+        where: { status: "active" },
+        include: {
+          _count: { select: { members: true, derivedPages: true } },
+          members: { include: { user: { select: { username: true, displayName: true } } } },
+          derivedPages: { select: { id: true, slug: true, title: true, kind: true, derivedFrom: true, updatedAt: true } }
+        },
+        orderBy: { createdAt: "desc" }
+      }),
+      db.brainDerivedPage.findMany({
+        select: { id: true, slug: true, title: true, kind: true, scopeId: true, derivedFrom: true, updatedAt: true }
+      })
+    ]);
+
+    const eagerScopesCount = scopes.filter((s: any) => s.strategy === "eager").length;
+    const lazyScopesCount = scopes.filter((s: any) => s.strategy === "lazy").length;
+    const scopeCompressionRatio = totalUsers ? Math.max(0, Math.round((1 - scopes.length / totalUsers) * 100)) : 0;
+
+    // 4. Two-tier Dream Maintenance
+    const dreamTelemetry = await this.brainCompilerService.getDreamTelemetry();
+
+    // 5. Outbox & Queues
+    const [outboxTotal, outboxPending, outboxCompleted, outboxFailed, recentOutboxEvents] = await Promise.all([
+      db.brainChangeEvent.count(),
+      db.brainChangeEvent.count({ where: { status: "pending" } }),
+      db.brainChangeEvent.count({ where: { status: "completed" } }),
+      db.brainChangeEvent.count({ where: { status: "failed" } }),
+      db.brainChangeEvent.findMany({ orderBy: { createdAt: "desc" }, take: 15 })
+    ]);
+
+    // 6. RAG & QA Stats
+    const [totalConversations, totalMessages, totalCitations] = await Promise.all([
+      this.prisma.conversation.count(),
+      this.prisma.message.count(),
+      this.prisma.citation.count()
+    ]);
+
+    const activeModelConfigs = await this.prisma.modelConfig.findMany({
+      include: { provider: true },
+      where: { provider: { enabled: true } }
+    });
+
+    const formatBytes = (bytes: number) => {
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+      return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+    };
+
+    const isSystemHealthy = doclingOnline && failedDocs === 0 && outboxFailed === 0 && dreamTelemetry.health !== "failed";
+
+    return {
+      summary: {
+        healthStatus: isSystemHealthy ? "healthy" : (dreamTelemetry.health === "failed" || !doclingOnline ? "warning" : "degraded"),
+        doclingStatus: { online: doclingOnline, latencyMs: doclingLatencyMs, url: doclingUrl },
+        maintenanceStatus: { health: dreamTelemetry.health, cron: dreamTelemetry.cron, lastRunAt: dreamTelemetry.lastRun?.startedAt || null },
+        storageUsage: {
+          repoBytes,
+          repoFormatted: formatBytes(repoBytes),
+          uploadBytes,
+          uploadFormatted: formatBytes(uploadBytes)
+        },
+        outboxStatus: { pending: outboxPending, completed: outboxCompleted, failed: outboxFailed, total: outboxTotal },
+        activeUsersCount: totalUsers,
+        activeScopesCount: scopes.length,
+        scopeCompressionRatio,
+        derivedPagesCount: derivedPages.length
+      },
+      ingestionQuality: {
+        totalDocuments: totalDocs,
+        publishedDocuments: publishedDocs,
+        failedDocuments: failedDocs,
+        parsingDocuments: parsingDocs,
+        parseSuccessRate,
+        totalChunks,
+        avgChunkLength,
+        embeddingModel: process.env.GBRAIN_EMBEDDING_MODEL || "openai:BAAI/bge-m3",
+        embeddingDimensions: 1024,
+        kbBreakdown: kbs.map((kb: any) => ({
+          id: kb.id,
+          name: kb.name,
+          type: kb.type,
+          docsCount: kb._count.documents,
+          chunksCount: kb.documents.reduce((sum: number, d: any) => sum + (d._count?.chunks || 0), 0),
+          failedDocsCount: kb.documents.filter((d: any) => d.status === "failed").length
+        })),
+        failedDocsList: failedDocList.map((d: any) => ({
+          id: d.id,
+          title: d.title,
+          kbName: d.kb?.name || "未知知识库",
+          error: (d as any).parseError || "解析异常",
+          createdAt: d.createdAt
+        }))
+      },
+      gbrainSources: {
+        sourcesCount: sources.length,
+        sharedSourcesCount: sources.filter((s: any) => s.kind === "shared").length,
+        privateSourcesCount: sources.filter((s: any) => s.kind === "private").length,
+        sourcesList: sources.map((s: any) => ({
+          sourceKey: s.sourceKey,
+          kind: s.kind,
+          status: s.status,
+          scopeKey: s.scopeKey,
+          lastSyncAt: s.lastSyncAt,
+          documentsCount: s._count.documents,
+          membersCount: s._count.members,
+        }))
+      },
+      scopeBrainQuality: {
+        scopesCount: scopes.length,
+        eagerScopesCount,
+        lazyScopesCount,
+        derivedPagesCount: derivedPages.length,
+        scopeList: scopes.map((s: any) => ({
+          id: s.id,
+          fingerprint: s.fingerprint,
+          strategy: s.strategy,
+          status: s.status,
+          aclEpoch: s.aclEpoch,
+          knowledgeEpoch: s.knowledgeEpoch,
+          lastCompileAt: s.lastCompileAt,
+          membersCount: s._count.members,
+          members: s.members.map((m: any) => ({ username: m.user.username, displayName: m.user.displayName })),
+          derivedPages: s.derivedPages.map((p: any) => ({
+            id: p.id,
+            slug: p.slug,
+            title: p.title,
+            kind: p.kind,
+            derivedCount: Array.isArray(p.derivedFrom) ? p.derivedFrom.length : 0,
+            updatedAt: p.updatedAt
+          }))
+        }))
+      },
+      dreamMaintenance: {
+        cron: dreamTelemetry.cron,
+        timezone: dreamTelemetry.timezone,
+        health: dreamTelemetry.health,
+        lastRun: dreamTelemetry.lastRun,
+        runs: dreamTelemetry.runs,
+        durationsAvgSec: dreamTelemetry.runs?.length
+          ? Math.round(
+              dreamTelemetry.runs.reduce(
+                (sum: number, r: any) =>
+                  sum + (r.completedAt && r.startedAt ? (new Date(r.completedAt).getTime() - new Date(r.startedAt).getTime()) / 1000 : 0),
+                0
+              ) / dreamTelemetry.runs.length
+            )
+          : 0
+      },
+      outboxAndQueues: {
+        outboxCounts: { pending: outboxPending, completed: outboxCompleted, failed: outboxFailed, total: outboxTotal },
+        recentEvents: recentOutboxEvents.map((e: any) => ({
+          id: e.id,
+          eventType: e.eventType,
+          status: e.status,
+          createdAt: e.createdAt,
+          processedAt: e.processedAt,
+          payload: e.payload
+        })),
+        queueJobCounts: dreamTelemetry.queueCounts || { waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0 },
+        maintenanceFailures: dreamTelemetry.maintenanceFailures || []
+      },
+      ragAndModels: {
+        totalConversations,
+        totalMessages,
+        totalCitations,
+        activeModels: activeModelConfigs.map((m: any) => ({
+          kind: m.kind,
+          modelName: m.modelName,
+          providerName: m.provider.name,
+          baseUrl: m.provider.baseUrl,
+          isDefault: m.isDefault,
+          testStatus: m.testStatus
+        }))
+      }
     };
   }
 
@@ -691,6 +958,11 @@ export class AdminController {
       },
     });
     await this.brainCompilerService.ensureUserBrainRepo(user.id);
+    await this.brainOutboxService?.emitEvent("role_change", "user", user.id, {
+      action: "create",
+      orgIds,
+      roleIds: finalRoleIds,
+    });
     await this.scheduleAccessReconciliation();
     return { user };
   }
@@ -725,44 +997,38 @@ export class AdminController {
       });
       if (duplicate)
         throw new BadRequestException(
-          "Username or email is already taken by another user.",
+          "User with that username or email already exists.",
         );
     }
-    const data: any = {};
-    if (body?.username !== undefined)
-      data.username = String(body.username).trim();
-    if (body?.displayName !== undefined)
-      data.displayName = String(body.displayName).trim();
-    if (body?.email !== undefined) data.email = String(body.email).trim();
-    if (body?.status !== undefined)
-      data.status = body.status === "disabled" ? "disabled" : "active";
+    const data: Record<string, unknown> = {};
+    if (body?.displayName) data.displayName = String(body.displayName).trim();
+    if (body?.username) data.username = String(body.username).trim();
+    if (body?.email) data.email = String(body.email).trim();
+    if (body?.status && ["active", "disabled"].includes(body.status))
+      data.status = body.status;
     if (body?.password)
       data.passwordHash = this.authService.hashPassword(String(body.password));
-    const isSystemAdmin =
-      await this.permissionService.isSystemAdmin(operatorId);
-    const roleIds: string[] | null = Array.isArray(body?.roleIds)
+    const roleIds: string[] | undefined = Array.isArray(body?.roleIds)
       ? Array.from(
-          new Set<string>(body.roleIds.map((roleId: string) => String(roleId))),
+          new Set<string>(body.roleIds.map((item: string) => String(item))),
         )
-      : null;
+      : undefined;
     if (roleIds) await this.validateAssignableRoles(operatorId, roleIds);
-    const orgIds: string[] | null = Array.isArray(body?.orgIds)
+    const orgIds: string[] | undefined = Array.isArray(body?.orgIds)
       ? Array.from(
-          new Set<string>(
-            body.orgIds.map((orgNodeId: string) => String(orgNodeId)),
-          ),
+          new Set<string>(body.orgIds.map((item: string) => String(item))),
         )
-      : null;
+      : undefined;
     if (orgIds) {
       if (!orgIds.length)
         throw new BadRequestException("At least one organization is required.");
-      const validOrgs = await this.prisma.orgNode.findMany({
+      const orgs = await this.prisma.orgNode.findMany({
         where: { id: { in: orgIds }, status: "active" },
         select: { id: true },
       });
-      if (validOrgs.length !== orgIds.length)
+      if (orgs.length !== orgIds.length)
         throw new BadRequestException("One or more organizations are invalid.");
-      if (!isSystemAdmin) {
+      if (!(await this.permissionService.isSystemAdmin(operatorId))) {
         const managedOrgIds =
           await this.permissionService.getManagedOrgIds(operatorId);
         if (orgIds.some((orgId) => !managedOrgIds.has(orgId)))
@@ -794,6 +1060,11 @@ export class AdminController {
         },
       });
     });
+    await this.brainOutboxService?.emitEvent("role_change", "user", id, {
+      action: "update",
+      orgIds,
+      roleIds,
+    });
     await this.scheduleAccessReconciliation();
     return { user };
   }
@@ -808,6 +1079,9 @@ export class AdminController {
     const user = await this.prisma.user.update({
       where: { id },
       data: { status: "disabled" },
+    });
+    await this.brainOutboxService?.emitEvent("perm_revoke", "user", id, {
+      action: "disable",
     });
     await this.scheduleAccessReconciliation();
     return { user };
@@ -1101,6 +1375,12 @@ export class AdminController {
         expiresAt: body?.expiresAt ? new Date(body.expiresAt) : null,
       },
     });
+    await this.brainOutboxService?.emitEvent(
+      "perm_grant",
+      "knowledge_base",
+      kbId,
+      { subjectType, subjectId, grantedById, grantId: grant.id },
+    );
     await this.scheduleAccessReconciliation();
     return { grant };
   }
@@ -1118,6 +1398,12 @@ export class AdminController {
         "Industry knowledge base authorization permission required.",
       );
     await this.prisma.industryGrant.delete({ where: { id } });
+    await this.brainOutboxService?.emitEvent(
+      "perm_revoke",
+      "knowledge_base",
+      grant.kbId,
+      { grantId: id },
+    );
     await this.scheduleAccessReconciliation();
     return { ok: true };
   }

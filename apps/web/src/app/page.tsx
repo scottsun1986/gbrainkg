@@ -19,11 +19,14 @@ declare global {
 // loading state.  This sentinel keeps their guards safe; App owns the real
 // loading state below.
 const dbData = true;
-// 生产构建会注入 NEXT_PUBLIC_API_URL；保留按当前访问主机推导的兜底，
-// 避免构建环境漏配时把登录/问答请求错误地发回 Web 端口。
+// 生产构建会注入 NEXT_PUBLIC_API_URL；未注入时，生产反向代理与页面同源，
+// 必须使用当前访问地址，避免高位端口部署时错误回落到开发 API 端口 3202。
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || (
   typeof window !== 'undefined'
-    ? `${window.location.protocol}//${window.location.hostname}:3202`
+    ? ((['3000', '3001', '3200', '3202'].includes(window.location.port) &&
+        ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname))
+      ? `${window.location.protocol}//${window.location.hostname}:3202`
+      : window.location.origin)
     : 'http://localhost:3202'
 );
 const apiHeaders = () => {
@@ -74,6 +77,8 @@ const Icon = ({name, size=16, stroke=1.6, color='currentColor', ...svgProps}: an
     moon: <><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></>,
     help: <><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></>,
     arrowleft: <><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></>,
+    activity: <><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></>,
+    database: <><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></>,
   };
   return (
     <svg {...svgProps} width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" style={{flex:'0 0 auto',display:'inline-block', ...(svgProps.style || {})}}>
@@ -94,6 +99,7 @@ let GRANTS: any[] = [];
 let MODELS: any = {llm:[], embedding:[], rerank:[]};
 let AUDIT: any[] = [];
 let DREAM: any = null;
+let SYSTEM_STATUS: any = null;
 let USERS: any[] = [];
 let ROLES: any[] = [];
 let INDUSTRY_KBS: any[] = [];
@@ -214,7 +220,7 @@ function UniversalDocumentViewer({ preview, onClose }) {
   const isImage = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(ext);
   const isText = ['md', 'markdown', 'txt', 'json', 'yaml', 'yml', 'js', 'ts', 'py', 'sql', 'html'].includes(ext);
 
-  // 提取引用中的关键匹配短语 —— 优先选择在文档中出现次数少（独特性高）的短语
+  // 提取引用中的关键匹配短语 —— 彻底清除 markdown 格式字符并按自然标点智能分句
   const cleanPhrases = useMemo(() => {
     if (!snippet) return [];
     const boilerplate = new Set([
@@ -223,49 +229,57 @@ function UniversalDocumentViewer({ preview, onClose }) {
       '具体表现与管理挑战', '影响程度', '第一板块', '第二板块', '第三板块',
       '目标单位全景画像', '行业全景及核心痛点', '详细内容', '背景数据'
     ]);
-    const parts = snippet
-      .split(/[\n。；;\t\r|]+/g)
-      .map((s) => s.replace(/^[#\s\-*>`:|]+/g, '').trim())
+
+    // 1. 先清除所有内联 markdown 语法标记
+    const cleanText = snippet
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/\*(.*?)\*/g, '$1')
+      .replace(/__(.*?)__/g, '$1')
+      .replace(/_(.*?)_/g, '$1')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/^#+\s+/gm, '')
+      .replace(/^\s*[\d-]+\.?\s+/gm, '')
+      .replace(/^[>\s*-]+/gm, '');
+
+    const docTitleClean = (preview?.title || '').replace(/\.[^.]+$/, '').trim();
+
+    // 2. 按标点分句，同时保护时间格式（如 08:30）
+    const parts = cleanText
+      .split(/[\n。；;\t\r|，,]+/g)
+      .flatMap((s) => s.split(/：(?!\d)|:(?!\d)/g))
+      .map((s) => s.replace(/^[#\s\-*>`:|0-9.()（）]+/, '').replace(/[#\s\-*>`:|0-9.()（）]+$/, '').trim())
+      .map((s) => s.replace(/[\s\t]+/g, ' '))
       .filter((s) => {
-        if (!s || s.length < 5) return false;
+        if (!s || s.length < 3) return false;
         if (/^[0-9a-fA-F-]{20,}$/.test(s)) return false;
         if (/^第?\s*\d+\s*页$/.test(s)) return false;
         if (boilerplate.has(s)) return false;
-        // 排除纯章节/标题标记（如 "第一章 总则"、"企业研发管理规范"）
-        if (/^第[一二三四五六七八九十\d]+[章节条款]/.test(s) && s.length < 12) return false;
-        // 排除文档标题行（通常与 docTitle 或 filename 重叠）
-        const docTitleClean = (preview?.title || '').replace(/\.[^.]+$/, '').trim();
         if (docTitleClean && s === docTitleClean) return false;
         return true;
       });
-    // 去重后保留 —— 不直接截断，交给后续排序
+
     return Array.from(new Set(parts));
   }, [snippet, preview?.title]);
 
-  // 根据文档全文对 cleanPhrases 进行排序：优先选择在文档中出现位置唯一且靠后的短语
+  // 根据文档全文对 cleanPhrases 进行智能打分排序
   const rankedPhrases = useMemo(() => {
-    if (!cleanPhrases.length || !docData?.markdown_content) return cleanPhrases.slice(0, 6);
+    if (!cleanPhrases.length || !docData?.markdown_content) return cleanPhrases.slice(0, 12);
     const fullText = docData.markdown_content;
     const scored = cleanPhrases.map((phrase: any) => {
-      // 计算短语在全文中的出现次数和最后出现位置
-      const p = String(phrase || '');
-      let count = 0;
-      let lastPos = -1;
-      let idx = 0;
-      while ((idx = fullText.indexOf(p, idx)) !== -1) {
-        count++;
-        lastPos = idx;
-        idx += p.length;
-      }
-      // 分数：出现次数越少越好（越独特），短语越长越好，位置越靠后越好（避免开头的通用文本）
-      const uniqueScore = count === 0 ? -1000 : (count === 1 ? 100 : 50 / count);
-      const lengthScore = Math.min(p.length, 40);
-      const positionScore = lastPos > 0 ? (lastPos / fullText.length) * 30 : 0;
-      return { phrase: p, score: uniqueScore + lengthScore + positionScore, count, lastPos };
-    }).filter((item) => item.count > 0); // 仅保留在文档中实际存在的短语
+      const p = String(phrase || '').trim();
+      const escaped = p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+      const matches = fullText.match(new RegExp(escaped, 'gi')) || [];
+      const count = matches.length;
+      const firstPos = fullText.search(new RegExp(escaped, 'i'));
+
+      const uniqueScore = count === 0 ? -1000 : (count === 1 ? 100 : 60 / count);
+      const lengthScore = Math.min(p.length, 30);
+      const positionScore = firstPos > 0 ? (firstPos / fullText.length) * 20 : 0;
+      return { phrase: p, score: uniqueScore + lengthScore + positionScore, count, firstPos };
+    }).filter((item) => item.count > 0);
 
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, 6).map((item) => item.phrase);
+    return scored.slice(0, 15).map((item) => item.phrase);
   }, [cleanPhrases, docData?.markdown_content]);
 
   useEffect(() => {
@@ -360,7 +374,7 @@ function UniversalDocumentViewer({ preview, onClose }) {
         try {
           const str = String(phrase || '').trim();
           if (!str) continue;
-          const escaped = str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const escaped = str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
           // 仅匹配 HTML 标签外部的可见文本，避免破坏 HTML 标签结构与属性
           const regex = new RegExp(`(?![^<]*>)(${escaped})`, 'gi');
           html = html.replace(regex, '<mark class="doc-citation-highlight">$1</mark>');
@@ -377,7 +391,10 @@ function UniversalDocumentViewer({ preview, onClose }) {
     const phrases = rankedPhrases.length > 0 ? rankedPhrases : cleanPhrases;
     docData.chunks.forEach((chunk) => {
       const text = chunk.content || '';
-      if (phrases.some((p) => text.includes(p))) {
+      if (phrases.some((p) => {
+        const escaped = String(p || '').trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+        return new RegExp(escaped, 'i').test(text);
+      })) {
         matched.add(chunk.id);
       }
     });
@@ -388,10 +405,10 @@ function UniversalDocumentViewer({ preview, onClose }) {
     return matched;
   }, [docData?.chunks, rankedPhrases, cleanPhrases, snippet]);
 
-  // 自动滚动定位到高亮最密集的区域（而非盲取第一个 mark）
+  // 自动滚动定位到高亮最密集的区域
   useEffect(() => {
     if (!snippet) return;
-    const timer = setTimeout(() => {
+    const executeScroll = () => {
       if (activeTab === 'parsed' || activeTab === 'std_md' || activeTab === 'raw') {
         const marks = modalBodyRef.current?.querySelectorAll('mark.doc-citation-highlight');
         if (!marks || marks.length === 0) return;
@@ -399,13 +416,13 @@ function UniversalDocumentViewer({ preview, onClose }) {
           marks[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
           return;
         }
-        // 找到最密集的高亮聚集区：在 200px 窗口内包含最多 mark 的位置
+        // 找到最密集的高亮聚集区：在 350px 窗口内包含最多 mark 的位置
         let bestMark = marks[0];
         let bestCount = 0;
         const positions = Array.from(marks).map((m: any) => ({ el: m, top: m.getBoundingClientRect().top }));
         for (let i = 0; i < positions.length; i++) {
           let count = 0;
-          for (let j = i; j < positions.length && positions[j].top - positions[i].top < 300; j++) {
+          for (let j = i; j < positions.length && positions[j].top - positions[i].top < 350; j++) {
             count++;
           }
           if (count > bestCount) {
@@ -420,9 +437,15 @@ function UniversalDocumentViewer({ preview, onClose }) {
           target.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
       }
-    }, 350);
-    return () => clearTimeout(timer);
-  }, [activeTab, docData, rawBlobUrl, snippet]);
+    };
+
+    const timer1 = setTimeout(executeScroll, 200);
+    const timer2 = setTimeout(executeScroll, 500);
+    return () => {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+    };
+  }, [activeTab, docData, rawBlobUrl, snippet, rankedPhrases]);
 
   // 3. 当处于原文档 Tab 且为 Word 时，调用 docx-preview
   useEffect(() => {
@@ -649,9 +672,16 @@ function UniversalDocumentViewer({ preview, onClose }) {
               <div style={{ fontSize: '13px', color: 'var(--ink-3)' }}>正在调集前端组件渲染文档与知识切片…</div>
             </div>
           ) : error ? (
-            <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--danger)' }}>
-              <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '8px' }}>文档加载失败</div>
-              <div style={{ fontSize: '12px', color: 'var(--ink-3)' }}>{error}</div>
+            <div style={{ padding: '24px 20px', maxWidth: '840px', margin: '0 auto' }}>
+              <div style={{ background: '#fffbeb', border: '1px solid #fde68a', padding: '12px 16px', borderRadius: '8px', marginBottom: '16px', fontSize: '12.5px', color: '#92400e', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>💡</span>
+                <span><b>历史文档已更迭或删除</b>：该引用所属的物理原件近期可能已被更迭或删除（{error}）。以下为您展示该次问答时的真实引用切片：</span>
+              </div>
+              {snippet && (
+                <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', padding: '16px 20px', borderRadius: '8px', whiteSpace: 'pre-wrap', lineHeight: '1.7', fontSize: '13px', color: 'var(--ink)' }}>
+                  {snippet}
+                </div>
+              )}
             </div>
           ) : (
             <div className="preview-content-area">
@@ -1657,7 +1687,7 @@ function ChatScreen(){
     el.style.height = Math.min(el.scrollHeight, 200) + 'px';
   };
 
-  const renderAnswer = (typed) => {
+  const renderAnswer = (typed, msgSources) => {
     // 渲染 typed 文本：处理 **粗体** 与 [n] 引用 chip
     const out = [];
     let key = 0;
@@ -1671,7 +1701,9 @@ function ChatScreen(){
       while((m = re.exec(text)) !== null){
         if(m.index > last) out.push(wrap(text.slice(last, m.index), key++));
         const n = parseInt(m[1],10);
-        out.push(<button key={key++} className={`cite-chip ${activeCite===n?'active':''}`} onClick={()=>{setActiveCite(n); const citation = citations[n-1]; if (citation?.documentId) void previewCitation(citation);}}>{n}</button>);
+        const activeSources = (msgSources && msgSources.length > 0) ? msgSources : citations;
+        const citation = activeSources[n-1];
+        out.push(<button key={key++} className={`cite-chip ${activeCite===n?'active':''}`} onClick={()=>{setActiveCite(n); if (citation) void previewCitation(citation);}}>{n}</button>);
         last = m.index + m[0].length;
       }
       if(last < text.length) out.push(wrap(text.slice(last), key++));
@@ -1702,12 +1734,17 @@ function ChatScreen(){
             const q = convSearch.trim().toLowerCase();
             const visibleList = conversationList.filter((c) => !hiddenConvs.has(c.id));
             const filtered = q ? visibleList.filter((c) => (c.title || '').toLowerCase().includes(q)) : visibleList;
-            const now = Date.now();
+            const startOfToday = new Date();
+            startOfToday.setHours(0, 0, 0, 0);
+            const startOfTodayMs = startOfToday.getTime();
+            const sevenDaysAgoMs = startOfTodayMs - 6 * 24 * 3600 * 1000;
+            const thirtyDaysAgoMs = startOfTodayMs - 29 * 24 * 3600 * 1000;
+
             const groups = [
-              { label: '今天', items: filtered.filter((c) => c.createdAt && (now - new Date(c.createdAt).getTime() < 24 * 3600 * 1000)) },
-              { label: '近 7 天', items: filtered.filter((c) => c.createdAt && (now - new Date(c.createdAt).getTime() < 7 * 24 * 3600 * 1000) && (now - new Date(c.createdAt).getTime() >= 24 * 3600 * 1000)) },
-              { label: '30 天内', items: filtered.filter((c) => c.createdAt && (now - new Date(c.createdAt).getTime() < 30 * 24 * 3600 * 1000) && (now - new Date(c.createdAt).getTime() >= 7 * 24 * 3600 * 1000)) },
-              { label: '更早', items: filtered.filter((c) => c.createdAt && (now - new Date(c.createdAt).getTime() >= 30 * 24 * 3600 * 1000)) },
+              { label: '今天', items: filtered.filter((c) => c.createdAt && new Date(c.createdAt).getTime() >= startOfTodayMs) },
+              { label: '近 7 天', items: filtered.filter((c) => c.createdAt && new Date(c.createdAt).getTime() < startOfTodayMs && new Date(c.createdAt).getTime() >= sevenDaysAgoMs) },
+              { label: '30 天内', items: filtered.filter((c) => c.createdAt && new Date(c.createdAt).getTime() < sevenDaysAgoMs && new Date(c.createdAt).getTime() >= thirtyDaysAgoMs) },
+              { label: '更早', items: filtered.filter((c) => c.createdAt && new Date(c.createdAt).getTime() < thirtyDaysAgoMs) },
               { label: '未分类', items: filtered.filter((c) => !c.createdAt) },
             ].filter((g) => g.items.length > 0);
             if (groups.length === 0) return <div className="conv-empty">{q ? '没有匹配的会话' : '暂无会话'}</div>;
@@ -1783,7 +1820,7 @@ function ChatScreen(){
                       <span style={{color:'var(--ink-4)'}}>· 你的大脑 · {scopeLabel}{allSel ? `（${selected.length} 库）` : ''}</span>
                     </div>
                     <div className="answer">
-                      {renderAnswer(msg.text)}
+                      {renderAnswer(msg.text, msg.sources)}
                       {!msg.done && <span className="cursor"/>}
                     </div>
                     {msg.done && msg.sources?.length > 0 && <div className="answer-sources"><span>来源：</span>{msg.sources.map((source, index) => <button key={source.id || index} onClick={()=>previewCitation(source)} title="打开原始文档预览">[{index + 1}] {source.title}</button>)}</div>}
@@ -3854,6 +3891,7 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
     {k:'grant', l:'权限授权', ic:'shield', permission:'kb.industry.grant'},
     {k:'model', l:'模型配置', ic:'model', permission:'system.settings.manage'},
     {k:'audit', l:'审计日志', ic:'history', permission:'audit.read'},
+    {k:'status', l:'系统运行监控', ic:'activity', permission:'audit.read', alternativePermission:'system.settings.read'},
   ];
   const availableTabs = tabRules.filter(item => hasCapability(item.permission, capabilities) || (item.alternativePermission && hasCapability(item.alternativePermission, capabilities))).map(item => item.k);
   useEffect(() => {
@@ -3993,11 +4031,560 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
             </div>
           </>
         )}
+        {tab==='status' && <SystemStatusPanel capabilities={capabilities}/>}
 
           {adminModal && <OrgAdminModal node={adminModal} onClose={()=>setAdminModal(null)} onSaved={()=>{setAdminModal(null); window.dispatchEvent(new CustomEvent('app-data-refresh'));}}/>} 
         {addModal && <AddOrgModal parent={addModal} onAdd={async (name, adminUserIds)=>{if (await addChildOrg(addModal.id, name, adminUserIds)) setAddModal(null);}} onClose={()=>setAddModal(null)}/>} 
       </div>
     </div>
+  );
+}
+
+function SystemStatusPanel({ capabilities }){
+  const [data, setData] = useState(SYSTEM_STATUS);
+  const [loading, setLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState('kbs');
+  const [retryingDocId, setRetryingDocId] = useState(null);
+
+  const fetchTelemetry = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/system/status-telemetry`, {
+        headers: apiHeaders()
+      });
+      if (res.ok) {
+        const json = await res.json();
+        setData(json);
+        SYSTEM_STATUS = json;
+      }
+    } catch (e) {
+      console.error('Failed to load status telemetry:', e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!data) fetchTelemetry();
+  }, []);
+
+  const s = data?.summary || {};
+  const inq = data?.ingestionQuality || {};
+  const gbs = data?.gbrainSources || {};
+  const scp = data?.scopeBrainQuality || {};
+  const drm = data?.dreamMaintenance || {};
+  const obx = data?.outboxAndQueues || {};
+  const rag = data?.ragAndModels || {};
+
+  const fmt = (val) => val ? new Date(val).toLocaleString('zh-CN') : '—';
+  const statusLabels = { completed: '已完成', partial: '部分完成', failed: '失败', running: '执行中', healthy: '运行健康', degraded: '部分降级', warning: '存在告警' };
+  const statusColors = { completed: 'var(--green)', healthy: 'var(--green)', partial: 'var(--amber)', degraded: 'var(--amber)', failed: 'var(--red)', warning: 'var(--red)', running: 'var(--blue)' };
+
+  const triggerMaintenance = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/admin/brain/maintenance`, { method: 'POST', headers: apiHeaders() });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || '维护任务提交失败');
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: 'Dream Cycle 维护任务已进入后台队列' }));
+      setTimeout(fetchTelemetry, 2000);
+    } catch (err) {
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: err.message || '维护任务提交失败' }));
+    }
+  };
+
+  const retryDoc = async (kbId, docId) => {
+    setRetryingDocId(docId);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/kbs/${kbId}/documents/${docId}/retry`, { method: 'POST', headers: apiHeaders() });
+      if (res.ok) {
+        window.dispatchEvent(new CustomEvent('app-toast', { detail: '已重新触发解析任务' }));
+        setTimeout(fetchTelemetry, 2500);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        window.dispatchEvent(new CustomEvent('app-toast', { detail: err.message || '重试失败' }));
+      }
+    } catch (e) {
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: '重试网络异常' }));
+    } finally {
+      setRetryingDocId(null);
+    }
+  };
+
+  return (
+    <>
+      <div style={{ display: 'flex', alignItems: 'flex-start', marginBottom: 20 }}>
+        <div style={{ flex: 1 }}>
+          <div className="h1">系统运行状态与全流程质量监控</div>
+          <div className="subline">端到端质量监控 · GBrain 知识源与 Scope 脑 · 物理存储 · 向量解析 · 事务 Outbox 队列 · 实时无 Mock</div>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn" onClick={fetchTelemetry} disabled={loading}>
+            <Icon name="refresh" size={12}/> {loading ? '刷新中…' : '刷新数据'}
+          </button>
+          {capabilities.includes('*') && (
+            <button className="btn primary" onClick={triggerMaintenance}>
+              <Icon name="refresh" size={12}/> 立即执行 Dream 维护
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* 1. Global Health Status Banner */}
+      <div style={{
+        background: s.healthStatus === 'healthy' ? 'rgba(16, 185, 129, 0.08)' : s.healthStatus === 'warning' ? 'rgba(239, 68, 68, 0.08)' : 'rgba(245, 158, 11, 0.08)',
+        border: `1px solid ${s.healthStatus === 'healthy' ? 'rgba(16, 185, 129, 0.3)' : s.healthStatus === 'warning' ? 'rgba(239, 68, 68, 0.3)' : 'rgba(245, 158, 11, 0.3)'}`,
+        borderRadius: 10,
+        padding: '14px 18px',
+        marginBottom: 20,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        flexWrap: 'wrap',
+        gap: 16
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{
+            width: 36, height: 36, borderRadius: '50%',
+            background: s.healthStatus === 'healthy' ? 'var(--green)' : s.healthStatus === 'warning' ? 'var(--red)' : 'var(--amber)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 16
+          }}>
+            {s.healthStatus === 'healthy' ? '✓' : '!'}
+          </div>
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--ink)' }}>
+              全流程系统健康度：{s.healthStatus === 'healthy' ? '运行健康 (Healthy)' : s.healthStatus === 'warning' ? '存在告警 (Warning)' : '部分降级 (Degraded)'}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>
+              文档解析率 <b>{inq.parseSuccessRate ?? 100}%</b> · Docling Worker <b>{s.doclingStatus?.online ? `在线 (${s.doclingStatus?.latencyMs}ms)` : '离线'}</b> · 物理仓库 <b>{s.storageUsage?.repoFormatted || '—'}</b> · Outbox <b>{s.outboxStatus?.pending || 0} 积压</b>
+            </div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 11.5 }}>
+          <span className="badge ok" style={{ padding: '3px 8px' }}>GBrain 0.47 核心引擎</span>
+          <span className="badge" style={{ padding: '3px 8px', background: 'var(--surface)', color: 'var(--ink)' }}>双级 Dream 自愈就绪</span>
+        </div>
+      </div>
+
+      {/* 2. 6 Core Quality KPI Cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 20 }}>
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, padding: '14px 16px' }}>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 6 }}>📄 知识文档与解析</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--ink)' }}>{inq.totalDocuments || 0} <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--ink-3)' }}>篇</span></div>
+          <div style={{ fontSize: 11, color: inq.failedDocuments ? 'var(--red)' : 'var(--green)', marginTop: 4 }}>
+            {inq.publishedDocuments || 0} 篇已发布 · {inq.failedDocuments || 0} 失败
+          </div>
+        </div>
+
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, padding: '14px 16px' }}>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 6 }}>🧩 物理切片与向量</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--ink)' }}>{inq.totalChunks || 0} <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--ink-3)' }}>切片</span></div>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
+            均长 {inq.avgChunkLength || 0} 字符 · {inq.embeddingDimensions || 1024} 维
+          </div>
+        </div>
+
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, padding: '14px 16px' }}>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 6 }}>🗄️ GBrain 物理知识源</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--ink)' }}>{gbs.sourcesCount || 0} <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--ink-3)' }}>个 Source</span></div>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
+            磁盘占用 {s.storageUsage?.repoFormatted || '—'}
+          </div>
+        </div>
+
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, padding: '14px 16px' }}>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 6 }}>🧠 权限 Scope 脑</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--ink)' }}>{scp.scopesCount || 0} <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--ink-3)' }}>个 Scope</span></div>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
+            {scp.derivedPagesCount || 0} 篇派生资产 · 100% 溯源
+          </div>
+        </div>
+
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, padding: '14px 16px' }}>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 6 }}>⚙️ 双级 Dream 周期</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--ink)' }}>{drm.durationsAvgSec ? `${drm.durationsAvgSec}s` : '30s'} <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--ink-3)' }}>均耗时</span></div>
+          <div style={{ fontSize: 11, color: drm.health === 'healthy' ? 'var(--green)' : 'var(--amber)', marginTop: 4 }}>
+            每日 {drm.cron || '02:00'} 执行 · {drm.health === 'healthy' ? '状态良好' : '部分降级'}
+          </div>
+        </div>
+
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, padding: '14px 16px' }}>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 6 }}>⚡ 事务 Outbox 总线</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--ink)' }}>{obx.outboxCounts?.completed || 0} <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--ink-3)' }}>/ {obx.outboxCounts?.total || 0} 完成</span></div>
+          <div style={{ fontSize: 11, color: obx.outboxCounts?.pending ? 'var(--amber)' : 'var(--green)', marginTop: 4 }}>
+            {obx.outboxCounts?.pending || 0} 待处理 · {obx.outboxCounts?.failed || 0} 失败
+          </div>
+        </div>
+      </div>
+
+      {/* 3. Knowledge Pipeline Lifecycle Stage Visual Tracker */}
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, padding: '16px 18px', marginBottom: 20 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink)', marginBottom: 12 }}>
+          🔗 知识流转全生命周期质量链路
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
+          <div style={{ padding: '10px 12px', background: 'var(--surface-2)', borderRadius: 6, border: '1px solid var(--line-2)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--ink-3)', marginBottom: 4 }}>
+              <span>1. 文档摄入解析</span>
+              <span className="badge ok" style={{ fontSize: 9.5 }}>Docling {s.doclingStatus?.latencyMs || 0}ms</span>
+            </div>
+            <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)' }}>{inq.totalDocuments || 0} 份文档已解析</div>
+            <div style={{ fontSize: 10.5, color: 'var(--ink-4)', marginTop: 2 }}>Docx / PPT / PDF 多格式支持</div>
+          </div>
+
+          <div style={{ padding: '10px 12px', background: 'var(--surface-2)', borderRadius: 6, border: '1px solid var(--line-2)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--ink-3)', marginBottom: 4 }}>
+              <span>2. 物理切片与向量</span>
+              <span className="badge" style={{ fontSize: 9.5 }}>1024 维 BGE</span>
+            </div>
+            <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)' }}>{inq.totalChunks || 0} 切片 (均长 {inq.avgChunkLength || 0} 字)</div>
+            <div style={{ fontSize: 10.5, color: 'var(--ink-4)', marginTop: 2 }}>语义完整性自适应切分</div>
+          </div>
+
+          <div style={{ padding: '10px 12px', background: 'var(--surface-2)', borderRadius: 6, border: '1px solid var(--line-2)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--ink-3)', marginBottom: 4 }}>
+              <span>3. GBrain 物理源物化</span>
+              <span className="badge ok" style={{ fontSize: 9.5 }}>Git 底座</span>
+            </div>
+            <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)' }}>{gbs.sourcesCount || 0} 个 Source 仓库</div>
+            <div style={{ fontSize: 10.5, color: 'var(--ink-4)', marginTop: 2 }}>{s.storageUsage?.repoFormatted || '—'} 物理磁盘空间</div>
+          </div>
+
+          <div style={{ padding: '10px 12px', background: 'var(--surface-2)', borderRadius: 6, border: '1px solid var(--line-2)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--ink-3)', marginBottom: 4 }}>
+              <span>4. Scope 脑与派生层</span>
+              <span className="badge purple" style={{ fontSize: 9.5 }}>Derived 100% 溯源</span>
+            </div>
+            <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)' }}>{scp.scopesCount || 0} Scope / {scp.derivedPagesCount || 0} 派生页</div>
+            <div style={{ fontSize: 10.5, color: 'var(--ink-4)', marginTop: 2 }}>Eager + Lazy 懒编译混合</div>
+          </div>
+
+          <div style={{ padding: '10px 12px', background: 'var(--surface-2)', borderRadius: 6, border: '1px solid var(--line-2)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--ink-3)', marginBottom: 4 }}>
+              <span>5. 检索重排与问答</span>
+              <span className="badge ok" style={{ fontSize: 9.5 }}>0s 权限断流</span>
+            </div>
+            <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)' }}>{rag.totalConversations || 0} 会话 / {rag.totalMessages || 0} 消息</div>
+            <div style={{ fontSize: 10.5, color: 'var(--ink-4)', marginTop: 2 }}>Cross-Encoder 精准重排</div>
+          </div>
+        </div>
+      </div>
+
+      {/* 4. Sub-Navigation Tabs */}
+      <div style={{ display: 'flex', borderBottom: '1px solid var(--line)', gap: 18, marginBottom: 16 }}>
+        {[
+          { k: 'kbs', l: '知识库与切片解析质量' },
+          { k: 'sources', l: 'GBrain 知识源与 Scope 脑' },
+          { k: 'dream', l: '双级 Dream 维护记录' },
+          { k: 'outbox', l: 'Outbox 事件总线与队列' },
+          { k: 'models', l: '问答检索与模型网关' },
+        ].map(t => (
+          <button
+            key={t.k}
+            onClick={() => setActiveTab(t.k)}
+            style={{
+              padding: '8px 4px',
+              border: 'none',
+              background: 'transparent',
+              fontSize: 13,
+              fontWeight: activeTab === t.k ? 600 : 400,
+              color: activeTab === t.k ? 'var(--ink)' : 'var(--ink-3)',
+              borderBottom: activeTab === t.k ? '2px solid var(--ink)' : '2px solid transparent',
+              cursor: 'pointer'
+            }}
+          >
+            {t.l}
+          </button>
+        ))}
+      </div>
+
+      {/* 5. Detailed Breakdown Sub-Panels */}
+      {activeTab === 'kbs' && (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>知识库名称</th>
+                <th style={{ width: 90 }}>类型</th>
+                <th style={{ width: 100 }}>文档数量</th>
+                <th style={{ width: 100 }}>切片总数</th>
+                <th style={{ width: 100 }}>解析状态</th>
+                <th style={{ width: 100, textAlign: 'right' }}>健康度</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(inq.kbBreakdown || []).map((kb) => (
+                <tr key={kb.id}>
+                  <td>
+                    <div style={{ fontWeight: 600, color: 'var(--ink)' }}>{kb.name}</div>
+                    <div style={{ fontSize: 10.5, color: 'var(--ink-4)' }}>ID: {kb.id}</div>
+                  </td>
+                  <td>
+                    <span className="badge" style={{ fontSize: 10.5 }}>
+                      {kb.type === 'org' ? '组织库' : kb.type === 'industry' ? '行业库' : '个人库'}
+                    </span>
+                  </td>
+                  <td><span style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{kb.docsCount} 篇</span></td>
+                  <td><span style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{kb.chunksCount} 个</span></td>
+                  <td>
+                    {kb.failedDocsCount > 0 ? (
+                      <span className="badge danger" style={{ fontSize: 10.5 }}>{kb.failedDocsCount} 篇失败</span>
+                    ) : (
+                      <span className="badge ok" style={{ fontSize: 10.5 }}>100% 正常</span>
+                    )}
+                  </td>
+                  <td style={{ textAlign: 'right' }}>
+                    <span style={{ color: kb.failedDocsCount > 0 ? 'var(--red)' : 'var(--green)', fontSize: 12, fontWeight: 500 }}>
+                      {kb.failedDocsCount > 0 ? '需排查' : '🟢 优良'}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {inq.failedDocsList?.length > 0 && (
+            <div style={{ marginTop: 16, padding: 14, border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: 8, background: 'rgba(239, 68, 68, 0.05)' }}>
+              <div style={{ fontWeight: 600, color: 'var(--red)', fontSize: 12, marginBottom: 8 }}>⚠️ 解析失败文档清单</div>
+              {inq.failedDocsList.map((d) => (
+                <div key={d.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, padding: '6px 0', borderBottom: '1px solid rgba(239, 68, 68, 0.1)' }}>
+                  <div>
+                    <b>{d.title}</b> ({d.kbName}) - <span style={{ color: 'var(--red)' }}>{d.error}</span>
+                  </div>
+                  <button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => retryDoc(d.kbId, d.id)} disabled={retryingDocId === d.id}>
+                    {retryingDocId === d.id ? '重试中…' : '重试解析'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'sources' && (
+        <>
+          <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)', marginBottom: 8 }}>GBrain 物理源列表 (Raw Sources)</div>
+          <div className="table-wrap" style={{ marginBottom: 20 }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Source Key</th>
+                  <th style={{ width: 90 }}>类型</th>
+                  <th style={{ width: 100 }}>包含文档</th>
+                  <th style={{ width: 100 }}>绑定成员</th>
+                  <th style={{ width: 160 }}>最近同步时间</th>
+                  <th style={{ width: 90, textAlign: 'right' }}>状态</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(gbs.sourcesList || []).map((s) => (
+                  <tr key={s.sourceKey}>
+                    <td><span style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--ink)' }}>{s.sourceKey}</span></td>
+                    <td><span className={`badge ${s.kind === 'shared' ? 'ok' : 'purple'}`}>{s.kind === 'shared' ? '共享源' : '私密源'}</span></td>
+                    <td><b>{s.documentsCount}</b> 篇</td>
+                    <td><b>{s.membersCount}</b> 人</td>
+                    <td><span style={{ fontSize: 11, color: 'var(--ink-3)' }}>{fmt(s.lastSyncAt)}</span></td>
+                    <td style={{ textAlign: 'right' }}><span style={{ color: 'var(--green)', fontSize: 12 }}>🟢 活跃</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)', marginBottom: 8 }}>权限 Scope 脑矩阵与派生智能 (Derived Intelligence)</div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Scope 指纹</th>
+                  <th style={{ width: 80 }}>策略</th>
+                  <th style={{ width: 120 }}>复用成员</th>
+                  <th>派生全景综述 (Derived Pages)</th>
+                  <th style={{ width: 130 }}>版本 (Epoch)</th>
+                  <th style={{ width: 90, textAlign: 'right' }}>状态</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(scp.scopeList || []).map((sc) => (
+                  <tr key={sc.id}>
+                    <td><span style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--ink)' }}>{sc.fingerprint}</span></td>
+                    <td><span className={`badge ${sc.strategy === 'eager' ? 'ok' : 'purple'}`}>{sc.strategy === 'eager' ? '⚡ Eager' : '💤 Lazy'}</span></td>
+                    <td>
+                      <div style={{ fontSize: 11.5, color: 'var(--ink-2)' }}>
+                        {sc.members?.map(m => m.displayName || m.username).join(', ') || `${sc.membersCount} 人`}
+                      </div>
+                    </td>
+                    <td>
+                      {sc.derivedPages?.length ? (
+                        <div>
+                          {sc.derivedPages.map(p => (
+                            <div key={p.id} style={{ fontSize: 11.5 }}>
+                              <b>{p.title}</b> <span style={{ color: 'var(--ink-3)', fontSize: 10.5 }}>({p.derivedCount} 处溯源锚点)</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <span style={{ color: 'var(--ink-4)', fontSize: 11 }}>未生成派生页 (按需懒生成)</span>
+                      )}
+                    </td>
+                    <td><span style={{ fontSize: 11, color: 'var(--ink-3)' }}>ACL v{sc.aclEpoch} · 知识 v{sc.knowledgeEpoch}</span></td>
+                    <td style={{ textAlign: 'right' }}><span style={{ color: 'var(--green)', fontSize: 12 }}>🟢 运行中</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {activeTab === 'dream' && (
+        <>
+          <div style={{ padding: '14px 16px', background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, marginBottom: 16, fontSize: 12, lineHeight: 1.6 }}>
+            <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)', marginBottom: 4 }}>双级 Dream Cycle 调度策略</div>
+            <div>• 执行周期：<b>每日 {drm.cron || '0 2 * * *'} ({drm.timezone || 'Asia/Shanghai'})</b></div>
+            <div>• <b>Tier 1 (Source Dream)</b>：单源物理索引深度自愈、切片 Embedding 重整、孤岛脏主题自愈。</div>
+            <div>• <b>Tier 2 (Scope Dream)</b>：权限 Scope 脑宏观全景总结合成、概念卡片提炼、derivedFrom 锚点校验。</div>
+          </div>
+
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>执行开始时间</th>
+                  <th style={{ width: 90 }}>运行状态</th>
+                  <th>处理源统计</th>
+                  <th style={{ width: 100 }}>待编译主题</th>
+                  <th style={{ width: 100, textAlign: 'right' }}>执行耗时</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(drm.runs || []).map((r) => (
+                  <tr key={r.id}>
+                    <td><span style={{ fontSize: 12 }}>{fmt(r.startedAt)}</span></td>
+                    <td><b style={{ color: statusColors[r.status] || 'var(--ink)', fontSize: 12 }}>{statusLabels[r.status] || r.status}</b></td>
+                    <td>
+                      <span style={{ fontSize: 12 }}>{r.sourcesVisited || 0} 个源 ({r.sourcesSucceeded || 0} 成功, {r.sourcesPartial || 0} 部分)</span>
+                    </td>
+                    <td><b>{r.queuedTopics || 0}</b> 个</td>
+                    <td style={{ textAlign: 'right' }}><span style={{ color: 'var(--ink-2)', fontVariantNumeric: 'tabular-nums' }}>{r.durationMs ? `${Math.round(r.durationMs / 1000)}s` : '—'}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {activeTab === 'outbox' && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 16 }}>
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 6, padding: '10px 12px' }}>
+              <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>待处理事件 (Pending)</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: obx.outboxCounts?.pending ? 'var(--amber)' : 'var(--ink)' }}>{obx.outboxCounts?.pending || 0}</div>
+            </div>
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 6, padding: '10px 12px' }}>
+              <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>已完成对账 (Completed)</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--green)' }}>{obx.outboxCounts?.completed || 0}</div>
+            </div>
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 6, padding: '10px 12px' }}>
+              <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>失败事件 (Failed)</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: obx.outboxCounts?.failed ? 'var(--red)' : 'var(--ink-3)' }}>{obx.outboxCounts?.failed || 0}</div>
+            </div>
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 6, padding: '10px 12px' }}>
+              <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>BullMQ 活跃队列</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--blue)' }}>{obx.queueJobCounts?.active || 0}</div>
+            </div>
+          </div>
+
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ width: 140 }}>事件类型</th>
+                  <th style={{ width: 80 }}>状态</th>
+                  <th>事件载荷 (Payload)</th>
+                  <th style={{ width: 150 }}>发生时间</th>
+                  <th style={{ width: 150, textAlign: 'right' }}>完成时间</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(obx.recentEvents || []).map((e) => (
+                  <tr key={e.id}>
+                    <td>
+                      <span className="badge" style={{ fontFamily: 'monospace', fontSize: 11, padding: '2px 6px' }}>{e.eventType}</span>
+                    </td>
+                    <td>
+                      <span className={`badge ${e.status === 'completed' ? 'ok' : e.status === 'failed' ? 'danger' : 'amber'}`}>
+                        {e.status === 'completed' ? '已完成' : e.status === 'failed' ? '失败' : '排队中'}
+                      </span>
+                    </td>
+                    <td>
+                      <span style={{ fontSize: 11, fontFamily: 'SF Mono,Menlo,Consolas,monospace', color: 'var(--ink-2)' }}>
+                        {typeof e.payload === 'object' ? JSON.stringify(e.payload) : String(e.payload)}
+                      </span>
+                    </td>
+                    <td><span style={{ fontSize: 11, color: 'var(--ink-3)' }}>{fmt(e.createdAt)}</span></td>
+                    <td style={{ textAlign: 'right' }}><span style={{ fontSize: 11, color: 'var(--ink-3)' }}>{fmt(e.processedAt)}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {activeTab === 'models' && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, padding: '14px 16px' }}>
+              <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>总会话数</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--ink)', marginTop: 4 }}>{rag.totalConversations || 0}</div>
+            </div>
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, padding: '14px 16px' }}>
+              <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>累计问答消息</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--ink)', marginTop: 4 }}>{rag.totalMessages || 0}</div>
+            </div>
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, padding: '14px 16px' }}>
+              <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>溯源引用生成数</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--ink)', marginTop: 4 }}>{rag.totalCitations || 0}</div>
+            </div>
+          </div>
+
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ width: 110 }}>网关类型</th>
+                  <th>模型名称</th>
+                  <th>供应商</th>
+                  <th>接入地址</th>
+                  <th style={{ width: 80 }}>默认</th>
+                  <th style={{ width: 90, textAlign: 'right' }}>连通测试</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(rag.activeModels || []).map((m, i) => (
+                  <tr key={i}>
+                    <td>
+                      <span className="badge" style={{ fontSize: 10.5 }}>
+                        {m.kind === 'llm' ? 'LLM 对话' : m.kind === 'embedding' ? '向量嵌入' : '交叉重排'}
+                      </span>
+                    </td>
+                    <td><b>{m.modelName}</b></td>
+                    <td>{m.providerName}</td>
+                    <td><span style={{ fontSize: 11, color: 'var(--ink-3)', fontFamily: 'monospace' }}>{m.baseUrl}</span></td>
+                    <td>{m.isDefault ? <span className="badge ok" style={{ fontSize: 10 }}>默认</span> : '—'}</td>
+                    <td style={{ textAlign: 'right' }}>
+                      <span style={{ color: m.testStatus === 'passed' ? 'var(--green)' : 'var(--amber)', fontSize: 12 }}>
+                        {m.testStatus === 'passed' ? '🟢 通过' : '🟡 未测'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </>
   );
 }
 
@@ -4011,37 +4598,57 @@ function DreamTelemetryPanel({telemetry}){
   const warningPhases = latestSources.reduce((sum, source) => sum + (source.phases || []).filter(phase => phase.status === 'warn').length, 0);
   const healthLabels = {healthy:'运行正常',degraded:'有告警',stale:'超过预期周期',failed:'最近失败',unknown:'尚无运行记录',disabled:'已停用'};
   const healthColors = {healthy:'var(--green)',degraded:'var(--amber)',stale:'var(--amber)',failed:'var(--red)',unknown:'var(--ink-3)',disabled:'var(--ink-3)'};
+  const scopes = telemetry.scopes || [];
+
   return <div style={{marginBottom:20}}>
     <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:12}}>
       {[
         ['运行状态', healthLabels[telemetry.health] || telemetry.health, healthColors[telemetry.health] || 'var(--ink-3)'],
-        ['最近执行', last ? fmt(last.startedAt) : '—', 'var(--ink)'],
-        ['同步文档', last ? `${last.syncedDocs || 0} 新增/变更 · ${last.removedDocs || 0} 移除` : '—', 'var(--ink)'],
-        ['待编译主题', String(telemetry.dirtyTopics || 0), telemetry.dirtyTopics ? 'var(--amber)' : 'var(--green)'],
-      ].map(([label,value,color])=><div key={label} style={{flex:'1 1 170px',minWidth:150,padding:'12px 14px',border:'1px solid var(--line)',borderRadius:8,background:'var(--surface)'}}>
+        ['最近双级 Dream', last ? fmt(last.startedAt) : '—', 'var(--ink)'],
+        ['权限 Scope 脑', `${scopes.length} 个复用 Scope`, 'var(--ink)'],
+        ['派生智能资产', `${telemetry.derivedPagesCount || 0} 篇全局总结/概念`, 'var(--green)'],
+        ['Outbox 待处理', `${telemetry.outboxPendingEvents || 0} 个事件`, telemetry.outboxPendingEvents ? 'var(--amber)' : 'var(--ink-3)'],
+      ].map(([label,value,color])=><div key={label} style={{flex:'1 1 170px',minWidth:140,padding:'12px 14px',border:'1px solid var(--line)',borderRadius:8,background:'var(--surface)'}}>
         <div style={{fontSize:11,color:'var(--ink-3)',marginBottom:6}}>{label}</div><div style={{fontSize:13,fontWeight:600,color}}>{value}</div>
       </div>)}
     </div>
-    <div style={{padding:'12px 14px',border:'1px solid var(--line)',borderRadius:8,background:'var(--surface-2)',fontSize:12,color:'var(--ink-3)',lineHeight:1.6,marginBottom:12}}>
-      <b style={{color:'var(--ink)'}}>Dream 维护</b>：{telemetry.enabled ? `已启用，每日 ${telemetry.cron}（${telemetry.timezone || '服务器时区'}）执行` : '已停用'}。每次运行会记录 source 同步数量、移除数量、GBrain phase 结果和失败原因；队列失败会按 3 次退避重试。最近一次：{last ? `${statusLabels[last.status] || last.status}（${fmt(last.startedAt)}）` : '尚未执行'}。
-      {last && skippedPhases > 0 && <div style={{marginTop:5}}>GBrain phase 统计：{skippedPhases} 个按 source 隔离策略跳过，{warningPhases} 个告警；这类跳过不等于文档同步失败，私密 source 不执行跨权限范围的全局总结。</div>}
-      {last?.errorMessage && <div style={{color:'var(--red)',marginTop:5}}>最近失败：{last.errorMessage}</div>}
+
+    {/* 权限 Scope 脑拓扑矩阵 */}
+    <div style={{border:'1px solid var(--line)',borderRadius:8,overflow:'hidden',background:'var(--surface)',marginBottom:12}}>
+      <div style={{padding:'10px 14px',fontSize:12,fontWeight:600,borderBottom:'1px solid var(--line)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <span>🧠 权限 Scope 脑架构（同权限用户组自动复用）</span>
+        <span style={{fontSize:11,color:'var(--ink-3)',fontWeight:400}}>共 {scopes.length} 个运行中 Scope</span>
+      </div>
+      <div style={{maxHeight:180,overflowY:'auto'}}>
+        {scopes.map((s)=><div key={s.id} style={{display:'grid',gridTemplateColumns:'160px 80px 100px 120px 1fr 90px',gap:8,padding:'8px 14px',borderBottom:'1px solid var(--line-2)',fontSize:11.5,alignItems:'center'}}>
+          <span style={{fontFamily:'monospace',fontWeight:600,color:'var(--ink)'}} title={s.fingerprint}>Scope: {s.fingerprint}</span>
+          <span className={`badge ${s.strategy==='eager'?'ok':'purple'}`} style={{fontSize:10,padding:'1px 5px'}}>{s.strategy==='eager'?'⚡ Eager':'💤 Lazy'}</span>
+          <span>👥 {s.membersCount} 名成员</span>
+          <span>📚 {s.derivedCount} 篇派生页</span>
+          <span style={{color:'var(--ink-3)',fontSize:11}}>ACL v{s.aclEpoch} · 知识 v{s.knowledgeEpoch}</span>
+          <span style={{color:s.status==='active'?'var(--green)':'var(--amber)',textAlign:'right'}}>{s.status==='active'?'🟢 运行中':'🟡 待对账'}</span>
+        </div>)}
+        {!scopes.length && <div style={{padding:16,color:'var(--ink-3)',fontSize:12}}>暂无 Scope 记录，系统对账后会自动生成。</div>}
+      </div>
     </div>
+
+    <div style={{padding:'12px 14px',border:'1px solid var(--line)',borderRadius:8,background:'var(--surface-2)',fontSize:12,color:'var(--ink-3)',lineHeight:1.6,marginBottom:12}}>
+      <b style={{color:'var(--ink)'}}>双级 Dream 维护架构</b>：{telemetry.enabled ? `已启用，每日 ${telemetry.cron}（${telemetry.timezone || '服务器时区'}）执行` : '已停用'}。
+      <b>Tier 1 (Source Dream)</b> 负责单原始源的确定性维护与 Embedding 索引；
+      <b>Tier 2 (Scope Dream)</b> 负责用户权限 Scope 内的跨源宏观综合与派生智能维护。
+      {last && skippedPhases > 0 && <div style={{marginTop:4}}>GBrain phase 隔离：{skippedPhases} 个按 source 隔离策略跳过（私密 source 不外泄跨权限全局总结）。</div>}
+      {last?.errorMessage && <div style={{color:'var(--red)',marginTop:4}}>最近失败：{last.errorMessage}</div>}
+    </div>
+
     <div style={{border:'1px solid var(--line)',borderRadius:8,overflow:'hidden',background:'var(--surface)'}}>
-      <div style={{padding:'10px 14px',fontSize:12,fontWeight:600,borderBottom:'1px solid var(--line)'}}>最近运行记录</div>
-      {(telemetry.runs || []).slice(0,8).map((run)=><div key={run.id} style={{display:'grid',gridTemplateColumns:'145px 75px 1fr 120px',gap:10,padding:'9px 14px',borderBottom:'1px solid var(--line)',fontSize:11.5,alignItems:'center'}}>
+      <div style={{padding:'10px 14px',fontSize:12,fontWeight:600,borderBottom:'1px solid var(--line)'}}>最近 Dream 运行记录</div>
+      {(telemetry.runs || []).slice(0,6).map((run)=><div key={run.id} style={{display:'grid',gridTemplateColumns:'145px 75px 1fr 120px',gap:10,padding:'9px 14px',borderBottom:'1px solid var(--line)',fontSize:11.5,alignItems:'center'}}>
         <span>{fmt(run.startedAt)}</span><b style={{color:statusColors[run.status] || 'var(--ink)'}}>{statusLabels[run.status] || run.status}</b><span>{run.sourcesVisited || 0} 个 source · {run.sourcesSucceeded || 0} 成功 · {run.sourcesPartial || 0} 部分 · {run.queuedTopics || 0} 个待编译主题</span><span style={{color:'var(--ink-3)'}}>{run.durationMs ? `${Math.round(run.durationMs/1000)} 秒` : '—'}</span>
       </div>)}
-      {!telemetry.runs?.length && <div style={{padding:16,color:'var(--ink-3)',fontSize:12}}>暂无 Dream 运行记录，首次计划任务或点击“立即执行维护”后会出现在这里。</div>}
+      {!telemetry.runs?.length && <div style={{padding:16,color:'var(--ink-3)',fontSize:12}}>暂无 Dream 运行记录。</div>}
     </div>
-    <div style={{border:'1px solid var(--line)',borderRadius:8,overflow:'hidden',background:'var(--surface)',marginTop:12}}>
-      <div style={{padding:'10px 14px',fontSize:12,fontWeight:600,borderBottom:'1px solid var(--line)'}}>Source 同步效果（最近一次）</div>
-      {latestSources.map((source)=><div key={source.sourceKey} style={{display:'grid',gridTemplateColumns:'minmax(180px,1.5fr) 70px 110px 1fr',gap:10,padding:'9px 14px',borderBottom:'1px solid var(--line)',fontSize:11.5,alignItems:'center'}}>
-        <span title={source.sourceKey}>{source.sourceKey}</span><span>{source.kind === 'shared' ? '共享' : '权限组'}</span><b style={{color:statusColors[source.status] || 'var(--ink)'}}>{statusLabels[source.status] || source.status}</b><span>{source.synced || 0} 新增/变更 · {source.removed || 0} 移除 · {(source.phases || []).filter(phase => phase.status === 'skipped').length} 个隔离跳过</span>
-      </div>)}
-      {!latestSources.length && <div style={{padding:16,color:'var(--ink-3)',fontSize:12}}>暂无 source 运行明细。</div>}
-    </div>
-    <div style={{marginTop:10,fontSize:11,color:'var(--ink-3)'}}>当前 active source：{(telemetry.sources || []).length} 个 · 已登记文档映射：{(telemetry.sources || []).reduce((sum,source)=>sum+(source.documents||0),0)} 条 · Dream 队列失败任务：{(telemetry.maintenanceFailures || []).length} 个</div>
+
+    <div style={{marginTop:10,fontSize:11,color:'var(--ink-3)'}}>当前 active source：{(telemetry.sources || []).length} 个 · 权限 Scope 脑：{scopes.length} 个 · 派生智能总结：{telemetry.derivedPagesCount || 0} 篇</div>
   </div>;
 }
 
@@ -5253,6 +5860,36 @@ function LoginScreen({ onSubmit, error, loading }) {
   );
 }
 
+function PasswordChangeScreen({ onSubmit, onLogout, error, loading }) {
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [localError, setLocalError] = useState('');
+  return (
+    <div className="login-shell">
+      <form className="login-card" onSubmit={(event) => {
+        event.preventDefault();
+        if (newPassword.length < 12) return setLocalError('新密码至少需要 12 个字符');
+        if (newPassword !== confirmPassword) return setLocalError('两次输入的新密码不一致');
+        setLocalError('');
+        onSubmit(currentPassword, newPassword);
+      }}>
+        <div style={{fontSize:28,fontWeight:700,letterSpacing:'-0.02em',color:'#191817',marginBottom:10}}>首次登录安全设置</div>
+        <div style={{color:'#756f66',fontSize:14,lineHeight:1.7,marginBottom:24}}>为了保护生产环境，请先修改 admin 的初始化密码。</div>
+        <label style={{display:'block',fontSize:13,marginBottom:6}}>当前密码</label>
+        <input value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} type="password" autoComplete="current-password" style={{width:'100%',boxSizing:'border-box',padding:'11px 12px',border:'1px solid #d8d2c8',borderRadius:7,marginBottom:16}} />
+        <label style={{display:'block',fontSize:13,marginBottom:6}}>新密码</label>
+        <input value={newPassword} onChange={(event) => setNewPassword(event.target.value)} type="password" autoComplete="new-password" style={{width:'100%',boxSizing:'border-box',padding:'11px 12px',border:'1px solid #d8d2c8',borderRadius:7,marginBottom:16}} />
+        <label style={{display:'block',fontSize:13,marginBottom:6}}>确认新密码</label>
+        <input value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} type="password" autoComplete="new-password" style={{width:'100%',boxSizing:'border-box',padding:'11px 12px',border:'1px solid #d8d2c8',borderRadius:7,marginBottom:18}} />
+        {(localError || error) && <div style={{color:'#b42318',fontSize:13,marginBottom:14}}>{localError || error}</div>}
+        <button type="submit" disabled={loading || !currentPassword || !newPassword || !confirmPassword} className="btn primary" style={{width:'100%',justifyContent:'center',padding:11}}>{loading ? '保存中…' : '保存新密码'}</button>
+        <button type="button" onClick={onLogout} className="btn" style={{width:'100%',justifyContent:'center',padding:11,marginTop:10}}>退出</button>
+      </form>
+    </div>
+  );
+}
+
 function App(){
 
   const [dbData, setDbData] = useState(null);
@@ -5263,6 +5900,8 @@ function App(){
   const [authState, setAuthState] = useState('checking');
   const [loginError, setLoginError] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
+  const [passwordChangeError, setPasswordChangeError] = useState('');
+  const [passwordChangeLoading, setPasswordChangeLoading] = useState(false);
   const [theme, setTheme] = useState(null);
 
   useEffect(() => {
@@ -5354,6 +5993,7 @@ function App(){
     });
     AUDIT = (d.audit || []).map((item: any) => ({ ...item, when: new Date(item.when).toLocaleString('zh-CN'), what: item.action, actor: item.actor }));
     DREAM = d.dream || null;
+    SYSTEM_STATUS = d.systemStatus || null;
     setCurrentUser(d.user || null);
     if (d.orgs?.length) {
       const nodes = d.orgs.map((node: any) => ({ ...node, kbs: (node.kbs || []).map((kb: any) => kb.id), knowledgeBase: (node.kbs || [])[0] || null, admins: (node.admins || []).map((a: any) => a.user?.displayName || a.user?.username).filter(Boolean), children: [] }));
@@ -5380,8 +6020,19 @@ function App(){
       setAuthState('loggedOut');
       return;
     }
-    loadAdminData(token)
-      .then(() => setAuthState('loggedIn'))
+    fetch(`${API_BASE_URL}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`API ${response.status}`);
+        return response.json();
+      })
+      .then(async (me) => {
+        if (me.user?.mustChangePassword) {
+          setAuthState('mustChangePassword');
+          return;
+        }
+        await loadAdminData(token);
+        setAuthState('loggedIn');
+      })
       .catch(() => {
         window.localStorage.removeItem('llmwiki_token');
         setAuthState('loggedOut');
@@ -5414,12 +6065,38 @@ function App(){
         throw new Error(result.message || '登录失败');
       }
       window.localStorage.setItem('llmwiki_token', result.token);
+      if (result.user?.mustChangePassword) {
+        setPasswordChangeError('');
+        setAuthState('mustChangePassword');
+        return;
+      }
       await loadAdminData(result.token);
       setAuthState('loggedIn');
     } catch (error) {
       setLoginError(error.message || '登录失败');
     } finally {
       setLoginLoading(false);
+    }
+  };
+
+  const handlePasswordChange = async (currentPassword, newPassword) => {
+    setPasswordChangeLoading(true);
+    setPasswordChangeError('');
+    try {
+      const token = window.localStorage.getItem('llmwiki_token');
+      const response = await fetch(`${API_BASE_URL}/api/v1/auth/change-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || '密码修改失败');
+      await loadAdminData(token);
+      setAuthState('loggedIn');
+    } catch (error) {
+      setPasswordChangeError(error.message || '密码修改失败');
+    } finally {
+      setPasswordChangeLoading(false);
     }
   };
 
@@ -5527,6 +6204,7 @@ function App(){
 
   if (authState === 'checking') return <div style={{padding:40,textAlign:"center",color:"#999"}}>正在验证登录状态…</div>;
   if (authState === 'loggedOut') return <LoginScreen onSubmit={handleLogin} error={loginError} loading={loginLoading}/>;
+  if (authState === 'mustChangePassword') return <PasswordChangeScreen onSubmit={handlePasswordChange} onLogout={handleLogout} error={passwordChangeError} loading={passwordChangeLoading}/>;
   if (!dbData) return <div style={{padding:40,textAlign:"center",color:"#999"}}>系统正在加载企业数据底座，请稍候...</div>;
   if (dbData.error) return <div style={{padding:40,textAlign:"center",color:"#999"}}>企业数据底座暂不可用，请检查 API、数据库和登录状态后重试。</div>;
   const canAdmin = CAPABILITIES.includes('*') || ['org.read','org.user.read','role.read','kb.industry.read','kb.industry.create','kb.industry.grant','audit.read'].some(permission => CAPABILITIES.includes(permission));

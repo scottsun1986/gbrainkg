@@ -4,6 +4,8 @@ import { Job } from "bullmq";
 import { PermissionService } from "../permission/permission.service";
 import { ModelConfigService } from "../model-config.service";
 import { BrainCompilerService } from "./brain-compiler.service";
+import { BrainScopeService } from "./brain-scope.service";
+import { BrainOutboxService } from "./brain-outbox.service";
 
 const mockPrisma = {
   brainRepo: {
@@ -55,6 +57,8 @@ describe("BrainCompilerProcessor", () => {
         { provide: PermissionService, useValue: permissionService },
         { provide: ModelConfigService, useValue: modelConfigService },
         { provide: BrainCompilerService, useValue: compilerService },
+        { provide: BrainScopeService, useValue: {} },
+        { provide: BrainOutboxService, useValue: {} },
       ],
     }).compile();
 

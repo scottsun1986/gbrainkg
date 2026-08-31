@@ -13,6 +13,9 @@ import { ModelConfigService } from "../model-config.service";
 import { createHash } from "node:crypto";
 import { readCanonicalDocument } from "./canonical-document";
 
+import { BrainScopeService } from "./brain-scope.service";
+import { BrainOutboxService } from "./brain-outbox.service";
+
 export enum CompilePriority {
   CRITICAL = 1, // 权限撤销
   IMMEDIATE = 2, // 懒编译
@@ -38,6 +41,8 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
     @InjectQueue("dirty-compiler-queue") private compilerQueue: Queue,
     private readonly permissionService: PermissionService,
     private readonly modelConfigService: ModelConfigService,
+    private readonly scopeService: BrainScopeService,
+    private readonly outboxService: BrainOutboxService,
   ) {}
 
   async onModuleInit() {
@@ -416,12 +421,14 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Durable, queue-triggered reconciliation after organization/role/ACL changes. */
-  async reconcileAccess(): Promise<{ users: number; sourcesSynced: number }> {
+  async reconcileAccess(): Promise<{ users: number; sourcesSynced: number; scopesReconciled: number }> {
     const users = await this.prisma.user.findMany({
       where: { status: "active" },
       select: { id: true },
     });
     const syncedSourceKeys = new Set<string>();
+    const reconciledScopeIds = new Set<string>();
+
     for (const user of users) {
       const plan = await this.getSourcePlan(user.id);
       await this.getUserSourceRefs(user.id);
@@ -430,18 +437,42 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
         await this.syncSourceDefinition(definition, user.id);
         syncedSourceKeys.add(definition.sourceKey);
       }
+      // 计算并更新该用户的权限 Scope
+      const scopeRes = await this.scopeService.resolveUserScope(user.id);
+      reconciledScopeIds.add(scopeRes.scopeId);
+
+      // 对于 eager 策略的 Scope，安排派生层编译
+      if (scopeRes.strategy === "eager") {
+        await this.compilerQueue.add(
+          "scope-derived-compile",
+          { scopeId: scopeRes.scopeId },
+          {
+            jobId: `scope-compile-${scopeRes.scopeId}`,
+            priority: CompilePriority.NORMAL,
+            removeOnComplete: true,
+            removeOnFail: 50,
+          },
+        );
+      }
     }
+
     const db: any = this.prisma as any;
     const emptySources = await db.brainSource.findMany({
       where: { members: { none: {} }, status: "active" },
       select: { id: true },
     });
-    if (emptySources.length)
+    if (emptySources.length) {
       await db.brainSource.updateMany({
         where: { id: { in: emptySources.map((item: any) => item.id) } },
         data: { status: "archived" },
       });
-    return { users: users.length, sourcesSynced: syncedSourceKeys.size };
+    }
+
+    return {
+      users: users.length,
+      sourcesSynced: syncedSourceKeys.size,
+      scopesReconciled: reconciledScopeIds.size,
+    };
   }
 
   async queueAccessReconciliation(): Promise<void> {
@@ -489,7 +520,6 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
       `Knowledge published in KB ${kbId}. Calculating affected users...`,
     );
 
-    // 1. 根据当前权限实时计算可见用户，避免发布事件把内容编译给错误的人。
     const visibleUsers =
       await this.permissionService.getUsersVisibleToKnowledgeBase(kbId);
     const publishedDocument = await this.prisma.document.findUnique({
@@ -498,9 +528,6 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
     });
     const publishVersion = publishedDocument?.version || Date.now();
 
-    // 2. 为每个当前有权阅读的人入队。共享 source 会在队列内自然幂等，
-    // 私密 source 则必须分别编译，不能只取 visibleUsers[0]，否则同一份
-    // 发布内容可能只进入第一个人的 source。
     const jobs = (
       await Promise.all(
         visibleUsers.map(async (userId) => {
@@ -519,8 +546,6 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
               sourceKey,
             },
             opts: {
-              // 同一用户、文档、主题在短时间内重复发布时保持队列幂等，
-              // 不改变最终权限，只减少重复同步。
               jobId: `publish-${userId}-${docId}-v${publishVersion}-${createHash(
                 "sha1",
               )
@@ -558,8 +583,6 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
     const sourceKeys = new Set<string>(
       mappedSources.map((item: any) => item.source?.sourceKey).filter(Boolean),
     );
-    // 重新根据当前 ACL 计算一次，覆盖尚未物化映射的 source；已撤销权限的
-    // 旧映射仍由上面的数据库映射负责清理。
     await Promise.all(
       visibleUsers.map(async (userId) => {
         const sourceKey =
@@ -595,7 +618,6 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
       `Triggering IMMEDIATE lazy compile for user ${userId}, topic ${topicSlug}`,
     );
 
-    // 插入高优先级任务，并等待完成
     const job = await this.compilerQueue.add(
       "compile-job",
       {
@@ -610,22 +632,31 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * 知识沉淀与一致性维护：Dream Cycle 调度维护任务
-   * 检查脏主题、协调文档版本差异、在后台消化编译
+   * 双级 Dream Cycle 维护：
+   * Tier 1 (Source Dream): 原始知识源的索引、Embedding、结构自愈与 Lint
+   * Tier 2 (Scope Dream): 用户可见权限 Scope 内的跨源宏观综合与派生智能维护
    */
   async runDreamCycle(
     userId?: string,
     trigger = "scheduled",
-  ): Promise<{ queuedTopics: number; syncedDocs: number; removedDocs: number; status: string }> {
+  ): Promise<{
+    queuedTopics: number;
+    syncedDocs: number;
+    removedDocs: number;
+    status: string;
+    scopesCompiled: number;
+  }> {
     this.logger.log(
-      `Starting Dream Cycle maintenance${userId ? ` for user ${userId}` : " across all active users"}...`,
+      `Starting Two-Tier Dream Cycle maintenance${userId ? ` for user ${userId}` : " across all active users"}...`,
     );
     let queuedTopics = 0;
     let syncedDocs = 0;
     let removedDocs = 0;
+    let scopesCompiled = 0;
     const sourceResults: Array<Record<string, unknown>> = [];
     const startedAt = Date.now();
-    const maintenanceRun = await (this.prisma as any).brainMaintenanceRun.create({
+    const db: any = this.prisma as any;
+    const maintenanceRun = await db.brainMaintenanceRun.create({
       data: { trigger, status: "running" },
     });
 
@@ -637,9 +668,9 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
             select: { id: true },
           });
 
+      // === Tier 1: Source Dream (原始 Source 确定性维护) ===
       const maintainedSources = new Set<string>();
       for (const user of targetUsers) {
-        // 1. 同步用户可见的最新知识源
         const plan = await this.getSourcePlan(user.id);
         for (const def of plan) {
           if (!maintainedSources.has(def.sourceKey)) {
@@ -648,9 +679,6 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
             removedDocs += res.removed;
             const dream = await this.gbrain.maintain(`gbrain://source/${def.sourceKey}`);
             const gbrainStatus = dream?.status || "completed";
-            // GBrain uses both `clean` and `completed` for a successful cycle
-            // depending on whether anything changed. Normalize them for the
-            // platform audit view while retaining the original status.
             const sourceStatus = gbrainStatus === "partial" ? "partial" : "completed";
             const phaseSummary = Array.isArray(dream?.phases)
               ? dream.phases.map((phase: any) => ({
@@ -672,61 +700,53 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
             maintainedSources.add(def.sourceKey);
           }
         }
+      }
 
-        // 2. 清理并编译积压的脏主题
-        const brainRepo = await this.prisma.brainRepo.findUnique({
-          where: { userId: user.id },
-        });
-        if (brainRepo) {
-          const dirtyTopics = await this.prisma.brainTopic.findMany({
-            where: { brainRepoId: brainRepo.id, compileStatus: "dirty" },
-          });
-          for (const topic of dirtyTopics) {
-            await this.compilerQueue.add(
-              "compile-job",
-              {
-                userId: user.id,
-                topicSlug: topic.topicSlug,
-                source: "dream",
-              },
-              { priority: CompilePriority.LOW },
-            );
-            queuedTopics++;
-          }
+      // === Tier 2: Scope Dream (权限 Scope 跨源综合与派生智能维护) ===
+      const activeScopes = await db.brainScope.findMany({
+        where: { status: "active" },
+      });
+      for (const scope of activeScopes) {
+        try {
+          await this.scopeService.compileScopeDerived(scope.id);
+          scopesCompiled++;
+        } catch (e: any) {
+          this.logger.warn(`Failed Scope Dream for ${scope.fingerprint}: ${e.message}`);
         }
       }
+
       this.logger.log(
-        `Dream Cycle completed: synced ${syncedDocs} doc(s), queued ${queuedTopics} topic(s).`,
+        `Two-Tier Dream Cycle completed: synced ${syncedDocs} doc(s), compiled ${scopesCompiled} scope(s).`,
       );
       const hasPartial = sourceResults.some((result) => result.status === "partial");
       const status = hasPartial ? "partial" : "completed";
-      await (this.prisma as any).brainMaintenanceRun.update({
+      await db.brainMaintenanceRun.update({
         where: { id: maintenanceRun.id },
         data: {
           status,
           completedAt: new Date(),
           durationMs: Date.now() - startedAt,
           sourcesVisited: sourceResults.length,
-          sourcesSucceeded: sourceResults.filter((result) => result.status === "completed").length,
-          sourcesPartial: sourceResults.filter((result) => result.status === "partial").length,
+          sourcesSucceeded: sourceResults.filter((result: any) => result.status === "completed").length,
+          sourcesPartial: sourceResults.filter((result: any) => result.status === "partial").length,
           syncedDocs,
           removedDocs,
           queuedTopics,
           sourceResults,
         },
       });
-      return { queuedTopics, syncedDocs, removedDocs, status };
+      return { queuedTopics, syncedDocs, removedDocs, status, scopesCompiled };
     } catch (err: any) {
       this.logger.error(`Dream Cycle error: ${err.message}`);
-      await (this.prisma as any).brainMaintenanceRun.update({
+      await db.brainMaintenanceRun.update({
         where: { id: maintenanceRun.id },
         data: {
           status: "failed",
           completedAt: new Date(),
           durationMs: Date.now() - startedAt,
           sourcesVisited: sourceResults.length,
-          sourcesSucceeded: sourceResults.filter((result) => result.status === "completed").length,
-          sourcesPartial: sourceResults.filter((result) => result.status === "partial").length,
+          sourcesSucceeded: sourceResults.filter((result: any) => result.status === "completed").length,
+          sourcesPartial: sourceResults.filter((result: any) => result.status === "partial").length,
           syncedDocs,
           removedDocs,
           queuedTopics,
@@ -734,15 +754,13 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
           errorMessage: String(err?.message || err),
         },
       }).catch((updateError: any) => this.logger.error(`Failed to persist Dream failure: ${updateError.message}`));
-      // Do not acknowledge a failed maintenance cycle. BullMQ must retain
-      // the failure and apply the configured retry/backoff policy.
       throw err;
     }
   }
 
   async getDreamTelemetry() {
     const db: any = this.prisma as any;
-    const [lastRun, runs, sources, dirtyTopics, queueCounts, failedJobs] = await Promise.all([
+    const [lastRun, runs, sources, scopes, derivedCount, outboxPending, opLogs, dirtyTopics, queueCounts, failedJobs] = await Promise.all([
       db.brainMaintenanceRun.findFirst({ orderBy: { startedAt: "desc" } }),
       db.brainMaintenanceRun.findMany({ orderBy: { startedAt: "desc" }, take: 30 }),
       db.brainSource.findMany({
@@ -750,6 +768,14 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
         include: { _count: { select: { members: true, documents: true } } },
         orderBy: { sourceKey: "asc" },
       }),
+      db.brainScope.findMany({
+        where: { status: "active" },
+        include: { _count: { select: { members: true, derivedPages: true } } },
+        orderBy: { createdAt: "desc" },
+      }),
+      db.brainDerivedPage.count(),
+      db.brainChangeEvent.count({ where: { status: "pending" } }),
+      db.brainOperationLog.findMany({ orderBy: { createdAt: "desc" }, take: 20 }),
       db.brainTopic.count({ where: { compileStatus: "dirty" } }),
       this.compilerQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
       this.compilerQueue.getJobs(["failed"], 0, 49),
@@ -784,6 +810,21 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
         members: source._count.members,
         documents: source._count.documents,
       })),
+      scopes: scopes.map((s: any) => ({
+        id: s.id,
+        fingerprint: s.fingerprint,
+        name: s.name,
+        strategy: s.strategy,
+        status: s.status,
+        aclEpoch: s.aclEpoch,
+        knowledgeEpoch: s.knowledgeEpoch,
+        lastCompileAt: s.lastCompileAt,
+        membersCount: s._count.members,
+        derivedCount: s._count.derivedPages,
+      })),
+      derivedPagesCount: derivedCount,
+      outboxPendingEvents: outboxPending,
+      recentOperationLogs: opLogs,
       dirtyTopics,
       queueCounts,
       maintenanceFailures: failedJobs

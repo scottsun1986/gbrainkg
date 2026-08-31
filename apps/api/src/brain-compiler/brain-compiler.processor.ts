@@ -6,6 +6,8 @@ import { PrismaClient } from "@prisma/client";
 import { PermissionService } from "../permission/permission.service";
 import { ModelConfigService } from "../model-config.service";
 import { BrainCompilerService } from "./brain-compiler.service";
+import { BrainScopeService } from "./brain-scope.service";
+import { BrainOutboxService } from "./brain-outbox.service";
 import { readCanonicalDocument } from "./canonical-document";
 
 @Processor("dirty-compiler-queue")
@@ -22,23 +24,144 @@ export class BrainCompilerProcessor extends WorkerHost {
     private readonly permissionService: PermissionService,
     private readonly modelConfigService: ModelConfigService,
     private readonly compilerService: BrainCompilerService,
+    private readonly scopeService: BrainScopeService,
+    private readonly outboxService: BrainOutboxService,
   ) {
     super();
   }
 
   async process(job: Job<any, any, string>): Promise<any> {
+    const db: any = this.prisma;
+
+    // 1. 权限与组织对账任务
     if (job.name === "access-reconcile") {
-      return {
+      const start = Date.now();
+      const res = await this.compilerService.reconcileAccess();
+      await this.outboxService.logOperation("sync", {
+        phase: "access_reconcile",
+        counts: res,
+        durationMs: Date.now() - start,
         status: "success",
-        ...(await this.compilerService.reconcileAccess()),
-      };
+      });
+      return { status: "success", ...res };
     }
+
+    // 2. 双级 Dream Cycle 调度维护（Source Dream + Scope Dream）
     if (job.name === "gbrain-maintenance") {
-      return {
+      const start = Date.now();
+      const res = await this.compilerService.runDreamCycle(
+        undefined,
+        job.data?.source || "scheduled",
+      );
+      await this.outboxService.logOperation("dream", {
+        phase: "two_tier_dream",
+        counts: res,
+        durationMs: Date.now() - start,
         status: "success",
-        ...(await this.compilerService.runDreamCycle(undefined, job.data?.source || "scheduled")),
-      };
+      });
+      return { status: "success", ...res };
     }
+
+    // 3. 消费 Outbox 变更事件
+    if (job.name === "process-outbox-event") {
+      const { eventId } = job.data;
+      const event = await db.brainChangeEvent.findUnique({
+        where: { id: eventId },
+      });
+      if (!event) return { status: "skipped", reason: "Event not found" };
+
+      await db.brainChangeEvent.update({
+        where: { id: eventId },
+        data: { status: "processing" },
+      });
+
+      try {
+        const start = Date.now();
+        this.logger.log(
+          `Processing BrainChangeEvent [${event.id}]: ${event.eventType} on ${event.resourceType} ${event.resourceId}`,
+        );
+
+        // 如果是权限变更或用户/组织变更，触发权限与 Scope 对账
+        if (
+          event.eventType === "perm_grant" ||
+          event.eventType === "perm_revoke" ||
+          event.eventType === "org_change" ||
+          event.eventType === "role_change"
+        ) {
+          if (event.resourceType === "user" && event.resourceId) {
+            await this.scopeService.invalidateUserScope(event.resourceId);
+          }
+          await this.compilerService.reconcileAccess();
+        }
+
+        // 如果是文档变更，触发增量同步
+        if (event.eventType === "doc_change" && event.resourceId) {
+          const doc = await this.prisma.document.findUnique({
+            where: { id: event.resourceId },
+            select: { id: true, kbId: true },
+          });
+          if (doc) {
+            await this.compilerService.onKnowledgePublished(
+              doc.kbId,
+              doc.id,
+              ["document"],
+            );
+          }
+        }
+
+        if (event.eventType === "doc_delete" && event.resourceId) {
+          const kbId = event.payload?.kbId;
+          if (kbId) {
+            await this.compilerService.onKnowledgeDeleted(
+              kbId,
+              event.resourceId,
+            );
+          }
+        }
+
+        await db.brainChangeEvent.update({
+          where: { id: eventId },
+          data: { status: "completed", processedAt: new Date() },
+        });
+
+        await this.outboxService.logOperation("sync", {
+          phase: "outbox_event",
+          counts: { eventType: event.eventType, resourceType: event.resourceType },
+          durationMs: Date.now() - start,
+          status: "success",
+        });
+
+        return { status: "success", eventId };
+      } catch (err: any) {
+        this.logger.error(`Failed to process Outbox Event [${eventId}]: ${err.message}`);
+        await db.brainChangeEvent.update({
+          where: { id: eventId },
+          data: {
+            status: "failed",
+            errorMessage: err.message,
+            retryCount: { increment: 1 },
+          },
+        });
+        throw err;
+      }
+    }
+
+    // 4. Scope 派生智能产物编译任务
+    if (job.name === "scope-derived-compile") {
+      const { scopeId } = job.data;
+      const start = Date.now();
+      const res = await this.scopeService.compileScopeDerived(scopeId);
+      await this.outboxService.logOperation("scope_compile", {
+        scopeId,
+        phase: "derived_summary",
+        counts: res,
+        durationMs: Date.now() - start,
+        status: "success",
+      });
+      return { status: "success", ...res };
+    }
+
+    // 5. 传统单主题/文档编译 Job
     const { userId, topicSlug, source, docIds = [], sourceKey } = job.data;
     this.logger.debug(
       `Starting compile job for User: ${userId}, Topic: ${topicSlug}`,
@@ -111,8 +234,6 @@ export class BrainCompilerProcessor extends WorkerHost {
         })),
       );
 
-      // Published knowledge is written incrementally to its shared source or
-      // private permission-group source. No per-user full rebuild is performed.
       if (sourceKey) {
         await this.compilerService.syncSourceIncremental(
           sourceKey,
@@ -164,9 +285,6 @@ export class BrainCompilerProcessor extends WorkerHost {
         data: { lastCompileAt: new Date() },
       });
 
-      // CompileTruth and管理后台需要可审计的编译结果。GBrain 的队列记录会
-      // 按保留策略清理，因此把最终结果写入平台数据库；这不参与权限判断，
-      // 仅用于追踪 source 同步、主题编译与失败原因。
       const compileJobModel: any = (this.prisma as any).compileJob;
       if (brainTopicId && compileJobModel?.create) {
         await compileJobModel.create({

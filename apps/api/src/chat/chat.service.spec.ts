@@ -2,6 +2,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { ChatService } from "./chat.service";
 import { PermissionService } from "../permission/permission.service";
 import { BrainCompilerService } from "../brain-compiler/brain-compiler.service";
+import { BrainScopeService } from "../brain-compiler/brain-scope.service";
 import { lastValueFrom, toArray } from "rxjs";
 
 // Mocks
@@ -50,6 +51,7 @@ jest.mock("@prisma/client", () => ({
 jest.mock("@llmwiki/gbrain-adapter", () => ({
   BrainRepoAdapter: jest.fn().mockImplementation(() => ({
     query: mockGbrainQuery,
+    isSourceMaterialized: jest.fn().mockResolvedValue(false),
   })),
 }));
 
@@ -62,6 +64,10 @@ describe("ChatService", () => {
         ChatService,
         { provide: PermissionService, useValue: mockPermissionService },
         { provide: BrainCompilerService, useValue: mockCompilerService },
+        {
+          provide: BrainScopeService,
+          useValue: { resolveUserScope: jest.fn().mockResolvedValue({ fingerprint: "test-scope", sourceKeys: [] }) },
+        },
       ],
     }).compile();
 

@@ -6,6 +6,8 @@ import { BrainRepoAdapter } from "@llmwiki/gbrain-adapter";
 import { PrismaClient } from "@prisma/client";
 import { ModelConfigService } from "../model-config.service";
 
+import { BrainScopeService } from "../brain-compiler/brain-scope.service";
+
 type RetrievalRequest = { query: string; breadth: boolean };
 
 @Injectable()
@@ -19,6 +21,7 @@ export class ChatService {
   constructor(
     private readonly permissionService: PermissionService,
     private readonly compilerService: BrainCompilerService,
+    private readonly scopeService: BrainScopeService,
     @Optional() private readonly modelConfigService?: ModelConfigService,
   ) {}
 
@@ -70,27 +73,31 @@ export class ChatService {
     }
 
     const brainRepo = await this.compilerService.ensureUserBrainRepo(userId);
-    const sourceRefs =
+    const userScope = await this.scopeService.resolveUserScope(userId);
+    const rawRefs =
       typeof (this.compilerService as any).getUserSourceRefs === "function"
         ? await (this.compilerService as any).getUserSourceRefs(userId)
         : [brainRepo.gitRepoUrl];
+
+    // 将用户可见的原始 Source 与 Scope 派生源合并为可查询集合
+    const derivedRef = `gbrain://source/llmwiki-d-${userScope.fingerprint}`;
+    const sourceRefs = [...rawRefs];
+    if (await this.gbrain.isSourceMaterialized(derivedRef).catch(() => false)) {
+      sourceRefs.push(derivedRef);
+    }
+
     const conversationHistory = await this.loadConversationHistory(
       userId,
       conversationId,
       question,
     );
-    // Retrieval uses a standalone current-turn query. When the user uses a
-    // genuine follow-up reference ("他", "这个制度", "上一条"), a generic
-    // contextual-rewrite step resolves it first; unrelated history is never
-    // concatenated into the query and previous answers are never treated as
-    // evidence. This avoids both lost coreference and topic contamination.
     const retrieval = await this.rewriteQueryForRetrieval(
       question,
       conversationHistory,
     );
 
     this.logger.debug(
-      `Querying brain for "${question}" in scope ${scope.join(",")}...`,
+      `Querying brain for "${question}" in scope ${scope.join(",")} (Scope fingerprint: ${userScope.fingerprint})...`,
     );
     let queryResult =
       sourceRefs.length > 1
@@ -223,8 +230,8 @@ export class ChatService {
 
 【重要回答规范】：
 1. 【必须标注引用角标】：在回答正文中，每一处陈述具体事实、业务范围、规章制度、技术指标、数据或核心结论时，必须在对应陈述的末尾标注对应的引用角标，格式为 [1]、[2] 等（严格与提供的【来源 1】、【来源 2】编号对应）。例如：“中通服节能的核心业务包括数据中心绿色化与液冷技术应用[1]。”
-2. 【多源合并】：若多个来源共同支持某一结论，可合并标注如 [1][2]。严禁捏造未在参考资料中提供的引用编号。
-3. 【强相关性与去伪存真】：仅依据与当前问题直接相关的参考资料回答，忽略无关的参考材料。
+2. 【多源对比与完整呈现】：若提供的参考资料中包含多份涉及该问题的文档（如不同版本制度、不同管理规范），必须分别列出各份文件的具体规定，并说明其版本差异、适用条件或生效背景（例如《详细手册》与《手册V2》的不同作息安排），严禁擅自忽略其中任何一份相关文件。
+3. 【多源合并】：若多个来源共同支持某一相同结论，可合并标注如 [1][2]。严禁捏造未在参考资料中提供的引用编号。
 4. 【客观真实】：如果参考资料不足以回答用户的问题，请明确客观说明“已知知识库资料中未包含相关信息”，切勿主观编造。
 
 ${priorConversation ? `历史对话参考（仅供消歧，以当前知识库资料为准）：\n${priorConversation}\n\n` : ""}【参考知识库资料】：
@@ -430,20 +437,24 @@ ${compiledTruthContext}`;
       .filter(
         (id: any): id is string => typeof id === "string" && id.length > 0,
       );
-    if (!docIds.length)
-      return { ...result, topics: [], answer: "", citations: [] };
 
-    const docs = await this.prisma.document.findMany({
-      where: {
-        id: { in: docIds },
-        kbId: { in: visibleKbIds },
-        status: "published",
-      },
-      select: { id: true, kbId: true, title: true },
-    });
+    const docs = docIds.length
+      ? await this.prisma.document.findMany({
+          where: {
+            id: { in: docIds },
+            kbId: { in: visibleKbIds },
+            status: "published",
+          },
+          select: { id: true, kbId: true, title: true },
+        })
+      : [];
     const allowed = new Map(docs.map((doc) => [doc.id, doc]));
     const filtered = citations
       .map((citation: any) => {
+        if (!citation.docId) {
+          // Scope 派生智能总结页面 (Derived Page)
+          return citation;
+        }
         const doc = allowed.get(citation.docId);
         return doc
           ? { ...citation, kbId: doc.kbId, docTitle: doc.title }
@@ -478,8 +489,8 @@ ${compiledTruthContext}`;
     const documents = citations
       .map((citation: any) =>
         String(
-          citation.context || citation.snippet || citation.docTitle || citation.topic || "",
-        ).trim(),
+          citation.snippet || citation.context || citation.docTitle || citation.topic || "",
+        ).slice(0, 1000).trim(),
       )
       .filter(Boolean);
     if (documents.length < 2) return result;

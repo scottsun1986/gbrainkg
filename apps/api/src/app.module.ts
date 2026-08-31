@@ -24,6 +24,7 @@ import { AuditModule } from './audit/audit.module';
       connection: {
         host: process.env.REDIS_HOST || 'localhost',
         port: Number(process.env.REDIS_PORT || 6379),
+        ...(process.env.REDIS_PASS ? { password: process.env.REDIS_PASS } : {}),
       },
     }),
     ChatModule,

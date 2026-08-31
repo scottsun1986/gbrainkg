@@ -1,9 +1,15 @@
-node_modules
+node_modules/
+**/node_modules/
 .git
 .turbo
+**/.turbo/
 .next
-dist
+**/.next/
+dist/
+**/dist/
 coverage
+**/coverage/
+**/*.tsbuildinfo
 *.log
 .env
 .env.local

@@ -1,0 +1,176 @@
+name: llmwiki
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASS}"]
+    environment:
+      REDIS_PASS: ${REDIS_PASS}
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASS}\" ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASS}
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  parser:
+    build:
+      context: ..
+      dockerfile: deploy/docker/parser.Dockerfile
+    environment:
+      AUTH_TOKEN: ${PARSER_AUTH_TOKEN}
+      CORS_ORIGINS: ${WEB_ORIGIN}
+      UPLOAD_ROOT: /var/lib/llmwiki/parser
+      PDF_PARSE_MODE: ${PDF_PARSE_MODE:-quality}
+      DOCLING_TIMEOUT_SECONDS: ${DOCLING_TIMEOUT_SECONDS:-240}
+    volumes:
+      - parser_data:/var/lib/llmwiki/parser
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  api-image:
+    build:
+      context: ..
+      dockerfile: deploy/docker/api.Dockerfile
+      args:
+        GBRAIN_VERSION: ${GBRAIN_VERSION:-0.47.6.0}
+    image: llmwiki-api:${LLMWIKI_IMAGE_TAG:-local}
+    profiles: ["build-only"]
+
+  bootstrap:
+    image: llmwiki-api:${LLMWIKI_IMAGE_TAG:-local}
+    command: ["sh", "-lc", "pnpm --filter database exec prisma migrate deploy --schema=prisma/schema.prisma && node apps/api/dist/bootstrap/production-bootstrap.js"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASS}@postgres:5432/${DB_NAME}?schema=public
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@local.invalid}
+      ADMIN_INITIAL_PASSWORD_FILE: /run/secrets/admin_initial_password
+    secrets:
+      - admin_initial_password
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    image: llmwiki-api:${LLMWIKI_IMAGE_TAG:-local}
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOST: 0.0.0.0
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASS}@postgres:5432/${DB_NAME}?schema=public
+      GBRAIN_DATABASE_URL: postgresql://${DB_USER}:${DB_PASS}@postgres:5432/${DB_NAME}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASS: ${REDIS_PASS}
+      WEB_ORIGIN: ${WEB_ORIGIN}
+      PARSER_WORKER_URL: http://parser:8100
+      PARSER_AUTH_TOKEN: ${PARSER_AUTH_TOKEN}
+      AUTH_SECRET: ${AUTH_SECRET}
+      MODEL_CONFIG_KEY: ${MODEL_CONFIG_KEY}
+      BRAIN_REPO_BASE_PATH: /var/lib/llmwiki
+      UPLOAD_ROOT: /var/lib/llmwiki/uploads
+      GBRAIN_HOME: /var/lib/llmwiki/gbrain-home
+      GBRAIN_BIN: /root/.bun/bin/gbrain
+      GBRAIN_MAINTENANCE_ENABLED: ${GBRAIN_MAINTENANCE_ENABLED:-1}
+      GBRAIN_MAINTENANCE_TZ: ${GBRAIN_MAINTENANCE_TZ:-Asia/Shanghai}
+      GBRAIN_MAINTENANCE_CRON: ${GBRAIN_MAINTENANCE_CRON:-0 2 * * *}
+      ACCESS_RECONCILE_INTERVAL_MS: ${ACCESS_RECONCILE_INTERVAL_MS:-900000}
+      INGESTION_CONCURRENCY: ${INGESTION_CONCURRENCY:-2}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-600}
+      AUTH_LOGIN_THROTTLE_LIMIT: ${AUTH_LOGIN_THROTTLE_LIMIT:-10}
+    volumes:
+      - brain_data:/var/lib/llmwiki
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      parser:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/docker/web.Dockerfile
+    image: llmwiki-web:${LLMWIKI_IMAGE_TAG:-local}
+    environment:
+      NODE_ENV: production
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "${HTTP_PORT:-20080}:80"
+    volumes:
+      - ./docker/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/proxy_params:/etc/nginx/proxy_params:ro
+    depends_on:
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  parser_data:
+  brain_data:
+
+secrets:
+  admin_initial_password:
+    file: ${ADMIN_INITIAL_PASSWORD_FILE_HOST:-../.secrets/admin_initial_password}

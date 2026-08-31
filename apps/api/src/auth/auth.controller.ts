@@ -1,10 +1,13 @@
 import { Body, Controller, Get, Post, Req, UseGuards } from "@nestjs/common";
+import { PrismaClient } from "@prisma/client";
 import { Throttle } from "@nestjs/throttler";
 import { AuthService } from "./auth.service";
 import { AuthGuard } from "./auth.guard";
 
 @Controller("api/v1/auth")
 export class AuthController {
+  private readonly prisma = new PrismaClient();
+
   constructor(private readonly authService: AuthService) {}
 
   @Throttle({
@@ -25,6 +28,24 @@ export class AuthController {
   @Get("me")
   async me(@Req() req: any) {
     const userId = await this.authService.userIdFromRequest(req);
-    return { userId };
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, username: true, displayName: true, mustChangePassword: true },
+    });
+    return { userId, user };
+  }
+
+  @UseGuards(AuthGuard)
+  @Post("change-password")
+  async changePassword(
+    @Req() req: any,
+    @Body() body: { currentPassword?: string; newPassword?: string },
+  ) {
+    const userId = await this.authService.userIdFromRequest(req);
+    return this.authService.changePassword(
+      userId,
+      String(body.currentPassword || ""),
+      String(body.newPassword || ""),
+    );
   }
 }

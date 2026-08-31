@@ -1,5 +1,8 @@
--- Manual migration: Add pgvector and full-text search support to chunks table
--- Run this AFTER prisma migrate deploy
+-- Legacy compatibility script. New deployments apply the equivalent
+-- idempotent migration through Prisma migrate deploy automatically:
+-- 20260831090100_add_search_indexes/migration.sql
+-- Keep this file only for operators upgrading an older installation that
+-- cannot yet use the Prisma migration runner.
 
 -- Enable extensions
 CREATE EXTENSION IF NOT EXISTS vector;
