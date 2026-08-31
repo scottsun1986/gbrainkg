@@ -1,0 +1,44 @@
+[
+  {
+    "test": "1.0 Web Frontend Initial Load",
+    "success": true,
+    "message": "Title: '企业级 GBrain 知识库', HTTP 200",
+    "latency_ms": 3588.63
+  },
+  {
+    "test": "2.0 Invalid Login Rejection",
+    "success": true,
+    "message": "Correctly displayed login error without crash",
+    "latency_ms": 1153.29
+  },
+  {
+    "test": "3.0 Superadmin Login & JWT Issuance",
+    "success": true,
+    "message": "Received JWT Token (Length: 128)",
+    "latency_ms": 2088.54
+  },
+  {
+    "test": "8.0 Help & User Manual Modal",
+    "success": false,
+    "message": "User manual and shortcuts tabs interactive",
+    "latency_ms": 915.46
+  },
+  {
+    "test": "9.0 Responsive Layout Desktop 1440x900",
+    "success": true,
+    "message": "Rendered and screenshot saved (responsive_1440x900.png)",
+    "latency_ms": 2414.99
+  },
+  {
+    "test": "9.0 Responsive Layout Tablet 768x1024",
+    "success": true,
+    "message": "Rendered and screenshot saved (responsive_768x1024.png)",
+    "latency_ms": 630.21
+  },
+  {
+    "test": "9.0 Responsive Layout Mobile 375x812",
+    "success": true,
+    "message": "Rendered and screenshot saved (responsive_375x812.png)",
+    "latency_ms": 591.84
+  }
+]

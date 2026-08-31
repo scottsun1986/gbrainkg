@@ -24,7 +24,8 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   
   app.use(helmet());
-  app.use(express.json({ limit: '10mb' }));
+  app.use(express.json({ limit: '250mb' }));
+  app.use(express.urlencoded({ limit: '250mb', extended: true }));
 
   const configuredOrigins = process.env.WEB_ORIGIN?.split(',').map((origin) => origin.trim()).filter(Boolean);
   app.enableCors({

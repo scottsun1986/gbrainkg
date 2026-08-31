@@ -302,6 +302,28 @@ model BrainSourceDocument {
   @@index([documentId])
 }
 
+// GBrain Dream Cycle 的持久化运行记录。队列日志会随保留策略清理，
+// 这里保留可审计的最终结果、各 source 的同步效果和失败原因。
+model BrainMaintenanceRun {
+  id              String   @id @default(uuid()) @db.Uuid
+  trigger         String   // scheduled/manual/startup/recovery
+  status          String   @default("running") // running/completed/partial/failed
+  startedAt       DateTime @default(now())
+  completedAt     DateTime?
+  durationMs      Int?
+  sourcesVisited  Int      @default(0)
+  sourcesSucceeded Int     @default(0)
+  sourcesPartial  Int      @default(0)
+  syncedDocs      Int      @default(0)
+  removedDocs     Int      @default(0)
+  queuedTopics    Int      @default(0)
+  sourceResults   Json?
+  errorMessage    String?
+
+  @@index([startedAt])
+  @@index([status, startedAt])
+}
+
 model CompileJob {
   id               String   @id @default(uuid()) @db.Uuid
   brainTopicId     String   @db.Uuid

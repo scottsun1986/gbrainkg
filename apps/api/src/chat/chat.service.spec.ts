@@ -1,8 +1,8 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { ChatService } from './chat.service';
-import { PermissionService } from '../permission/permission.service';
-import { BrainCompilerService } from '../brain-compiler/brain-compiler.service';
-import { lastValueFrom, toArray } from 'rxjs';
+import { Test, TestingModule } from "@nestjs/testing";
+import { ChatService } from "./chat.service";
+import { PermissionService } from "../permission/permission.service";
+import { BrainCompilerService } from "../brain-compiler/brain-compiler.service";
+import { lastValueFrom, toArray } from "rxjs";
 
 // Mocks
 const mockPermissionService = {
@@ -13,6 +13,20 @@ const mockCompilerService = {
   triggerLazyCompileAndWait: jest.fn(),
   ensureUserBrainRepo: jest.fn(),
 };
+
+const mockGbrainQuery = jest.fn().mockResolvedValue({
+  topics: ["数据合规"],
+  answer: "Compiled truth",
+  citations: [
+    {
+      topic: "数据合规",
+      docId: "doc-1",
+      docTitle: "规则.md",
+      snippet: "Compiled truth",
+    },
+  ],
+  reranked: true,
+});
 
 const mockPrisma = {
   brainRepo: {
@@ -29,21 +43,17 @@ const mockPrisma = {
   },
 };
 
-jest.mock('@prisma/client', () => ({
-  PrismaClient: jest.fn().mockImplementation(() => mockPrisma)
+jest.mock("@prisma/client", () => ({
+  PrismaClient: jest.fn().mockImplementation(() => mockPrisma),
 }));
 
-jest.mock('@llmwiki/gbrain-adapter', () => ({
+jest.mock("@llmwiki/gbrain-adapter", () => ({
   BrainRepoAdapter: jest.fn().mockImplementation(() => ({
-    query: jest.fn().mockResolvedValue({
-      topics: ['数据合规'],
-      answer: 'Compiled truth',
-      citations: [{ topic: '数据合规', docId: 'doc-1', docTitle: '规则.md', snippet: 'Compiled truth' }],
-    })
-  }))
+    query: mockGbrainQuery,
+  })),
 }));
 
-describe('ChatService', () => {
+describe("ChatService", () => {
   let service: ChatService;
 
   beforeEach(async () => {
@@ -59,61 +69,148 @@ describe('ChatService', () => {
     jest.clearAllMocks();
   });
 
-  it('should stream chat and trigger lazy compile if topic is dirty', async () => {
+  it("should stream chat and trigger lazy compile if topic is dirty", async () => {
     // 权限校验 mock
-    mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(['kb-1']);
-    
+    mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(["kb-1"]);
+
     // Brain repo mock
-    mockCompilerService.ensureUserBrainRepo.mockResolvedValue({ id: 'repo-1', gitRepoUrl: '/tmp/repo' });
-    mockPrisma.document.findMany.mockResolvedValue([{ id: 'doc-1', kbId: 'kb-1', title: '规则.md' }]);
-    
+    mockCompilerService.ensureUserBrainRepo.mockResolvedValue({
+      id: "repo-1",
+      gitRepoUrl: "/tmp/repo",
+    });
+    mockPrisma.document.findMany.mockResolvedValue([
+      { id: "doc-1", kbId: "kb-1", title: "规则.md" },
+    ]);
+
     // 模拟主题是 dirty 的，触发懒编译
-    mockPrisma.brainTopic.findUnique.mockResolvedValue({ compileStatus: 'dirty' });
+    mockPrisma.brainTopic.findUnique.mockResolvedValue({
+      compileStatus: "dirty",
+    });
     mockCompilerService.triggerLazyCompileAndWait.mockResolvedValue(undefined);
 
-    const stream$ = await service.handleChatStream('user-1', '测试问题');
+    const stream$ = await service.handleChatStream("user-1", "测试问题");
     const events = await lastValueFrom(stream$.pipe(toArray()));
 
     // 验证懒编译被调用
-    expect(mockCompilerService.triggerLazyCompileAndWait).toHaveBeenCalledWith('user-1', '数据合规');
+    expect(mockCompilerService.triggerLazyCompileAndWait).toHaveBeenCalledWith(
+      "user-1",
+      "数据合规",
+    );
 
     // 验证流式事件输出
-    expect(events.some(e => (e.data as any).type === 'meta')).toBeTruthy();
-    expect(events.some(e => (e.data as any).type === 'delta')).toBeTruthy();
-    expect(events.some(e => (e.data as any).type === 'citation')).toBeTruthy();
-    expect(events.some(e => (e.data as any).type === 'done')).toBeTruthy();
+    expect(events.some((e) => (e.data as any).type === "meta")).toBeTruthy();
+    expect(events.some((e) => (e.data as any).type === "delta")).toBeTruthy();
+    expect(
+      events.some((e) => (e.data as any).type === "citation"),
+    ).toBeTruthy();
+    expect(events.some((e) => (e.data as any).type === "done")).toBeTruthy();
   });
 
-  it('should preserve conversation context without sending stale assistant turns as live messages', async () => {
-    mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(['kb-1']);
-    mockCompilerService.ensureUserBrainRepo.mockResolvedValue({ id: 'repo-1', gitRepoUrl: '/tmp/repo' });
-    mockPrisma.document.findMany.mockResolvedValue([{ id: 'doc-1', kbId: 'kb-1', title: '规则.md' }]);
-    mockPrisma.message.findMany.mockResolvedValue([
-      { role: 'user', content: '上一轮问题' },
-      { role: 'assistant', content: '上一轮回答' },
-      { role: 'user', content: '当前问题' },
+  it("should preserve conversation context without sending stale assistant turns as live messages", async () => {
+    mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(["kb-1"]);
+    mockCompilerService.ensureUserBrainRepo.mockResolvedValue({
+      id: "repo-1",
+      gitRepoUrl: "/tmp/repo",
+    });
+    mockPrisma.document.findMany.mockResolvedValue([
+      { id: "doc-1", kbId: "kb-1", title: "规则.md" },
     ]);
-    process.env.DEEPSEEK_API_KEY = 'test-key';
+    mockPrisma.message.findMany.mockResolvedValue([
+      { role: "user", content: "当前问题" },
+      { role: "assistant", content: "上一轮回答" },
+      { role: "user", content: "上一轮问题" },
+    ]);
+    process.env.DEEPSEEK_API_KEY = "test-key";
     const originalFetch = global.fetch;
-    const fetchMock = jest.fn()
+    const fetchMock = jest
+      .fn()
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ choices: [{ message: { content: '{"query":"当前问题"}' } }] }),
+        json: async () => ({
+          choices: [
+            { message: { content: '{"query":"当前问题","breadth":false}' } },
+          ],
+        }),
       })
       .mockResolvedValueOnce({
-      ok: true,
-      body: { getReader: () => ({ read: async () => ({ done: true, value: undefined }) }) },
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: async () => ({ done: true, value: undefined }),
+          }),
+        },
       });
     (global as any).fetch = fetchMock;
 
     try {
-      const stream$ = await service.handleChatStream('user-1', '当前问题', ['kb-1'], 'conversation-1');
+      const stream$ = await service.handleChatStream(
+        "user-1",
+        "当前问题",
+        ["kb-1"],
+        "conversation-1",
+      );
       await lastValueFrom(stream$.pipe(toArray()));
       const requestBody = JSON.parse(fetchMock.mock.calls[1][1].body);
-      expect(requestBody.messages.slice(1)).toEqual([{ role: 'user', content: '当前问题' }]);
-      expect(requestBody.messages[0].content).toContain('上一轮问题');
-      expect(requestBody.messages[0].content).toContain('上一轮回答');
-      expect(requestBody.messages[0].content).toContain('Current compiled truth (authoritative)');
+      expect(requestBody.messages.slice(1)).toEqual([
+        { role: "user", content: "当前问题" },
+      ]);
+      expect(requestBody.messages[0].content).toContain("上一轮问题");
+      expect(requestBody.messages[0].content).toContain("上一轮回答");
+      expect(requestBody.messages[0].content).toContain("【参考知识库资料】");
+    } finally {
+      (global as any).fetch = originalFetch;
+      delete process.env.DEEPSEEK_API_KEY;
+    }
+  });
+
+  it("should pass a model-classified broad retrieval profile to GBrain", async () => {
+    mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(["kb-1"]);
+    mockCompilerService.ensureUserBrainRepo.mockResolvedValue({
+      id: "repo-1",
+      gitRepoUrl: "gbrain://source/test",
+    });
+    mockPrisma.document.findMany.mockResolvedValue([
+      { id: "doc-1", kbId: "kb-1", title: "规则.md" },
+    ]);
+    mockPrisma.message.findMany.mockResolvedValue([]);
+    mockPrisma.brainTopic.findUnique.mockResolvedValue(null);
+    process.env.DEEPSEEK_API_KEY = "test-key";
+    const originalFetch = global.fetch;
+    (global as any).fetch = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content:
+                  '{"query":"企业研发管理规范全部条款数量","breadth":true}',
+              },
+            },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: async () => ({ done: true, value: undefined }),
+          }),
+        },
+      });
+
+    try {
+      const stream$ = await service.handleChatStream(
+        "user-1",
+        "这个规范一共有多少条款",
+      );
+      await lastValueFrom(stream$.pipe(toArray()));
+      expect(mockGbrainQuery).toHaveBeenCalledWith(
+        "gbrain://source/test",
+        "企业研发管理规范全部条款数量",
+        { breadth: true },
+      );
     } finally {
       (global as any).fetch = originalFetch;
       delete process.env.DEEPSEEK_API_KEY;

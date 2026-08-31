@@ -1,0 +1,131 @@
+{
+  "summary": {
+    "total": 15,
+    "passed": 13,
+    "failed": 2,
+    "skipped": 0,
+    "duration_seconds": 65.35
+  },
+  "phases": [
+    {
+      "phase": "Phase 1: Environment Health",
+      "tests": [
+        {
+          "test": "Backend API Health Endpoint",
+          "status": "PASSED",
+          "latency_ms": 22.58,
+          "detail": "Status: ok, HTTP 200"
+        },
+        {
+          "test": "Docling Parser Worker Health",
+          "status": "PASSED",
+          "latency_ms": 4.83,
+          "detail": "Status: healthy, Version: 0.2.0"
+        },
+        {
+          "test": "Next.js Web Frontend Serving",
+          "status": "PASSED",
+          "latency_ms": 5.86,
+          "detail": "HTTP 200 OK"
+        }
+      ]
+    },
+    {
+      "phase": "Phase 2: Authentication & RBAC",
+      "tests": [
+        {
+          "test": "Admin JWT Login & Token Grant",
+          "status": "PASSED",
+          "latency_ms": 124.27,
+          "detail": "User: 陈昱, Token length: 128"
+        },
+        {
+          "test": "Invalid Password 401 Rejection",
+          "status": "PASSED",
+          "latency_ms": 54.49,
+          "detail": "Correctly returned HTTP 401 Unauthorized"
+        },
+        {
+          "test": "Unauthenticated Route Protection",
+          "status": "PASSED",
+          "latency_ms": 1.94,
+          "detail": "Correctly blocked with HTTP 403"
+        }
+      ]
+    },
+    {
+      "phase": "Phase 3: Ingestion & KB Lifecycle",
+      "tests": [
+        {
+          "test": "Query Visible Knowledge Bases",
+          "status": "PASSED",
+          "latency_ms": 114.04,
+          "detail": "Retrieved 9 KBs, Default KB: 集团总部知识库"
+        },
+        {
+          "test": "Text Document Ingestion & Chunking",
+          "status": "FAILED",
+          "latency_ms": 60.03,
+          "detail": "Created Doc ID: None, Chunks created: OK"
+        }
+      ]
+    },
+    {
+      "phase": "Phase 4: AI & Streaming Retrieval",
+      "tests": [
+        {
+          "test": "SSE Stream & First Token Latency",
+          "status": "FAILED",
+          "latency_ms": 21.31,
+          "detail": "HTTP Error 404: Not Found"
+        }
+      ]
+    },
+    {
+      "phase": "Phase 5: Knowledge Graph",
+      "tests": [
+        {
+          "test": "Knowledge Graph Topology Data",
+          "status": "PASSED",
+          "latency_ms": 75.64,
+          "detail": "Nodes count: 163, Edges count: 166"
+        }
+      ]
+    },
+    {
+      "phase": "Phase 7: Responsive & UI",
+      "tests": [
+        {
+          "test": "Viewport Layout: Desktop-1440x900",
+          "status": "PASSED",
+          "latency_ms": 14187.15,
+          "detail": "Rendered and screenshot saved (viewport_desktop-1440x900.png)"
+        },
+        {
+          "test": "Viewport Layout: Laptop-1280x800",
+          "status": "PASSED",
+          "latency_ms": 11533.82,
+          "detail": "Rendered and screenshot saved (viewport_laptop-1280x800.png)"
+        },
+        {
+          "test": "Viewport Layout: Tablet-768x1024",
+          "status": "PASSED",
+          "latency_ms": 13260.51,
+          "detail": "Rendered and screenshot saved (viewport_tablet-768x1024.png)"
+        },
+        {
+          "test": "Viewport Layout: Mobile-375x812",
+          "status": "PASSED",
+          "latency_ms": 11293.62,
+          "detail": "Rendered and screenshot saved (viewport_mobile-375x812.png)"
+        },
+        {
+          "test": "Help & User Manual Modal Interaction",
+          "status": "PASSED",
+          "latency_ms": 13856.98,
+          "detail": "Help overlay opened with manual tabs"
+        }
+      ]
+    }
+  ]
+}

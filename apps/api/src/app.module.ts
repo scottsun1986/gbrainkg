@@ -18,7 +18,7 @@ import { AuditModule } from './audit/audit.module';
   imports: [
     ThrottlerModule.forRoot([{
       ttl: 60000,
-      limit: 60,
+      limit: Number(process.env.RATE_LIMIT_MAX || 600),
     }]),
     BullModule.forRoot({
       connection: {

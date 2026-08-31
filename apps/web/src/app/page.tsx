@@ -8,6 +8,8 @@
  */
 /* eslint-disable */
 import React, { useState, useEffect, useRef, useMemo } from "react";
+import { marked } from "marked";
+import * as XLSX from "xlsx";
 
 declare global {
   interface Window { DocsAPI?: any; }
@@ -91,6 +93,7 @@ let ORG_TREE: any = null;
 let GRANTS: any[] = [];
 let MODELS: any = {llm:[], embedding:[], rerank:[]};
 let AUDIT: any[] = [];
+let DREAM: any = null;
 let USERS: any[] = [];
 let ROLES: any[] = [];
 let INDUSTRY_KBS: any[] = [];
@@ -181,46 +184,748 @@ async function fetchOnlinePreviewConfig(kbId, documentId) {
   return result;
 }
 
-// 官方 OnlyOffice Docs API 的只读封装。文档内容仍由 API 通过短时签名
-// URL 提供，因此不会把登录 Bearer token 暴露给文档服务器或地址栏。
-function OnlineDocumentViewer({preview}) {
-  const hostRef = useRef(null);
-  const editorRef = useRef(null);
-  const editorId = useMemo(() => `onlyoffice-${Math.random().toString(36).slice(2)}`, []);
+// 业界领先的多格式通用前端文档预览器 (支持 Word docx-preview / PDF / Excel SheetJS / Markdown / 细粒度分块)
+function UniversalDocumentViewer({ preview, onClose }) {
+  const snippet = (preview?.snippet || '').trim();
+  const [activeTab, setActiveTab] = useState(preview?.initialTab || (snippet ? 'std_md' : 'raw')); // 'raw' | 'std_md' | 'parsed' | 'chunks' | 'meta'
+  const [stdMdMode, setStdMdMode] = useState('rendered'); // 'rendered' | 'source'
+  const [fullscreen, setFullscreen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [docData, setDocData] = useState(null);
+  const [compileTruth, setCompileTruth] = useState(null);
+  const [compileTruthLoading, setCompileTruthLoading] = useState(false);
+  const [compileTruthError, setCompileTruthError] = useState('');
+  const [rawBlob, setRawBlob] = useState(null);
+  const [rawBlobUrl, setRawBlobUrl] = useState('');
+  const [sheetsData, setSheetsData] = useState({ names: [], active: '', rows: [] });
+  const [copied, setCopied] = useState(false);
+  const docxContainerRef = useRef(null);
+  const modalBodyRef = useRef(null);
+
+  const kbId = preview?.kbId || preview?.kb;
+  const docId = preview?.docId || preview?.documentId || preview?.id;
+  const filename = preview?.title || docData?.document?.title || '原始文档';
+  const ext = (filename.split('.').pop() || '').toLowerCase();
+
+  const isWord = ext === 'docx' || ext === 'doc';
+  const isPdf = ext === 'pdf';
+  const isExcel = ext === 'xlsx' || ext === 'xls' || ext === 'csv';
+  const isImage = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(ext);
+  const isText = ['md', 'markdown', 'txt', 'json', 'yaml', 'yml', 'js', 'ts', 'py', 'sql', 'html'].includes(ext);
+
+  // 提取引用中的关键匹配短语 —— 优先选择在文档中出现次数少（独特性高）的短语
+  const cleanPhrases = useMemo(() => {
+    if (!snippet) return [];
+    const boilerplate = new Set([
+      '属性维度', '详细内容与背景数据', '可信度', '单位全称/简称',
+      '机构性质与背景', '关键领导关切', '数字化/AI现状', '痛点维度',
+      '具体表现与管理挑战', '影响程度', '第一板块', '第二板块', '第三板块',
+      '目标单位全景画像', '行业全景及核心痛点', '详细内容', '背景数据'
+    ]);
+    const parts = snippet
+      .split(/[\n。；;\t\r|]+/g)
+      .map((s) => s.replace(/^[#\s\-*>`:|]+/g, '').trim())
+      .filter((s) => {
+        if (!s || s.length < 5) return false;
+        if (/^[0-9a-fA-F-]{20,}$/.test(s)) return false;
+        if (/^第?\s*\d+\s*页$/.test(s)) return false;
+        if (boilerplate.has(s)) return false;
+        // 排除纯章节/标题标记（如 "第一章 总则"、"企业研发管理规范"）
+        if (/^第[一二三四五六七八九十\d]+[章节条款]/.test(s) && s.length < 12) return false;
+        // 排除文档标题行（通常与 docTitle 或 filename 重叠）
+        const docTitleClean = (preview?.title || '').replace(/\.[^.]+$/, '').trim();
+        if (docTitleClean && s === docTitleClean) return false;
+        return true;
+      });
+    // 去重后保留 —— 不直接截断，交给后续排序
+    return Array.from(new Set(parts));
+  }, [snippet, preview?.title]);
+
+  // 根据文档全文对 cleanPhrases 进行排序：优先选择在文档中出现位置唯一且靠后的短语
+  const rankedPhrases = useMemo(() => {
+    if (!cleanPhrases.length || !docData?.markdown_content) return cleanPhrases.slice(0, 6);
+    const fullText = docData.markdown_content;
+    const scored = cleanPhrases.map((phrase: any) => {
+      // 计算短语在全文中的出现次数和最后出现位置
+      const p = String(phrase || '');
+      let count = 0;
+      let lastPos = -1;
+      let idx = 0;
+      while ((idx = fullText.indexOf(p, idx)) !== -1) {
+        count++;
+        lastPos = idx;
+        idx += p.length;
+      }
+      // 分数：出现次数越少越好（越独特），短语越长越好，位置越靠后越好（避免开头的通用文本）
+      const uniqueScore = count === 0 ? -1000 : (count === 1 ? 100 : 50 / count);
+      const lengthScore = Math.min(p.length, 40);
+      const positionScore = lastPos > 0 ? (lastPos / fullText.length) * 30 : 0;
+      return { phrase: p, score: uniqueScore + lengthScore + positionScore, count, lastPos };
+    }).filter((item) => item.count > 0); // 仅保留在文档中实际存在的短语
+
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, 6).map((item) => item.phrase);
+  }, [cleanPhrases, docData?.markdown_content]);
+
   useEffect(() => {
-    if (!preview?.documentServerUrl || !preview?.config || !hostRef.current) return undefined;
-    let disposed = false;
-    const start = () => {
-      if (disposed || !window.DocsAPI || !hostRef.current) return;
-      editorRef.current = new window.DocsAPI.DocEditor(editorId, preview.config);
-    };
-    const scriptId = 'onlyoffice-docs-api';
-    const existing = document.getElementById(scriptId);
-    if (existing) {
-      if (window.DocsAPI) start();
-      else existing.addEventListener('load', start, {once:true});
-    } else {
-      const script = document.createElement('script');
-      script.id = scriptId;
-      script.src = `${preview.documentServerUrl.replace(/\/$/, '')}/web-apps/apps/api/documents/api.js`;
-      script.onload = start;
-      script.onerror = () => window.dispatchEvent(new CustomEvent('app-toast',{detail:'在线预览组件加载失败，请检查 OnlyOffice 服务'}));
-      document.body.appendChild(script);
+    if (!kbId || !docId) {
+      setLoading(false);
+      return;
     }
+    let active = true;
+    setLoading(true);
+    setError('');
+    setCompileTruth(null);
+    setCompileTruthError('');
+    setCompileTruthLoading(true);
+
+    // Compile Truth is deliberately read from the current user's BrainTopic
+    // and the authorized GBrain source mapping, not inferred from UI status.
+    fetch(`${API_BASE_URL}/api/v1/kbs/${kbId}/documents/${docId}/compile-truth`, { headers: apiHeaders() })
+      .then(async (res) => {
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json.message || `API ${res.status}`);
+        return json;
+      })
+      .then((data) => { if (active) setCompileTruth(data); })
+      .catch((err) => { if (active) setCompileTruthError(err.message || '编译真相加载失败'); })
+      .finally(() => { if (active) setCompileTruthLoading(false); });
+
+    // 1. 获取文档元数据与分块数据
+    fetch(`${API_BASE_URL}/api/v1/kbs/${kbId}/documents/${docId}`, { headers: apiHeaders() })
+      .then(async (res) => {
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json.message || `API ${res.status}`);
+        return json;
+      })
+      .then(async (data) => {
+        if (!active) return;
+        setDocData(data);
+
+        // 2. 如果存在原始文件二进制，获取 Blob
+        if (data.document?.hasRawFile) {
+          try {
+            const fileRes = await fetch(`${API_BASE_URL}/api/v1/kbs/${kbId}/documents/${docId}/file`, {
+              headers: apiHeaders(),
+            });
+            if (fileRes.ok) {
+              const blob = await fileRes.blob();
+              if (active) {
+                setRawBlob(blob);
+                const url = URL.createObjectURL(blob);
+                setRawBlobUrl(url);
+
+                if (isExcel) {
+                  const buffer = await blob.arrayBuffer();
+                  const wb = XLSX.read(buffer, { type: 'array' });
+                  if (wb.SheetNames.length > 0) {
+                    const firstSheet = wb.SheetNames[0];
+                    const rows = XLSX.utils.sheet_to_json(wb.Sheets[firstSheet], { header: 1 });
+                    setSheetsData({ names: wb.SheetNames, active: firstSheet, rows });
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            console.warn('获取原始文件失败:', e);
+          }
+        }
+      })
+      .catch((err) => {
+        if (active) setError(err.message || '加载文档失败');
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
     return () => {
-      disposed = true;
-      try { editorRef.current?.destroyEditor?.(); } catch {}
-      editorRef.current = null;
+      active = false;
+      if (rawBlobUrl) URL.revokeObjectURL(rawBlobUrl);
     };
-  }, [preview, editorId]);
-  return <div ref={hostRef} id={editorId} style={{width:'100%',height:'68vh',minHeight:480}}/>;
+  }, [kbId, docId]);
+
+  // 高亮处理后的 Markdown HTML
+  const markdownHtml = useMemo(() => {
+    const content = docData?.markdown_content || '';
+    if (!content) return '<p style="color:var(--ink-4);font-style:italic;">暂无结构化解析内容</p>';
+    let html = '';
+    try {
+      html = (marked.parse(content) as unknown as string) || '';
+    } catch {
+      html = `<div style="white-space:pre-wrap;">${content}</div>`;
+    }
+    if (rankedPhrases.length > 0) {
+      for (const phrase of rankedPhrases) {
+        try {
+          const str = String(phrase || '').trim();
+          if (!str) continue;
+          const escaped = str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          // 仅匹配 HTML 标签外部的可见文本，避免破坏 HTML 标签结构与属性
+          const regex = new RegExp(`(?![^<]*>)(${escaped})`, 'gi');
+          html = html.replace(regex, '<mark class="doc-citation-highlight">$1</mark>');
+        } catch {}
+      }
+    }
+    return html;
+  }, [docData?.markdown_content, rankedPhrases]);
+
+  // 命中切片计算
+  const chunkMatches = useMemo(() => {
+    if (!docData?.chunks || !docData.chunks.length) return new Set();
+    const matched = new Set();
+    const phrases = rankedPhrases.length > 0 ? rankedPhrases : cleanPhrases;
+    docData.chunks.forEach((chunk) => {
+      const text = chunk.content || '';
+      if (phrases.some((p) => text.includes(p))) {
+        matched.add(chunk.id);
+      }
+    });
+    if (matched.size === 0 && snippet && docData.chunks.length > 0) {
+      const firstMatch = docData.chunks.find((c) => (c.content || '').includes(snippet.slice(0, 15)));
+      if (firstMatch) matched.add(firstMatch.id);
+    }
+    return matched;
+  }, [docData?.chunks, rankedPhrases, cleanPhrases, snippet]);
+
+  // 自动滚动定位到高亮最密集的区域（而非盲取第一个 mark）
+  useEffect(() => {
+    if (!snippet) return;
+    const timer = setTimeout(() => {
+      if (activeTab === 'parsed' || activeTab === 'std_md' || activeTab === 'raw') {
+        const marks = modalBodyRef.current?.querySelectorAll('mark.doc-citation-highlight');
+        if (!marks || marks.length === 0) return;
+        if (marks.length === 1) {
+          marks[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+          return;
+        }
+        // 找到最密集的高亮聚集区：在 200px 窗口内包含最多 mark 的位置
+        let bestMark = marks[0];
+        let bestCount = 0;
+        const positions = Array.from(marks).map((m: any) => ({ el: m, top: m.getBoundingClientRect().top }));
+        for (let i = 0; i < positions.length; i++) {
+          let count = 0;
+          for (let j = i; j < positions.length && positions[j].top - positions[i].top < 300; j++) {
+            count++;
+          }
+          if (count > bestCount) {
+            bestCount = count;
+            bestMark = positions[i].el;
+          }
+        }
+        bestMark.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } else if (activeTab === 'chunks') {
+        const target = modalBodyRef.current?.querySelector('.chunk-card.matching-target');
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [activeTab, docData, rawBlobUrl, snippet]);
+
+  // 3. 当处于原文档 Tab 且为 Word 时，调用 docx-preview
+  useEffect(() => {
+    if (activeTab !== 'raw' || !isWord || !rawBlob || !docxContainerRef.current) return;
+    let disposed = false;
+    (async () => {
+      try {
+        if (ext === 'docx') {
+          const { renderAsync } = await import('docx-preview');
+          if (disposed || !docxContainerRef.current) return;
+          docxContainerRef.current.innerHTML = '';
+          await renderAsync(rawBlob, docxContainerRef.current, undefined, {
+            inWrapper: true,
+            ignoreWidth: false,
+            ignoreHeight: false,
+            className: 'docx',
+          });
+        } else {
+          // .doc 格式直接采用 Docling 高保真 Markdown 渲染
+          if (!disposed && docxContainerRef.current) {
+            docxContainerRef.current.innerHTML = `<div style="background:var(--surface-2);padding:6px 12px;border-radius:6px;font-size:11.5px;color:var(--ink-3);margin-bottom:16px;border:1px solid var(--line);">💡 该文件为 Word 早期格式 (.doc)，已自动调用 Docling 智能版面引擎还原标准排版。</div><div class="parsed-markdown-view">${markdownHtml}</div>`;
+          }
+        }
+      } catch (err) {
+        console.warn('docx-preview 渲染异常，降级至 Docling Markdown:', err);
+        if (!disposed && docxContainerRef.current) {
+          docxContainerRef.current.innerHTML = `<div style="background:var(--surface-2);padding:6px 12px;border-radius:6px;font-size:11.5px;color:var(--ink-3);margin-bottom:16px;border:1px solid var(--line);">💡 已通过 Docling 高性能版面引擎还原标准格式。</div><div class="parsed-markdown-view">${markdownHtml}</div>`;
+        }
+      }
+    })();
+    return () => { disposed = true; };
+  }, [activeTab, isWord, rawBlob, ext, markdownHtml]);
+
+  const handleSheetChange = async (sheetName) => {
+    if (!rawBlob) return;
+    try {
+      const buffer = await rawBlob.arrayBuffer();
+      const wb = XLSX.read(buffer, { type: 'array' });
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1 });
+      setSheetsData((prev) => ({ ...prev, active: sheetName, rows }));
+    } catch (e) {
+      console.warn('切换 Sheet 失败:', e);
+    }
+  };
+
+  const handleCopyMarkdown = () => {
+    const text = docData?.markdown_content || '';
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+    window.dispatchEvent(new CustomEvent('app-toast', { detail: '文档 Markdown 全文已复制到剪贴板' }));
+  };
+
+  const handleDownload = () => {
+    if (!rawBlobUrl && !rawBlob) return;
+    const a = document.createElement('a');
+    a.href = rawBlobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  const formatBadgeColor = isWord ? '#2563eb' : isPdf ? '#dc2626' : isExcel ? '#16a34a' : '#d97706';
+
+  return (
+    <div className="modal-mask" onClick={onClose} style={{ zIndex: 9999 }}>
+      <div
+        className={`modal preview-modal ${fullscreen ? 'fullscreen' : ''}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* 顶部标题与导航栏 */}
+        <div className="modal-head" style={{ padding: '12px 18px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1 }}>
+            <span
+              style={{
+                fontSize: '10.5px',
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                background: formatBadgeColor,
+                color: '#fff',
+                padding: '2px 6px',
+                borderRadius: '4px',
+                letterSpacing: '0.5px',
+                flexShrink: 0
+              }}
+            >
+              {ext || 'DOC'}
+            </span>
+            <h3 style={{ margin: 0, fontSize: '14.5px', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={filename}>
+              {filename}
+            </h3>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 'auto' }}>
+            {rawBlob && (
+              <button
+                type="button"
+                className="btn"
+                onClick={handleDownload}
+                style={{ padding: '4px 10px', fontSize: '11.5px', height: '28px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                title="下载原文件"
+              >
+                <span>📥</span> 下载原件
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn"
+              onClick={handleCopyMarkdown}
+              style={{ padding: '4px 10px', fontSize: '11.5px', height: '28px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+              title="复制 Markdown 全文"
+            >
+              <span>{copied ? '✓' : '📋'}</span> {copied ? '已复制' : '复制全文'}
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={() => setFullscreen(!fullscreen)}
+              style={{ width: '28px', height: '28px', fontSize: '13px' }}
+              title={fullscreen ? '退出全屏' : '全屏预览'}
+            >
+              {fullscreen ? '⛷' : '⛶'}
+            </button>
+            <span className="x" onClick={onClose} style={{ marginLeft: '4px' }}>×</span>
+          </div>
+        </div>
+
+        {/* 次级 Tab 栏 */}
+        <div className="preview-nav">
+          <button
+            type="button"
+            className={`preview-tab-btn ${activeTab === 'raw' ? 'active' : ''}`}
+            onClick={() => setActiveTab('raw')}
+          >
+            <span>📄</span> 原始文件排版 {rawBlob ? '' : '(无原件)'}
+          </button>
+          <button
+            type="button"
+            className={`preview-tab-btn ${activeTab === 'std_md' ? 'active' : ''}`}
+            onClick={() => setActiveTab('std_md')}
+          >
+            <span>📝</span> 标准化 Markdown 页 {cleanPhrases.length > 0 ? '✨' : ''}
+          </button>
+          <button
+            type="button"
+            className={`preview-tab-btn ${activeTab === 'parsed' ? 'active' : ''}`}
+            onClick={() => setActiveTab('parsed')}
+          >
+            <span>🧠</span> Docling 解析视图
+          </button>
+          <button
+            type="button"
+            className={`preview-tab-btn ${activeTab === 'chunks' ? 'active' : ''}`}
+            onClick={() => setActiveTab('chunks')}
+          >
+            <span>🧩</span> 知识切片与向量 ({docData?.chunks?.length || docData?.document?.chunkCount || 0}) {chunkMatches.size > 0 ? `(命中 ${chunkMatches.size})` : ''}
+          </button>
+          <button
+            type="button"
+            className={`preview-tab-btn ${activeTab === 'truth' ? 'active' : ''}`}
+            onClick={() => setActiveTab('truth')}
+            title="查看当前用户的 GBrain 编译状态、source 同步状态和最近编译记录"
+          >
+            <span>✅</span> Compile Truth
+          </button>
+          <button
+            type="button"
+            className={`preview-tab-btn ${activeTab === 'meta' ? 'active' : ''}`}
+            onClick={() => setActiveTab('meta')}
+          >
+            <span>⚙️</span> 元数据属性
+          </button>
+
+          <div style={{ marginLeft: 'auto', fontSize: '11px', color: 'var(--ink-4)' }}>
+            {docData?.markdown_content ? `${docData.markdown_content.length} 字符 · ` : ''}
+            {docData?.document?.status === 'published' ? '✓ 已发布' : docData?.document?.status || '就绪'}
+          </div>
+        </div>
+
+        {/* 引用溯源快速跳转与高亮指示条 */}
+        {snippet && (
+          <div className="citation-jump-banner">
+            <div className="banner-left">
+              <span className="banner-badge">🎯 问答引用溯源</span>
+              <span className="banner-text" title={snippet}>
+                已为您高亮匹配原文与切片：“{snippet.replace(/\s+/g, ' ').slice(0, 48)}...”
+              </span>
+            </div>
+            <div className="banner-actions">
+              <button
+                type="button"
+                className={`jump-btn ${activeTab === 'raw' ? 'active' : ''}`}
+                onClick={() => setActiveTab('raw')}
+                title="查看原文排版"
+              >
+                📄 原始文件
+              </button>
+              <button
+                type="button"
+                className={`jump-btn ${activeTab === 'std_md' ? 'active' : ''}`}
+                onClick={() => setActiveTab('std_md')}
+                title="查看标准化 Markdown 知识页"
+              >
+                📝 标准化 Markdown (已高亮)
+              </button>
+              <button
+                type="button"
+                className={`jump-btn ${activeTab === 'chunks' ? 'active' : ''}`}
+                onClick={() => setActiveTab('chunks')}
+                title="定位命中切片"
+              >
+                🧩 命中切片 ({chunkMatches.size || 1})
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 预览主体内容区 */}
+        <div className="modal-body" ref={modalBodyRef} style={{ position: 'relative' }}>
+          {loading ? (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', minHeight: '380px', gap: '12px' }}>
+              <div className="streaming-dot" style={{ width: '12px', height: '12px', background: 'var(--evidence)' }} />
+              <div style={{ fontSize: '13px', color: 'var(--ink-3)' }}>正在调集前端组件渲染文档与知识切片…</div>
+            </div>
+          ) : error ? (
+            <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--danger)' }}>
+              <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '8px' }}>文档加载失败</div>
+              <div style={{ fontSize: '12px', color: 'var(--ink-3)' }}>{error}</div>
+            </div>
+          ) : (
+            <div className="preview-content-area">
+              {/* Tab 1: 原文档排版 */}
+              {activeTab === 'raw' && (
+                <>
+                  {isWord && rawBlob ? (
+                    <div className="docx-render-container" ref={docxContainerRef}>
+                      <div style={{ textAlign: 'center', padding: '30px', color: 'var(--ink-3)' }}>Word 文档渲染中…</div>
+                    </div>
+                  ) : isPdf && rawBlobUrl ? (
+                    <object
+                      data={`${rawBlobUrl}#toolbar=1`}
+                      type="application/pdf"
+                      style={{ width: '100%', height: '100%', minHeight: '68vh', borderRadius: '8px', border: '1px solid var(--line)' }}
+                    >
+                      <iframe src={rawBlobUrl} style={{ width: '100%', height: '100%', border: 'none', minHeight: '68vh' }} />
+                    </object>
+                  ) : isExcel && sheetsData.names.length > 0 ? (
+                    <div className="sheet-container">
+                      <div className="sheet-tabs">
+                        {sheetsData.names.map((name) => (
+                          <button
+                            key={name}
+                            type="button"
+                            className={`sheet-tab-btn ${sheetsData.active === name ? 'active' : ''}`}
+                            onClick={() => handleSheetChange(name)}
+                          >
+                            📊 {name}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="sheet-table-wrap">
+                        <table>
+                          <tbody>
+                            {sheetsData.rows.map((row, rIdx) => (
+                              <tr key={rIdx}>
+                                {row.map((cell, cIdx) => (
+                                  rIdx === 0 ? (
+                                    <th key={cIdx}>{String(cell ?? '')}</th>
+                                  ) : (
+                                    <td key={cIdx}>{String(cell ?? '')}</td>
+                                  )
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ) : isImage && rawBlobUrl ? (
+                    <div style={{ textAlign: 'center', padding: '20px' }}>
+                      <img src={rawBlobUrl} alt={filename} style={{ maxWidth: '100%', maxHeight: '72vh', borderRadius: '8px', boxShadow: 'var(--shadow-md)' }} />
+                    </div>
+                  ) : (
+                    /* 兜底渲染为结构化 Markdown */
+                    <div className="parsed-markdown-view" dangerouslySetInnerHTML={{ __html: markdownHtml }} />
+                  )}
+                </>
+              )}
+
+              {/* Tab 2: 标准化 Markdown 知识页 */}
+              {activeTab === 'std_md' && (
+                <div style={{ maxWidth: '920px', width: '100%', margin: '0 auto' }}>
+                  <div className="std-md-banner">
+                    <div className="std-md-banner-info">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span className="std-md-path-badge">📄 {docData?.document?.mdPath || `${docId}/content.md`}</span>
+                        <span style={{ fontSize: '11px', color: 'var(--ink-4)' }}>Git 版本受控 · Single Source of Truth</span>
+                      </div>
+                      <div className="std-md-desc">
+                        💡 这是从原始多模态文档解析提炼的<b>标准化 Markdown 知识页</b>。已剔除冗余版式噪声并完整保留多级标题、数据表格与实体关系，作为知识切片构建与大模型动态问答的语义真实源。
+                      </div>
+                    </div>
+                    <div className="std-md-controls">
+                      <div className="sheet-tabs" style={{ background: 'transparent', border: 'none', padding: 0 }}>
+                        <button
+                          type="button"
+                          className={`sheet-tab-btn ${stdMdMode === 'rendered' ? 'active' : ''}`}
+                          onClick={() => setStdMdMode('rendered')}
+                        >
+                          🎨 渲染排版
+                        </button>
+                        <button
+                          type="button"
+                          className={`sheet-tab-btn ${stdMdMode === 'source' ? 'active' : ''}`}
+                          onClick={() => setStdMdMode('source')}
+                        >
+                          💻 源码视图
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={handleCopyMarkdown}
+                        style={{ padding: '4px 8px', fontSize: '11px', height: '26px' }}
+                        title="复制 Markdown 源码"
+                      >
+                        {copied ? '✓ 已复制' : '📋 复制源码'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {stdMdMode === 'rendered' ? (
+                    <div className="parsed-markdown-view" dangerouslySetInnerHTML={{ __html: markdownHtml }} />
+                  ) : (
+                    <pre className="markdown-source-container"><code>{docData?.markdown_content || '暂无内容'}</code></pre>
+                  )}
+                </div>
+              )}
+
+              {/* Tab 3: Docling Markdown 解析视图 */}
+              {activeTab === 'parsed' && (
+                <div className="parsed-markdown-view" dangerouslySetInnerHTML={{ __html: markdownHtml }} />
+              )}
+
+              {/* Tab 4: 知识切片与向量 */}
+              {activeTab === 'chunks' && (
+                <div className="chunks-grid">
+                  <div style={{ fontSize: '12px', color: 'var(--ink-3)', marginBottom: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span>Docling 标准化分块结果 · 共 {docData?.chunks?.length || 0} 个切片 · 细粒度父子关联</span>
+                    {chunkMatches.size > 0 && <span style={{ color: 'var(--evidence)', fontWeight: 600 }}>🎯 命中 {chunkMatches.size} 个问答切片</span>}
+                  </div>
+                  {docData?.chunks && docData.chunks.length > 0 ? (
+                    docData.chunks.map((chunk, idx) => {
+                      const isMatch = chunkMatches.has(chunk.id);
+                      return (
+                        <div key={chunk.id || idx} className={`chunk-card ${isMatch ? 'matching-target' : ''}`}>
+                          <div className="chunk-card-head">
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{ fontSize: '11px', fontWeight: 600, color: isMatch ? '#fff' : 'var(--evidence)', background: isMatch ? 'var(--evidence)' : 'var(--evidenceSoft)', padding: '1px 6px', borderRadius: '4px' }}>
+                                #{chunk.ord ?? idx + 1}
+                              </span>
+                              {isMatch && <span className="chunk-match-badge">🎯 问答引用命中切片</span>}
+                              <span style={{ fontSize: '11.5px', color: 'var(--ink-3)' }}>
+                                切片 ID: {chunk.id ? chunk.id.slice(0, 8) + '...' : `chunk-${idx}`}
+                              </span>
+                            </div>
+                            <span style={{ fontSize: '11px', color: 'var(--ink-4)' }}>
+                              {chunk.tokenCount ? `${chunk.tokenCount} tokens · ` : ''}{chunk.content?.length || 0} 字
+                            </span>
+                          </div>
+                          <div style={{ fontSize: '12.5px', color: 'var(--ink)', lineHeight: '1.6', whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>
+                            {isMatch ? (
+                              <span dangerouslySetInnerHTML={{
+                                __html: (() => {
+                                  let text = (chunk.content || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                                  for (const p of (rankedPhrases.length > 0 ? rankedPhrases : cleanPhrases)) {
+                                    try {
+                                      const pStr = String(p || '').trim();
+                                      if (!pStr) continue;
+                                      const escaped = pStr.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                                      text = text.replace(new RegExp(`(${escaped})`, 'gi'), '<mark class="doc-citation-highlight">$1</mark>');
+                                    } catch {}
+                                  }
+                                  return text;
+                                })()
+                              }} />
+                            ) : (
+                              chunk.content
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div style={{ padding: '30px', textAlign: 'center', color: 'var(--ink-3)' }}>
+                      暂无切片详情
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Tab 5: 当前用户的 GBrain Compile Truth */}
+              {activeTab === 'truth' && (
+                <div style={{ maxWidth: '900px', width: '100%', margin: '0 auto' }}>
+                  <div style={{ padding: '16px 18px', borderRadius: '10px', border: '1px solid var(--line)', background: 'var(--surface)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', marginBottom: '16px' }}>
+                      <div>
+                        <div style={{ fontSize: '15px', fontWeight: 650, color: 'var(--ink)' }}>Compile Truth · 编译真相</div>
+                        <div style={{ fontSize: '12px', color: 'var(--ink-3)', marginTop: '5px', lineHeight: 1.6 }}>
+                          这里展示当前登录用户实际可用的 GBrain topic 与 source 状态。数据库权限校验仍是最终准入条件。
+                        </div>
+                      </div>
+                      {compileTruth?.compileTruth?.state && (
+                        <span className={`badge ${compileTruth.compileTruth.state === 'clean' ? 'ok' : compileTruth.compileTruth.state === 'not_created' ? 'indexing' : 'warn'}`}>
+                          {compileTruth.compileTruth.state === 'clean' ? '✓ 已编译' : compileTruth.compileTruth.state === 'not_created' ? '尚未生成 Topic' : compileTruth.compileTruth.state}
+                        </span>
+                      )}
+                    </div>
+                    {compileTruthLoading ? (
+                      <div style={{ color: 'var(--ink-3)', fontSize: '12px', padding: '24px 0' }}>正在读取当前用户的 Compile Truth…</div>
+                    ) : compileTruthError ? (
+                      <div style={{ color: 'var(--danger)', fontSize: '12px', padding: '12px 0' }}>{compileTruthError}</div>
+                    ) : compileTruth ? (
+                      <>
+                        <div className="perm-list" style={{ display: 'grid', gridTemplateColumns: '150px 1fr', gap: '10px 16px', fontSize: '12px' }}>
+                          <div style={{ color: 'var(--ink-3)' }}>Topic</div><div><code>{compileTruth.compileTruth.topicSlug}</code></div>
+                          <div style={{ color: 'var(--ink-3)' }}>Topic 文件</div><div><code>{compileTruth.compileTruth.mdPath || '—'}</code></div>
+                          <div style={{ color: 'var(--ink-3)' }}>最后编译时间</div><div>{compileTruth.compileTruth.lastCompiledAt ? new Date(compileTruth.compileTruth.lastCompiledAt).toLocaleString('zh-CN') : '—'}</div>
+                          <div style={{ color: 'var(--ink-3)' }}>BrainRepo 最后编译</div><div>{compileTruth.compileTruth.brainRepoLastCompileAt ? new Date(compileTruth.compileTruth.brainRepoLastCompileAt).toLocaleString('zh-CN') : '—'}</div>
+                          <div style={{ color: 'var(--ink-3)' }}>当前文档</div><div>{compileTruth.document.status} · {compileTruth.document.chunkCount} 个检索 Chunk · v{compileTruth.document.version}</div>
+                        </div>
+                        <div style={{ marginTop: '18px', paddingTop: '14px', borderTop: '1px solid var(--line)' }}>
+                          <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '8px' }}>GBrain source 同步记录</div>
+                          {compileTruth.compileTruth.sources?.length ? compileTruth.compileTruth.sources.map((source) => (
+                            <div key={source.sourceKey} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '5px 16px', padding: '10px 12px', marginBottom: '7px', borderRadius: '7px', background: 'var(--surface-2)' }}>
+                              <div><code>{source.sourceKey}</code> <span style={{ color: 'var(--ink-3)', marginLeft: '6px' }}>{source.kind === 'shared' ? '共享 source' : '权限组 source'}</span></div>
+                              <span className="badge ok">已同步 v{source.syncedVersion}</span>
+                              <div style={{ gridColumn: '1 / -1', color: 'var(--ink-3)', fontSize: '11px' }}>文档同步：{source.syncedAt ? new Date(source.syncedAt).toLocaleString('zh-CN') : '—'} · source 最近同步：{source.lastSyncAt ? new Date(source.lastSyncAt).toLocaleString('zh-CN') : '—'}</div>
+                            </div>
+                          )) : <div style={{ color: 'var(--ink-3)', fontSize: '12px' }}>当前用户还没有可见 source 的同步记录。</div>}
+                        </div>
+                        {compileTruth.compileTruth.latestJob && (
+                          <div style={{ marginTop: '14px', color: 'var(--ink-3)', fontSize: '11px' }}>
+                            最近编译任务：{compileTruth.compileTruth.latestJob.trigger} · {compileTruth.compileTruth.latestJob.status} · {compileTruth.compileTruth.latestJob.completedAt ? new Date(compileTruth.compileTruth.latestJob.completedAt).toLocaleString('zh-CN') : '进行中'}
+                          </div>
+                        )}
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+              )}
+
+              {/* Tab 6: 元数据属性 */}
+              {activeTab === 'meta' && (
+                <div style={{ maxWidth: '780px', width: '100%', margin: '0 auto', background: 'var(--surface)', padding: '24px', borderRadius: '8px', border: '1px solid var(--line)' }}>
+                  <h4 style={{ margin: '0 0 16px', fontSize: '14px', fontWeight: 600 }}>文档系统元数据</h4>
+                  <div className="perm-list" style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: '10px 16px', fontFamily: 'inherit', fontSize: '12px' }}>
+                    <div style={{ color: 'var(--ink-3)' }}>文档标识 (ID)</div>
+                    <div><code>{docData?.document?.id || docId}</code></div>
+
+                    <div style={{ color: 'var(--ink-3)' }}>标准化 Markdown 路径</div>
+                    <div><code>{docData?.document?.mdPath || `${docId}/content.md`}</code></div>
+
+                    <div style={{ color: 'var(--ink-3)' }}>所属知识库</div>
+                    <div><code>{docData?.document?.kbId || kbId}</code></div>
+
+                    <div style={{ color: 'var(--ink-3)' }}>文档标题</div>
+                    <div style={{ fontWeight: 500 }}>{filename}</div>
+
+                    <div style={{ color: 'var(--ink-3)' }}>索引状态</div>
+                    <div><span className={`badge ${docData?.document?.status === 'published' ? 'ok' : 'indexing'}`}>{docData?.document?.status || '就绪'}</span></div>
+
+                    <div style={{ color: 'var(--ink-3)' }}>切片总数</div>
+                    <div>{docData?.document?.chunkCount || docData?.chunks?.length || 0} 个检索 Chunk</div>
+
+                    <div style={{ color: 'var(--ink-3)' }}>原始二进制</div>
+                    <div>{docData?.document?.hasRawFile ? '✓ 存在已归档原文件' : '— 纯文本直接录入'}</div>
+
+                    <div style={{ color: 'var(--ink-3)' }}>创建时间</div>
+                    <div>{docData?.document?.createdAt ? new Date(docData.document.createdAt).toLocaleString('zh-CN') : '—'}</div>
+
+                    <div style={{ color: 'var(--ink-3)' }}>最后更新</div>
+                    <div>{docData?.document?.updatedAt ? new Date(docData.document.updatedAt).toLocaleString('zh-CN') : '—'}</div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 底部按钮栏 */}
+        <div className="modal-foot">
+          <button className="btn" onClick={onClose}>关闭 (Esc)</button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
-function OnlinePreviewModal({preview, onClose}) {
+function OnlinePreviewModal({ preview, onClose }) {
   if (!preview) return null;
-  return <Modal title={`在线预览 · ${preview.title}`} onClose={onClose} foot={<button className="btn" onClick={onClose}>关闭</button>}>
-    <div style={{margin:'-8px -4px -4px',minHeight:480,background:'#f5f6f8'}}><OnlineDocumentViewer preview={preview}/></div>
-  </Modal>;
+  return <UniversalDocumentViewer preview={preview} onClose={onClose} />;
 }
 
 /* Tag picker - multi-select with chips */
@@ -422,55 +1127,150 @@ function NotificationsPanel({open, onClose}){
   );
 }
 
-/* ============== 快捷键速查浮层 ============== */
+/* ============== 快捷键速查与使用手册浮层 ============== */
 function HelpOverlay({open, onClose}){
   if (!open) return null;
+  const [activeTab, setActiveTab] = useState('manual'); // 'manual' | 'shortcuts'
+
   const groups = [
-    { label: '导航', items: [
-      { keys: ['⌘', 'K'], label: '打开命令面板' },
-      { keys: ['⌘', '1'], label: '切换到对话' },
-      { keys: ['⌘', '2'], label: '切换到知识库' },
-      { keys: ['⌘', '3'], label: '切换到知识图谱' },
-      { keys: ['⌘', '4'], label: '切换到管理后台' },
+    { label: '全局导航', items: [
+      { keys: ['⌘', 'K'], label: '打开全局命令搜索面板' },
+      { keys: ['⌘', '1'], label: '快速切换到「智能问答」' },
+      { keys: ['⌘', '2'], label: '快速切换到「知识管理」' },
+      { keys: ['⌘', '3'], label: '快速切换到「知识图谱」' },
+      { keys: ['⌘', '4'], label: '快速切换到「管理后台」' },
     ] },
-    { label: '动作', items: [
-      { keys: ['⌘', 'N'], label: '新建对话' },
-      { keys: ['⌘', 'F'], label: '聚焦当前页搜索' },
-      { keys: ['⌘', '\\'], label: '折叠侧栏' },
-      { keys: ['?'], label: '本速查表' },
-      { keys: ['Esc'], label: '关闭弹窗 / 取消选择' },
+    { label: '快捷操作', items: [
+      { keys: ['⌘', 'N'], label: '新建对话会话' },
+      { keys: ['⌘', 'F'], label: '聚焦当前搜索框' },
+      { keys: ['⌘', '\\'], label: '展开 / 折叠左侧栏' },
+      { keys: ['?'], label: '打开本使用帮助' },
+      { keys: ['Esc'], label: '关闭弹窗 / 取消选区' },
     ] },
-    { label: '图谱', items: [
-      { keys: ['滚轮'], label: '以光标为中心缩放' },
-      { keys: ['拖拽空白'], label: '平移画布' },
-      { keys: ['拖拽节点'], label: '调整布局' },
-      { keys: ['点击'], label: '查看节点详情' },
-      { keys: ['双击'], label: '打开原始文档/知识库' },
+    { label: '图谱交互', items: [
+      { keys: ['滚轮'], label: '以光标为中心缩放画布' },
+      { keys: ['拖拽空白'], label: '平移知识图谱' },
+      { keys: ['拖拽节点'], label: '调整物理力导向布局' },
+      { keys: ['单击节点'], label: '侧栏查看节点属性与关联' },
+      { keys: ['双击节点'], label: '直达关联文档与源库' },
     ] },
-    { label: '对话', items: [
-      { keys: ['Enter'], label: '发送消息' },
-      { keys: ['Shift', 'Enter'], label: '在输入框中换行' },
+    { label: '智能对话', items: [
+      { keys: ['Enter'], label: '发送问答消息' },
+      { keys: ['Shift', 'Enter'], label: '在提问框内换行' },
     ] },
   ];
+
+  const manualSections = [
+    {
+      title: '一、 知识库体系与三级权限架构',
+      desc: '平台采用严密的 RBAC + 组织树继承 + Pre-filter ACL 隔离体系：',
+      points: [
+        '【个人知识库】：仅创建者本人可见与维护，用于存放个人笔记、研究草稿与敏感材料。',
+        '【组织知识库】：绑定企业组织架构节点（如合规部、研发中心），自动面向部门及子部门成员开放权限。',
+        '【行业标准库】：跨组织共享的公共法规与权威标准库，由管理员统一维护并授予指定主体访问。'
+      ]
+    },
+    {
+      title: '二、 文档入库、版面解析与父子分块',
+      desc: '支持 PDF、Word (.doc/.docx)、Markdown、TXT、CSV 等多种格式：',
+      points: [
+        '【版面还原解析】：自动调用 Docling 高性能微服务提取表格与多栏排版，无损转换为 Markdown。',
+        '【智能父子分块】：采用 1800 字符细粒度检索块并注入章节完整 Context，杜绝条款断章取义。',
+        '【异步状态流转】：上传后依次经历 parsing (解析中) -> indexing (索引中) -> published (已发布)。'
+      ]
+    },
+    {
+      title: '三、 智能问答与可信证据链溯源',
+      desc: '基于编译式大脑 (Compile-then-Query) 引擎，提供金融/法律级真实性保障：',
+      points: [
+        '【检索范围选择】：可在输入框上方自由指定「我可见的全部」或勾选特定知识库范围。',
+        '【流式推理问答】：支持 DeepSeek / 本地大模型实时打字机生成，并自动标注引用角标 [1][2]。',
+        '【精准引用卡片】：点击回答下方的证据卡片，可直接高亮定位到原始文档切片与章节出处。'
+      ]
+    },
+    {
+      title: '四、 知识图谱物理网络探索',
+      desc: '直观呈现企业知识资产的全景拓扑关系：',
+      points: [
+        '【自动实体提取】：基于文档标题、Markdown 关联与显式引用，动态构建概念网络。',
+        '【多维关系筛选】：支持高亮展示 contains (包含)、mentions (提及)、related_to (关联) 关系。'
+      ]
+    },
+    {
+      title: '五、 系统管理后台与模型路由',
+      desc: '管理员专属运维控制台：',
+      points: [
+        '【人员与角色配置】：支持用户增删改查、停用封禁，以及自定义角色权限矩阵。',
+        '【组织树管理】：可视化维护部门上下级层级，一键为部门开启专属知识库。',
+        '【模型网关配置】：支持动态接入并测试 LLM、Embedding 与 Rerank 供应商，无缝热切换。'
+      ]
+    }
+  ];
+
   return (
-    <div className="cmdk-mask" onClick={onClose}>
-      <div className="help-overlay" onClick={(e) => e.stopPropagation()}>
-        <div className="help-head">
-          <h3>快捷键速查</h3>
-          <span className="x" onClick={onClose}>×</span>
+    <div className="cmdk-mask" onClick={onClose} style={{zIndex: 9999}}>
+      <div className="help-overlay" onClick={(e) => e.stopPropagation()} style={{maxWidth: '780px', width: '90vw', maxHeight: '85vh', display: 'flex', flexDirection: 'column'}}>
+        <div className="help-head" style={{borderBottom: '1px solid var(--border)', paddingBottom: '12px'}}>
+          <div style={{display: 'flex', alignItems: 'center', gap: '16px'}}>
+            <h3 style={{margin: 0, fontSize: '16px', fontWeight: 600}}>📖 平台帮助与使用指南</h3>
+            <div style={{display: 'flex', background: 'var(--bg-subtle, #f1f5f9)', padding: '2px', borderRadius: '6px'}}>
+              <button
+                type="button"
+                onClick={() => setActiveTab('manual')}
+                style={{
+                  padding: '4px 12px', fontSize: '12px', borderRadius: '4px', border: 'none', cursor: 'pointer',
+                  background: activeTab === 'manual' ? '#fff' : 'transparent',
+                  fontWeight: activeTab === 'manual' ? 600 : 400,
+                  boxShadow: activeTab === 'manual' ? '0 1px 2px rgba(0,0,0,0.05)' : 'none'
+                }}>
+                📘 使用手册
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('shortcuts')}
+                style={{
+                  padding: '4px 12px', fontSize: '12px', borderRadius: '4px', border: 'none', cursor: 'pointer',
+                  background: activeTab === 'shortcuts' ? '#fff' : 'transparent',
+                  fontWeight: activeTab === 'shortcuts' ? 600 : 400,
+                  boxShadow: activeTab === 'shortcuts' ? '0 1px 2px rgba(0,0,0,0.05)' : 'none'
+                }}>
+                ⌨️ 快捷键速查
+              </button>
+            </div>
+          </div>
+          <span className="x" onClick={onClose} style={{cursor: 'pointer', fontSize: '20px'}}>×</span>
         </div>
-        <div className="help-body">
-          {groups.map((g) => (
-            <div className="help-group" key={g.label}>
-              <div className="help-group-label">{g.label}</div>
-              {g.items.map((it, i) => (
-                <div key={i} className="help-row">
-                  <div className="help-keys">{it.keys.map((k, j) => <span className="kbd" key={j}>{k}</span>)}</div>
-                  <div className="help-label">{it.label}</div>
+
+        <div className="help-body" style={{overflowY: 'auto', padding: '16px', flex: 1}}>
+          {activeTab === 'manual' ? (
+            <div style={{display: 'flex', flexDirection: 'column', gap: '18px', lineHeight: 1.6}}>
+              {manualSections.map((sec, idx) => (
+                <div key={idx} style={{background: 'var(--card-bg, #f8fafc)', padding: '14px 16px', borderRadius: '8px', border: '1px solid var(--border, #e2e8f0)'}}>
+                  <h4 style={{margin: '0 0 6px 0', fontSize: '14px', fontWeight: 600, color: 'var(--primary, #4f46e5)'}}>{sec.title}</h4>
+                  <p style={{margin: '0 0 8px 0', fontSize: '12px', color: 'var(--text-muted, #64748b)'}}>{sec.desc}</p>
+                  <ul style={{margin: 0, paddingLeft: '18px', fontSize: '12px', color: 'var(--text, #1e293b)'}}>
+                    {sec.points.map((pt, pIdx) => (
+                      <li key={pIdx} style={{marginBottom: '4px'}}>{pt}</li>
+                    ))}
+                  </ul>
                 </div>
               ))}
             </div>
-          ))}
+          ) : (
+            <div>
+              {groups.map((g) => (
+                <div className="help-group" key={g.label} style={{marginBottom: '14px'}}>
+                  <div className="help-group-label" style={{fontWeight: 600, fontSize: '12px', color: 'var(--text-muted, #64748b)', marginBottom: '6px'}}>{g.label}</div>
+                  {g.items.map((it, i) => (
+                    <div key={i} className="help-row" style={{display: 'flex', justifyContent: 'space-between', padding: '4px 0'}}>
+                      <div className="help-label" style={{fontSize: '12px'}}>{it.label}</div>
+                      <div className="help-keys">{it.keys.map((k, j) => <span className="kbd" key={j} style={{marginLeft: '4px'}}>{k}</span>)}</div>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -587,6 +1387,12 @@ function ChatScreen(){
   const [activeConv, setActiveConv] = useState(null);
   const [conversationList, setConversationList] = useState(CONVERSATIONS);
   const [convSearch, setConvSearch] = useState('');
+  const [collapsedGroups, setCollapsedGroups] = useState(() => ({
+    '近 7 天': true,
+    '30 天内': true,
+    '更早': true,
+    '未分类': true,
+  }));
   const [citations, setCitations] = useState([]);
   const [onlinePreview, setOnlinePreview] = useState(null);
   const [citeCollapsed, setCiteCollapsed] = useState(true);
@@ -776,15 +1582,18 @@ function ChatScreen(){
     } catch {}
   };
 
-  const previewCitation = async (citation) => {
+  const previewCitation = (citation) => {
     if (!citation?.kb || !citation?.documentId) {
       window.dispatchEvent(new CustomEvent('app-toast', {detail:'当前引用没有可预览的原始文档'}));
       return;
     }
-    try {
-      const config = await fetchOnlinePreviewConfig(citation.kb, citation.documentId);
-      setOnlinePreview({title: citation.title || '原始文档', ...config});
-    } catch (error) { window.dispatchEvent(new CustomEvent('app-toast', {detail:error.message || '原始来源预览失败'})); }
+    setOnlinePreview({
+      kbId: citation.kb,
+      docId: citation.documentId,
+      title: citation.title || '原始文档',
+      snippet: citation.snippet,
+      topic: citation.path || citation.title,
+    });
   };
   const uploadAttachment = async (file) => {
     const targetKb = KNOWLEDGE_BASES.find(k => k.id === selected[0]);
@@ -897,21 +1706,37 @@ function ChatScreen(){
             const groups = [
               { label: '今天', items: filtered.filter((c) => c.createdAt && (now - new Date(c.createdAt).getTime() < 24 * 3600 * 1000)) },
               { label: '近 7 天', items: filtered.filter((c) => c.createdAt && (now - new Date(c.createdAt).getTime() < 7 * 24 * 3600 * 1000) && (now - new Date(c.createdAt).getTime() >= 24 * 3600 * 1000)) },
-              { label: '更早', items: filtered.filter((c) => c.createdAt && (now - new Date(c.createdAt).getTime() >= 7 * 24 * 3600 * 1000)) },
+              { label: '30 天内', items: filtered.filter((c) => c.createdAt && (now - new Date(c.createdAt).getTime() < 30 * 24 * 3600 * 1000) && (now - new Date(c.createdAt).getTime() >= 7 * 24 * 3600 * 1000)) },
+              { label: '更早', items: filtered.filter((c) => c.createdAt && (now - new Date(c.createdAt).getTime() >= 30 * 24 * 3600 * 1000)) },
               { label: '未分类', items: filtered.filter((c) => !c.createdAt) },
             ].filter((g) => g.items.length > 0);
             if (groups.length === 0) return <div className="conv-empty">{q ? '没有匹配的会话' : '暂无会话'}</div>;
-            return groups.map((g) => (
-              <div key={g.label} className="conv-group">
-                <div className="conv-group-label">{g.label} <em>· {g.items.length}</em></div>
-                {g.items.map((c) => (
-                  <div key={c.id} className={`conv-item ${activeConv===c.id?'active':''}`} onClick={()=>openConversation(c.id)} onContextMenu={(e) => showConvMenu(e, c)}>
-                    <span className="conv-title">{c.title || '未命名会话'}</span>
-                    <span className="conv-time">{c.createdAt ? new Date(c.createdAt).toLocaleDateString('zh-CN') : ''}</span>
+            return groups.map((g) => {
+              const hasActive = g.items.some((c) => c.id === activeConv);
+              const isCollapsed = !q && !hasActive && Boolean(collapsedGroups[g.label]);
+              return (
+                <div key={g.label} className="conv-group">
+                  <div
+                    className={`conv-group-label ${isCollapsed ? 'collapsed' : ''}`}
+                    onClick={() => setCollapsedGroups((prev) => ({ ...prev, [g.label]: !isCollapsed }))}
+                    title={isCollapsed ? '点击展开' : '点击折叠'}
+                  >
+                    <span>{g.label} <em>· {g.items.length}</em></span>
+                    <span className="group-arrow">▾</span>
                   </div>
-                ))}
-              </div>
-            ));
+                  {!isCollapsed && (
+                    <div className="conv-group-items">
+                      {g.items.map((c) => (
+                        <div key={c.id} className={`conv-item ${activeConv===c.id?'active':''}`} onClick={()=>openConversation(c.id)} onContextMenu={(e) => showConvMenu(e, c)}>
+                          <span className="conv-title">{c.title || '未命名会话'}</span>
+                          <span className="conv-time">{c.createdAt ? new Date(c.createdAt).toLocaleDateString('zh-CN') : ''}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            });
           })()}
         </div>
         <div className="new-chat" onClick={newChat} title="开始一段新对话 (⌘N)">
@@ -1107,7 +1932,6 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
   const [sel, setSel] = useState(null);
   const [tab, setTab] = useState('docs');
   const [docs, setDocs] = useState([]);
-  const [uploading, setUploading] = useState(false);
   const [previewDoc, setPreviewDoc] = useState(null);
   const [onlinePreview, setOnlinePreview] = useState(null);
   const [confirmDoc, setConfirmDoc] = useState(null);
@@ -1116,6 +1940,14 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
   const [newTextOpen, setNewTextOpen] = useState(false);
   const fileInputRef = useRef(null);
   const current = sel || filtered[0] || null;
+  const formatFileSize = (bytes: any) => {
+    if (bytes === null || bytes === undefined || isNaN(Number(bytes)) || Number(bytes) <= 0) return '—';
+    const n = Number(bytes);
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+  };
+
   const loadDocuments = async (kbId) => {
     if (!kbId) { setDocs([]); return; }
     try {
@@ -1131,7 +1963,7 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
           id: doc.id,
           name: original,
           type: ext,
-          size: doc.sizeBytes ? `${(doc.sizeBytes / 1024).toFixed(1)} KB` : '—',
+          size: formatFileSize(doc.sizeBytes),
           status: doc.status,
           uploader: doc.uploadedBy?.displayName || doc.uploadedBy?.username || '—',
           t: new Date(doc.updatedAt || doc.createdAt).toLocaleString('zh-CN'),
@@ -1145,45 +1977,109 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
   useEffect(() => { void loadDocuments(current?.id); }, [current?.id]);
   useEffect(() => { const refresh = () => { if (current?.id) void loadDocuments(current.id); }; window.addEventListener('app-data-refresh', refresh); return () => window.removeEventListener('app-data-refresh', refresh); }, [current?.id]);
 
-  const uploadDocument = async (file) => {
-    if(uploading || !file || !current?.id) return;
-    setUploading(true);
+  const uploadDocument = async (file: any) => {
+    if (!file || !current?.id) return;
+    if (file.size > 200 * 1024 * 1024) {
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: `文件「${file.name}」超出 200MB 大小限制` }));
+      return;
+    }
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const tempName = file.name;
-    setDocs(ds=>[{id:`temp-${Date.now()}`,name:tempName,type:file.name.split('.').pop()||'file',size:`${(file.size/1024/1024).toFixed(1)} MB`,status:'parsing',uploader:'当前用户',t:'刚刚',path:''}, ...ds]);
+    const ext = file.name.split('.').pop() || 'file';
+    const sizeStr = formatFileSize(file.size);
+
+    // 立即在表格首行插入占位记录，显示当前解析进展，不阻塞任何交互
+    setDocs((ds) => [
+      {
+        id: tempId,
+        name: tempName,
+        type: ext,
+        size: sizeStr,
+        status: 'parsing',
+        uploader: '当前用户',
+        t: '刚刚',
+        path: '',
+      },
+      ...ds.filter((d) => d.name !== tempName),
+    ]);
+
     try {
       const form = new FormData();
       form.append('file', file);
-      const response = await fetch(`${API_BASE_URL}/api/v1/kbs/${current.id}/documents`, { method:'POST', headers:apiHeaders(), body:form });
-      const result = await response.json();
-      if(!response.ok) throw new Error(result.message || '上传失败');
-      const documentId = result.documents?.[0]?.id;
-      // 与 API/Docling 的最长解析窗口一致，避免前端 30 秒后把仍在处理
-      // 的 PDF/Office 文档显示成失败。
-      for(let attempt=0; attempt<600 && documentId; attempt++){
-        await new Promise(resolve=>setTimeout(resolve, 500));
-        const statusResponse = await fetch(`${API_BASE_URL}/api/v1/kbs/${current.id}/documents`, {headers:apiHeaders()});
-        if(!statusResponse.ok) break;
-        const statusResult = await statusResponse.json();
-        const polled = statusResult.items?.find(d=>d.id===documentId);
-        if(polled?.status === 'published' || polled?.status === 'failed'){
-          await loadDocuments(current.id);
-          break;
-        }
+      const response = await fetch(`${API_BASE_URL}/api/v1/kbs/${current.id}/documents`, {
+        method: 'POST',
+        headers: apiHeaders(),
+        body: form,
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || '上传失败');
+
+      const doc = result.documents?.[0];
+      if (doc) {
+        setDocs((ds) => ds.map((d) => (d.id === tempId ? { ...d, id: doc.id, status: doc.status || 'parsing' } : d)));
       }
-      window.dispatchEvent(new CustomEvent('app-toast', {detail:'上传成功，已进入解析与大脑编译流程。'}));
-    } catch(error) {
-      setDocs(ds=>ds.map(d=>d.name===tempName?{...d,status:'failed'}:d));
-      window.dispatchEvent(new CustomEvent('app-toast', {detail:error.message || '上传失败'}));
-    } finally {
-      setUploading(false);
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: `「${tempName}」已上传，后台正在解析与索引` }));
+      await loadDocuments(current.id);
+    } catch (error: any) {
+      setDocs((ds) => ds.map((d) => (d.id === tempId ? { ...d, status: 'failed' } : d)));
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: error.message || '上传失败' }));
     }
   };
 
-  const previewDocument = async (doc) => {
-    try {
-      const config = await fetchOnlinePreviewConfig(current.id, doc.id);
-      setOnlinePreview({title: doc.name || '原始文档', ...config});
-    } catch (error) { window.dispatchEvent(new CustomEvent('app-toast', {detail:error.message || '文档预览失败'})); }
+  // 针对处理中（parsing / indexing）文档进行后台轻量级自动轮询，动态更新状态，完全不阻塞上传按钮与区域
+  const hasProcessingDocs = docs.some((d: any) => d.status === 'parsing' || d.status === 'indexing' || String(d.id).startsWith('temp-'));
+
+  useEffect(() => {
+    if (!hasProcessingDocs || !current?.id) return;
+    const timer = setInterval(() => {
+      loadDocuments(current.id);
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [hasProcessingDocs, current?.id]);
+
+  const [docSearch, setDocSearch] = useState('');
+  const [docStatusFilter, setDocStatusFilter] = useState('all');
+  const [docTypeFilter, setDocTypeFilter] = useState('all');
+  const [docPage, setDocPage] = useState(1);
+  const [docPageSize, setDocPageSize] = useState(10);
+
+  useEffect(() => {
+    setDocPage(1);
+  }, [current?.id, docSearch, docStatusFilter, docTypeFilter, docPageSize]);
+
+  const filteredDocs = useMemo(() => {
+    return docs.filter((d: any) => {
+      if (docSearch.trim()) {
+        const q = docSearch.trim().toLowerCase();
+        const matchName = (d.name || '').toLowerCase().includes(q);
+        const matchPath = (d.path || '').toLowerCase().includes(q);
+        const matchUploader = (d.uploader || '').toLowerCase().includes(q);
+        if (!matchName && !matchPath && !matchUploader) return false;
+      }
+      if (docStatusFilter !== 'all' && d.status !== docStatusFilter) {
+        return false;
+      }
+      if (docTypeFilter !== 'all') {
+        const ext = (d.name || '').split('.').pop()?.toLowerCase() || '';
+        if (docTypeFilter === 'word' && !['doc', 'docx'].includes(ext)) return false;
+        if (docTypeFilter === 'pdf' && ext !== 'pdf') return false;
+        if (docTypeFilter === 'excel' && !['xlsx', 'xls', 'csv'].includes(ext)) return false;
+        if (docTypeFilter === 'md' && !['md', 'txt', 'markdown'].includes(ext)) return false;
+      }
+      return true;
+    });
+  }, [docs, docSearch, docStatusFilter, docTypeFilter]);
+
+  const totalDocs = filteredDocs.length;
+  const docTotalPages = Math.max(1, Math.ceil(totalDocs / docPageSize));
+  const currentDocPage = Math.min(docPage, docTotalPages);
+  const pagedDocs = useMemo(() => {
+    const start = (currentDocPage - 1) * docPageSize;
+    return filteredDocs.slice(start, start + docPageSize);
+  }, [filteredDocs, currentDocPage, docPageSize]);
+
+  const previewDocument = (doc) => {
+    setOnlinePreview({ kbId: current.id, docId: doc.id, title: doc.name || doc.title || '原始文档' });
   };
 
   const deleteDocument = async (doc) => {
@@ -1199,7 +2095,6 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
 
   const addTextDocument = async ({title, content}) => {
     if (!current?.id || !current.canWrite) return;
-    setUploading(true);
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/kbs/${current.id}/documents/text`, {
         method: 'POST', headers: {'Content-Type':'application/json', ...apiHeaders()},
@@ -1211,10 +2106,9 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
       await loadDocuments(current.id);
       window.dispatchEvent(new CustomEvent('app-toast',{detail:'文本知识已保存并进入解析与索引流程'}));
     } catch (error) { window.dispatchEvent(new CustomEvent('app-toast',{detail:error.message || '文本知识保存失败'})); }
-    finally { setUploading(false); }
   };
 
-return (
+  return (
     <div className="lib">
       <div className="lib-list">
         <div className="lib-head" style={{display:'flex',alignItems:'center',gap:12}}>
@@ -1270,9 +2164,22 @@ return (
             {current.type==='industry' && current.canGrant && <button className="btn" onClick={()=>onManageGrant?.(current)}>管理授权</button>}
             {current.type==='personal' && <button className="btn" onClick={()=>window.dispatchEvent(new CustomEvent('app-toast',{detail:'个人库不可共享，权限仅随账号生效'}))}>查看权限</button>}
             {current.type==='personal' && current.canDelete && <button className="btn danger" onClick={()=>setConfirmKb(current)}>删除知识库</button>}
-            <input ref={fileInputRef} type="file" hidden onChange={(event)=>{const file=event.target.files?.[0]; if(file) uploadDocument(file); event.target.value='';}} accept=".md,.txt,.csv,.html,.htm,.doc,.docx,.pdf,.xlsx,.pptx,.png,.jpg,.jpeg"/>
-            {current.canWrite && <button className="btn" onClick={()=>setNewTextOpen(true)} disabled={uploading}><Icon name="plus" size={12}/> 添加文本</button>}
-            {current.canWrite && <button className="btn primary" onClick={()=>fileInputRef.current?.click()} disabled={uploading}><Icon name="upload" size={12}/> {uploading?'解析中…':'上传文档'}</button>}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              hidden
+              onChange={(event)=>{
+                const files = event.target.files;
+                if(files && files.length){
+                  Array.from(files).forEach(file=>uploadDocument(file));
+                }
+                event.target.value='';
+              }}
+              accept=".md,.txt,.csv,.html,.htm,.doc,.docx,.pdf,.xlsx,.pptx,.png,.jpg,.jpeg"
+            />
+            {current.canWrite && <button className="btn" onClick={()=>setNewTextOpen(true)}><Icon name="plus" size={12}/> 添加文本</button>}
+            {current.canWrite && <button className="btn primary" onClick={()=>fileInputRef.current?.click()}><Icon name="upload" size={12}/> 上传文档</button>}
           </div>
         </div>
         <div className="detail-tabs">
@@ -1282,17 +2189,83 @@ return (
         </div>
         <div className="detail-body">
           {tab==='docs' && <>
-          {current.canWrite ? <div className="dropzone" onClick={()=>!uploading && fileInputRef.current?.click()} style={{cursor: uploading?'default':'pointer', opacity: uploading?.85:1}}>
-            <Icon name="upload" size={26} className="ic" color="var(--ink-3)"/>
-            <h5>{uploading ? '已接收 · 正在解析为 Markdown…' : '拖拽文件到此处，或点击选择'}</h5>
-            <p>{uploading ? '解析中 → 发布 → 面向可见者编译大脑' : '支持 Markdown / Word（含 .doc / .docx）/ PDF / Excel / PPT / 图片 · 自动解析为 Markdown 入库'}</p>
-          </div> : <div className="dropzone" style={{cursor:'default',opacity:.8}}><Icon name="lock" size={24} className="ic" color="var(--ink-3)"/><h5>当前账号仅可阅读</h5><p>只有知识库所有者或管理员可以上传、删除知识。</p></div>}
+          {current.canWrite ? (
+            <div
+              className="dropzone"
+              onClick={()=>fileInputRef.current?.click()}
+              onDragOver={(e)=>{ e.preventDefault(); e.stopPropagation(); }}
+              onDrop={(e)=>{
+                e.preventDefault();
+                e.stopPropagation();
+                const files = e.dataTransfer.files;
+                if(files && files.length){
+                  Array.from(files).forEach(file=>uploadDocument(file));
+                }
+              }}
+              style={{cursor:'pointer'}}
+            >
+              <Icon name="upload" size={26} className="ic" color="var(--ink-3)"/>
+              <h5>拖拽文件到此处，或点击选择（支持多选批量上传）</h5>
+              <p>支持 Markdown / Word（含 .doc / .docx）/ PDF / Excel / PPT / 图片 · 单文件最大 200MB · 自动在后台异步解析与多路索引</p>
+            </div>
+          ) : (
+            <div className="dropzone" style={{cursor:'default',opacity:.8}}>
+              <Icon name="lock" size={24} className="ic" color="var(--ink-3)"/>
+              <h5>当前账号仅可阅读</h5>
+              <p>只有知识库所有者或管理员可以上传、删除知识。</p>
+            </div>
+          )}
 
           <div className="kpi-row">
             <div className="kpi"><div className="lbl">总文档</div><div className="val">{docs.length}</div><div className="sub">来自数据库</div></div>
             <div className="kpi"><div className="lbl">已发布</div><div className="val">{docs.filter(d=>d.status==='published').length}</div><div className="sub">当前库状态</div></div>
             <div className="kpi"><div className="lbl">处理中</div><div className="val">{docs.filter(d=>d.status==='indexing'||d.status==='parsing').length}</div><div className="sub">解析 / 索引队列</div></div>
             <div className="kpi"><div className="lbl">解析失败</div><div className="val" style={{color: docs.filter(d=>d.status==='failed').length? 'var(--danger)':'var(--ink)'}}>{docs.filter(d=>d.status==='failed').length}</div><div className="sub">需人工介入</div></div>
+          </div>
+
+          <div className="doc-filter-toolbar">
+            <input
+              className="search-input"
+              placeholder="搜索文档名称 / 文件路径..."
+              value={docSearch}
+              onChange={(e) => setDocSearch(e.target.value)}
+              style={{ width: '280px' }}
+            />
+            <select
+              className="filter-select"
+              value={docStatusFilter}
+              onChange={(e) => setDocStatusFilter(e.target.value)}
+            >
+              <option value="all">全部状态</option>
+              <option value="published">已发布</option>
+              <option value="indexing">索引中</option>
+              <option value="parsing">解析中</option>
+              <option value="failed">解析失败</option>
+            </select>
+            <select
+              className="filter-select"
+              value={docTypeFilter}
+              onChange={(e) => setDocTypeFilter(e.target.value)}
+            >
+              <option value="all">全部格式</option>
+              <option value="word">Word (.docx / .doc)</option>
+              <option value="pdf">PDF (.pdf)</option>
+              <option value="excel">Excel (.xlsx / .csv)</option>
+              <option value="md">Markdown / 文本</option>
+            </select>
+            {(docSearch || docStatusFilter !== 'all' || docTypeFilter !== 'all') && (
+              <button
+                type="button"
+                className="btn"
+                onClick={() => { setDocSearch(''); setDocStatusFilter('all'); setDocTypeFilter('all'); }}
+                style={{ fontSize: '11.5px', padding: '5px 10px' }}
+              >
+                重置过滤
+              </button>
+            )}
+            <div style={{ marginLeft: 'auto', fontSize: '11.5px', color: 'var(--ink-4)' }}>
+              筛选出 {filteredDocs.length} / {docs.length} 篇文档
+            </div>
           </div>
 
           <div className="doc-table">
@@ -1304,29 +2277,103 @@ return (
               <div>大小</div>
               <div>操作</div>
             </div>
-            {docs.map((d,i)=>(
-              <div key={i} className="doc-row" style={{gridTemplateColumns:'32px 1fr 110px 110px 80px 120px'}}>
-                <div className="doc-type-icon" data-type={d.type}><Icon name="doc" size={14} color="var(--ink-3)"/></div>
-                <div>
-                  <div className="ttl" title={d.name}>{d.name}</div>
-                  <div className="sub" title={d.path}>{d.path}</div>
-                </div>
-                <div>
-                  <span className={`status ${d.status}`}>
-                    <span className="d"/>
-                    {d.status==='published'?'已发布':d.status==='indexing'?'索引中':d.status==='parsing'?'解析中':'失败'}
-                  </span>
-                </div>
-                <div style={{color:'var(--ink-2)'}}>{d.uploader}<div style={{fontSize:10.5,color:'var(--ink-4)'}}>{d.t}</div></div>
-                <div style={{color:'var(--ink-3)',fontVariantNumeric:'tabular-nums'}}>{d.size}</div>
-                <div className="actions" style={{display:'flex',gap:6,justifyContent:'flex-end'}}>
-                  <button className="icon-btn" title="预览" onClick={()=>previewDocument(d)} aria-label="预览"><Icon name="search" size={14}/></button>
-                  {current.canWrite && d.status==='failed' && !String(d.id).startsWith('temp-') && <button className="icon-btn" title="重试" onClick={async()=>{try{const response=await fetch(`${API_BASE_URL}/api/v1/kbs/${current.id}/documents/${d.id}/retry`,{method:'POST',headers:apiHeaders()}); const result=await response.json().catch(()=>({})); if(!response.ok) throw new Error(result.message||'重试失败'); window.dispatchEvent(new CustomEvent('app-toast',{detail:'已重新提交解析'})); await loadDocuments(current.id);}catch(error){window.dispatchEvent(new CustomEvent('app-toast',{detail:error.message||'重试失败'}));}}} aria-label="重试"><Icon name="refresh" size={14}/></button>}
-                  {current.canWrite && !String(d.id).startsWith('temp-') && <button className="icon-btn danger" title="删除" onClick={()=>setConfirmDoc(d)} aria-label="删除"><Icon name="logout" size={14} style={{transform:'scaleX(-1)'}}/></button>}
-                </div>
+            {pagedDocs.length === 0 ? (
+              <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--ink-3)' }}>
+                未找到匹配的文档
               </div>
-            ))}
+            ) : (
+              pagedDocs.map((d,i)=>(
+                <div key={d.id || i} className="doc-row" style={{gridTemplateColumns:'32px 1fr 110px 110px 80px 120px'}}>
+                  <div className="doc-type-icon" data-type={d.type}><Icon name="doc" size={14} color="var(--ink-3)"/></div>
+                  <div style={{ cursor: 'pointer' }} onClick={() => previewDocument(d)} title="点击预览文档与标准知识页">
+                    <div className="ttl" title={d.name}>{d.name}</div>
+                    <div className="sub" title={d.path}>{d.path}</div>
+                  </div>
+                  <div>
+                    <span className={`status ${d.status}`}>
+                      <span className="d"/>
+                      {d.status==='published'?'已发布':d.status==='indexing'?'索引中':d.status==='parsing'?'解析中':'失败'}
+                    </span>
+                  </div>
+                  <div style={{color:'var(--ink-2)'}}>{d.uploader}<div style={{fontSize:10.5,color:'var(--ink-4)'}}>{d.t}</div></div>
+                  <div style={{color:'var(--ink-3)',fontVariantNumeric:'tabular-nums'}}>{d.size}</div>
+                  <div className="actions" style={{display:'flex',gap:6,justifyContent:'flex-end'}}>
+                    <button className="icon-btn" title="预览" onClick={()=>previewDocument(d)} aria-label="预览"><Icon name="search" size={14}/></button>
+                    {current.canWrite && d.status==='failed' && !String(d.id).startsWith('temp-') && <button className="icon-btn" title="重试" onClick={async()=>{try{const response=await fetch(`${API_BASE_URL}/api/v1/kbs/${current.id}/documents/${d.id}/retry`,{method:'POST',headers:apiHeaders()}); const result=await response.json().catch(()=>({})); if(!response.ok) throw new Error(result.message||'重试失败'); window.dispatchEvent(new CustomEvent('app-toast',{detail:'已重新提交解析'})); await loadDocuments(current.id);}catch(error){window.dispatchEvent(new CustomEvent('app-toast',{detail:error.message||'重试失败'}));}}} aria-label="重试"><Icon name="refresh" size={14}/></button>}
+                    {current.canWrite && !String(d.id).startsWith('temp-') && <button className="icon-btn danger" title="删除" onClick={()=>setConfirmDoc(d)} aria-label="删除"><Icon name="logout" size={14} style={{transform:'scaleX(-1)'}}/></button>}
+                  </div>
+                </div>
+              ))
+            )}
           </div>
+
+          {totalDocs > 0 && (
+            <div className="pagination-bar">
+              <div>
+                共 <b>{totalDocs}</b> 篇文档 · 每页
+                <select
+                  value={docPageSize}
+                  onChange={(e) => setDocPageSize(Number(e.target.value))}
+                  style={{ margin: '0 6px', padding: '2px 6px', borderRadius: '4px', border: '1px solid var(--line)', background: 'var(--surface)', fontSize: '11.5px' }}
+                >
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                </select>
+                条 · 第 <b>{currentDocPage}</b> / {docTotalPages} 页
+              </div>
+              <div className="pagination-controls">
+                <button
+                  type="button"
+                  className="pagination-btn"
+                  disabled={currentDocPage <= 1}
+                  onClick={() => setDocPage(1)}
+                  title="第一页"
+                >
+                  首页
+                </button>
+                <button
+                  type="button"
+                  className="pagination-btn"
+                  disabled={currentDocPage <= 1}
+                  onClick={() => setDocPage((p) => Math.max(1, p - 1))}
+                >
+                  上一页
+                </button>
+                {Array.from({ length: Math.min(5, docTotalPages) }, (_, idx) => {
+                  const pNum = Math.max(1, Math.min(docTotalPages - 4, currentDocPage - 2)) + idx;
+                  if (pNum > docTotalPages) return null;
+                  return (
+                    <button
+                      key={pNum}
+                      type="button"
+                      className={`pagination-btn ${pNum === currentDocPage ? 'active' : ''}`}
+                      onClick={() => setDocPage(pNum)}
+                    >
+                      {pNum}
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  className="pagination-btn"
+                  disabled={currentDocPage >= docTotalPages}
+                  onClick={() => setDocPage((p) => Math.min(docTotalPages, p + 1))}
+                >
+                  下一页
+                </button>
+                <button
+                  type="button"
+                  className="pagination-btn"
+                  disabled={currentDocPage >= docTotalPages}
+                  onClick={() => setDocPage(docTotalPages)}
+                  title="最后一页"
+                >
+                  末页
+                </button>
+              </div>
+            </div>
+          )}
           </>}
           {tab==='health' && <div style={{padding:24}}><h3>知识库健康度</h3><p style={{color:'var(--ink-3)'}}>健康度根据当前数据库中的文档状态计算。</p><div className="kpi-row"><div className="kpi"><div className="lbl">已发布率</div><div className="val">{docs.length ? Math.round(docs.filter(d=>d.status==='published').length/docs.length*100) : 0}%</div></div><div className="kpi"><div className="lbl">失败文档</div><div className="val">{docs.filter(d=>d.status==='failed').length}</div></div><div className="kpi"><div className="lbl">待处理</div><div className="val">{docs.filter(d=>d.status==='parsing'||d.status==='indexing').length}</div></div></div></div>}
           {tab==='settings' && <div style={{padding:24}}><h3>知识库设置</h3><div className="field"><label>名称</label><input value={current.name} readOnly/></div><div className="field"><label>类型</label><input value={current.type} readOnly/></div><div className="field"><label>可见性</label><input value={current.visibility} readOnly/></div><p className="field-hint">知识库的权限和管理员请在管理后台维护。</p></div>}
@@ -1370,95 +2417,590 @@ function flattenOrgTree(node, parentPath = '') {
   if (!node) return [];
   const path = parentPath ? `${parentPath} / ${node.name}` : node.name;
   return [
-    { id: node.id, name: node.name, path },
+    { id: node.id, name: node.name, path, canManage: Boolean(node.canManage) },
     ...(node.children || []).flatMap(child => flattenOrgTree(child, path)),
   ];
 }
 
-function UsersPanel({orgOptions = [], canManage = false}){
+// 递归收集节点及其所有子节点的 ID 集合
+function getSubtreeOrgIds(node) {
+  const ids = new Set();
+  const walk = (n) => {
+    if (!n) return;
+    if (n.id) ids.add(n.id);
+    (n.children || []).forEach(walk);
+  };
+  walk(node);
+  return ids;
+}
+
+// 递归计算某节点及其子节点下的用户总数
+function countSubtreeUsers(node, users) {
+  const ids = getSubtreeOrgIds(node);
+  return users.filter(u => (u.orgIds || []).some(id => ids.has(id))).length;
+}
+
+// 侧边栏组织树渲染节点
+function UsersOrgTreeNode({ node, depth = 0, selectedId, onSelect, expandedIds, onToggle, users }) {
+  const isExpanded = expandedIds.has(node.id);
+  const isSelected = selectedId === node.id;
+  const hasChildren = node.children && node.children.length > 0;
+  const userCount = countSubtreeUsers(node, users);
+
+  return (
+    <div style={{ marginLeft: depth > 0 ? 12 : 0, display: 'flex', flexDirection: 'column' }}>
+      <div
+        className={`org-tree-node-item ${isSelected ? 'active' : ''}`}
+        onClick={() => onSelect(node)}
+        title={`${node.path || node.name} (含下属部门共 ${userCount} 人)`}
+      >
+        {hasChildren ? (
+          <span
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggle(node.id);
+            }}
+            style={{
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 16,
+              height: 16,
+              color: 'var(--ink-3)',
+              transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+              transition: 'transform 0.15s ease',
+              fontSize: '9px'
+            }}
+          >
+            ▶
+          </span>
+        ) : (
+          <span style={{ width: 16, display: 'inline-block', textAlign: 'center', color: 'var(--ink-4)', fontSize: 10 }}>•</span>
+        )}
+        <Icon name="users" size={13} color={isSelected ? 'var(--ink)' : 'var(--ink-3)'} />
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 130 }}>
+          {node.name}
+        </span>
+        <span className="node-badge">{userCount} 人</span>
+      </div>
+
+      {hasChildren && isExpanded && (
+        <div style={{ display: 'flex', flexDirection: 'column', borderLeft: '1px dashed var(--line)', marginLeft: 8, paddingLeft: 4 }}>
+          {node.children.map((child) => (
+            <UsersOrgTreeNode
+              key={child.id}
+              node={child}
+              depth={depth + 1}
+              selectedId={selectedId}
+              onSelect={onSelect}
+              expandedIds={expandedIds}
+              onToggle={onToggle}
+              users={users}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UsersPanel({ orgTree, orgOptions = [], canManage = false, capabilities = [] }){
   const [search, setSearch] = useState('');
+  const [selectedOrg, setSelectedOrg] = useState(null);
+  const [roleFilter, setRoleFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [permFilter, setPermFilter] = useState('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [open, setOpen] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
-  const filtered = USERS.filter(u => !search || u.name.includes(search) || u.org.includes(search) || u.orgPath.includes(search));
+
+  const isSysAdmin = (capabilities || []).includes('*');
+  const manageableOrgOptions = useMemo(() => {
+    if (isSysAdmin) return orgOptions;
+    return orgOptions.filter((node) => node.canManage);
+  }, [orgOptions, isSysAdmin]);
+
+  // 组织树展开状态
+  const [treeExpandedIds, setTreeExpandedIds] = useState(() => {
+    const s = new Set();
+    const walk = (n) => {
+      if (!n) return;
+      s.add(n.id);
+      (n.children || []).forEach(walk);
+    };
+    if (orgTree) walk(orgTree);
+    return s;
+  });
+
+  const toggleTreeNode = (id) => {
+    setTreeExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // 1. 获取当前选中组织及其子组织的 ID 集合
+  const filterOrgIds = useMemo(() => {
+    if (!selectedOrg) return null;
+    return getSubtreeOrgIds(selectedOrg);
+  }, [selectedOrg]);
+
+  // 2. 多维度用户过滤
+  const filteredUsers = useMemo(() => {
+    return USERS.filter((u) => {
+      // 组织树筛选（本层及以下组织）
+      if (filterOrgIds && !(u.orgIds || []).some(id => filterOrgIds.has(id))) {
+        return false;
+      }
+      // 关键字搜索
+      if (search.trim()) {
+        const q = search.trim().toLowerCase();
+        const matchName = (u.name || '').toLowerCase().includes(q);
+        const matchUsername = (u.initials || '').toLowerCase().includes(q);
+        const matchEmail = (u.email || '').toLowerCase().includes(q);
+        const matchOrg = (u.org || '').toLowerCase().includes(q);
+        const matchOrgPath = (u.orgPath || '').toLowerCase().includes(q);
+        const matchRoles = (u.roles || []).some(r => r.toLowerCase().includes(q));
+        if (!matchName && !matchUsername && !matchEmail && !matchOrg && !matchOrgPath && !matchRoles) {
+          return false;
+        }
+      }
+      // 角色筛选
+      if (roleFilter !== 'all' && !(u.roles || []).includes(roleFilter)) {
+        return false;
+      }
+      // 状态筛选
+      if (statusFilter !== 'all' && u.status !== statusFilter) {
+        return false;
+      }
+      // 权限范围筛选
+      if (permFilter === 'manageable' && !u.canManage) {
+        return false;
+      }
+      if (permFilter === 'readonly' && u.canManage) {
+        return false;
+      }
+      return true;
+    });
+  }, [filterOrgIds, search, roleFilter, statusFilter, permFilter]);
+
+  // 3. 分页计算
+  const totalUsers = filteredUsers.length;
+  const totalPages = Math.max(1, Math.ceil(totalUsers / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pagedUsers = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredUsers.slice(start, start + pageSize);
+  }, [filteredUsers, currentPage, pageSize]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, selectedOrg, roleFilter, statusFilter, permFilter, pageSize]);
+
   return (
     <>
-      <div style={{display:'flex',alignItems:'flex-start',marginBottom:20}}>
-        <div style={{flex:1}}>
+      <div style={{ display:'flex', alignItems:'flex-start', marginBottom: 18 }}>
+        <div style={{ flex: 1 }}>
           <div className="h1">人员管理</div>
-          <div className="subline">用户归属多组织节点，可绑定多角色 · 来自 LDAP/OIDC 的用户可在「来源」中查看</div>
+          <div className="subline">
+            支持组织树快速穿透检索 · 组织管理员仅可管理本级及下级组织成员（跨级或上级人员仅供只读查看）
+          </div>
         </div>
-        <input className="search-input" placeholder="搜索姓名 / 组织..." value={search} onChange={e=>setSearch(e.target.value)} style={{marginRight:12}}/>
-        {canManage && <button className="btn primary" onClick={()=>{setEditTarget(null); setOpen(true);}}><Icon name="plus" size={12}/> 新增人员</button>}
+        {canManage && (
+          <button className="btn primary" onClick={() => { setEditTarget(null); setOpen(true); }}>
+            <Icon name="plus" size={12}/> 新增人员
+          </button>
+        )}
       </div>
 
-      <div className="admin-table">
-        <div className="at-row head" style={{gridTemplateColumns:'1.6fr 1.4fr 1.4fr 90px 120px'}}>
-          <div>人员</div><div>归属组织</div><div>角色</div><div>状态</div><div style={{textAlign:'right'}}>操作</div>
-        </div>
-        {filtered.map(u=>(
-          <div key={u.id} className="at-row" style={{gridTemplateColumns:'1.6fr 1.4fr 1.4fr 90px 120px'}}>
-            <div className="ppl">
-              <div className="avatar">{u.initials}</div>
-              <div>
-                <div className="nm">{u.name}</div>
-                <div className="sub">{u.t}</div>
+      <div className="users-layout">
+        {/* 左侧组织架构树导航面板 */}
+        <div className="users-org-tree-panel">
+          <div className="users-org-tree-head">
+            <h4><Icon name="users" size={14} /> 组织架构筛选</h4>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                if (treeExpandedIds.size > 0) setTreeExpandedIds(new Set());
+                else {
+                  const s = new Set();
+                  const walk = (n) => { if (!n) return; s.add(n.id); (n.children || []).forEach(walk); };
+                  if (orgTree) walk(orgTree);
+                  setTreeExpandedIds(s);
+                }
+              }}
+              style={{ fontSize: '10.5px', padding: '2px 6px', height: '22px' }}
+            >
+              {treeExpandedIds.size > 0 ? '折叠' : '展开'}
+            </button>
+          </div>
+
+          <div className="users-org-tree-body">
+            {/* 全部组织根项 */}
+            <div
+              className={`org-tree-node-item ${!selectedOrg ? 'active' : ''}`}
+              onClick={() => setSelectedOrg(null)}
+              title="查看所有组织人员"
+            >
+              <Icon name="users" size={13} color={!selectedOrg ? 'var(--ink)' : 'var(--ink-3)'} />
+              <span style={{ fontWeight: !selectedOrg ? 600 : 400 }}>🏢 全部组织</span>
+              <span className="node-badge">{USERS.length} 人</span>
+            </div>
+
+            {/* 组织层级树 */}
+            {orgTree ? (
+              <UsersOrgTreeNode
+                node={orgTree}
+                depth={0}
+                selectedId={selectedOrg?.id}
+                onSelect={setSelectedOrg}
+                expandedIds={treeExpandedIds}
+                onToggle={toggleTreeNode}
+                users={USERS}
+              />
+            ) : (
+              <div style={{ padding: '20px 10px', fontSize: '11.5px', color: 'var(--ink-4)', textAlign: 'center' }}>
+                暂无组织节点
               </div>
+            )}
+          </div>
+        </div>
+
+        {/* 右侧人员表格与多维检索区 */}
+        <div className="users-table-panel">
+          {/* 当前组织过滤高亮提示 */}
+          {selectedOrg && (
+            <div className="org-filter-pill">
+              <span>📁 当前组织筛选：<b>{selectedOrg.path || selectedOrg.name}</b> 及所有下属部门（共匹配 {filteredUsers.length} 人）</span>
+              <button type="button" className="clear-btn" onClick={() => setSelectedOrg(null)}>
+                ✕ 取消筛选
+              </button>
             </div>
-            <div>
-              <div className="nm-bold">{u.org}</div>
-              <div className="path">{u.orgPath}</div>
-            </div>
-            <div className="role-tags">
-              {u.roles.map((r,i)=>(<span key={i} className="role-tag">{r}</span>))}
-            </div>
-            <div>
-              <span className={`status-pill ${u.status}`}><span className="d" style={{width:5,height:5,borderRadius:'50%',background:u.status==='active'?'var(--success)':'var(--ink-4)'}}/>{u.status==='active'?'启用':'停用'}</span>
-            </div>
-            <div className="actions">
-              {canManage && <button onClick={()=>{setEditTarget(u); setOpen(true);}}>编辑</button>}
-              {canManage && <button className="danger" onClick={()=>setConfirmDel(u)}>删除</button>}
+          )}
+
+          {/* 综合搜索过滤工具栏 */}
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap' }}>
+            <input
+              className="search-input"
+              placeholder="搜索姓名 / 账号 / 邮箱 / 角色..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{ width: '240px' }}
+            />
+            <select
+              className="filter-select"
+              value={roleFilter}
+              onChange={(e) => setRoleFilter(e.target.value)}
+            >
+              <option value="all">全部角色</option>
+              {ROLES.map((r) => (
+                <option key={r.id} value={r.name}>{r.name}</option>
+              ))}
+            </select>
+            <select
+              className="filter-select"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+            >
+              <option value="all">全部状态</option>
+              <option value="active">启用</option>
+              <option value="disabled">停用</option>
+            </select>
+            <select
+              className="filter-select"
+              value={permFilter}
+              onChange={(e) => setPermFilter(e.target.value)}
+            >
+              <option value="all">全部权限范围</option>
+              <option value="manageable">可管理 (本级及下级)</option>
+              <option value="readonly">只读查看 (非管辖范围)</option>
+            </select>
+            {(search || selectedOrg || roleFilter !== 'all' || statusFilter !== 'all' || permFilter !== 'all') && (
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  setSearch('');
+                  setSelectedOrg(null);
+                  setRoleFilter('all');
+                  setStatusFilter('all');
+                  setPermFilter('all');
+                }}
+                style={{ fontSize: '11.5px', padding: '5px 10px' }}
+              >
+                重置全部
+              </button>
+            )}
+            <div style={{ marginLeft: 'auto', fontSize: '11.5px', color: 'var(--ink-4)' }}>
+              匹配到 {filteredUsers.length} / {USERS.length} 人
             </div>
           </div>
-        ))}
+
+          {/* 表格数据展示 */}
+          <div className="table-wrap" style={{ flex: 1 }}>
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ width: '42px' }}>头像</th>
+                  <th>姓名 / 账号</th>
+                  <th>归属组织节点</th>
+                  <th>角色 / 权限组</th>
+                  <th style={{ width: '85px' }}>状态</th>
+                  <th style={{ width: '85px' }}>管辖权限</th>
+                  <th style={{ width: '110px', textAlign: 'right' }}>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pagedUsers.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} style={{ textAlign: 'center', padding: '40px 0', color: 'var(--ink-4)' }}>
+                      没有符合筛选条件的人员
+                    </td>
+                  </tr>
+                ) : (
+                  pagedUsers.map((u) => (
+                    <tr key={u.id}>
+                      <td>
+                        <div className="avatar" style={{ background: u.canManage ? '#2563eb' : '#64748b' }}>{u.initials ? u.initials.slice(0, 2).toUpperCase() : 'U'}</div>
+                      </td>
+                      <td>
+                        <div style={{ fontWeight: 600, color: 'var(--ink)' }}>{u.name}</div>
+                        <div style={{ fontSize: '11px', color: 'var(--ink-4)' }}>@{u.initials?.toLowerCase()} · {u.email}</div>
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                          {(u.orgNodes || []).length > 0 ? (
+                            u.orgNodes.map((node: any, i: number) => (
+                              <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+                                <span className="badge ok" style={{ fontSize: '11px', padding: '1px 6px', width: 'fit-content' }}>
+                                  {node.name}
+                                </span>
+                                {node.path && node.path !== node.name && (
+                                  <span style={{ fontSize: '10.5px', color: 'var(--ink-4)', paddingLeft: '2px' }}>
+                                    {node.path}
+                                  </span>
+                                )}
+                              </div>
+                            ))
+                          ) : (u.orgs || []).length > 0 ? (
+                            u.orgs.map((org: string, i: number) => (
+                              <span key={i} className="badge ok" style={{ fontSize: '11px', padding: '1px 6px', width: 'fit-content' }}>
+                                {org}
+                              </span>
+                            ))
+                          ) : u.org && u.org !== '未分配组织' ? (
+                            <span className="badge ok" style={{ fontSize: '11px', padding: '1px 6px', width: 'fit-content' }}>
+                              {u.org}
+                            </span>
+                          ) : (
+                            <span style={{ color: 'var(--ink-4)', fontSize: '11.5px' }}>未分配组织</span>
+                          )}
+                        </div>
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                          {(u.roles || []).map((r, i) => (
+                            <span key={i} className="badge" style={{ fontSize: '11px', padding: '1px 6px' }}>{r}</span>
+                          ))}
+                        </div>
+                      </td>
+                      <td>
+                        <span className={`status ${u.status}`}>
+                          <span className="d"/>
+                          {u.status === 'active' ? '正常' : '已停用'}
+                        </span>
+                      </td>
+                      <td>
+                        {u.canManage ? (
+                          <span style={{ color: '#2563eb', fontWeight: 600, fontSize: '11px' }}>✓ 可管理</span>
+                        ) : (
+                          <span style={{ color: 'var(--ink-4)', fontSize: '11px' }}>只读</span>
+                        )}
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <div className="row-actions" style={{ justifyContent: 'flex-end', gap: '6px' }}>
+                          {u.canManage ? (
+                            <button
+                              type="button"
+                              className="btn"
+                              style={{ padding: '3px 8px', fontSize: '11.5px', height: '26px' }}
+                              onClick={() => { setEditTarget(u); setOpen(true); }}
+                            >
+                              编辑
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btn"
+                              style={{ padding: '3px 8px', fontSize: '11.5px', height: '26px', opacity: 0.5, cursor: 'not-allowed' }}
+                              title="跨组织/上层人员仅支持只读查验"
+                              disabled
+                            >
+                              只读
+                            </button>
+                          )}
+                          {u.canManage && (
+                            <button
+                              type="button"
+                              className="btn danger"
+                              style={{ padding: '3px 8px', fontSize: '11.5px', height: '26px' }}
+                              onClick={() => setConfirmDel(u)}
+                            >
+                              停用
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* 分页控制栏 */}
+          {totalUsers > 0 && (
+            <div className="pagination-bar">
+              <div>
+                共 <span className="pagination-num">{totalUsers}</span> 人，第 {currentPage} / {totalPages} 页
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <select
+                  value={pageSize}
+                  onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+                  className="pagination-select"
+                >
+                  <option value={10}>10 条 / 页</option>
+                  <option value={20}>20 条 / 页</option>
+                  <option value={50}>50 条 / 页</option>
+                  <option value={100}>100 条 / 页</option>
+                </select>
+                <button
+                  type="button"
+                  className="pagination-btn"
+                  disabled={currentPage <= 1}
+                  onClick={() => setPage(1)}
+                >
+                  首页
+                </button>
+                <button
+                  type="button"
+                  className="pagination-btn"
+                  disabled={currentPage <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                >
+                  上一页
+                </button>
+                <button
+                  type="button"
+                  className="pagination-btn"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                >
+                  下一页
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
-      {open && <UserFormModal target={editTarget} orgOptions={orgOptions} onClose={()=>setOpen(false)} onSaved={()=>{setOpen(false); window.dispatchEvent(new CustomEvent('app-data-refresh'));}}/>}
-      {confirmDel && <ConfirmModal title="删除人员" msg={<>确认删除 <b style={{color:'var(--ink)'}}>{confirmDel.name}</b>？该用户将被立即停用，相关引用与历史保留。</>} onConfirm={async()=>{const response=await fetch(`${API_BASE_URL}/api/v1/admin/users/${confirmDel.id}`,{method:'DELETE',headers:apiHeaders()}); if(!response.ok) throw new Error('停用失败'); window.dispatchEvent(new CustomEvent('app-data-refresh'));}} onClose={()=>setConfirmDel(null)}/>} 
+      {open && (
+        <UserFormModal
+          target={editTarget}
+          orgOptions={manageableOrgOptions}
+          capabilities={capabilities}
+          onClose={() => setOpen(false)}
+          onSaved={() => {
+            setOpen(false);
+            window.dispatchEvent(new CustomEvent('app-data-refresh'));
+          }}
+        />
+      )}
+      {confirmDel && (
+        <ConfirmModal
+          title="停用人员"
+          msg={<>确认停用 <b style={{ color: 'var(--ink)' }}>{confirmDel.name}</b>（{confirmDel.initials}）？停用后该用户将无法登录系统，相关引用与历史仍将完整保留。</>}
+          onConfirm={async () => {
+            const response = await fetch(`${API_BASE_URL}/api/v1/admin/users/${confirmDel.id}`, {
+              method: 'DELETE',
+              headers: apiHeaders(),
+            });
+            if (!response.ok) throw new Error('停用失败');
+            window.dispatchEvent(new CustomEvent('app-data-refresh'));
+          }}
+          onClose={() => setConfirmDel(null)}
+        />
+      )}
     </>
   );
 }
 
-function UserFormModal({target, orgOptions = [], onClose, onSaved}){
+function UserFormModal({target, orgOptions = [], capabilities = [], onClose, onSaved}){
   const isEdit = !!target;
+  const isSysAdmin = capabilities.includes('*');
   const [name, setName] = useState(target?.name || '');
   const [username, setUsername] = useState(target?.initials?.toLowerCase() || '');
   const [email, setEmail] = useState(target?.email || '');
   const [password, setPassword] = useState('');
-  const [orgId, setOrgId] = useState(target?.orgIds?.[0] || '');
+  const [orgId, setOrgId] = useState(target?.orgIds?.[0] || (orgOptions[0]?.id || ''));
   const [status, setStatus] = useState(target?.status || 'active');
   const [saving, setSaving] = useState(false);
   const [roles, setRoles] = useState(isEdit && target ? ROLES.filter(r=>target.roles.includes(r.name)).map(r=>({id:r.id,n:r.name,sub:`${r.users} 人`})) : []);
+
+  const assignableRoles = useMemo(() => {
+    if (isSysAdmin) return ROLES;
+    return ROLES.filter(r => !r.builtin && r.name !== '超级管理员' && r.name !== '系统管理员');
+  }, [isSysAdmin]);
+
   const save = async () => {
     if (!name.trim() || !username.trim() || (!isEdit && !orgId)) return;
     setSaving(true);
     try {
-      const payload = { displayName:name.trim(), username:username.trim(), email:email.trim() || `${username.trim()}@local.invalid`, orgIds: orgId ? [orgId] : [], roleIds: roles.map(r=>r.id), status, ...(password ? {password} : {}) };
-      const response = await fetch(`${API_BASE_URL}/api/v1/admin/users${isEdit ? `/${target.id}` : ''}`, { method:isEdit?'PATCH':'POST', headers:{'Content-Type':'application/json',...apiHeaders()}, body:JSON.stringify(payload) });
-      const result = await response.json().catch(()=>({}));
+      const payload = {
+        displayName: name.trim(),
+        username: username.trim(),
+        email: email.trim() || `${username.trim()}@local.invalid`,
+        orgIds: orgId ? [orgId] : [],
+        roleIds: roles.map(r => r.id),
+        status,
+        ...(password ? { password } : {})
+      };
+      const response = await fetch(`${API_BASE_URL}/api/v1/admin/users${isEdit ? `/${target.id}` : ''}`, {
+        method: isEdit ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json', ...apiHeaders() },
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || '保存失败');
-      window.dispatchEvent(new CustomEvent('app-toast', {detail:'人员已保存'}));
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: '人员已保存' }));
       onSaved?.();
-    } catch (error) { window.dispatchEvent(new CustomEvent('app-toast', {detail:error.message || '保存失败'})); }
-    finally { setSaving(false); }
+    } catch (error) {
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: error.message || '保存失败' }));
+    } finally {
+      setSaving(false);
+    }
   };
+
   return (
-    <Modal title={isEdit?`编辑人员 · ${target.name}`:'新增人员'} onClose={onClose} foot={
-      <>
-        <button className="btn" onClick={onClose}>取消</button>
-        <button className="btn primary" disabled={saving} onClick={save}>{saving?'保存中…':isEdit?'保存':'创建'}</button>
-      </>
-    }>
+    <Modal
+      title={isEdit ? `编辑人员 · ${target.name}` : '新增人员'}
+      onClose={onClose}
+      foot={
+        <>
+          <button className="btn" onClick={onClose}>取消</button>
+          <button className="btn primary" disabled={saving} onClick={save}>
+            {saving ? '保存中…' : isEdit ? '保存' : '创建'}
+          </button>
+        </>
+      }
+    >
       <div className="field-row">
         <div className="field"><label>姓名<span className="req">*</span></label><input value={name} onChange={e=>setName(e.target.value)} placeholder="如：陈昱"/></div>
         <div className="field"><label>用户名<span className="req">*</span></label><input value={username} onChange={e=>setUsername(e.target.value)} placeholder="登录账号" disabled={isEdit}/></div>
@@ -1473,91 +3015,219 @@ function UserFormModal({target, orgOptions = [], onClose, onSaved}){
           <option value="">选择组织节点…</option>
           {orgOptions.map(node => <option key={node.id} value={node.id}>{node.path}</option>)}
         </select>
-        <div className="field-hint">人员归属多个组织节点时，可见性取并集。可在用户详情中绑定多组织。</div>
+        <div className="field-hint">
+          {isSysAdmin
+            ? '系统管理员可为人员分配系统内任意组织节点。'
+            : '组织管理员仅可选择您所管辖的本级组织及下属子组织。'}
+        </div>
       </div>
       <div className="field">
         <label>绑定角色</label>
-        <TagPicker placeholder="搜索并选择角色..." items={ROLES.map(r=>({id:r.id,n:r.name,sub:`${r.users} 人 · ${r.builtin?'内置':r.perms.length+' 权限'}`}))} selected={roles} setSelected={setRoles}/>
-        <div className="field-hint">角色决定默认权限范围；额外授权可在「权限授权」单独配置。</div>
+        <TagPicker
+          placeholder="搜索并选择角色..."
+          items={assignableRoles.map(r=>({id:r.id,n:r.name,sub:`${r.users} 人 · ${r.builtin?'内置':r.perms.length+' 权限'}`}))}
+          selected={roles}
+          setSelected={setRoles}
+        />
+        <div className="field-hint">
+          {isSysAdmin
+            ? '角色决定默认权限范围；额外授权可在「权限授权」单独配置。'
+            : '组织管理员可为本组织人员赋予组织管理员或普通用户等角色。'}
+        </div>
       </div>
-      <div className="field"><label>状态</label><select value={status} onChange={e=>setStatus(e.target.value)}><option value="active">启用</option><option value="disabled">停用</option></select></div>
+      <div className="field">
+        <label>状态</label>
+        <select value={status} onChange={e=>setStatus(e.target.value)}>
+          <option value="active">启用</option>
+          <option value="disabled">停用</option>
+        </select>
+      </div>
     </Modal>
   );
 }
 
-/* ============== Admin: 角色管理 ============== */
 function RolesPanel({canManage = false}){
   const [open, setOpen] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
+  const [search, setSearch] = useState('');
+
+  const getPermBadgeClass = (p: string) => {
+    if (p === '*') return 'perm-chip all';
+    if (p.startsWith('chat.') || p === 'kb.read') return 'perm-chip wb';
+    if (p.startsWith('kb.industry')) return 'perm-chip kb';
+    if (p.startsWith('org.') || p.startsWith('role.')) return 'perm-chip org';
+    return 'perm-chip sys';
+  };
+
+  const filtered = ROLES.filter(r => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return r.name.toLowerCase().includes(q) || (r.desc || '').toLowerCase().includes(q) || r.perms.some((p: string) => p.toLowerCase().includes(q));
+  });
+
   return (
     <>
-      <div style={{display:'flex',alignItems:'flex-start',marginBottom:20}}>
-        <div style={{flex:1}}>
-          <div className="h1">角色管理</div>
-          <div className="subline">角色是权限的模板，可绑定多权限码，分配给人员 · 内置角色不可删除</div>
+      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:20}}>
+        <div>
+          <div className="h1">角色与权限矩阵</div>
+          <div className="subline">角色是系统功能与数据范围的权限模板，可分配给单人或批量人员 · 内置角色受安全策略保护不可删除</div>
         </div>
-        {canManage && <button className="btn primary" onClick={()=>{setEditTarget(null); setOpen(true);}}><Icon name="plus" size={12}/> 新增角色</button>}
+        {canManage && (
+          <button className="btn primary" onClick={()=>{setEditTarget(null); setOpen(true);}}>
+            <Icon name="plus" size={12}/> 新增自定义角色
+          </button>
+        )}
       </div>
 
-      <div className="admin-table">
-        <div className="at-row head" style={{gridTemplateColumns:'1.4fr 2.6fr 90px 100px 140px'}}>
-          <div>角色</div><div>描述</div><div>人员</div><div>类型</div><div style={{textAlign:'right'}}>操作</div>
-        </div>
-        {ROLES.map(r=>(
-          <div key={r.id} className="at-row" style={{gridTemplateColumns:'1.4fr 2.6fr 90px 100px 140px'}}>
-            <div>
-              <div className="nm-bold">{r.name}</div>
-              <div className="role-tags" style={{marginTop:4}}>
-                {r.perms.slice(0,3).map((p,i)=>(<span key={i} className="role-tag" style={{fontFamily:'SF Mono,Menlo,monospace'}}>{p}</span>))}
-                {r.perms.length>3 && <span className="role-tag" style={{color:'var(--ink-3)'}}>+{r.perms.length-3}</span>}
-              </div>
-            </div>
-            <div style={{color:'var(--ink-2)',fontSize:12,lineHeight:1.5}}>{r.desc}</div>
-            <div className="nm-bold" style={{fontVariantNumeric:'tabular-nums'}}>{r.users}</div>
-            <div>
-              <span className="badge" style={{background: r.builtin?'var(--ink)':'var(--surface-2)', color: r.builtin?'#fff':'var(--ink-3)'}}>{r.builtin?'内置':'自定义'}</span>
-            </div>
-            <div className="actions">
-              {canManage && <button onClick={()=>{setEditTarget(r); setOpen(true);}}>编辑</button>}
-              {canManage && !r.builtin && <button className="danger" onClick={()=>setConfirmDel(r)}>删除</button>}
-            </div>
+      <div className="admin-toolbar">
+        <div className="admin-toolbar-left">
+          <div className="search-input">
+            <input placeholder="搜索角色名称 / 描述 / 权限码…" value={search} onChange={e => setSearch(e.target.value)}/>
           </div>
-        ))}
+          {search && (
+            <button className="btn" style={{padding:'4px 8px',fontSize:'11.5px'}} onClick={()=>setSearch('')}>
+              重置
+            </button>
+          )}
+        </div>
+        <div className="toolbar-count">
+          共 {filtered.length} / {ROLES.length} 个角色模板
+        </div>
       </div>
 
-      {open && <RoleFormModal target={editTarget} onClose={()=>setOpen(false)} onSaved={()=>{setOpen(false); window.dispatchEvent(new CustomEvent('app-data-refresh'));}}/>} 
-      {confirmDel && <ConfirmModal title="删除角色" msg={<>确认删除自定义角色 <b style={{color:'var(--ink)'}}>{confirmDel.name}</b>？绑定该角色的 {confirmDel.users} 名人员将失去该角色带来的权限。</>} onConfirm={async()=>{const response=await fetch(`${API_BASE_URL}/api/v1/admin/roles/${confirmDel.id}`,{method:'DELETE',headers:apiHeaders()}); if(!response.ok) throw new Error('删除失败'); window.dispatchEvent(new CustomEvent('app-data-refresh'));}} onClose={()=>setConfirmDel(null)}/>} 
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style={{width:160}}>角色名称</th>
+              <th>权限码概览 (按模块分类)</th>
+              <th>职责描述</th>
+              <th style={{width:80,textAlign:'center'}}>绑定人员</th>
+              <th style={{width:90,textAlign:'center'}}>角色类型</th>
+              <th style={{width:130,textAlign:'right'}}>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 ? (
+              <tr>
+                <td colSpan={6} style={{textAlign:'center',padding:'40px 0',color:'var(--ink-4)'}}>
+                  <div style={{fontSize:'28px',marginBottom:'8px'}}>🛡️</div>
+                  <div>没有匹配的角色模板</div>
+                </td>
+              </tr>
+            ) : filtered.map(r => (
+              <tr key={r.id}>
+                <td>
+                  <div style={{fontWeight:600,color:'var(--ink)',fontSize:'13px'}}>{r.name}</div>
+                </td>
+                <td>
+                  <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
+                    {r.perms.slice(0, 4).map((p: string, i: number) => (
+                      <span key={i} className={getPermBadgeClass(p)}>
+                        {p === '*' ? '⚡ 全部特权 (*)' : p}
+                      </span>
+                    ))}
+                    {r.perms.length > 4 && (
+                      <span className="badge" style={{fontSize:'10px',padding:'1px 5px',color:'var(--ink-3)'}}>
+                        +{r.perms.length - 4}
+                      </span>
+                    )}
+                  </div>
+                </td>
+                <td>
+                  <span style={{color:'var(--ink-2)',fontSize:'12px',lineHeight:'1.5'}}>{r.desc}</span>
+                </td>
+                <td style={{textAlign:'center'}}>
+                  <span style={{fontWeight:600,fontVariantNumeric:'tabular-nums',fontSize:'12.5px'}}>
+                    {r.users || 0} 人
+                  </span>
+                </td>
+                <td style={{textAlign:'center'}}>
+                  <span className={r.builtin ? 'badge dark' : 'badge purple'} style={{fontSize:'11px',padding:'2px 7px'}}>
+                    {r.builtin ? '🔒 内置' : '自定义'}
+                  </span>
+                </td>
+                <td style={{textAlign:'right',whiteSpace:'nowrap'}}>
+                  <div className="table-actions">
+                    {canManage && (
+                      <button className="btn" style={{padding:'3px 9px',fontSize:'11.5px'}} onClick={()=>{setEditTarget(r); setOpen(true);}}>
+                        编辑
+                      </button>
+                    )}
+                    {canManage && !r.builtin && (
+                      <button className="btn danger" style={{padding:'3px 9px',fontSize:'11.5px'}} onClick={()=>setConfirmDel(r)}>
+                        删除
+                      </button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {open && (
+        <RoleFormModal
+          target={editTarget}
+          onClose={()=>setOpen(false)}
+          onSaved={()=>{setOpen(false); window.dispatchEvent(new CustomEvent('app-data-refresh'));}}
+        />
+      )}
+      {confirmDel && (
+        <ConfirmModal
+          title="删除自定义角色"
+          msg={<>确认删除角色 <b style={{color:'var(--ink)'}}>{confirmDel.name}</b>？绑定该角色的 <b>{confirmDel.users}</b> 名人员将失去此角色赋予的所有权限。</>}
+          onConfirm={async()=>{
+            const response = await fetch(`${API_BASE_URL}/api/v1/admin/roles/${confirmDel.id}`,{method:'DELETE',headers:apiHeaders()});
+            if(!response.ok) throw new Error('删除失败');
+            window.dispatchEvent(new CustomEvent('app-data-refresh'));
+          }}
+          onClose={()=>setConfirmDel(null)}
+        />
+      )}
     </>
   );
 }
 
 const ALL_PERMS = [
-  {group:'工作台', items:[
-    {code:'chat.use',desc:'使用问答对话'},
-    {code:'kb.read',desc:'查看本人有权访问的知识库'},
-    {code:'kb.read',desc:'查看知识库和知识图谱'},
-  ]},
-  {group:'知识库', items:[
-    {code:'kb.industry.read',desc:'进入行业库管理'},
-    {code:'kb.industry.create',desc:'创建行业知识库'},
-    {code:'kb.industry.manage',desc:'管理行业知识库'},
-    {code:'kb.industry.grant',desc:'管理行业库人员 / 组织 / 角色授权'},
-  ]},
-  {group:'人员与组织', items:[
-    {code:'org.user.read',desc:'查看本组织及下级组织人员'},
-    {code:'org.user.manage',desc:'新增/编辑/停用本组织及下级组织人员'},
-    {code:'org.read',desc:'查看组织架构'},
-    {code:'org.node.create',desc:'新增本组织及下级组织的子组织'},
-    {code:'role.read',desc:'查看角色'},
-    {code:'role.manage',desc:'管理角色'},
-  ]},
-  {group:'系统', items:[
-    {code:'system.settings.read',desc:'查看系统设置'},
-    {code:'system.settings.manage',desc:'管理模型配置'},
-    {code:'audit.read',desc:'查看审计日志'},
-    {code:'*',desc:'超级权限（含全部）'},
-  ]},
+  {
+    group: '💬 智能问答与工作台',
+    items: [
+      { code: 'chat.use', desc: '使用智能对话与问答功能' },
+      { code: 'kb.read', desc: '查阅本人有权访问的知识库与知识图谱' },
+    ]
+  },
+  {
+    group: '📚 行业知识库治理',
+    items: [
+      { code: 'kb.industry.read', desc: '进入行业知识库管理面板' },
+      { code: 'kb.industry.create', desc: '新建行业知识库' },
+      { code: 'kb.industry.manage', desc: '管理与维护所负责的行业知识库' },
+      { code: 'kb.industry.grant', desc: '管理跨部门人员/角色/组织授权' },
+    ]
+  },
+  {
+    group: '👥 组织架构与人员',
+    items: [
+      { code: 'org.read', desc: '查看企业组织架构树' },
+      { code: 'org.node.create', desc: '在本层及下级组织创建子组织' },
+      { code: 'org.user.read', desc: '查阅本层及下级组织人员名册' },
+      { code: 'org.user.manage', desc: '新增、编辑、停用本层及下级组织人员' },
+      { code: 'role.read', desc: '查阅角色与权限矩阵' },
+      { code: 'role.manage', desc: '创建、编辑与删除自定义角色' },
+    ]
+  },
+  {
+    group: '⚙️ 系统配置与审计',
+    items: [
+      { code: 'system.settings.read', desc: '查看系统设置与基础配置' },
+      { code: 'system.settings.manage', desc: '管理大模型与模型供应商参数' },
+      { code: 'audit.read', desc: '查阅系统安全与编译审计日志' },
+      { code: '*', desc: '⚡ 超级管理员全局特权（包含系统全部功能）' },
+    ]
+  },
 ];
 
 function RoleFormModal({target, onClose, onSaved}){
@@ -1566,53 +3236,112 @@ function RoleFormModal({target, onClose, onSaved}){
   const [name, setName] = useState(target?.name || '');
   const [description, setDescription] = useState(target?.desc || '');
   const [saving, setSaving] = useState(false);
-  const toggle = (code) => {
-    if(code==='*'){ setPicked(picked.includes('*') ? [] : ['*']); return; }
-    const np = picked.filter(p=>p!=='*');
-    setPicked(np.includes(code) ? np.filter(p=>p!==code) : [...np, code]);
+
+  const toggle = (code: string) => {
+    if(code === '*'){
+      setPicked(picked.includes('*') ? [] : ['*']);
+      return;
+    }
+    const np = picked.filter((p: string) => p !== '*');
+    setPicked(np.includes(code) ? np.filter((p: string) => p !== code) : [...np, code]);
   };
+
+  const isSuperSelected = picked.includes('*');
+
   const save = async () => {
     if (!name.trim()) return;
     setSaving(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/admin/roles${isEdit ? `/${target.id}` : ''}`, { method:isEdit?'PATCH':'POST', headers:{'Content-Type':'application/json',...apiHeaders()}, body:JSON.stringify({name:name.trim(),description,permissions:picked}) });
+      const response = await fetch(`${API_BASE_URL}/api/v1/admin/roles${isEdit ? `/${target.id}` : ''}`, {
+        method: isEdit ? 'PATCH' : 'POST',
+        headers: {'Content-Type':'application/json',...apiHeaders()},
+        body: JSON.stringify({name:name.trim(),description,permissions:picked})
+      });
       const result = await response.json().catch(()=>({}));
       if (!response.ok) throw new Error(result.message || '保存失败');
+      window.dispatchEvent(new CustomEvent('app-toast', {detail:'角色已保存'}));
       onSaved?.();
-    } catch (error) { window.dispatchEvent(new CustomEvent('app-toast', {detail:error.message || '保存失败'})); }
-    finally { setSaving(false); }
+    } catch (error: any) {
+      window.dispatchEvent(new CustomEvent('app-toast', {detail:error.message || '保存失败'}));
+    } finally {
+      setSaving(false);
+    }
   };
+
   return (
-    <Modal title={isEdit?`编辑角色 · ${target.name}`:'新增角色'} onClose={onClose} foot={
-      <>
-        <button className="btn" onClick={onClose}>取消</button>
-        <button className="btn primary" disabled={saving} onClick={save}>{saving?'保存中…':isEdit?'保存':'创建'}</button>
-      </>
-    }>
+    <Modal
+      title={isEdit ? `编辑角色 · ${target.name}` : '新增自定义角色'}
+      onClose={onClose}
+      foot={
+        <>
+          <button className="btn" onClick={onClose}>取消</button>
+          <button className="btn primary" disabled={saving || !name.trim()} onClick={save}>
+            {saving ? '保存中…' : isEdit ? '保存角色' : '创建角色'}
+          </button>
+        </>
+      }
+    >
       <div className="field-row">
-        <div className="field"><label>角色名称<span className="req">*</span></label><input value={name} onChange={e=>setName(e.target.value)} placeholder="如：合规审核员" disabled={target?.builtin}/></div>
-        <div className="field"><label>类型</label><input value={target?.builtin?'内置（不可改）':'自定义'} disabled style={{background:'var(--surface-2)',color:'var(--ink-3)'}}/></div>
+        <div className="field">
+          <label>角色名称<span className="req">*</span></label>
+          <input value={name} onChange={e=>setName(e.target.value)} placeholder="如：合规审核专家 / 安全审计员" disabled={target?.builtin}/>
+        </div>
+        <div className="field">
+          <label>角色类型</label>
+          <input value={target?.builtin ? '🔒 系统内置（不可修改）' : '✨ 自定义角色'} disabled style={{background:'var(--surface-2)',color:'var(--ink-2)',fontWeight:500}}/>
+        </div>
       </div>
-      <div className="field"><label>描述</label><textarea value={description} onChange={e=>setDescription(e.target.value)} placeholder="该角色的职责与适用人群"/></div>
       <div className="field">
-        <label>权限码（勾选授予）</label>
-        <div style={{border:'1px solid var(--line)',borderRadius:7,background:'var(--surface)',maxHeight:260,overflowY:'auto',padding:'8px 12px'}}>
+        <label>职责描述</label>
+        <textarea value={description} onChange={e=>setDescription(e.target.value)} placeholder="明确说明该角色的业务定位、职责范围与适用岗位群……"/>
+      </div>
+      <div className="field">
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+          <label style={{margin:0}}>权限配置矩阵（已选 {picked.length} 项）</label>
+          {isSuperSelected && <span className="badge dark" style={{fontSize:'10.5px'}}>已启用超级特权模式</span>}
+        </div>
+        <div style={{border:'1px solid var(--line)',borderRadius:8,background:'var(--surface)',maxHeight:280,overflowY:'auto',padding:'10px 14px'}}>
           {ALL_PERMS.map(g=>(
-            <div key={g.group} style={{marginBottom:10}}>
-              <div style={{fontSize:10.5,color:'var(--ink-3)',textTransform:'uppercase',letterSpacing:.4,fontWeight:600,marginBottom:5}}>{g.group}</div>
-              {g.items.map(p=>(
-                <label key={p.code} style={{display:'flex',alignItems:'flex-start',padding:'5px 0',cursor:p.code==='*' && target?.builtin ? 'not-allowed':'pointer',opacity: p.code==='*' && target?.builtin ? .5 : 1}}>
-                  <input type="checkbox" checked={picked.includes(p.code)} disabled={p.code==='*' && target?.builtin} onChange={()=>toggle(p.code)} style={{marginTop:2,marginRight:8,accentColor:'var(--ink)'}}/>
-                  <div style={{flex:1}}>
-                    <code style={{background:'var(--surface-2)',padding:'1px 6px',borderRadius:3,fontSize:11,color:'var(--ink)',fontFamily:'SF Mono,Menlo,monospace',marginRight:6}}>{p.code}</code>
-                    <span style={{fontSize:11.5,color:'var(--ink-3)'}}>{p.desc}</span>
-                  </div>
-                </label>
-              ))}
+            <div key={g.group} style={{marginBottom:14,paddingBottom:10,borderBottom:'1px dashed var(--line-2)'}}>
+              <div style={{fontSize:'11.5px',color:'var(--ink)',fontWeight:600,marginBottom:6,display:'flex',alignItems:'center',gap:4}}>
+                {g.group}
+              </div>
+              <div style={{display:'flex',flexDirection:'column',gap:5}}>
+                {g.items.map(p=>(
+                  <label
+                    key={p.code}
+                    style={{
+                      display:'flex',
+                      alignItems:'flex-start',
+                      gap:8,
+                      padding:'4px 6px',
+                      borderRadius:5,
+                      cursor: (target?.builtin && p.code === '*') || (isSuperSelected && p.code !== '*') ? 'not-allowed' : 'pointer',
+                      opacity: isSuperSelected && p.code !== '*' ? 0.45 : 1,
+                      background: picked.includes(p.code) ? 'rgba(37,99,235,0.05)' : 'transparent',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={picked.includes(p.code)}
+                      disabled={(target?.builtin && p.code === '*') || (isSuperSelected && p.code !== '*')}
+                      onChange={()=>toggle(p.code)}
+                      style={{marginTop:3,accentColor:'var(--ink)'}}
+                    />
+                    <div style={{flex:1}}>
+                      <div style={{display:'flex',alignItems:'center',gap:6}}>
+                        <code style={{fontFamily:'SF Mono,Menlo,monospace',fontSize:'11px',fontWeight:600,color:'var(--ink)'}}>
+                          {p.code}
+                        </code>
+                        <span style={{fontSize:'12px',color:'var(--ink-2)'}}>{p.desc}</span>
+                      </div>
+                    </div>
+                  </label>
+                ))}
+              </div>
             </div>
           ))}
         </div>
-        <div className="field-hint">已选 {picked.filter(p=>p!=='*').length} 条权限{picked.includes('*') && ' · 含超级权限 *'}</div>
       </div>
     </Modal>
   );
@@ -1640,46 +3369,163 @@ function IndustryKBPanel({onOpenGrant, canCreate = false}){
   const [openNew, setOpenNew] = useState(false);
   const [adminTarget, setAdminTarget] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
+  const [search, setSearch] = useState('');
+
+  const filtered = INDUSTRY_KBS.filter(k => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return k.name.toLowerCase().includes(q) || (k.desc || '').toLowerCase().includes(q) || k.admins.some((a: any) => (a.n || a.i || '').toLowerCase().includes(q));
+  });
+
   return (
     <>
-      <div style={{display:'flex',alignItems:'flex-start',marginBottom:20}}>
-        <div style={{flex:1}}>
-          <div className="h1">行业库管理</div>
-          <div className="subline">动态新增 / 维护行业知识库 · 组织授权包含全部下级组织 · 新员工自动获得符合条件的阅读权限</div>
+      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:20}}>
+        <div>
+          <div className="h1">行业知识库管理</div>
+          <div className="subline">跨部门与专业领域知识资产库 · 支持向全企业人员/角色/组织维度进行细粒度授权 · 组织授权自动继承至新成员</div>
         </div>
-        {canCreate && <button className="btn primary" onClick={()=>setOpenNew(true)}><Icon name="plus" size={12}/> 新建行业库</button>}
+        {canCreate && (
+          <button className="btn primary" onClick={()=>setOpenNew(true)}>
+            <Icon name="plus" size={12}/> 新建行业库
+          </button>
+        )}
       </div>
 
-      <div className="admin-table">
-        <div className="at-row head" style={{gridTemplateColumns:'1.8fr 2fr 130px 110px 150px'}}>
-          <div>行业库</div><div>描述</div><div>管理员</div><div>授权主体</div><div style={{textAlign:'right'}}>操作</div>
-        </div>
-        {INDUSTRY_KBS.map(k=>(
-          <div key={k.id} className="at-row" style={{gridTemplateColumns:'1.8fr 2fr 130px 110px 150px'}}>
-            <div>
-              <div className="nm-bold">{k.name}</div>
-              <div style={{marginTop:3,display:'flex',alignItems:'center',gap:6}}>
-                <span className="badge industry">行业库</span>
-                <span style={{fontSize:11,color:'var(--ink-3)'}}>{k.docs} 文档 · 创建于 {k.created}</span>
-              </div>
-            </div>
-            <div style={{color:'var(--ink-2)',fontSize:12,lineHeight:1.5}}>{k.desc}</div>
-            <div className="admins" style={{display:'flex'}}>
-              {k.admins.map((a,i)=>(<div key={i} className="avatar" title={a.n} style={{width:24,height:24,fontSize:10,border:'1.5px solid var(--surface)',marginLeft:i===0?0:-6, background:'#2C7A7B'}}>{a.i}</div>))}
-            </div>
-            <div className="nm-bold" style={{fontVariantNumeric:'tabular-nums',color:'var(--ink-2)'}}>{k.grants} 个主体</div>
-            <div className="actions">
-              {k.canManage && <button onClick={()=>setAdminTarget(k)}>管理员</button>}
-              {k.canGrant && <button onClick={()=>onOpenGrant(k)}>授权</button>}
-              {k.canDelete && <button className="danger" onClick={()=>setConfirmDel(k)}>删除</button>}
-            </div>
+      <div className="admin-toolbar">
+        <div className="admin-toolbar-left">
+          <div className="search-input">
+            <input placeholder="搜索行业库名称 / 描述 / 管理员…" value={search} onChange={e => setSearch(e.target.value)}/>
           </div>
-        ))}
+          {search && (
+            <button className="btn" style={{padding:'4px 8px',fontSize:'11.5px'}} onClick={()=>setSearch('')}>
+              重置
+            </button>
+          )}
+        </div>
+        <div className="toolbar-count">
+          共 {filtered.length} / {INDUSTRY_KBS.length} 个行业知识库
+        </div>
       </div>
 
-      {openNew && <NewIndustryKBModal onClose={()=>setOpenNew(false)} onSaved={()=>{setOpenNew(false); window.dispatchEvent(new CustomEvent('app-data-refresh'));}}/>} 
-      {adminTarget && <KBAdminModal kb={adminTarget} onClose={()=>setAdminTarget(null)} onSaved={()=>{setAdminTarget(null); window.dispatchEvent(new CustomEvent('app-data-refresh'));}}/>} 
-      {confirmDel && <ConfirmModal title="删除行业库" msg={<>确认删除 <b style={{color:'var(--ink)'}}>{confirmDel.name}</b>？共 <b>{confirmDel.docs}</b> 份文档将被归档。已授权主体将无法再访问。</>} onConfirm={async()=>{const response=await fetch(`${API_BASE_URL}/api/v1/admin/kbs/${confirmDel.id}`,{method:'DELETE',headers:apiHeaders()}); if(!response.ok) throw new Error('删除失败'); window.dispatchEvent(new CustomEvent('app-data-refresh'));}} onClose={()=>setConfirmDel(null)}/>} 
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style={{width:'26%'}}>知识库名称</th>
+              <th>描述说明</th>
+              <th style={{width:130}}>管理员团队</th>
+              <th style={{width:130,textAlign:'center'}}>授权生效范围</th>
+              <th style={{width:210,textAlign:'right'}}>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 ? (
+              <tr>
+                <td colSpan={5} style={{textAlign:'center',padding:'40px 0',color:'var(--ink-4)'}}>
+                  <div style={{fontSize:'28px',marginBottom:'8px'}}>📚</div>
+                  <div>没有匹配的行业知识库</div>
+                </td>
+              </tr>
+            ) : filtered.map(k => (
+              <tr key={k.id}>
+                <td>
+                  <div style={{display:'flex',alignItems:'flex-start',gap:8}}>
+                    <div style={{fontSize:'18px',lineHeight:'1.2'}}>📘</div>
+                    <div>
+                      <div style={{fontWeight:600,color:'var(--ink)',fontSize:'13px'}}>{k.name}</div>
+                      <div style={{marginTop:3,display:'flex',alignItems:'center',gap:6}}>
+                        <span className="badge ok" style={{fontSize:'10px',padding:'1px 5px'}}>行业库</span>
+                        <span style={{fontSize:'11px',color:'var(--ink-3)'}}>
+                          {k.docs} 份文档 · {k.created}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </td>
+                <td>
+                  <span style={{color:'var(--ink-2)',fontSize:'12px',lineHeight:'1.5'}}>{k.desc || '暂无描述'}</span>
+                </td>
+                <td>
+                  <div className="avatar-stack">
+                    {k.admins.length > 0 ? (
+                      k.admins.map((a: any, i: number) => (
+                        <div
+                          key={i}
+                          className="avatar"
+                          title={`${a.n || '管理员'} (@${a.i})`}
+                          style={{
+                            background: i % 2 === 0 ? '#2563eb' : '#059669',
+                            color: '#fff'
+                          }}
+                        >
+                          {(a.i || a.n || '管').slice(0, 2).toUpperCase()}
+                        </div>
+                      ))
+                    ) : (
+                      <span style={{fontSize:'11.5px',color:'var(--ink-4)'}}>未设置</span>
+                    )}
+                  </div>
+                </td>
+                <td style={{textAlign:'center'}}>
+                  <button
+                    className="badge purple"
+                    style={{cursor:'pointer',border:'1px solid #DDD6FE'}}
+                    onClick={()=>onOpenGrant(k)}
+                    title="点击跳转并查看授权明细"
+                  >
+                    👥 {k.grants} 个主体 ↗
+                  </button>
+                </td>
+                <td style={{textAlign:'right',whiteSpace:'nowrap'}}>
+                  <div className="table-actions">
+                    {k.canManage && (
+                      <button className="btn" style={{padding:'3px 9px',fontSize:'11.5px'}} onClick={()=>setAdminTarget(k)}>
+                        管理员
+                      </button>
+                    )}
+                    {k.canGrant && (
+                      <button className="btn primary" style={{padding:'3px 9px',fontSize:'11.5px'}} onClick={()=>onOpenGrant(k)}>
+                        去授权
+                      </button>
+                    )}
+                    {k.canDelete && (
+                      <button className="btn danger" style={{padding:'3px 9px',fontSize:'11.5px'}} onClick={()=>setConfirmDel(k)}>
+                        删除
+                      </button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {openNew && (
+        <NewIndustryKBModal
+          onClose={()=>setOpenNew(false)}
+          onSaved={()=>{setOpenNew(false); window.dispatchEvent(new CustomEvent('app-data-refresh'));}}
+        />
+      )}
+      {adminTarget && (
+        <KBAdminModal
+          kb={adminTarget}
+          onClose={()=>setAdminTarget(null)}
+          onSaved={()=>{setAdminTarget(null); window.dispatchEvent(new CustomEvent('app-data-refresh'));}}
+        />
+      )}
+      {confirmDel && (
+        <ConfirmModal
+          title="删除行业知识库"
+          msg={<>确认删除行业库 <b style={{color:'var(--ink)'}}>{confirmDel.name}</b>？共 <b>{confirmDel.docs}</b> 份文档将被归档，已授权主体将无法再访问此库知识。</>}
+          onConfirm={async()=>{
+            const response = await fetch(`${API_BASE_URL}/api/v1/admin/kbs/${confirmDel.id}`,{method:'DELETE',headers:apiHeaders()});
+            if(!response.ok) throw new Error('删除失败');
+            window.dispatchEvent(new CustomEvent('app-data-refresh'));
+          }}
+          onClose={()=>setConfirmDel(null)}
+        />
+      )}
     </>
   );
 }
@@ -2002,12 +3848,14 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
     {k:'org', l:'组织架构', ic:'users', permission:'org.read'},
     {k:'users', l:'人员管理', ic:'user', permission:'org.user.read'},
     {k:'roles', l:'角色管理', ic:'shield', permission:'role.read'},
-    {k:'industry', l:'行业库管理', ic:'book', permission:'kb.industry.read'},
+    // 创建者即使已把内容管理员转交给别人，仍需保留设置管理员和删除库的入口。
+    // 资源管理员但没有行业库角色时仍不会因此获得整个管理菜单。
+    {k:'industry', l:'行业库管理', ic:'book', permission:'kb.industry.read', alternativePermission:'kb.industry.create'},
     {k:'grant', l:'权限授权', ic:'shield', permission:'kb.industry.grant'},
     {k:'model', l:'模型配置', ic:'model', permission:'system.settings.manage'},
     {k:'audit', l:'审计日志', ic:'history', permission:'audit.read'},
   ];
-  const availableTabs = tabRules.filter(item => hasCapability(item.permission, capabilities)).map(item => item.k);
+  const availableTabs = tabRules.filter(item => hasCapability(item.permission, capabilities) || (item.alternativePermission && hasCapability(item.alternativePermission, capabilities))).map(item => item.k);
   useEffect(() => {
     if (availableTabs.length && !availableTabs.includes(tab)) setTab(availableTabs[0]);
   }, [availableTabs.join(','), tab]);
@@ -2098,30 +3946,42 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
 
       <div className="admin-main">
         {tab==='org' && (
-          <>
-            <div style={{display:'flex',alignItems:'flex-start',marginBottom:20}}>
-              <div style={{flex:1}}>
-                <div className="h1">组织架构</div>
-                <div className="subline">支持无限层级 · 组织树变更会自动刷新用户可见库缓存 · 每一级组织都可设置知识库管理员</div>
-              </div>
-              {hasCapability('*', capabilities) && <button className="btn primary" onClick={()=>setAddModal(orgTree || {id:null,name:'根节点'})}><Icon name="plus" size={12}/> 新增一级组织</button>}
-            </div>
-            <div className="org-tree">
-              {orgTree ? <OrgNode node={orgTree} depth={0} expandedIds={expandedIds} onToggle={toggleNode}
-                onAddChild={(n)=>setAddModal(n)} onSetAdmin={(n)=>setAdminModal(n)} onActivateKb={activateKb} onDeactivateKb={deactivateKb} onManageKb={onManageKb}/>
-                : <div style={{padding:30,color:'var(--ink-3)'}}>暂无组织节点，请先新增一级组织。</div>}
-            </div>
-          </>
+          <OrgPanel
+            orgTree={orgTree}
+            expandedIds={expandedIds}
+            onToggle={toggleNode}
+            setExpandedIds={setExpandedIds}
+            onAddChild={(n: any)=>setAddModal(n)}
+            onSetAdmin={(n: any)=>setAdminModal(n)}
+            onActivateKb={activateKb}
+            onDeactivateKb={deactivateKb}
+            onManageKb={onManageKb}
+            canCreateRoot={hasCapability('*', capabilities)}
+          />
         )}
-        {tab==='users' && <UsersPanel orgOptions={orgOptions} canManage={hasCapability('org.user.manage', capabilities)}/>} 
+        {tab==='users' && <UsersPanel orgTree={orgTree} orgOptions={orgOptions} canManage={hasCapability('org.user.manage', capabilities)} capabilities={capabilities}/>}
         {tab==='roles' && <RolesPanel canManage={hasCapability('role.manage', capabilities)}/>} 
         {tab==='industry' && <IndustryKBPanel canCreate={hasCapability('kb.industry.create', capabilities)} onOpenGrant={(k)=>{setGrantKb(k.id); setTab('grant');}}/>}
         {tab==='grant' && <GrantPanel kbId={grantKb} setKbId={setGrantKb}/>}
         {tab==='model' && <ModelPanel/>}
         {tab==='audit' && (
           <>
-            <div className="h1">审计日志</div>
-            <div className="subline">查询 · 知识变更 · 权限变更 · 大脑编译记录 · Dream Cycle · 越权拦截 · 留存 ≥ 1 年</div>
+            <div style={{display:'flex',alignItems:'flex-start',marginBottom:18}}>
+              <div style={{flex:1}}>
+                <div className="h1">审计日志</div>
+                <div className="subline">查询 · 知识变更 · 权限变更 · 大脑编译记录 · Dream Cycle · 越权拦截 · 留存 ≥ 1 年</div>
+              </div>
+              {DREAM && capabilities.includes('*') && <button className="btn" onClick={async()=>{
+                try {
+                  const response = await fetch(`${API_BASE_URL}/api/v1/admin/brain/maintenance`, {method:'POST', headers:apiHeaders()});
+                  const result = await response.json().catch(()=>({}));
+                  if (!response.ok) throw new Error(result.message || '维护任务提交失败');
+                  window.dispatchEvent(new CustomEvent('app-toast',{detail:'Dream Cycle 已进入后台队列'}));
+                  window.setTimeout(()=>window.dispatchEvent(new CustomEvent('app-data-refresh')),1500);
+                } catch (error) { window.dispatchEvent(new CustomEvent('app-toast',{detail:error.message || '维护任务提交失败'})); }
+              }}><Icon name="refresh" size={12}/> 立即执行维护</button>}
+            </div>
+            {DREAM && <DreamTelemetryPanel telemetry={DREAM}/>}
             <div className="audit">
               {AUDIT.map((a,i)=>(
                 <div key={i} className="audit-row">
@@ -2139,6 +3999,50 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
       </div>
     </div>
   );
+}
+
+function DreamTelemetryPanel({telemetry}){
+  const last = telemetry.lastRun;
+  const statusLabels = {completed:'已完成',partial:'部分完成',failed:'失败',running:'执行中',clean:'已完成'};
+  const statusColors = {completed:'var(--green)',partial:'var(--amber)',failed:'var(--red)',running:'var(--blue)',clean:'var(--green)'};
+  const fmt = (value) => value ? new Date(value).toLocaleString('zh-CN') : '—';
+  const latestSources = Array.isArray(last?.sourceResults) ? last.sourceResults : [];
+  const skippedPhases = latestSources.reduce((sum, source) => sum + (source.phases || []).filter(phase => phase.status === 'skipped').length, 0);
+  const warningPhases = latestSources.reduce((sum, source) => sum + (source.phases || []).filter(phase => phase.status === 'warn').length, 0);
+  const healthLabels = {healthy:'运行正常',degraded:'有告警',stale:'超过预期周期',failed:'最近失败',unknown:'尚无运行记录',disabled:'已停用'};
+  const healthColors = {healthy:'var(--green)',degraded:'var(--amber)',stale:'var(--amber)',failed:'var(--red)',unknown:'var(--ink-3)',disabled:'var(--ink-3)'};
+  return <div style={{marginBottom:20}}>
+    <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:12}}>
+      {[
+        ['运行状态', healthLabels[telemetry.health] || telemetry.health, healthColors[telemetry.health] || 'var(--ink-3)'],
+        ['最近执行', last ? fmt(last.startedAt) : '—', 'var(--ink)'],
+        ['同步文档', last ? `${last.syncedDocs || 0} 新增/变更 · ${last.removedDocs || 0} 移除` : '—', 'var(--ink)'],
+        ['待编译主题', String(telemetry.dirtyTopics || 0), telemetry.dirtyTopics ? 'var(--amber)' : 'var(--green)'],
+      ].map(([label,value,color])=><div key={label} style={{flex:'1 1 170px',minWidth:150,padding:'12px 14px',border:'1px solid var(--line)',borderRadius:8,background:'var(--surface)'}}>
+        <div style={{fontSize:11,color:'var(--ink-3)',marginBottom:6}}>{label}</div><div style={{fontSize:13,fontWeight:600,color}}>{value}</div>
+      </div>)}
+    </div>
+    <div style={{padding:'12px 14px',border:'1px solid var(--line)',borderRadius:8,background:'var(--surface-2)',fontSize:12,color:'var(--ink-3)',lineHeight:1.6,marginBottom:12}}>
+      <b style={{color:'var(--ink)'}}>Dream 维护</b>：{telemetry.enabled ? `已启用，每日 ${telemetry.cron}（${telemetry.timezone || '服务器时区'}）执行` : '已停用'}。每次运行会记录 source 同步数量、移除数量、GBrain phase 结果和失败原因；队列失败会按 3 次退避重试。最近一次：{last ? `${statusLabels[last.status] || last.status}（${fmt(last.startedAt)}）` : '尚未执行'}。
+      {last && skippedPhases > 0 && <div style={{marginTop:5}}>GBrain phase 统计：{skippedPhases} 个按 source 隔离策略跳过，{warningPhases} 个告警；这类跳过不等于文档同步失败，私密 source 不执行跨权限范围的全局总结。</div>}
+      {last?.errorMessage && <div style={{color:'var(--red)',marginTop:5}}>最近失败：{last.errorMessage}</div>}
+    </div>
+    <div style={{border:'1px solid var(--line)',borderRadius:8,overflow:'hidden',background:'var(--surface)'}}>
+      <div style={{padding:'10px 14px',fontSize:12,fontWeight:600,borderBottom:'1px solid var(--line)'}}>最近运行记录</div>
+      {(telemetry.runs || []).slice(0,8).map((run)=><div key={run.id} style={{display:'grid',gridTemplateColumns:'145px 75px 1fr 120px',gap:10,padding:'9px 14px',borderBottom:'1px solid var(--line)',fontSize:11.5,alignItems:'center'}}>
+        <span>{fmt(run.startedAt)}</span><b style={{color:statusColors[run.status] || 'var(--ink)'}}>{statusLabels[run.status] || run.status}</b><span>{run.sourcesVisited || 0} 个 source · {run.sourcesSucceeded || 0} 成功 · {run.sourcesPartial || 0} 部分 · {run.queuedTopics || 0} 个待编译主题</span><span style={{color:'var(--ink-3)'}}>{run.durationMs ? `${Math.round(run.durationMs/1000)} 秒` : '—'}</span>
+      </div>)}
+      {!telemetry.runs?.length && <div style={{padding:16,color:'var(--ink-3)',fontSize:12}}>暂无 Dream 运行记录，首次计划任务或点击“立即执行维护”后会出现在这里。</div>}
+    </div>
+    <div style={{border:'1px solid var(--line)',borderRadius:8,overflow:'hidden',background:'var(--surface)',marginTop:12}}>
+      <div style={{padding:'10px 14px',fontSize:12,fontWeight:600,borderBottom:'1px solid var(--line)'}}>Source 同步效果（最近一次）</div>
+      {latestSources.map((source)=><div key={source.sourceKey} style={{display:'grid',gridTemplateColumns:'minmax(180px,1.5fr) 70px 110px 1fr',gap:10,padding:'9px 14px',borderBottom:'1px solid var(--line)',fontSize:11.5,alignItems:'center'}}>
+        <span title={source.sourceKey}>{source.sourceKey}</span><span>{source.kind === 'shared' ? '共享' : '权限组'}</span><b style={{color:statusColors[source.status] || 'var(--ink)'}}>{statusLabels[source.status] || source.status}</b><span>{source.synced || 0} 新增/变更 · {source.removed || 0} 移除 · {(source.phases || []).filter(phase => phase.status === 'skipped').length} 个隔离跳过</span>
+      </div>)}
+      {!latestSources.length && <div style={{padding:16,color:'var(--ink-3)',fontSize:12}}>暂无 source 运行明细。</div>}
+    </div>
+    <div style={{marginTop:10,fontSize:11,color:'var(--ink-3)'}}>当前 active source：{(telemetry.sources || []).length} 个 · 已登记文档映射：{(telemetry.sources || []).reduce((sum,source)=>sum+(source.documents||0),0)} 条 · Dream 队列失败任务：{(telemetry.maintenanceFailures || []).length} 个</div>
+  </div>;
 }
 
 /* 新增子组织弹窗（支持无限层级） */
@@ -2222,104 +4126,544 @@ function OrgAdminModal({node, onClose, onSaved}){
   );
 }
 
-/* GrantPanel extracted for reuse + selectedKb pre-fill */
+/* ============== Admin: 行业库授权中枢 (GrantPanel) ============== */
 function GrantPanel({kbId, setKbId}){
   const [grantTab, setGrantTab] = useState('user');
   const [subjectId, setSubjectId] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
+  const [search, setSearch] = useState('');
+  const [revokingGrant, setRevokingGrant] = useState<any>(null);
+
   const addGrant = async () => {
     if (!kbId || !subjectId) return;
     const expiry = expiresAt ? new Date(Date.now() + Number(expiresAt) * 86400000).toISOString() : undefined;
-    const response = await fetch(`${API_BASE_URL}/api/v1/admin/grants`,{method:'POST',headers:{'Content-Type':'application/json',...apiHeaders()},body:JSON.stringify({kbId,subjectType:grantTab,subjectId,expiresAt:expiry})});
+    const response = await fetch(`${API_BASE_URL}/api/v1/admin/grants`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json',...apiHeaders()},
+      body:JSON.stringify({kbId,subjectType:grantTab,subjectId,expiresAt:expiry})
+    });
     const result = await response.json().catch(()=>({}));
-    if (!response.ok) { window.dispatchEvent(new CustomEvent('app-toast',{detail:result.message || '授权失败'})); return; }
-    setSubjectId(''); window.dispatchEvent(new CustomEvent('app-toast',{detail:'授权已保存'})); window.dispatchEvent(new CustomEvent('app-data-refresh'));
+    if (!response.ok) {
+      window.dispatchEvent(new CustomEvent('app-toast',{detail:result.message || '授权失败'}));
+      return;
+    }
+    setSubjectId('');
+    window.dispatchEvent(new CustomEvent('app-toast',{detail:'授权策略已成功签发'}));
+    window.dispatchEvent(new CustomEvent('app-data-refresh'));
   };
+
+  const currentGrants = GRANTS.filter(g => g.kbId === kbId);
+  const filteredGrants = currentGrants.filter(g => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (g.subj || '').toLowerCase().includes(q) || (g.scope || '').toLowerCase().includes(q);
+  });
+
+  const selectedKbObj = INDUSTRY_KBS.find(k => k.id === kbId) || INDUSTRY_KBS[0];
+
   return (
     <>
-      <div className="h1">行业库授权</div>
-      <div className="subline">支持人员 / 角色 / 组织三类主体；组织授权包含全部下级组织，新增人员会动态获得权限</div>
-      <div className="grant">
-        <h6>目标库</h6>
-        <div className="g-input">
-          <select value={kbId} onChange={e=>setKbId && setKbId(e.target.value)}>
-            {INDUSTRY_KBS.map(k=><option key={k.id} value={k.id}>{k.name}</option>)}
-          </select>
+      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:20}}>
+        <div>
+          <div className="h1">行业知识库授权中枢</div>
+          <div className="subline">为行业知识库配置跨部门访问策略 · 支持按「人员 / 角色 / 组织」三维矩阵授权 · 权限变更即时生效并同步大脑</div>
         </div>
+      </div>
 
-        <h6>添加授权</h6>
-        <div className="g-tabs">
-          {[{k:'user',l:'人员'},{k:'role',l:'角色'},{k:'org',l:'组织'}].map(g=>(
-            <button key={g.k} className={grantTab===g.k?'on':''} onClick={()=>setGrantTab(g.k)}>{g.l}</button>
-          ))}
-        </div>
-        <div className="g-input">
-          <select value={subjectId} onChange={e=>setSubjectId(e.target.value)}>
-            <option value="">选择主体…</option>
-            {grantTab==='user' && USERS.filter(u=>u.status!=='disabled').map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
-            {grantTab==='role' && ROLES.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}
-            {grantTab==='org' && flattenOrgTree(ORG_TREE).map(o=><option key={o.id} value={o.id}>{o.path}</option>)}
-          </select>
-          <select value={expiresAt} onChange={e=>setExpiresAt(e.target.value)}>
-            <option value="">永久</option>
-            <option value="30">30 天</option>
-            <option value="90">90 天</option>
-            <option value="365">1 年</option>
-          </select>
-          <button className="btn primary" style={{padding:'7px 14px'}} onClick={addGrant}><Icon name="plus" size={12}/> 添加</button>
-        </div>
-
-        <div className="g-list">
-          <h6>当前授权</h6>
-          {GRANTS.filter(g=>g.kbId===kbId).map((g,i)=>(
-            <div key={i} className="g-row">
-              <div className="subj">
-                {g.avatar ? <div className="avatar">{g.avatar}</div> : <Icon name={g.type==='role'?'users':'folder'} size={14} color="var(--ink-3)"/>}
-                <span>{g.subj}</span>
-                <span style={{fontSize:11,color:'var(--ink-4)',marginLeft:6}}>· {g.scope}</span>
-              </div>
-                <span className="type-stamp">{g.type==='user'?'人员':g.type==='role'?'角色':'组织'}</span>
-              <span className="exp">至 {g.exp}</span>
-              <button className="x" onClick={async()=>{const response=await fetch(`${API_BASE_URL}/api/v1/admin/grants/${g.id}`,{method:'DELETE',headers:apiHeaders()}); if(response.ok) window.dispatchEvent(new CustomEvent('app-data-refresh'));}}>×</button>
+      <div className="split-layout-container">
+        {/* Left: Add Grant Wizard Card */}
+        <div className="split-card">
+          <div className="split-card-header">
+            <div className="split-card-title">
+              ➕ 新建授权规则
             </div>
-          ))}
+            <span className="badge ok" style={{fontSize:'10.5px'}}>即时生效</span>
+          </div>
+
+          <div className="field">
+            <label>1️⃣ 目标行业库</label>
+            <select value={kbId} onChange={e=>setKbId && setKbId(e.target.value)} style={{fontWeight:500}}>
+              {INDUSTRY_KBS.map(k=>(
+                <option key={k.id} value={k.id}>
+                  📘 {k.name} ({k.docs} 份文档)
+                </option>
+              ))}
+            </select>
+            {selectedKbObj && (
+              <div className="field-hint" style={{color:'var(--ink-3)'}}>
+                {selectedKbObj.desc}
+              </div>
+            )}
+          </div>
+
+          <div className="field">
+            <label>2️⃣ 授权主体维度</label>
+            <div className="segmented-control">
+              <button
+                type="button"
+                className={`segmented-btn ${grantTab==='user'?'active':''}`}
+                onClick={()=>{ setGrantTab('user'); setSubjectId(''); }}
+              >
+                👤 人员
+              </button>
+              <button
+                type="button"
+                className={`segmented-btn ${grantTab==='role'?'active':''}`}
+                onClick={()=>{ setGrantTab('role'); setSubjectId(''); }}
+              >
+                🛡️ 角色
+              </button>
+              <button
+                type="button"
+                className={`segmented-btn ${grantTab==='org'?'active':''}`}
+                onClick={()=>{ setGrantTab('org'); setSubjectId(''); }}
+              >
+                🏢 组织
+              </button>
+            </div>
+          </div>
+
+          <div className="field">
+            <label>3️⃣ 选择具体{grantTab==='user'?'人员':grantTab==='role'?'角色':'组织'}<span className="req">*</span></label>
+            <select value={subjectId} onChange={e=>setSubjectId(e.target.value)}>
+              <option value="">点击检索并选择{grantTab==='user'?'人员':grantTab==='role'?'角色':'组织'}…</option>
+              {grantTab==='user' && USERS.filter(u=>u.status!=='disabled').map(u=>(
+                <option key={u.id} value={u.id}>
+                  {u.name} (@{u.initials}) · {u.org || '全公司'}
+                </option>
+              ))}
+              {grantTab==='role' && ROLES.map(r=>(
+                <option key={r.id} value={r.id}>
+                  {r.name} ({r.users || 0} 人)
+                </option>
+              ))}
+              {grantTab==='org' && flattenOrgTree(ORG_TREE).map(o=>(
+                <option key={o.id} value={o.id}>
+                  {o.path}
+                </option>
+              ))}
+            </select>
+            <div className="field-hint">
+              {grantTab==='org' ? '💡 组织授权将自动包含该节点下全部直属与递归子部门成员。' : grantTab==='role' ? '💡 绑定该角色的所有当前及未来成员均自动获得访问权。' : '💡 单人授权仅对该成员账号独立生效。'}
+            </div>
+          </div>
+
+          <div className="field">
+            <label>4️⃣ 授权有效期</label>
+            <select value={expiresAt} onChange={e=>setExpiresAt(e.target.value)}>
+              <option value="">永久有效 (长期知识资产推荐)</option>
+              <option value="30">30 天 (临时协作)</option>
+              <option value="90">90 天 (季度专项)</option>
+              <option value="365">1 年 (年度授权)</option>
+            </select>
+          </div>
+
+          <button
+            className="btn primary"
+            disabled={!subjectId || !kbId}
+            style={{width:'100%',justifyContent:'center',padding:'8px 16px',marginTop:4}}
+            onClick={addGrant}
+          >
+            <Icon name="plus" size={12}/> 确认并签发授权规则
+          </button>
         </div>
+
+        {/* Right: Current Active Grants Table Card */}
+        <div>
+          <div className="admin-toolbar">
+            <div className="admin-toolbar-left">
+              <div className="search-input">
+                <input placeholder="搜索已授权主体名称 / 所属范围…" value={search} onChange={e => setSearch(e.target.value)}/>
+              </div>
+              {search && (
+                <button className="btn" style={{padding:'4px 8px',fontSize:'11.5px'}} onClick={()=>setSearch('')}>
+                  重置
+                </button>
+              )}
+            </div>
+            <div className="toolbar-count">
+              当前知识库生效授权: <b>{filteredGrants.length}</b> 条
+            </div>
+          </div>
+
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>授权主体</th>
+                  <th style={{width:90,textAlign:'center'}}>主体类型</th>
+                  <th style={{width:120}}>有效期</th>
+                  <th style={{width:70,textAlign:'right'}}>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredGrants.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} style={{textAlign:'center',padding:'48px 0',color:'var(--ink-4)'}}>
+                      <div style={{fontSize:'32px',marginBottom:'8px'}}>🔑</div>
+                      <div style={{fontWeight:500,color:'var(--ink-3)'}}>
+                        {currentGrants.length === 0 ? '该行业库当前暂无生效授权记录' : '没有匹配的授权记录'}
+                      </div>
+                      <div style={{fontSize:'11.5px',color:'var(--ink-4)',marginTop:4}}>
+                        可在左侧表单选择人员、角色或组织为本科室添加访问权限
+                      </div>
+                    </td>
+                  </tr>
+                ) : filteredGrants.map((g,i) => (
+                  <tr key={g.id || i}>
+                    <td>
+                      <div style={{display:'flex',alignItems:'center',gap:10}}>
+                        {g.avatar ? (
+                          <div className="avatar" style={{width:28,height:28,fontSize:11,background:'#2563eb',color:'#fff'}}>
+                            {g.avatar}
+                          </div>
+                        ) : (
+                          <div style={{width:28,height:28,borderRadius:'50%',background:'var(--surface-2)',display:'flex',alignItems:'center',justifyContent:'center',border:'1px solid var(--line)'}}>
+                            <Icon name={g.type==='role'?'users':'folder'} size={14} color="var(--ink-2)"/>
+                          </div>
+                        )}
+                        <div>
+                          <div style={{fontWeight:600,color:'var(--ink)',fontSize:'13px'}}>{g.subj}</div>
+                          <div style={{fontSize:'11.5px',color:'var(--ink-3)',marginTop:2}}>{g.scope}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td style={{textAlign:'center'}}>
+                      <span
+                        className="badge"
+                        style={{
+                          fontSize:'11px',
+                          padding:'2px 7px',
+                          background: g.type==='user'?'#EFF6FF':g.type==='role'?'#F5F3FF':'#ECFDF5',
+                          color: g.type==='user'?'#1D4ED8':g.type==='role'?'#6D28D9':'#047857',
+                          borderColor: g.type==='user'?'#BFDBFE':g.type==='role'?'#DDD6FE':'#A7F3D0'
+                        }}
+                      >
+                        {g.type==='user'?'👤 人员':g.type==='role'?'🛡️ 角色':'🏢 组织'}
+                      </span>
+                    </td>
+                    <td>
+                      <span style={{fontSize:'12px',color:g.exp==='永久'?'var(--success)':'var(--ink-2)',fontWeight:g.exp==='永久'?500:400}}>
+                        {g.exp === '永久' ? '♾️ 永久有效' : `至 ${g.exp}`}
+                      </span>
+                    </td>
+                    <td style={{textAlign:'right'}}>
+                      <button
+                        className="btn danger"
+                        style={{padding:'3px 8px',fontSize:'11.5px'}}
+                        onClick={()=>setRevokingGrant(g)}
+                      >
+                        撤销
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {revokingGrant && (
+        <ConfirmModal
+          title="撤销知识库授权"
+          msg={
+            <>
+              确认撤销 <b>【{revokingGrant.subj}】</b> 对 <b>【{selectedKbObj?.name || '当前行业库'}】</b> 的访问权限？
+              撤销后，该主体对应的人员在大脑问答与检索中将不再能访问本库知识。
+            </>
+          }
+          onConfirm={async()=>{
+            const response = await fetch(`${API_BASE_URL}/api/v1/admin/grants/${revokingGrant.id}`,{
+              method:'DELETE',
+              headers:apiHeaders()
+            });
+            if (!response.ok) throw new Error('撤销失败');
+            window.dispatchEvent(new CustomEvent('app-toast',{detail:'授权已撤销'}));
+            window.dispatchEvent(new CustomEvent('app-data-refresh'));
+          }}
+          onClose={()=>setRevokingGrant(null)}
+        />
+      )}
+    </>
+  );
+}
+
+/* ============== Admin: 组织架构全景 (OrgPanel) ============== */
+function OrgPanel({
+  orgTree,
+  expandedIds,
+  onToggle,
+  setExpandedIds,
+  onAddChild,
+  onSetAdmin,
+  onActivateKb,
+  onDeactivateKb,
+  onManageKb,
+  canCreateRoot = false
+}){
+  const [selectedNodeId, setSelectedNodeId] = useState<string>(() => orgTree?.id || '');
+  const [nodeSearch, setNodeSearch] = useState('');
+
+  // 递归查找选中节点
+  const findNode = (n: any, id: string): any => {
+    if (!n) return null;
+    if (n.id === id) return n;
+    for (const c of (n.children || [])) {
+      const found = findNode(c, id);
+      if (found) return found;
+    }
+    return null;
+  };
+
+  const selectedNode = findNode(orgTree, selectedNodeId) || orgTree;
+  const flatNodes = useMemo(() => flattenOrgTree(orgTree), [orgTree]);
+  const subtreeUserCount = useMemo(() => selectedNode ? countSubtreeUsers(selectedNode, USERS) : 0, [selectedNode]);
+  const directUsers = useMemo(() => selectedNode ? USERS.filter((u: any) => (u.orgNodes || []).some((on: any) => on.id === selectedNode.id) || (u.orgIds || []).includes(selectedNode.id)) : [], [selectedNode]);
+
+  const expandAll = () => {
+    const s = new Set<string>();
+    const walk = (n: any) => { s.add(n.id); (n.children || []).forEach(walk); };
+    if (orgTree) walk(orgTree);
+    setExpandedIds(s);
+  };
+
+  const collapseAll = () => {
+    setExpandedIds(new Set());
+  };
+
+  return (
+    <>
+      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:20}}>
+        <div>
+          <div className="h1">组织架构拓扑</div>
+          <div className="subline">维护企业多级组织树拓扑 · 支持各级独立挂载部门知识库与指定部门知识管理员</div>
+        </div>
+        <div style={{display:'flex',gap:8}}>
+          <button className="btn" onClick={expandAll}>⤢ 展开全部</button>
+          <button className="btn" onClick={collapseAll}>⤡ 折叠全部</button>
+          {canCreateRoot && (
+            <button className="btn primary" onClick={()=>onAddChild(orgTree || {id:null,name:'根节点'})}>
+              <Icon name="plus" size={12}/> 新增一级组织
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="split-layout-container">
+        {/* Left: Interactive Tree Card */}
+        <div className="split-card" style={{padding:'16px'}}>
+          <div className="split-card-header">
+            <div className="split-card-title">
+              🏢 组织拓扑树
+            </div>
+            <span style={{fontSize:'11.5px',color:'var(--ink-3)'}}>共 {flatNodes.length} 个节点</span>
+          </div>
+
+          <div style={{marginBottom:10}}>
+            <div className="search-input" style={{maxWidth:'100%'}}>
+              <input placeholder="快速筛选组织节点…" value={nodeSearch} onChange={e=>setNodeSearch(e.target.value)}/>
+            </div>
+          </div>
+
+          <div className="org-tree-box">
+            {orgTree ? (
+              <OrgTreeItem
+                node={orgTree}
+                depth={0}
+                expandedIds={expandedIds}
+                selectedNodeId={selectedNodeId}
+                onSelect={(id: string)=>setSelectedNodeId(id)}
+                onToggle={onToggle}
+                onAddChild={onAddChild}
+                onSetAdmin={onSetAdmin}
+                search={nodeSearch}
+              />
+            ) : (
+              <div style={{padding:24,color:'var(--ink-4)',textAlign:'center'}}>暂无组织节点</div>
+            )}
+          </div>
+        </div>
+
+        {/* Right: Selected Node Profile Card */}
+        {selectedNode ? (
+          <div className="split-card">
+            <div className="split-card-header">
+              <div>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <span style={{fontSize:'20px'}}>🏢</span>
+                  <div style={{fontSize:'16px',fontWeight:600,color:'var(--ink)'}}>{selectedNode.name}</div>
+                  {selectedNode.kbs && selectedNode.kbs.length > 0 ? (
+                    <span className="badge ok" style={{fontSize:'11px'}}>🟢 部门库已激活</span>
+                  ) : (
+                    <span className="badge" style={{fontSize:'11px'}}>⚪ 未激活部门库</span>
+                  )}
+                </div>
+                <div style={{fontSize:'11.5px',color:'var(--ink-3)',marginTop:4}}>
+                  全路径：{selectedNode.path || selectedNode.name}
+                </div>
+              </div>
+              <div style={{display:'flex',gap:6}}>
+                {selectedNode.canCreateChild && (
+                  <button className="btn primary" style={{fontSize:'11.5px',padding:'4px 10px'}} onClick={()=>onAddChild(selectedNode)}>
+                    <Icon name="plus" size={12}/> 添加子组织
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* KPI Metrics */}
+            <div className="org-kpi-grid">
+              <div className="org-kpi-box">
+                <div className="kpi-label">👥 组织穿透总人数</div>
+                <div className="kpi-val">{subtreeUserCount} <span style={{fontSize:'12px',fontWeight:400,color:'var(--ink-3)'}}>人 (直属 {directUsers.length} 人)</span></div>
+              </div>
+              <div className="org-kpi-box">
+                <div className="kpi-label">📁 下级子部门数</div>
+                <div className="kpi-val">{selectedNode.children?.length || 0} <span style={{fontSize:'12px',fontWeight:400,color:'var(--ink-3)'}}>个下属分支</span></div>
+              </div>
+            </div>
+
+            {/* Department Knowledge Base Section */}
+            <div style={{background:'var(--surface-2)',border:'1px solid var(--line-2)',borderRadius:8,padding:'14px 16px',marginBottom:16}}>
+              <div style={{fontSize:'13px',fontWeight:600,color:'var(--ink)',marginBottom:6,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                <span>📚 组织知识库</span>
+                {selectedNode.knowledgeBase && (
+                  <span style={{fontSize:'11px',color:'var(--ink-3)'}}>
+                    文档数：{selectedNode.knowledgeBase.docCount || 0} 篇
+                  </span>
+                )}
+              </div>
+              {selectedNode.kbs && selectedNode.kbs.length > 0 ? (
+                <div>
+                  <div style={{fontSize:'12px',color:'var(--ink-2)',marginBottom:10,lineHeight:'1.5'}}>
+                    已为「{selectedNode.name}」启用专属组织知识库。同层及所有下属子部门成员均自动继承查阅权限。
+                  </div>
+                  <div style={{display:'flex',gap:8}}>
+                    {selectedNode.canManage && (
+                      <>
+                        <button className="btn primary" style={{fontSize:'12px'}} onClick={()=>onManageKb?.(selectedNode.knowledgeBase?.id)}>
+                          管理知识库文档
+                        </button>
+                        <button className="btn danger" style={{fontSize:'12px'}} onClick={()=>onDeactivateKb?.(selectedNode)}>
+                          去激活组织库
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <div style={{fontSize:'12px',color:'var(--ink-3)',marginBottom:10}}>
+                    当前节点尚未创建专属组织知识库。创建后该部门及下属成员可在此共享内部文档与制度。
+                  </div>
+                  {selectedNode.canManage && (
+                    <button className="btn primary" style={{fontSize:'12px'}} onClick={()=>onActivateKb?.(selectedNode)}>
+                      <Icon name="plus" size={12}/> 激活组织知识库
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Department Admins Section */}
+            <div style={{background:'var(--surface)',border:'1px solid var(--line)',borderRadius:8,padding:'14px 16px',marginBottom:16}}>
+              <div style={{fontSize:'13px',fontWeight:600,color:'var(--ink)',marginBottom:10,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                <span>👑 组织知识库管理员团队</span>
+                {selectedNode.canSetAdmin && (
+                  <button className="btn" style={{padding:'3px 9px',fontSize:'11.5px'}} onClick={()=>onSetAdmin(selectedNode)}>
+                    ⚙️ 设置管理员
+                  </button>
+                )}
+              </div>
+              <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
+                {(selectedNode.admins || []).length > 0 ? (
+                  selectedNode.admins.map((nm: string, i: number) => {
+                    const u = USERS.find((user: any) => user.name === nm);
+                    return (
+                      <div key={i} style={{display:'flex',alignItems:'center',gap:6,background:'var(--surface-2)',border:'1px solid var(--line-2)',padding:'4px 10px',borderRadius:6}}>
+                        <div className="avatar" style={{width:22,height:22,fontSize:10,background:'#2563eb',color:'#fff'}}>
+                          {(u?.initials || nm).slice(0, 2).toUpperCase()}
+                        </div>
+                        <span style={{fontSize:'12px',fontWeight:500,color:'var(--ink)'}}>{nm}</span>
+                        {u?.org && <span style={{fontSize:'11px',color:'var(--ink-4)'}}>({u.org})</span>}
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div style={{fontSize:'12px',color:'var(--ink-4)',fontStyle:'italic'}}>
+                    尚未指派管理员（将继承上级组织的管理策略）
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="split-card" style={{display:'flex',alignItems:'center',justifyContent:'center',padding:'60px 20px',color:'var(--ink-4)'}}>
+            请在左侧选择一个组织节点查看画像
+          </div>
+        )}
       </div>
     </>
   );
 }
 
-function OrgNode({node, depth, expandedIds, onToggle, onAddChild, onSetAdmin, onActivateKb, onDeactivateKb, onManageKb}){
+function OrgTreeItem({node, depth, expandedIds, selectedNodeId, onSelect, onToggle, onAddChild, onSetAdmin, search}: any){
   const open = expandedIds.has(node.id);
-  const hasChildren = node.children && node.children.length>0;
-  const isRoot = depth===0;
-  const hasKb = node.kbs && node.kbs.length>0;
-  const adminNames = node.admins || [];
+  const hasChildren = node.children && node.children.length > 0;
+  const isSelected = selectedNodeId === node.id;
+  const isMatch = !search || node.name.toLowerCase().includes(search.toLowerCase());
+
   return (
-    <div>
-      <div className={`org-node ${isRoot?'root':''}`} onClick={()=>onToggle(node.id)}>
+    <div style={{display: isMatch ? 'block' : 'none'}}>
+      <div
+        className={`org-node-row ${isSelected ? 'active' : ''}`}
+        style={{paddingLeft: `${8 + depth * 14}px`}}
+        onClick={() => {
+          onSelect(node.id);
+        }}
+      >
         {hasChildren ? (
-          <Icon name="chevron" size={11} className={`ic ${open?'open':''}`}/>
+          <span
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggle(node.id);
+            }}
+            style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:16,height:16,cursor:'pointer'}}
+          >
+            <Icon name="chevron" size={11} className={`ic ${open ? 'open' : ''}`}/>
+          </span>
         ) : (
-          <span style={{width:11,display:'inline-block'}}/>
+          <span style={{width:16,display:'inline-block'}}/>
         )}
-        <span className="nm">{node.name}</span>
-        {adminNames.length>0 && <span style={{fontSize:11,color:'var(--ink-3)'}}>· {adminNames.join('、')}</span>}
-        {hasKb ? <span className="tag">组织库已激活</span> : <span className="tag" style={{color:'var(--ink-4)',background:'var(--surface-2)'}}>未激活组织库</span>}
-        <span className="ct">{hasChildren?`${node.children.length} 个下级`:'—'}</span>
-        <span className="org-acts" onClick={e=>e.stopPropagation()}>
-          {node.canSetAdmin && <button className="act" onClick={()=>onSetAdmin(node)} title="设置本组织的知识库管理员">管理员</button>}
-          {node.canManage && (hasKb ? <>
-            <button className="act" onClick={()=>onManageKb?.(node.knowledgeBase?.id)} title="打开该组织知识库">管理知识库</button>
-            <button className="act danger" onClick={()=>onDeactivateKb?.(node)} title="停用该组织知识库">去激活</button>
-          </> : <button className="act" onClick={()=>onActivateKb?.(node)} title="创建并启用该组织知识库">激活组织库</button>)}
-          {node.canCreateChild && <button className="act" onClick={()=>onAddChild(node)} title="在此组织下新增子组织">+ 子组织</button>}
+        <span style={{fontSize:'13px',marginRight:4}}>
+          {depth === 0 ? '🏢' : hasChildren ? '📁' : '📄'}
+        </span>
+        <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+          {node.name}
+        </span>
+        {node.kbs && node.kbs.length > 0 && (
+          <span className="badge ok" style={{fontSize:'9.5px',padding:'0 4px'}}>库</span>
+        )}
+        <span style={{fontSize:'11px',color:'var(--ink-4)',fontVariantNumeric:'tabular-nums'}}>
+          {node.children?.length ? `${node.children.length}` : ''}
         </span>
       </div>
       {open && hasChildren && (
-        <div className="org-children">
-          {node.children.map((c,i)=>(
-            <OrgNode key={c.id||i} node={c} depth={depth+1} expandedIds={expandedIds} onToggle={onToggle} onAddChild={onAddChild} onSetAdmin={onSetAdmin} onActivateKb={onActivateKb} onDeactivateKb={onDeactivateKb} onManageKb={onManageKb}/>
+        <div style={{borderLeft:'1px dashed var(--line-2)',marginLeft:`${15 + depth * 14}px`}}>
+          {node.children.map((c: any, i: number) => (
+            <OrgTreeItem
+              key={c.id || i}
+              node={c}
+              depth={depth + 1}
+              expandedIds={expandedIds}
+              selectedNodeId={selectedNodeId}
+              onSelect={onSelect}
+              onToggle={onToggle}
+              onAddChild={onAddChild}
+              onSetAdmin={onSetAdmin}
+              search={search}
+            />
           ))}
         </div>
       )}
@@ -2365,15 +4709,17 @@ function runForceLayout(nodes, edges, options) {
         const b = pos[j]; const bNode = nodes[j];
         let dx = a.x - b.x; let dy = a.y - b.y;
         let dist2 = dx * dx + dy * dy; if (dist2 < 1) { dist2 = 1; dx = (Math.random() - 0.5); dy = (Math.random() - 0.5); }
-        const dist = Math.sqrt(dist2);
-        const force = chargeStrength / dist2 * alpha;
-        const fx = (dx / dist) * force; const fy = (dy / dist) * force;
+        const dist = Math.max(Math.sqrt(dist2), 0.1);
+        const repulseForce = (Math.abs(chargeStrength) / (dist2 + 40)) * alpha;
+        const fx = (dx / dist) * repulseForce; const fy = (dy / dist) * repulseForce;
         a.fx += fx; a.fy += fy; b.fx -= fx; b.fy -= fy;
-        const minDist = radiusFor(aNode) + radiusFor(bNode) + 6;
+        const minDist = radiusFor(aNode) + radiusFor(bNode) + 12;
         if (dist < minDist) {
-          const push = (minDist - dist) / dist * 0.5;
-          a.x += dx * push; a.y += dy * push;
-          b.x -= dx * push; b.y -= dy * push;
+          const push = (minDist - dist) / dist * 0.4 * alpha;
+          a.fx += (dx / dist) * push * 10;
+          a.fy += (dy / dist) * push * 10;
+          b.fx -= (dx / dist) * push * 10;
+          b.fy -= (dy / dist) * push * 10;
         }
       }
     }
@@ -2388,12 +4734,14 @@ function runForceLayout(nodes, edges, options) {
       const k = diff * 0.18 * alpha * (1 + Math.min(2, (e.weight || 1) * 0.1));
       a.fx += dx * k; a.fy += dy * k; b.fx -= dx * k; b.fy -= dy * k;
     }
-    const step = 1.6;
+    const damp = 0.2;
     for (let i = 0; i < N; i++) {
-      pos[i].x += pos[i].fx * step;
-      pos[i].y += pos[i].fy * step;
-      pos[i].x = Math.max(40, Math.min(width - 40, pos[i].x));
-      pos[i].y = Math.max(40, Math.min(height - 40, pos[i].y));
+      const vx = Math.max(-15, Math.min(15, pos[i].fx * damp));
+      const vy = Math.max(-15, Math.min(15, pos[i].fy * damp));
+      pos[i].x += vx;
+      pos[i].y += vy;
+      pos[i].x = Math.max(60, Math.min(width - 60, pos[i].x));
+      pos[i].y = Math.max(60, Math.min(height - 60, pos[i].y));
     }
   }
   return nodes.map((n, i) => ({ ...n, x: pos[i].x, y: pos[i].y }));
@@ -2416,7 +4764,7 @@ function KnowledgeGraphScreen({ onOpenDocument, onOpenKb }){
   const svgRef = useRef(null);
   const dragRef = useRef(null);
   const panRef = useRef(null);
-  const [canvasSize, setCanvasSize] = useState({ w: 900, h: 600 });
+  const [canvasSize, setCanvasSize] = useState({ w: 1100, h: 720 });
 
   useEffect(() => {
     let active = true;
@@ -2478,9 +4826,11 @@ function KnowledgeGraphScreen({ onOpenDocument, onOpenKb }){
     const canvas = svgRef.current?.parentElement;
     if (!canvas) return undefined;
     const update = () => {
-      const w = Math.max(canvas.clientWidth - 24, 320);
-      const h = Math.max(canvas.clientHeight - 24, 360);
-      setCanvasSize((prev) => prev.w === w && prev.h === h ? prev : { w, h });
+      if (canvas.clientWidth > 100 && canvas.clientHeight > 100) {
+        const w = canvas.clientWidth;
+        const h = canvas.clientHeight;
+        setCanvasSize((prev) => (Math.abs(prev.w - w) > 20 || Math.abs(prev.h - h) > 20) ? { w, h } : prev);
+      }
     };
     update();
     const ro = new ResizeObserver(update);
@@ -2498,6 +4848,18 @@ function KnowledgeGraphScreen({ onOpenDocument, onOpenKb }){
           if (sameParams) return prev;
         }
         const positioned = runForceLayout(focusNodes, focusEdges, { width: w, height: h, chargeStrength: params.charge, linkDistance: params.link });
+        requestAnimationFrame(() => {
+          const xs = positioned.map((n: any) => n.x); const ys = positioned.map((n: any) => n.y);
+          if (xs.length > 0) {
+            const minX = Math.min(...xs); const maxX = Math.max(...xs);
+            const minY = Math.min(...ys); const maxY = Math.max(...ys);
+            const bboxW = Math.max(maxX - minX, 1); const bboxH = Math.max(maxY - minY, 1);
+            const kx = (w - 80) / bboxW; const ky = (h - 80) / bboxH;
+            const k = Math.min(1.8, Math.max(0.7, Math.min(kx, ky)));
+            const cx = (minX + maxX) / 2; const cy = (minY + maxY) / 2;
+            setTransform({ k, x: w / 2 - cx * k, y: h / 2 - cy * k });
+          }
+        });
         return { nodes: positioned, _root: localRoot, _count: focusNodes.length, _charge: params.charge, _link: params.link, _w: w, _h: h };
       });
     }, 16);
@@ -2605,18 +4967,7 @@ function KnowledgeGraphScreen({ onOpenDocument, onOpenKb }){
   }, []);
 
   const fitView = () => {
-    const canvas = svgRef.current?.parentElement;
-    if (!canvas || !layout) return;
-    const xs = layout.nodes.map((n) => n.x); const ys = layout.nodes.map((n) => n.y);
-    const minX = Math.min(...xs); const maxX = Math.max(...xs);
-    const minY = Math.min(...ys); const maxY = Math.max(...ys);
-    const pad = 40;
-    const cw = canvas.clientWidth; const ch = canvas.clientHeight;
-    const bboxW = Math.max(maxX - minX, 1); const bboxH = Math.max(maxY - minY, 1);
-    const kx = (cw - pad * 2) / bboxW; const ky = (ch - pad * 2) / bboxH;
-    const k = Math.min(3, Math.max(0.4, Math.min(kx, ky)));
-    const cx = (minX + maxX) / 2; const cy = (minY + maxY) / 2;
-    setTransform({ k, x: cw / 2 - cx * k, y: ch / 2 - cy * k });
+    setTransform({ x: 0, y: 0, k: 1.0 });
   };
 
   const resetView = () => { setTransform({ x: 0, y: 0, k: 1 }); };
@@ -2626,9 +4977,19 @@ function KnowledgeGraphScreen({ onOpenDocument, onOpenKb }){
   useEffect(() => {
     if (!layout) return;
     const key = `${layout._root || 'global'}:${layout._count}:${layout._w}x${layout._h}`;
-    if (key === lastFitKey.current) return;
-    lastFitKey.current = key;
-    requestAnimationFrame(() => fitView());
+    if (key !== lastFitKey.current) {
+      lastFitKey.current = key;
+      requestAnimationFrame(() => fitView());
+    }
+    const canvas = svgRef.current?.parentElement;
+    if (!canvas || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      if (canvas.clientWidth > 100) {
+        fitView();
+      }
+    });
+    ro.observe(canvas);
+    return () => ro.disconnect();
   }, [layout]);
   const centerOnSelected = () => {
     if (!selected || !positions.has(selected)) return;
@@ -2740,7 +5101,7 @@ function KnowledgeGraphScreen({ onOpenDocument, onOpenKb }){
                   <path d="M 0 0 L 10 5 L 0 10 z" fill="#b9b5ae" />
                 </marker>
               </defs>
-              <g transform={`translate(${transform.x},${transform.y}) scale(${transform.k})`}>
+              <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.k})`}>
                 {focusEdges.map((edge) => {
                   const a = positions.get(edge.source); const b = positions.get(edge.target);
                   if (!a || !b) return null;
@@ -2896,6 +5257,9 @@ function App(){
 
   const [dbData, setDbData] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
+  // Keep server HTML and the first browser render identical. Reading
+  // localStorage in the state initializer caused a production hydration
+  // mismatch on a fresh visit and could surface Next's "page couldn't load".
   const [authState, setAuthState] = useState('checking');
   const [loginError, setLoginError] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
@@ -2923,7 +5287,7 @@ function App(){
       const sessionRes = await fetch(`${API_BASE_URL}/api/v1/session/bootstrap`, { headers: { Authorization: `Bearer ${token}` } });
       if (!sessionRes.ok) throw new Error(`API ${sessionRes.status}`);
       const session = await sessionRes.json();
-      d = { ...session, kbs: session.kbs || [], users: [], orgs: [], roles: [], grants: [], providers: [], models: [], audit: [] };
+      d = { ...session, kbs: session.kbs || [], users: [], orgs: [], roles: [], grants: [], providers: [], models: [], audit: [], dream: null };
     } else {
       throw new Error(`API ${res.status}`);
     }
@@ -2946,6 +5310,8 @@ function App(){
       const memberships = u.orgs || [];
       const roles = (u.roles || []).map((item: any) => item.role?.name).filter(Boolean);
       const orgNodes = memberships.map((item: any) => item.orgNode).filter(Boolean);
+      const orgNames = orgNodes.map((node: any) => node.name).filter(Boolean);
+      const orgPaths = orgNodes.map((node: any) => node.path || node.name).filter(Boolean);
       return {
         id: u.id,
         name: u.displayName || u.username,
@@ -2954,9 +5320,12 @@ function App(){
         t: u.source === 'manual' ? '手动创建' : (u.source || '系统用户'),
         roles: roles.length ? roles : ['普通用户'],
         status: u.status || 'active',
-        org: orgNodes.map((node: any) => node.name).join('、') || '未分配组织',
-        orgPath: orgNodes.map((node: any) => node.path || node.name).join('、') || '—',
+        org: orgNames.join('、') || '未分配组织',
+        orgPath: orgPaths.join('、') || '—',
+        orgs: orgNames,
+        orgNodes: orgNodes,
         orgIds: orgNodes.map((node: any) => node.id),
+        canManage: Boolean(u.canManage),
       };
     });
     ROLES = (d.roles || []).map((role: any) => ({ ...role, desc: role.description || '', perms: Array.isArray(role.permissions) ? role.permissions : (role.perms || []) }));
@@ -2984,6 +5353,7 @@ function App(){
       (MODELS[kind] ||= []).push({ ...model, name: model.modelName, provider: model.provider?.name || '—', ctx: `${Math.round((model.contextLen || 0) / 1024) || model.contextLen}K`, dim: model.dimensions ? `${model.dimensions} 维` : '', default: model.isDefault, tested: model.testStatus === 'passed' });
     });
     AUDIT = (d.audit || []).map((item: any) => ({ ...item, when: new Date(item.when).toLocaleString('zh-CN'), what: item.action, actor: item.actor }));
+    DREAM = d.dream || null;
     setCurrentUser(d.user || null);
     if (d.orgs?.length) {
       const nodes = d.orgs.map((node: any) => ({ ...node, kbs: (node.kbs || []).map((kb: any) => kb.id), knowledgeBase: (node.kbs || [])[0] || null, admins: (node.admins || []).map((a: any) => a.user?.displayName || a.user?.username).filter(Boolean), children: [] }));
@@ -3036,8 +5406,13 @@ function App(){
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.message || '登录失败');
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (response.status === 429 || (result.message && String(result.message).includes('Too Many Requests'))) {
+          throw new Error('请求过于频繁，请稍候再试');
+        }
+        throw new Error(result.message || '登录失败');
+      }
       window.localStorage.setItem('llmwiki_token', result.token);
       await loadAdminData(result.token);
       setAuthState('loggedIn');
@@ -3061,7 +5436,7 @@ function App(){
   
 
 
-  const [screen, setScreen] = useState(() => typeof window !== 'undefined' && window.location.pathname.startsWith('/admin') ? 'admin' : 'chat');
+  const [screen, setScreen] = useState('chat');
   const [adminTab, setAdminTab] = useState('org');
   const [libraryKbId, setLibraryKbId] = useState(null);
   const [toast, setToast] = useState(null);
@@ -3071,13 +5446,12 @@ function App(){
   const [helpOpen, setHelpOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
 
-  const openGraphDocument = async (kbId, documentId, title) => {
-    try {
-      const config = await fetchOnlinePreviewConfig(kbId, documentId);
-      setGraphOnlinePreview({ title: title || '原始文档', ...config });
-    } catch (error) {
-      window.dispatchEvent(new CustomEvent('app-toast', { detail: error.message || '原始文档预览失败' }));
-    }
+  useEffect(() => {
+    if (window.location.pathname.startsWith('/admin')) setScreen('admin');
+  }, []);
+
+  const openGraphDocument = (kbId, documentId, title) => {
+    setGraphOnlinePreview({ kbId, docId: documentId, title: title || '原始文档' });
   };
   const openGraphKb = (kbId) => {
     setLibraryKbId(kbId);
@@ -3168,7 +5542,7 @@ function App(){
           theme={theme || 'light'}
           onToggleTheme={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')}
           onOpenPalette={() => setPaletteOpen(true)}
-          onOpenHelp={() => setHelpOpen(true)}
+          onOpenHelp={() => { window.location.assign('/help'); }}
           onOpenNotifications={() => setNotifOpen(true)}
         />
         <div className="content">

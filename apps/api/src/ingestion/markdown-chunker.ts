@@ -4,11 +4,17 @@ export interface IndexedMarkdownChunk {
   tokenCount: number;
   charStart: number;
   charEnd: number;
-  metadata: Record<string, unknown>;
+  metadata: {
+    section: string;
+    parentContext?: string;
+    chunkStrategy: string;
+    overlapChars: number;
+    [key: string]: unknown;
+  };
 }
 
-const MAX_CHARS = 4800;
-const OVERLAP_CHARS = 480;
+const MAX_CHARS = 1800;
+const OVERLAP_CHARS = 200;
 
 type Section = { start: number; end: number; heading: string };
 
@@ -41,17 +47,18 @@ function chooseBoundary(markdown: string, start: number, targetEnd: number): num
 
 /**
  * Split parsed Markdown on heading boundaries and paragraph-safe windows.
- * GBrain still receives the complete document under one canonical slug; these
- * chunks are the durable DB representation used for retrieval, ACL and sync.
+ * Generates child chunks with attached parent section context for high-precision retrieval.
  */
 export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[] {
+  const cleanMarkdown = (markdown || '').replace(/\0/g, '').replace(/\u0000/g, '');
   const chunks: IndexedMarkdownChunk[] = [];
-  for (const section of findSections(markdown)) {
+  for (const section of findSections(cleanMarkdown)) {
+    const sectionBody = cleanMarkdown.slice(section.start, section.end).trim();
     let start = section.start;
     let first = true;
     while (start < section.end) {
-      const end = chooseBoundary(markdown, start, Math.min(start + MAX_CHARS, section.end));
-      const raw = markdown.slice(start, end);
+      const end = chooseBoundary(cleanMarkdown, start, Math.min(start + MAX_CHARS, section.end));
+      const raw = cleanMarkdown.slice(start, end);
       const content = raw.trim();
       if (content) {
         const withHeading = !first && section.heading && !content.startsWith(section.heading)
@@ -65,7 +72,8 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
           charEnd: end,
           metadata: {
             section: section.heading || '文档正文',
-            chunkStrategy: 'markdown-section-window',
+            parentContext: sectionBody.length <= 4000 ? sectionBody : undefined,
+            chunkStrategy: 'parent-child-section-window',
             overlapChars: first ? 0 : OVERLAP_CHARS,
           },
         });

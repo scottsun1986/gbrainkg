@@ -1,8 +1,8 @@
 declare const require: any;
 declare const process: any;
 
-const { mkdir, writeFile, access } = require('node:fs').promises;
-const { join } = require('node:path');
+const { mkdir, writeFile, access, rename, unlink, readdir } = require('node:fs').promises;
+const { join, dirname } = require('node:path');
 const { spawn } = require('node:child_process');
 
 export interface BrainEvidence {
@@ -18,8 +18,19 @@ export interface BrainEvidence {
 export interface BrainQueryResult {
   topics: string[];
   answer: string;
-  citations: Array<{ topic: string; kbId?: string; docId?: string; docTitle?: string; snippet: string; context?: string }>;
+  citations: Array<{ topic: string; kbId?: string; docId?: string; docTitle?: string; snippet: string; context?: string; score?: number }>;
   reranked?: boolean;
+}
+
+export interface BrainQueryOptions {
+  breadth?: boolean;
+}
+
+export interface BrainMaintenanceResult {
+  status?: string;
+  schema_version?: string;
+  phases?: Array<{ phase?: string; status?: string; summary?: string; reason?: string }>;
+  [key: string]: unknown;
 }
 
 function safePart(value: string): string {
@@ -28,16 +39,6 @@ function safePart(value: string): string {
 
 function sourceIdForUser(userId: string): string {
   return `llmwiki-${safePart(userId.replace(/-/g, '').slice(0, 16))}`.slice(0, 32);
-}
-
-function stripPrismaUrl(value: string): string {
-  try {
-    const url = new URL(value);
-    url.search = '';
-    return url.toString();
-  } catch {
-    return value;
-  }
 }
 
 function yamlString(value: string): string {
@@ -73,9 +74,20 @@ export class BrainRepoAdapter {
   private readonly sourceRoot: string;
   private searchConfigSignature = '';
   private searchConfigPromise: Promise<void> | null = null;
+  private queryCache = new Map<string, { expiresAt: number; result: BrainQueryResult }>();
 
   constructor(basePath: string) {
     this.sourceRoot = join(basePath, 'gbrain-sources');
+  }
+
+  private invalidateCache(sourceId?: string): void {
+    if (!sourceId) {
+      this.queryCache.clear();
+      return;
+    }
+    for (const key of this.queryCache.keys()) {
+      if (key.startsWith(`${sourceId}:`)) this.queryCache.delete(key);
+    }
   }
 
   private sourceId(repoPath: string): string {
@@ -85,12 +97,21 @@ export class BrainRepoAdapter {
   }
 
   private async run(args: string[], input?: string): Promise<{ stdout: string; stderr: string }> {
-    const env = {
+    const env: Record<string, string> = {
       ...process.env,
       GBRAIN_HOME: this.gbrainHome,
       PATH: `/home/scottsun/.bun/bin:${process.env.PATH || ''}`,
-      DATABASE_URL: stripPrismaUrl(process.env.DATABASE_URL || ''),
     };
+    // Prisma accepts the `schema` query parameter, but the GBrain CLI treats
+    // it as a PostgreSQL runtime setting and fails with “unrecognized
+    // configuration parameter schema”. Keep the application URL untouched;
+    // only normalize the child-process environment used by GBrain.
+    const databaseUrl = process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL;
+    if (databaseUrl) {
+      env.DATABASE_URL = databaseUrl
+        .replace(/([?&])schema=[^&]*&?/i, "$1")
+        .replace(/[?&]$/, "");
+    }
     return new Promise((resolve, reject) => {
       const child = spawn(this.gbrainBin, args, { env, stdio: 'pipe' });
       let stdout = '';
@@ -200,6 +221,29 @@ export class BrainRepoAdapter {
     return `gbrain://source/${sourceId}`;
   }
 
+  private pagePath(sourcePath: string, slug: string): string {
+    const parts = slug.split('/').filter(Boolean).map((part) => part.trim().replace(/[^\p{L}\p{N}_-]+/gu, '-').replace(/^-+|-+$/g, ''));
+    if (!parts.length) throw new Error('A non-empty GBrain page slug is required.');
+    if (parts.some((part) => !part)) throw new Error(`Invalid GBrain page slug: ${slug}`);
+    return join(sourcePath, ...parts) + '.md';
+  }
+
+  /** Whether the source repository already contains canonical Markdown pages. */
+  async isSourceMaterialized(repoPath: string): Promise<boolean> {
+    const sourcePath = await this.ensureSource(this.sourceId(repoPath));
+    const walk = async (dir: string): Promise<boolean> => {
+      const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+      for (const entry of entries) {
+        if (entry.name === '.git') continue;
+        const path = join(dir, entry.name);
+        if (entry.isDirectory() && await walk(path)) return true;
+        if (entry.isFile() && entry.name.endsWith('.md')) return true;
+      }
+      return false;
+    };
+    return walk(sourcePath);
+  }
+
   async ingest(repoPath: string, evidence: BrainEvidence[]): Promise<void> {
     const sourceId = this.sourceId(repoPath);
     const sourcePath = await this.ensureSource(sourceId);
@@ -211,16 +255,21 @@ export class BrainRepoAdapter {
     for (const [slug, items] of grouped) {
       const content = canonicalPage(slug, items);
       if (content) {
-        // capture delegates to GBrain put_page: one canonical markdown page is
-        // recursively chunked, embedded and graph-linked by GBrain itself.
-        await this.run(['capture', '--stdin', '--slug', slug, '--type', 'source', '--source', sourceId, '--quiet'], content);
+        // The source repository is the durable system of record recommended by
+        // GBrain. Write canonical Markdown first, then let `sync` perform its
+        // own incremental chunking, embedding and graph projection.
+        const path = this.pagePath(sourcePath, slug);
+        await mkdir(dirname(path), { recursive: true });
+        const tempPath = `${path}.tmp`;
+        await writeFile(tempPath, `${content}\n`, 'utf8');
+        await rename(tempPath, path);
       }
     }
-    // GBrain's documented system of record is the source repository. Capture
-    // writes through to that repository; commit the incremental batch so a
-    // later sync/restore sees exactly the same canonical pages as Postgres.
+    if (!grouped.size) return;
     await this.runGit(['add', '-A'], sourcePath);
     await this.runGit(['commit', '-qm', 'sync knowledge documents'], sourcePath);
+    await this.run(['sync', '--source', sourceId]);
+    this.invalidateCache(sourceId);
   }
 
   async replace(repoPath: string, evidence: BrainEvidence[]): Promise<void> {
@@ -229,36 +278,86 @@ export class BrainRepoAdapter {
     await this.run(['sources', 'remove', sourceId, '--confirm-destructive']).catch(() => undefined);
     await this.ensureSource(sourceId);
     await this.ingest(repoPath, evidence);
+    this.invalidateCache(sourceId);
   }
 
   async delete(repoPath: string, slug: string): Promise<void> {
-    const sourceId = this.sourceId(repoPath);
-    await this.run(['delete', slug, '--source', sourceId]).catch((error) => {
-      if (!String(error).toLowerCase().includes('not found')) throw error;
-    });
+    await this.deleteMany(repoPath, [slug]);
   }
 
-  async query(repoPath: string, question: string): Promise<BrainQueryResult> {
+  async deleteMany(repoPath: string, slugs: string[]): Promise<void> {
+    if (!slugs.length) return;
     const sourceId = this.sourceId(repoPath);
+    const sourcePath = await this.ensureSource(sourceId);
+    for (const slug of slugs) {
+      await unlink(this.pagePath(sourcePath, slug)).catch((error: any) => {
+        if (error?.code !== 'ENOENT') throw error;
+      });
+    }
+    await this.runGit(['add', '-A'], sourcePath);
+    await this.runGit(['commit', '-qm', 'remove knowledge document'], sourcePath);
+    await this.run(['sync', '--source', sourceId]);
+    this.invalidateCache(sourceId);
+  }
+
+  /** Run GBrain's own deterministic maintenance phases for one named source. */
+  async maintain(repoPath: string): Promise<BrainMaintenanceResult | null> {
+    const sourceId = this.sourceId(repoPath);
+    await this.ensureSource(sourceId);
+    await this.ensureSearchConfig();
+    const { stdout } = await this.run(['dream', '--source', sourceId, '--json']);
+    // Dream may normalize frontmatter (for example, adding `created`) while
+    // maintaining the derived index. Keep the source repository clean and
+    // auditable so the next sync does not report those legitimate writes as
+    // uncommitted-work warnings.
+    const sourcePath = join(this.sourceRoot, sourceId);
+    await this.runGit(['add', '-A'], sourcePath);
+    await this.runGit(['commit', '-qm', 'gbrain dream maintenance'], sourcePath);
+    this.invalidateCache(sourceId);
+    // The CLI may print human-readable phase lines before its JSON document.
+    // Keep the machine-readable result so the API can expose real phase
+    // outcomes instead of treating a zero exit code as the whole story.
+    const trimmed = stdout.trim();
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      const start = trimmed.search(/\{\s*"schema_version"/);
+      if (start < 0) return null;
+      try { return JSON.parse(trimmed.slice(start)); } catch { return null; }
+    }
+  }
+
+  async query(repoPath: string, question: string, options: BrainQueryOptions = {}): Promise<BrainQueryResult> {
+    const sourceId = this.sourceId(repoPath);
+    const cacheKey = `${sourceId}:${options.breadth ? 'broad' : 'focused'}:${question.trim()}`;
+    const cached = this.queryCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.result;
+    }
     await this.ensureSearchConfig();
     // Use GBrain's official balanced retrieval stack as designed: query
     // expansion + vector/BM25/RRF + graph signals + reranker + autocut.
     // No application-side keyword rules or language-specific retries.
-    const { stdout } = await this.run([
+    const args = [
       'query', question,
       '--source-id', sourceId,
       '--mode', 'balanced',
-      '--limit', '30',
+      '--limit', options.breadth ? '50' : '30',
       '--detail', 'high',
       '--snippet-chars', '1800',
       '--json',
-    ]);
-    let rawRows: Array<{ slug: string; title: string; chunk_text?: string; source_id?: string; rerank_score?: number }> = [];
+    ];
+    // GBrain recommends disabling autocut for broad enumeration and landscape
+    // questions so the caller can judge a wider candidate set.
+    if (options.breadth) args.splice(args.length - 1, 0, '--autocut', 'false');
+    else args.splice(args.length - 1, 0, '--adaptive-return', 'true');
+    const { stdout } = await this.run(args);
+    let rawRows: Array<{ slug: string; title: string; chunk_text?: string; source_id?: string; rerank_score?: number; score?: number }> = [];
     try { rawRows = JSON.parse(stdout || '[]'); } catch { rawRows = []; }
 
     // GBrain can return multiple high-scoring chunks from one page. Collapse
     // them into one citation while retaining all distinct evidence snippets.
-    const bySlug = new Map<string, { slug: string; title: string; chunk_text: string; source_id?: string }>();
+    const bySlug = new Map<string, { slug: string; title: string; chunk_text: string; source_id?: string; rerank_score?: number; score?: number }>();
     for (const row of rawRows) {
       if (!row.slug) continue;
       const previous = bySlug.get(row.slug);
@@ -272,8 +371,8 @@ export class BrainRepoAdapter {
     // a fixed context budget. This gives the answer model complete policy
     // context for details, totals and cross-section questions without trying
     // to classify every possible wording in application code.
-    const pageBudget = Math.max(8_000, Number(process.env.GBRAIN_CONTEXT_MAX_CHARS || 80_000));
-    const maxParents = Math.max(1, Number(process.env.GBRAIN_CONTEXT_MAX_PARENTS || 3));
+    const pageBudget = Math.max(8_000, Number(process.env.GBRAIN_CONTEXT_MAX_CHARS || (options.breadth ? 120_000 : 80_000)));
+    const maxParents = Math.max(1, Number(process.env.GBRAIN_CONTEXT_MAX_PARENTS || (options.breadth ? 5 : 3)));
     let remaining = pageBudget;
     const pageContext = new Map<string, string>();
     for (const row of rows.slice(0, maxParents)) {
@@ -293,13 +392,20 @@ export class BrainRepoAdapter {
       docTitle: row.title,
       snippet: row.chunk_text || '',
       context: pageContext.get(row.slug) || row.chunk_text || '',
+      score: typeof row.rerank_score === 'number' ? row.rerank_score : row.score,
     }));
-    return {
+    const result: BrainQueryResult = {
       topics: citations.map((citation) => citation.topic),
       answer: citations.map((citation) => citation.context).filter(Boolean).join('\n\n'),
       citations,
       reranked: rawRows.some((row) => typeof row.rerank_score === 'number'),
     };
+    this.queryCache.set(cacheKey, { expiresAt: Date.now() + 30_000, result });
+    if (this.queryCache.size > 200) {
+      const oldest = this.queryCache.keys().next().value;
+      if (oldest) this.queryCache.delete(oldest);
+    }
+    return result;
   }
 
   private async getPage(repoPath: string, slug: string): Promise<string> {
@@ -314,15 +420,20 @@ export class BrainRepoAdapter {
   }
 
   /** Query the shared source plus the user's private permission-group sources. */
-  async queryMany(repoPaths: string[], question: string): Promise<BrainQueryResult> {
-    const results = await Promise.all(repoPaths.map((repoPath) => this.query(repoPath, question)));
+  async queryMany(repoPaths: string[], question: string, options: BrainQueryOptions = {}): Promise<BrainQueryResult> {
+    const results = await Promise.all(repoPaths.map((repoPath) => this.query(repoPath, question, options)));
     const citations = results.flatMap((result) => result.citations || []);
     const unique = new Map<string, BrainQueryResult['citations'][number]>();
     for (const citation of citations) {
       const key = `${citation.kbId || ''}:${citation.docId || citation.topic}`;
       if (!unique.has(key)) unique.set(key, citation);
     }
-    const merged = [...unique.values()].slice(0, 20);
+    // Every source is reranked with the same configured cross-encoder. Preserve
+    // those comparable scores when federating instead of biasing toward the
+    // source that happened to be queried first.
+    const merged = [...unique.values()]
+      .sort((a, b) => (typeof b.score === 'number' ? b.score : -Infinity) - (typeof a.score === 'number' ? a.score : -Infinity))
+      .slice(0, options.breadth ? 40 : 8);
     return {
       topics: merged.map((citation) => citation.topic),
       answer: merged.map((citation) => citation.context || citation.snippet).filter(Boolean).join('\n\n'),
