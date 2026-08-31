@@ -4,10 +4,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends antiword libreoffice curl \
+  && apt-get install -y --no-install-recommends antiword curl \
   && rm -rf /var/lib/apt/lists/*
 
 COPY apps/parser-worker/pyproject.toml apps/parser-worker/README.md ./
+RUN pip install --no-cache-dir \
+  --index-url https://download.pytorch.org/whl/cpu \
+  "torch>=2.2.2,<3.0.0" "torchvision>=0,<1.0.0"
 RUN pip install --no-cache-dir \
   "fastapi>=0.111.0" "uvicorn[standard]>=0.30.0" "pydantic>=2.7.0" \
   "python-multipart>=0.0.9" "minio>=7.2.7" "docling>=1.1.0"
