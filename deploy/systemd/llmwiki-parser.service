@@ -4,9 +4,11 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/gbrainkg/apps/parser-worker
-EnvironmentFile=%h/.config/llmwiki/production.env
-ExecStart=/usr/bin/python3 -m uvicorn src.main:app --host 0.0.0.0 --port 8100
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/gbrainkg/apps/parser-worker
+EnvironmentFile=/home/ubuntu/.config/llmwiki/production.env
+ExecStart=/home/ubuntu/gbrainkg/.venv/bin/python -m uvicorn src.main:app --host 127.0.0.1 --port 8100
 Restart=always
 RestartSec=5
 TimeoutStopSec=15
@@ -17,4 +19,4 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

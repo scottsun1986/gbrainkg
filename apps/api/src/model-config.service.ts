@@ -8,6 +8,14 @@ import {
 
 export type ModelKind = "llm" | "embedding" | "rerank";
 
+export interface ResolvedOcrConfig {
+  providerId: string;
+  provider: string;
+  baseUrl: string;
+  apiKey: string;
+  secretKey: string;
+}
+
 export interface ResolvedModelConfig {
   id: string;
   kind: ModelKind;
@@ -68,6 +76,27 @@ export class ModelConfigService implements OnModuleDestroy {
         apiKey,
         defaultParams: config.provider.defaultParams,
       },
+    };
+  }
+
+  async getOcrConfig(): Promise<ResolvedOcrConfig | null> {
+    const provider = await this.prisma.modelProvider.findFirst({
+      where: { kind: "ocr", enabled: true },
+      orderBy: { name: "asc" },
+    });
+    if (!provider) return null;
+    const apiKey = decryptModelCredential(provider.apiKeyEncrypted);
+    const secretKey = decryptModelCredential(provider.secretKeyEncrypted);
+    const defaultParams =
+      provider.defaultParams && typeof provider.defaultParams === "object"
+        ? (provider.defaultParams as Record<string, unknown>)
+        : {};
+    return {
+      providerId: provider.id,
+      provider: String(defaultParams.provider || "baidu").toLowerCase(),
+      baseUrl: provider.baseUrl,
+      apiKey,
+      secretKey,
     };
   }
 

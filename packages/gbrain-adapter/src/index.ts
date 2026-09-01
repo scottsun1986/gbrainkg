@@ -2,7 +2,7 @@ declare const require: any;
 declare const process: any;
 
 const { mkdir, writeFile, access, rename, unlink, readdir } = require('node:fs').promises;
-const { join, dirname } = require('node:path');
+const { join, dirname, resolve } = require('node:path');
 const { spawn } = require('node:child_process');
 
 export interface BrainEvidence {
@@ -75,6 +75,7 @@ export class BrainRepoAdapter {
   private searchConfigSignature = '';
   private searchConfigPromise: Promise<void> | null = null;
   private queryCache = new Map<string, { expiresAt: number; result: BrainQueryResult }>();
+  private sourceSyncLocks = new Map<string, Promise<void>>();
 
   constructor(basePath: string) {
     this.sourceRoot = join(basePath, 'gbrain-sources');
@@ -108,9 +109,14 @@ export class BrainRepoAdapter {
     // only normalize the child-process environment used by GBrain.
     const databaseUrl = process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL;
     if (databaseUrl) {
-      env.DATABASE_URL = databaseUrl
+      const normalizedDatabaseUrl = databaseUrl
         .replace(/([?&])schema=[^&]*&?/i, "$1")
         .replace(/[?&]$/, "");
+      // GBrain prefers GBRAIN_DATABASE_URL over DATABASE_URL. Normalize both
+      // planes so a Prisma-only `schema=public` parameter cannot make the CLI
+      // use a different connection string from the one we just validated.
+      env.DATABASE_URL = normalizedDatabaseUrl;
+      env.GBRAIN_DATABASE_URL = normalizedDatabaseUrl;
     }
     return new Promise((resolve, reject) => {
       const child = spawn(this.gbrainBin, args, { env, stdio: 'pipe' });
@@ -138,6 +144,94 @@ export class BrainRepoAdapter {
       });
       child.stdin.end(input);
     });
+  }
+
+  private parseJsonObject(raw: string): Record<string, any> {
+    const trimmed = raw.trim();
+    if (trimmed.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+      } catch {
+        // GBrain may emit a cost-gate envelope followed by the command result.
+        // Fall through and parse the last complete JSON line below.
+      }
+    }
+    const lines = trimmed.split(/\r?\n/);
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      const start = lines[index].indexOf('{');
+      if (start < 0) continue;
+      try {
+        const parsed = JSON.parse(lines[index].slice(start));
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+      } catch {
+        // Keep looking: human output or an earlier JSON envelope may precede
+        // the final machine-readable result.
+      }
+    }
+    throw new Error(`Invalid GBrain JSON response: ${trimmed.slice(0, 300)}`);
+  }
+
+  private async sourcePageCount(sourceId: string): Promise<number> {
+    const row = await this.registeredSource(sourceId);
+    if (!row) throw new Error(`GBrain source ${sourceId} is not present in the source status report.`);
+    const count = Number(row.total_pages ?? row.page_count);
+    if (!Number.isFinite(count)) throw new Error(`GBrain source ${sourceId} returned no page count.`);
+    return count;
+  }
+
+  private async registeredSource(sourceId: string): Promise<Record<string, any> | null> {
+    const { stdout } = await this.run(['sources', 'status', '--json']);
+    const payload = this.parseJsonObject(stdout);
+    return (Array.isArray(payload.sources) ? payload.sources : []).find(
+      (item: any) => item?.source_id === sourceId || item?.id === sourceId,
+    ) || null;
+  }
+
+  private async assertEmbeddingPlane(): Promise<void> {
+    const expected = Number(process.env.GBRAIN_EMBEDDING_DIMENSIONS || '');
+    if (!Number.isInteger(expected) || expected <= 0) return;
+    const { stdout } = await this.run(['migrate', 'embeddings', '--status']);
+    const match = stdout.match(/Column:\s+content_chunks\.embedding\s+(\d+)d/i);
+    if (!match) throw new Error('Unable to verify GBrain embedding dimensions from `gbrain migrate embeddings --status`.');
+    const actual = Number(match[1]);
+    if (actual !== expected) {
+      throw new Error(
+        `GBrain embedding plane mismatch: runtime is ${expected}d but content_chunks.embedding is ${actual}d. ` +
+        `Run the official migration to the configured embedding model before indexing or querying.`,
+      );
+    }
+  }
+
+  private async syncSource(sourceId: string, expectedAddedPages = 0): Promise<void> {
+    const previous = this.sourceSyncLocks.get(sourceId) || Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolveRelease) => { release = resolveRelease; });
+    const chain = previous.catch(() => undefined).then(() => current);
+    this.sourceSyncLocks.set(sourceId, chain);
+    await previous.catch(() => undefined);
+    try {
+      const { stdout } = await this.run(['sync', '--source', sourceId, '--json']);
+      const payload = this.parseJsonObject(stdout);
+      const sourceRows = Array.isArray(payload.sources) ? payload.sources : [];
+      const sourceError = sourceRows.find((item: any) => item?.status === 'error');
+      const syncStatus = String(payload.sync_status ?? payload.status ?? sourceRows[0]?.sync_status ?? '');
+      const errorCount = Number(payload.error_count ?? sourceRows[0]?.error_count ?? 0);
+      if (sourceError || errorCount > 0 || ['error', 'partial', 'blocked_by_failures'].includes(syncStatus)) {
+        throw new Error(`GBrain source sync failed for ${sourceId}: ${JSON.stringify(sourceError || payload)}`);
+      }
+      if (expectedAddedPages > 0) {
+        const indexedPages = await this.sourcePageCount(sourceId);
+        if (indexedPages < expectedAddedPages) {
+          throw new Error(
+            `GBrain source sync incomplete for ${sourceId}: expected at least ${expectedAddedPages} indexed page(s), found ${indexedPages}.`,
+          );
+        }
+      }
+    } finally {
+      release();
+      if (this.sourceSyncLocks.get(sourceId) === chain) this.sourceSyncLocks.delete(sourceId);
+    }
   }
 
   private async runGit(args: string[], cwd: string): Promise<void> {
@@ -184,6 +278,7 @@ export class BrainRepoAdapter {
       if (chatModel) await this.run(['config', 'set', 'chat_model', chatModel]);
       if (expansionModel) await this.run(['config', 'set', 'expansion_model', expansionModel]);
       if (deepseekBaseUrl) await this.run(['config', 'set', 'provider_base_urls.deepseek', deepseekBaseUrl]);
+      await this.assertEmbeddingPlane();
       this.searchConfigSignature = signature;
     })();
     try { await this.searchConfigPromise; } finally { this.searchConfigPromise = null; }
@@ -200,11 +295,35 @@ export class BrainRepoAdapter {
       await this.runGit(['add', '.gbrain-source'], sourcePath).catch(() => undefined);
       await this.runGit(['commit', '-qm', 'initialize source', '--allow-empty'], sourcePath).catch(() => undefined);
     }
+    let registration = { stdout: '', stderr: '' };
     try {
-      await this.run(['sources', 'add', sourceId, '--path', sourcePath, '--force']);
+      registration = await this.run(['sources', 'add', sourceId, '--path', sourcePath, '--force']);
     } catch (error: unknown) {
-      const message = String(error).toLowerCase();
-      if (!message.includes('already exists') && !message.includes('already registered')) throw error;
+      // The CLI uses exit code 1 for an already-registered source, even when
+      // the registration can be inspected and safely repaired below.
+      const message = String(error);
+      if (!message.toLowerCase().includes('already registered') && !message.toLowerCase().includes('already exists')) {
+        throw error;
+      }
+      registration = { stdout: '', stderr: message };
+    }
+    const registrationMessage = `${registration.stdout}\n${registration.stderr}`.toLowerCase();
+    if (registrationMessage.includes('already registered') || registrationMessage.includes('already exists')) {
+      const existing = await this.registeredSource(sourceId);
+      const existingPath = existing?.local_path ? resolve(String(existing.local_path)) : '';
+      if (existingPath && existingPath !== resolve(sourcePath)) {
+        const pages = Number(existing?.total_pages ?? existing?.page_count ?? 0);
+        if (pages > 0) {
+          throw new Error(
+            `GBrain source ${sourceId} is registered at ${existingPath} with ${pages} page(s), ` +
+            `but the application source path is ${resolve(sourcePath)}. Migrate the source explicitly before continuing.`,
+          );
+        }
+        // The stale registration has no indexed data. Rebind it safely while
+        // preserving the application's current Git repository on disk.
+        await this.run(['sources', 'remove', sourceId, '--confirm-destructive']);
+        await this.run(['sources', 'add', sourceId, '--path', sourcePath, '--force']);
+      }
     }
     return sourcePath;
   }
@@ -230,7 +349,8 @@ export class BrainRepoAdapter {
 
   /** Whether the source repository already contains canonical Markdown pages. */
   async isSourceMaterialized(repoPath: string): Promise<boolean> {
-    const sourcePath = await this.ensureSource(this.sourceId(repoPath));
+    const sourceId = this.sourceId(repoPath);
+    const sourcePath = await this.ensureSource(sourceId);
     const walk = async (dir: string): Promise<boolean> => {
       const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
       for (const entry of entries) {
@@ -241,12 +361,16 @@ export class BrainRepoAdapter {
       }
       return false;
     };
-    return walk(sourcePath);
+    if (!(await walk(sourcePath))) return false;
+    // A physical Markdown file is not enough: the production incident showed
+    // that the app DB can say a document is synced while GBrain has zero pages.
+    return (await this.sourcePageCount(sourceId)) > 0;
   }
 
   async ingest(repoPath: string, evidence: BrainEvidence[]): Promise<void> {
     const sourceId = this.sourceId(repoPath);
     const sourcePath = await this.ensureSource(sourceId);
+    await this.ensureSearchConfig();
     const grouped = new Map<string, BrainEvidence[]>();
     for (const item of evidence) {
       const slug = item.slug || `docs/${safePart(item.topic || 'document')}`;
@@ -268,7 +392,7 @@ export class BrainRepoAdapter {
     if (!grouped.size) return;
     await this.runGit(['add', '-A'], sourcePath);
     await this.runGit(['commit', '-qm', 'sync knowledge documents'], sourcePath);
-    await this.run(['sync', '--source', sourceId]);
+    await this.syncSource(sourceId, grouped.size);
     this.invalidateCache(sourceId);
   }
 
@@ -289,6 +413,7 @@ export class BrainRepoAdapter {
     if (!slugs.length) return;
     const sourceId = this.sourceId(repoPath);
     const sourcePath = await this.ensureSource(sourceId);
+    await this.ensureSearchConfig();
     for (const slug of slugs) {
       await unlink(this.pagePath(sourcePath, slug)).catch((error: any) => {
         if (error?.code !== 'ENOENT') throw error;
@@ -296,7 +421,7 @@ export class BrainRepoAdapter {
     }
     await this.runGit(['add', '-A'], sourcePath);
     await this.runGit(['commit', '-qm', 'remove knowledge document'], sourcePath);
-    await this.run(['sync', '--source', sourceId]);
+    await this.syncSource(sourceId);
     this.invalidateCache(sourceId);
   }
 

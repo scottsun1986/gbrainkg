@@ -9,6 +9,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
 } from "@nestjs/common";
@@ -52,7 +53,16 @@ export class AdminController {
   }
 
   @Get("data")
-  async getAllData(@Req() req: any) {
+  async getAllData(
+    @Req() req: any,
+    @Query("auditPage") auditPageParam?: string,
+    @Query("auditLimit") auditLimitParam?: string,
+    @Query("dreamPage") dreamPageParam?: string,
+  ) {
+    const auditPage = Math.max(1, Math.min(10000, Number.parseInt(auditPageParam || "1", 10) || 1));
+    const auditLimit = Math.max(1, Math.min(100, Number.parseInt(auditLimitParam || "20", 10) || 20));
+    const dreamPage = Math.max(1, Math.min(10000, Number.parseInt(dreamPageParam || "1", 10) || 1));
+    const auditWindow = Math.min(1000, auditPage * auditLimit);
     const adminId = await this.authService.userIdFromRequest(req);
     const capabilities = await this.permissionService.getCapabilities(adminId);
     const isSystemAdmin = capabilities.includes("*");
@@ -174,19 +184,21 @@ export class AdminController {
             brainTopic: { select: { topicSlug: true } },
           },
           orderBy: { createdAt: "desc" },
-          take: 100,
+          take: auditWindow,
         }),
         this.prisma.document.findMany({
           include: { kb: { select: { name: true } } },
           orderBy: { updatedAt: "desc" },
-          take: 100,
+          take: auditWindow,
         }),
       ]);
     const safeProviders = (isSystemAdmin ? providers : []).map(
-      ({ apiKeyEncrypted, ...provider }) => ({
+      ({ apiKeyEncrypted, secretKeyEncrypted, ...provider }) => ({
         ...provider,
         keyMask: maskModelCredential(apiKeyEncrypted),
         hasApiKey: Boolean(apiKeyEncrypted),
+        secretKeyMask: maskModelCredential(secretKeyEncrypted),
+        hasSecretKey: Boolean(secretKeyEncrypted),
       }),
     );
     const industryScopeKbs = kbs.filter(
@@ -203,7 +215,11 @@ export class AdminController {
     );
     const readableKbs = kbs.filter((kb) => readableKbIds.has(kb.id));
     const visibleKbs = isSystemAdmin
-      ? kbs
+      // 个人库仍然遵循“仅本人可见”：超级管理员可以看到自己创建的个人库，
+      // 但不能因为系统管理员身份看到其他人的个人库。
+      ? kbs.filter(
+          (kb) => kb.type !== "personal" || kb.ownerUserId === adminId,
+        )
       : [
           ...new Map(
             [...readableKbs, ...industryScopeKbs].map((kb) => [kb.id, kb]),
@@ -235,14 +251,34 @@ export class AdminController {
       (grant) =>
         isSystemAdmin || industryScopeKbs.some((kb) => kb.id === grant.kbId),
     );
-    const safeDocuments = documents.filter(
-      (doc) => isSystemAdmin || visibleKbs.some((kb) => kb.id === doc.kbId),
+    const safeDocuments = documents.filter((doc) =>
+      visibleKbs.some((kb) => kb.id === doc.kbId),
     );
     const userById = new Map(users.map((user) => [user.id, user]));
-    const safeCompileJobs = isSystemAdmin
+    const privateDocumentIds = isSystemAdmin
+      ? new Set(
+          (await this.prisma.document.findMany({
+            where: {
+              kb: {
+                type: "personal",
+                ownerUserId: { not: adminId },
+              },
+            },
+            select: { id: true },
+          })).map((document) => document.id),
+        )
+      : new Set<string>();
+    const allCompileJobEvidence = isSystemAdmin
+      ? await this.prisma.compileJob.findMany({ select: { inputEvidenceIds: true } })
+      : [];
+    const hasPrivateEvidence = (job: any) =>
+      Array.isArray(job.inputEvidenceIds) &&
+      job.inputEvidenceIds.some((id: string) => privateDocumentIds.has(id));
+    const safeCompileJobs = (isSystemAdmin
       ? compileJobs
-      : compileJobs.filter((job) => job.userId === adminId);
-    const audit = [
+      : compileJobs.filter((job) => job.userId === adminId)
+    ).filter((job) => !hasPrivateEvidence(job));
+    const auditItems = [
       ...(canReadAudit
         ? safeDocuments.map((doc) => ({
             id: `doc-${doc.id}`,
@@ -275,8 +311,31 @@ export class AdminController {
           }))
         : []),
     ]
-      .sort((a, b) => new Date(b.when).getTime() - new Date(a.when).getTime())
-      .slice(0, 100);
+      .sort((a, b) => new Date(b.when).getTime() - new Date(a.when).getTime());
+    const [auditDocumentsTotal, auditCompileJobsTotalRaw, auditGrantsTotal] =
+      canReadAudit
+        ? await Promise.all([
+            this.prisma.document.count({
+              where: { kbId: { in: visibleKbs.map((kb) => kb.id) } },
+            }),
+            this.prisma.compileJob.count(
+              isSystemAdmin ? undefined : { where: { userId: adminId } },
+            ),
+            this.prisma.industryGrant.count({
+              where: isSystemAdmin
+                ? undefined
+                : { kbId: { in: industryScopeKbs.map((kb) => kb.id) } },
+            }),
+          ])
+        : [0, 0, 0];
+    const auditCompileJobsTotal = isSystemAdmin
+      ? Math.max(
+          0,
+          auditCompileJobsTotalRaw - allCompileJobEvidence.filter(hasPrivateEvidence).length,
+        )
+      : auditCompileJobsTotalRaw;
+    const auditTotal = auditDocumentsTotal + auditCompileJobsTotal + auditGrantsTotal;
+    const audit = auditItems.slice((auditPage - 1) * auditLimit, auditPage * auditLimit);
     const writePermissions = await Promise.all(
       visibleKbs.map((kb) =>
         this.permissionService.canManageKnowledgeBase(adminId, kb.id),
@@ -354,54 +413,86 @@ export class AdminController {
         : [],
       audit,
       dream: isSystemAdmin || canReadAudit
-        ? await this.brainCompilerService.getDreamTelemetry()
+        ? await this.brainCompilerService.getDreamTelemetry({
+            excludePrivate: true,
+            runsPage: dreamPage,
+            runsLimit: auditLimit,
+          })
         : null,
       systemStatus: isSystemAdmin || canReadAudit
         ? await this.getSystemStatusTelemetryData()
         : null,
+      auditPagination: {
+        page: auditPage,
+        limit: auditLimit,
+        total: auditTotal,
+        totalPages: Math.max(1, Math.ceil(auditTotal / auditLimit)),
+      },
       capabilities,
       managedOrgIds: [...managedOrgIds],
     };
   }
 
   @Get("system/status-telemetry")
-  async getSystemStatusTelemetry(@Req() req: any) {
+  async getSystemStatusTelemetry(
+    @Req() req: any,
+    @Query("section") sectionParam?: string,
+    @Query("page") pageParam?: string,
+    @Query("limit") limitParam?: string,
+  ) {
     const adminId = await this.authService.userIdFromRequest(req);
     const capabilities = await this.permissionService.getCapabilities(adminId);
     const isSystemAdmin = capabilities.includes("*");
     if (!isSystemAdmin && !capabilities.includes("audit.read") && !capabilities.includes("system.settings.read")) {
       throw new ForbiddenException("No administration permission to view system telemetry.");
     }
-    return this.getSystemStatusTelemetryData();
+    const page = Math.max(1, Math.min(10000, Number.parseInt(pageParam || "1", 10) || 1));
+    const limit = Math.max(1, Math.min(100, Number.parseInt(limitParam || "20", 10) || 20));
+    return this.getSystemStatusTelemetryData({
+      section: sectionParam || "",
+      page,
+      limit,
+    });
   }
 
-  private async getSystemStatusTelemetryData() {
+  private async getSystemStatusTelemetryData(options: { section?: string; page?: number; limit?: number } = {}) {
     const db: any = this.prisma as any;
+    const section = options.section || "";
+    const page = options.page || 1;
+    const limit = options.limit || 20;
+    const pageFor = (name: string) => section === name ? page : 1;
+    const offsetFor = (name: string) => (pageFor(name) - 1) * limit;
+    const nonPersonalKb = { type: { not: "personal" } };
 
     // 1. Ingestion & Document Quality
-    const [totalDocs, publishedDocs, failedDocs, parsingDocs, totalChunks, sampleChunks, failedDocList, kbs] = await Promise.all([
-      this.prisma.document.count(),
-      this.prisma.document.count({ where: { status: "published" } }),
-      this.prisma.document.count({ where: { status: "failed" } }),
-      this.prisma.document.count({ where: { status: { in: ["parsing", "uploading", "pending"] } } }),
-      this.prisma.chunk.count(),
-      this.prisma.chunk.findMany({ select: { content: true }, take: 100 }),
+    const [totalDocs, publishedDocs, failedDocs, parsingDocs, totalChunks, sampleChunks, failedDocList, failedDocsTotal, kbs, kbTotal] = await Promise.all([
+      this.prisma.document.count({ where: { kb: nonPersonalKb } }),
+      this.prisma.document.count({ where: { status: "published", kb: nonPersonalKb } }),
+      this.prisma.document.count({ where: { status: "failed", kb: nonPersonalKb } }),
+      this.prisma.document.count({ where: { status: { in: ["parsing", "uploading", "pending"] }, kb: nonPersonalKb } }),
+      this.prisma.chunk.count({ where: { document: { kb: nonPersonalKb } } }),
+      this.prisma.chunk.findMany({ where: { document: { kb: nonPersonalKb } }, select: { content: true }, take: 100 }),
       this.prisma.document.findMany({
-        where: { status: "failed" },
+        where: { status: "failed", kb: nonPersonalKb },
         include: { kb: true },
-        take: 20,
+        skip: offsetFor("failedDocs"),
+        take: limit,
         orderBy: { createdAt: "desc" }
       }),
+      this.prisma.document.count({ where: { status: "failed", kb: nonPersonalKb } }),
       this.prisma.knowledgeBase.findMany({
-        where: { status: "active" },
+        where: { status: "active", ...nonPersonalKb },
         include: {
           _count: { select: { documents: true } },
           documents: {
             select: { id: true, status: true, _count: { select: { chunks: true } } }
           }
         },
+        skip: offsetFor("kbs"),
+        take: limit,
         orderBy: { createdAt: "asc" }
-      })
+      }),
+      this.prisma.knowledgeBase.count({ where: { status: "active", ...nonPersonalKb } })
     ]);
 
     const avgChunkLength = sampleChunks.length
@@ -436,45 +527,100 @@ export class AdminController {
       uploadBytes = parseInt(duOut2.trim().split(/\s+/)[0], 10) * (duOut2.includes("-sb") ? 1 : 1024);
     } catch {}
 
-    const sources = await db.brainSource.findMany({
+    const personalSources = await db.brainSource.findMany({
       where: { status: "active" },
+      select: {
+        sourceKey: true,
+        documents: {
+          select: { document: { select: { kb: { select: { type: true } } } } },
+        },
+      },
+    });
+    const privateSourceKeys = new Set(
+      personalSources
+        .filter((source: any) =>
+          source.documents.some((item: any) => item.document?.kb?.type === "personal"),
+        )
+        .map((source: any) => source.sourceKey),
+    );
+    const safeSourceWhere = {
+      status: "active",
+      documents: { none: { document: { kb: { type: "personal" } } } },
+    };
+    const [sources, sourcesTotal, sharedSourcesTotal, privateSourcesTotal] = await Promise.all([
+      db.brainSource.findMany({
+      where: safeSourceWhere,
       include: {
         _count: { select: { members: true, documents: true } }
       },
+      skip: offsetFor("sources"),
+      take: limit,
       orderBy: { sourceKey: "asc" }
-    });
+      }),
+      db.brainSource.count({ where: safeSourceWhere }),
+      db.brainSource.count({ where: { ...safeSourceWhere, kind: "shared" } }),
+      db.brainSource.count({ where: { ...safeSourceWhere, kind: "private" } }),
+    ]);
+    const privateDocumentIds = new Set<string>(
+      (await this.prisma.document.findMany({
+        where: { kb: { type: "personal" } },
+        select: { id: true },
+      })).map((document) => document.id),
+    );
+    const safeOutboxWhere = privateDocumentIds.size
+      ? { NOT: { resourceType: "document", resourceId: { in: [...privateDocumentIds] } } }
+      : {};
 
     // 3. Scope Brain Quality & Derived Intelligence
-    const [totalUsers, scopes, derivedPages] = await Promise.all([
+    const allScopeKeys = await db.brainScope.findMany({
+      where: { status: "active" },
+      select: { id: true, sourceKeys: true, strategy: true },
+    });
+    const safeScopeIds = allScopeKeys
+      .filter((scope: any) =>
+        !(Array.isArray(scope.sourceKeys) ? scope.sourceKeys : []).some((key: string) => privateSourceKeys.has(key)),
+      )
+      .map((scope: any) => scope.id);
+    const [totalUsers, scopes, scopesTotal, derivedPages] = await Promise.all([
       this.prisma.user.count({ where: { status: "active" } }),
       db.brainScope.findMany({
-        where: { status: "active" },
+        where: { status: "active", id: { in: safeScopeIds } },
         include: {
           _count: { select: { members: true, derivedPages: true } },
           members: { include: { user: { select: { username: true, displayName: true } } } },
           derivedPages: { select: { id: true, slug: true, title: true, kind: true, derivedFrom: true, updatedAt: true } }
         },
+        skip: offsetFor("scopes"),
+        take: limit,
         orderBy: { createdAt: "desc" }
       }),
+      safeScopeIds.length,
       db.brainDerivedPage.findMany({
+        where: { scopeId: { in: safeScopeIds } },
         select: { id: true, slug: true, title: true, kind: true, scopeId: true, derivedFrom: true, updatedAt: true }
       })
     ]);
 
-    const eagerScopesCount = scopes.filter((s: any) => s.strategy === "eager").length;
-    const lazyScopesCount = scopes.filter((s: any) => s.strategy === "lazy").length;
-    const scopeCompressionRatio = totalUsers ? Math.max(0, Math.round((1 - scopes.length / totalUsers) * 100)) : 0;
+    const safeScopeDescriptors = allScopeKeys.filter((scope: any) => safeScopeIds.includes(scope.id));
+    const eagerScopesCount = safeScopeDescriptors.filter((s: any) => s.strategy === "eager").length;
+    const lazyScopesCount = safeScopeDescriptors.filter((s: any) => s.strategy === "lazy").length;
+    const scopeCompressionRatio = totalUsers ? Math.max(0, Math.round((1 - scopesTotal / totalUsers) * 100)) : 0;
 
     // 4. Two-tier Dream Maintenance
-    const dreamTelemetry = await this.brainCompilerService.getDreamTelemetry();
+    const dreamTelemetry = await this.brainCompilerService.getDreamTelemetry({
+      excludePrivate: true,
+      runsPage: pageFor("dream"),
+      runsLimit: limit,
+    });
 
     // 5. Outbox & Queues
-    const [outboxTotal, outboxPending, outboxCompleted, outboxFailed, recentOutboxEvents] = await Promise.all([
-      db.brainChangeEvent.count(),
-      db.brainChangeEvent.count({ where: { status: "pending" } }),
-      db.brainChangeEvent.count({ where: { status: "completed" } }),
-      db.brainChangeEvent.count({ where: { status: "failed" } }),
-      db.brainChangeEvent.findMany({ orderBy: { createdAt: "desc" }, take: 15 })
+    const [outboxTotal, outboxPending, outboxCompleted, outboxFailed, recentOutboxEvents, recentOutboxTotal] = await Promise.all([
+      db.brainChangeEvent.count({ where: safeOutboxWhere }),
+      db.brainChangeEvent.count({ where: { ...safeOutboxWhere, status: "pending" } }),
+      db.brainChangeEvent.count({ where: { ...safeOutboxWhere, status: "completed" } }),
+      db.brainChangeEvent.count({ where: { ...safeOutboxWhere, status: "failed" } }),
+      db.brainChangeEvent.findMany({ where: safeOutboxWhere, orderBy: { createdAt: "desc" }, skip: offsetFor("outbox"), take: limit }),
+      db.brainChangeEvent.count({ where: safeOutboxWhere })
     ]);
 
     // 6. RAG & QA Stats
@@ -510,7 +656,7 @@ export class AdminController {
         },
         outboxStatus: { pending: outboxPending, completed: outboxCompleted, failed: outboxFailed, total: outboxTotal },
         activeUsersCount: totalUsers,
-        activeScopesCount: scopes.length,
+        activeScopesCount: scopesTotal,
         scopeCompressionRatio,
         derivedPagesCount: derivedPages.length
       },
@@ -534,16 +680,21 @@ export class AdminController {
         })),
         failedDocsList: failedDocList.map((d: any) => ({
           id: d.id,
+          kbId: d.kbId,
           title: d.title,
           kbName: d.kb?.name || "未知知识库",
           error: (d as any).parseError || "解析异常",
           createdAt: d.createdAt
-        }))
+        })),
+        pagination: {
+          kbBreakdown: { page: pageFor("kbs"), limit, total: kbTotal, totalPages: Math.max(1, Math.ceil(kbTotal / limit)) },
+          failedDocs: { page: pageFor("failedDocs"), limit, total: failedDocsTotal, totalPages: Math.max(1, Math.ceil(failedDocsTotal / limit)) },
+        }
       },
       gbrainSources: {
-        sourcesCount: sources.length,
-        sharedSourcesCount: sources.filter((s: any) => s.kind === "shared").length,
-        privateSourcesCount: sources.filter((s: any) => s.kind === "private").length,
+        sourcesCount: sourcesTotal,
+        sharedSourcesCount: sharedSourcesTotal,
+        privateSourcesCount: privateSourcesTotal,
         sourcesList: sources.map((s: any) => ({
           sourceKey: s.sourceKey,
           kind: s.kind,
@@ -552,10 +703,11 @@ export class AdminController {
           lastSyncAt: s.lastSyncAt,
           documentsCount: s._count.documents,
           membersCount: s._count.members,
-        }))
+        })),
+        pagination: { page: pageFor("sources"), limit, total: sourcesTotal, totalPages: Math.max(1, Math.ceil(sourcesTotal / limit)) }
       },
       scopeBrainQuality: {
-        scopesCount: scopes.length,
+        scopesCount: scopesTotal,
         eagerScopesCount,
         lazyScopesCount,
         derivedPagesCount: derivedPages.length,
@@ -577,7 +729,8 @@ export class AdminController {
             derivedCount: Array.isArray(p.derivedFrom) ? p.derivedFrom.length : 0,
             updatedAt: p.updatedAt
           }))
-        }))
+        })),
+        pagination: { page: pageFor("scopes"), limit, total: scopesTotal, totalPages: Math.max(1, Math.ceil(scopesTotal / limit)) }
       },
       dreamMaintenance: {
         cron: dreamTelemetry.cron,
@@ -585,6 +738,7 @@ export class AdminController {
         health: dreamTelemetry.health,
         lastRun: dreamTelemetry.lastRun,
         runs: dreamTelemetry.runs,
+        pagination: dreamTelemetry.runsPagination,
         durationsAvgSec: dreamTelemetry.runs?.length
           ? Math.round(
               dreamTelemetry.runs.reduce(
@@ -605,6 +759,7 @@ export class AdminController {
           processedAt: e.processedAt,
           payload: e.payload
         })),
+        pagination: { page: pageFor("outbox"), limit, total: recentOutboxTotal, totalPages: Math.max(1, Math.ceil(recentOutboxTotal / limit)) },
         queueJobCounts: dreamTelemetry.queueCounts || { waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0 },
         maintenanceFailures: dreamTelemetry.maintenanceFailures || []
       },
@@ -712,6 +867,108 @@ export class AdminController {
       include: { admins: { select: { userId: true } } },
     });
     return { organization: org };
+  }
+
+  @Patch("orgs/:id")
+  async updateOrg(
+    @Req() req: any,
+    @Param("id") id: string,
+    @Body() body: any,
+  ) {
+    const operatorId = await this.authService.userIdFromRequest(req);
+    if (!(await this.permissionService.canManageOrganization(operatorId, id)))
+      throw new ForbiddenException(
+        "You can only edit organizations within your organization scope.",
+      );
+
+    const current = await this.prisma.orgNode.findFirst({
+      where: { id, status: "active" },
+    });
+    if (!current) throw new NotFoundException("Organization not found.");
+
+    const name = String(body?.name ?? current.name).trim();
+    if (!name) throw new BadRequestException("Organization name is required.");
+    if (name.length > 120)
+      throw new BadRequestException("Organization name is too long.");
+    if (/[\\/]/.test(name))
+      throw new BadRequestException(
+        "Organization name cannot contain slash characters.",
+      );
+
+    const hasParentChange = Object.prototype.hasOwnProperty.call(
+      body || {},
+      "parentId",
+    );
+    const parentId = hasParentChange
+      ? body?.parentId
+        ? String(body.parentId)
+        : null
+      : current.parentId;
+    if (parentId && !/^[0-9a-f-]{36}$/i.test(parentId))
+      throw new BadRequestException("Invalid parent organization.");
+    if (parentId === id)
+      throw new BadRequestException(
+        "An organization cannot be its own parent.",
+      );
+
+    const parent = parentId
+      ? await this.prisma.orgNode.findFirst({
+          where: { id: parentId, status: "active" },
+        })
+      : null;
+    if (parentId && !parent)
+      throw new NotFoundException("Parent organization not found.");
+    const parentChanged = parentId !== current.parentId;
+    if (parentChanged && !parentId && !(await this.permissionService.isSystemAdmin(operatorId)))
+      throw new ForbiddenException(
+        "Only a system administrator can move an organization to the root.",
+      );
+    if (parentChanged && parentId && !(await this.permissionService.canManageOrganization(operatorId, parentId)))
+      throw new ForbiddenException(
+        "You can only move organizations within your managed scope.",
+      );
+    if (parent && (parent.path === current.path || parent.path.startsWith(`${current.path}/`)))
+      throw new BadRequestException(
+        "An organization cannot be moved below itself or one of its children.",
+      );
+
+    const nextPath = parent ? `${parent.path}/${name}` : `/${name}`;
+    const duplicate = await this.prisma.orgNode.findFirst({
+      where: { path: nextPath, status: "active", NOT: { id } },
+    });
+    if (duplicate)
+      throw new BadRequestException(
+        "An organization with the same path already exists.",
+      );
+
+    const siblingCount = await this.prisma.orgNode.count({
+      where: { parentId, status: "active", NOT: { id } },
+    });
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const subtree = await tx.orgNode.findMany({
+        where: {
+          status: "active",
+          OR: [{ id }, { path: { startsWith: `${current.path}/` } }],
+        },
+        select: { id: true, path: true },
+      });
+      for (const node of subtree) {
+        const path =
+          node.id === id
+            ? nextPath
+            : `${nextPath}${node.path.slice(current.path.length)}`;
+        await tx.orgNode.update({
+          where: { id: node.id },
+          data: { path },
+        });
+      }
+      return tx.orgNode.update({
+        where: { id },
+        data: { name, parentId, path: nextPath, sort: siblingCount },
+      });
+    });
+    await this.scheduleAccessReconciliation();
+    return { organization: updated };
   }
 
   @Post("orgs/:id/admins")
@@ -1189,7 +1446,7 @@ export class AdminController {
       throw new BadRequestException("Knowledge base name is required.");
     const isSystemAdmin = await this.permissionService.isSystemAdmin(adminId);
     if (type === "personal") {
-      if (body?.ownerUserId && body.ownerUserId !== adminId && !isSystemAdmin)
+      if (body?.ownerUserId && body.ownerUserId !== adminId)
         throw new ForbiddenException(
           "A personal knowledge base can only belong to its owner.",
         );
@@ -1263,7 +1520,8 @@ export class AdminController {
         : kb.type === "industry"
           ? await this.permissionService.canManageIndustryKb(userId, id)
           : false;
-    if (!(await this.permissionService.isSystemAdmin(userId)) && !allowed)
+    const systemAdmin = await this.permissionService.isSystemAdmin(userId);
+    if (kb.type === "personal" ? !allowed : !systemAdmin && !allowed)
       throw new ForbiddenException(
         "Knowledge base management permission required.",
       );
@@ -1423,11 +1681,27 @@ export class AdminController {
         apiKeyEncrypted: body?.apiKey
           ? encryptModelCredential(String(body.apiKey))
           : undefined,
+        secretKeyEncrypted: body?.secretKey
+          ? encryptModelCredential(String(body.secretKey))
+          : undefined,
         defaultParams: body?.defaultParams || undefined,
       },
     });
     await this.modelConfigService.applyRuntimeConfig();
-    return { provider };
+    const {
+      apiKeyEncrypted,
+      secretKeyEncrypted,
+      ...safeProvider
+    } = provider;
+    return {
+      provider: {
+        ...safeProvider,
+        keyMask: maskModelCredential(apiKeyEncrypted),
+        hasApiKey: Boolean(apiKeyEncrypted),
+        secretKeyMask: maskModelCredential(secretKeyEncrypted),
+        hasSecretKey: Boolean(secretKeyEncrypted),
+      },
+    };
   }
 
   @Delete("providers/:id")
@@ -1469,6 +1743,9 @@ export class AdminController {
         apiKeyEncrypted: body?.apiKey
           ? encryptModelCredential(String(body.apiKey))
           : undefined,
+        secretKeyEncrypted: body?.secretKey
+          ? encryptModelCredential(String(body.secretKey))
+          : undefined,
         defaultParams:
           body?.defaultParams !== undefined
             ? body.defaultParams
@@ -1476,7 +1753,20 @@ export class AdminController {
       },
     });
     await this.modelConfigService.applyRuntimeConfig();
-    return { provider: updated };
+    const {
+      apiKeyEncrypted,
+      secretKeyEncrypted,
+      ...safeProvider
+    } = updated;
+    return {
+      provider: {
+        ...safeProvider,
+        keyMask: maskModelCredential(apiKeyEncrypted),
+        hasApiKey: Boolean(apiKeyEncrypted),
+        secretKeyMask: maskModelCredential(secretKeyEncrypted),
+        hasSecretKey: Boolean(secretKeyEncrypted),
+      },
+    };
   }
 
   @Post("models")
@@ -1599,5 +1889,50 @@ export class AdminController {
       data: { testStatus: status },
     });
     return { ok: status === "passed", status, model };
+  }
+
+  @Post("ocr/test")
+  async testOcr(@Req() req: any) {
+    await this.authService.adminUserIdFromRequest(req);
+    const config = await this.modelConfigService.getOcrConfig();
+    if (!config) {
+      throw new BadRequestException("PDF OCR is not configured.");
+    }
+    if (config.provider !== "baidu") {
+      throw new BadRequestException(
+        `Unsupported PDF OCR provider: ${config.provider}`,
+      );
+    }
+    try {
+      const response = await fetch(
+        `${config.baseUrl.replace(/\/$/, "")}/oauth/2.0/token`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: new URLSearchParams({
+            grant_type: "client_credentials",
+            client_id: config.apiKey,
+            client_secret: config.secretKey,
+          }),
+        },
+      );
+      const payload = (await response.json().catch(() => ({}))) as any;
+      const passed = response.ok && Boolean(payload.access_token);
+      return {
+        ok: passed,
+        status: passed ? "passed" : "failed",
+        message: passed
+          ? "Baidu OCR credentials are valid."
+          : String(payload.error_description || payload.error || "OCR connection failed."),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        status: "failed",
+        message: error instanceof Error ? error.message : "OCR connection failed.",
+      };
+    }
   }
 }

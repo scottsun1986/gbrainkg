@@ -758,13 +758,32 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async getDreamTelemetry() {
+  async getDreamTelemetry(options: { excludePrivate?: boolean; runsPage?: number; runsLimit?: number } = {}) {
     const db: any = this.prisma as any;
-    const [lastRun, runs, sources, scopes, derivedCount, outboxPending, opLogs, dirtyTopics, queueCounts, failedJobs] = await Promise.all([
+    const runsPage = Math.max(1, options.runsPage || 1);
+    const runsLimit = Math.max(1, Math.min(100, options.runsLimit || 20));
+    const privateSourceRows = options.excludePrivate
+      ? await db.brainSource.findMany({
+          where: { status: "active" },
+          select: {
+            sourceKey: true,
+            documents: { select: { document: { select: { kb: { select: { type: true } } } } } },
+          },
+        })
+      : [];
+    const privateSourceKeys = new Set(
+      privateSourceRows
+        .filter((source: any) => source.documents.some((item: any) => item.document?.kb?.type === "personal"))
+        .map((source: any) => source.sourceKey),
+    );
+    const [lastRun, runs, runsTotal, sources, scopes, derivedCount, outboxPending, opLogs, dirtyTopics, queueCounts, failedJobs] = await Promise.all([
       db.brainMaintenanceRun.findFirst({ orderBy: { startedAt: "desc" } }),
-      db.brainMaintenanceRun.findMany({ orderBy: { startedAt: "desc" }, take: 30 }),
+      db.brainMaintenanceRun.findMany({ orderBy: { startedAt: "desc" }, skip: (runsPage - 1) * runsLimit, take: runsLimit }),
+      db.brainMaintenanceRun.count(),
       db.brainSource.findMany({
-        where: { status: "active" },
+        where: options.excludePrivate
+          ? { status: "active", documents: { none: { document: { kb: { type: "personal" } } } } }
+          : { status: "active" },
         include: { _count: { select: { members: true, documents: true } } },
         orderBy: { sourceKey: "asc" },
       }),
@@ -775,13 +794,34 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
       }),
       db.brainDerivedPage.count(),
       db.brainChangeEvent.count({ where: { status: "pending" } }),
-      db.brainOperationLog.findMany({ orderBy: { createdAt: "desc" }, take: 20 }),
+      options.excludePrivate
+        ? Promise.resolve([])
+        : db.brainOperationLog.findMany({ orderBy: { createdAt: "desc" }, take: 20 }),
       db.brainTopic.count({ where: { compileStatus: "dirty" } }),
       this.compilerQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
       this.compilerQueue.getJobs(["failed"], 0, 49),
     ]);
     const lastStartedAt = lastRun?.startedAt ? new Date(lastRun.startedAt).getTime() : 0;
     const staleAfterMs = Math.max(90 * 60 * 1000, Number(process.env.GBRAIN_MAINTENANCE_STALE_MS || 36 * 60 * 60 * 1000));
+    const safeScopes = options.excludePrivate
+      ? scopes.filter((scope: any) =>
+          !(Array.isArray(scope.sourceKeys) ? scope.sourceKeys : []).some((key: string) => privateSourceKeys.has(key)),
+        )
+      : scopes;
+    const safeScopeIds = safeScopes.map((scope: any) => scope.id);
+    const safeDerivedCount = options.excludePrivate
+      ? await db.brainDerivedPage.count({ where: { scopeId: { in: safeScopeIds } } })
+      : derivedCount;
+    const sanitizeRun = (run: any) => {
+      if (!options.excludePrivate || !Array.isArray(run?.sourceResults)) return run;
+      return {
+        ...run,
+        sourceResults: run.sourceResults.filter((result: any) => {
+          const key = result?.sourceKey || result?.source || result?.sourceName;
+          return !key || !privateSourceKeys.has(key);
+        }),
+      };
+    };
     const health = process.env.GBRAIN_MAINTENANCE_ENABLED === "0"
       ? "disabled"
       : !lastRun
@@ -799,8 +839,14 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
       timezone: this.maintenanceTimezone,
       intervalMinutes: 24 * 60,
       health,
-      lastRun,
-      runs,
+      lastRun: sanitizeRun(lastRun),
+      runs: runs.map(sanitizeRun),
+      runsPagination: {
+        page: runsPage,
+        limit: runsLimit,
+        total: runsTotal,
+        totalPages: Math.max(1, Math.ceil(runsTotal / runsLimit)),
+      },
       sources: sources.map((source: any) => ({
         sourceKey: source.sourceKey,
         kind: source.kind,
@@ -810,7 +856,7 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
         members: source._count.members,
         documents: source._count.documents,
       })),
-      scopes: scopes.map((s: any) => ({
+      scopes: safeScopes.map((s: any) => ({
         id: s.id,
         fingerprint: s.fingerprint,
         name: s.name,
@@ -822,7 +868,7 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
         membersCount: s._count.members,
         derivedCount: s._count.derivedPages,
       })),
-      derivedPagesCount: derivedCount,
+      derivedPagesCount: safeDerivedCount,
       outboxPendingEvents: outboxPending,
       recentOperationLogs: opLogs,
       dirtyTopics,

@@ -53,8 +53,16 @@ services:
       AUTH_TOKEN: ${PARSER_AUTH_TOKEN}
       CORS_ORIGINS: ${WEB_ORIGIN}
       UPLOAD_ROOT: /var/lib/llmwiki/parser
-      PDF_PARSE_MODE: ${PDF_PARSE_MODE:-quality}
+      PDF_PARSE_MODE: ${PDF_PARSE_MODE:-hybrid}
       DOCLING_TIMEOUT_SECONDS: ${DOCLING_TIMEOUT_SECONDS:-240}
+      LOCAL_DOCLING_ENABLED: ${LOCAL_DOCLING_ENABLED:-0}
+      OCR_PROVIDER: ${OCR_PROVIDER:-none}
+      OCR_TIMEOUT_SECONDS: ${OCR_TIMEOUT_SECONDS:-900}
+      OCR_POLL_INTERVAL_SECONDS: ${OCR_POLL_INTERVAL_SECONDS:-5}
+      OCR_MAX_FILE_BYTES: ${OCR_MAX_FILE_BYTES:-52428800}
+      BAIDU_OCR_API_KEY: ${BAIDU_OCR_API_KEY:-}
+      BAIDU_OCR_SECRET_KEY: ${BAIDU_OCR_SECRET_KEY:-}
+      BAIDU_OCR_ENDPOINT: ${BAIDU_OCR_ENDPOINT:-https://aip.baidubce.com}
     volumes:
       - parser_data:/var/lib/llmwiki/parser
     restart: unless-stopped
@@ -75,6 +83,7 @@ services:
 
   bootstrap:
     image: llmwiki-api:${LLMWIKI_IMAGE_TAG:-local}
+    entrypoint: []
     command: ["sh", "-lc", "pnpm --filter database exec prisma migrate deploy --schema=prisma/schema.prisma && node apps/api/dist/bootstrap/production-bootstrap.js"]
     environment:
       NODE_ENV: production
@@ -90,6 +99,8 @@ services:
 
   api:
     image: llmwiki-api:${LLMWIKI_IMAGE_TAG:-local}
+    entrypoint: []
+    command: ["node", "apps/api/dist/main.js"]
     environment:
       NODE_ENV: production
       PORT: 3000
@@ -112,6 +123,7 @@ services:
       GBRAIN_MAINTENANCE_TZ: ${GBRAIN_MAINTENANCE_TZ:-Asia/Shanghai}
       GBRAIN_MAINTENANCE_CRON: ${GBRAIN_MAINTENANCE_CRON:-0 2 * * *}
       ACCESS_RECONCILE_INTERVAL_MS: ${ACCESS_RECONCILE_INTERVAL_MS:-900000}
+      PARSER_POLL_TIMEOUT_MS: ${PARSER_POLL_TIMEOUT_MS:-900000}
       INGESTION_CONCURRENCY: ${INGESTION_CONCURRENCY:-2}
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-600}
       AUTH_LOGIN_THROTTLE_LIMIT: ${AUTH_LOGIN_THROTTLE_LIMIT:-10}
@@ -140,6 +152,7 @@ services:
     image: llmwiki-web:${LLMWIKI_IMAGE_TAG:-local}
     environment:
       NODE_ENV: production
+      HOSTNAME: 0.0.0.0
     depends_on:
       api:
         condition: service_healthy

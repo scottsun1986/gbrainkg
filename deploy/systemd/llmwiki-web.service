@@ -1,13 +1,17 @@
 [Unit]
 Description=LLMWiki Web
 After=network.target llmwiki-api.service
+Wants=llmwiki-api.service
 
 [Service]
 Type=simple
-WorkingDirectory=%h/gbrainkg/apps/web
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/gbrainkg/apps/web
 Environment=PORT=3200
-Environment=HOSTNAME=0.0.0.0
-ExecStart=%h/.local/bin/npm run start
+Environment=HOSTNAME=127.0.0.1
+Environment=PATH=/home/ubuntu/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/bin/npm run start -- --hostname 127.0.0.1
 Restart=always
 RestartSec=5
 TimeoutStopSec=15
@@ -18,4 +22,4 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

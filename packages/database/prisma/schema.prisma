@@ -443,9 +443,10 @@ model CompileJob {
 model ModelProvider {
   id               String   @id @default(uuid()) @db.Uuid
   name             String
-  kind             String   // llm/embedding/rerank
+  kind             String   // llm/embedding/rerank/ocr
   baseUrl          String
   apiKeyEncrypted  Bytes?
+  secretKeyEncrypted Bytes?
   defaultParams    Json?
   enabled          Boolean  @default(true)
 

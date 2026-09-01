@@ -1,4 +1,4 @@
-import { Body, Controller, Get, NotFoundException, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { AuthService } from '../auth/auth.service';
 import { AuthGuard } from '../auth/auth.guard';
@@ -22,6 +22,24 @@ export class ConversationController {
     const conversation = await this.prisma.conversation.findFirst({ where: { id, userId }, include: { messages: { orderBy: { createdAt: 'asc' } } } });
     if (!conversation) throw new NotFoundException('Conversation not found.');
     return conversation;
+  }
+
+  @Patch(':id')
+  async update(@Req() req: any, @Param('id') id: string, @Body() body: any) {
+    const userId = await this.authService.userIdFromRequest(req);
+    const title = String(body?.title || '').trim();
+    if (!title) throw new NotFoundException('Title cannot be empty.');
+    const conversation = await this.prisma.conversation.findFirst({ where: { id, userId } });
+    if (!conversation) throw new NotFoundException('Conversation not found.');
+    return this.prisma.conversation.update({ where: { id }, data: { title } });
+  }
+
+  @Delete(':id')
+  async remove(@Req() req: any, @Param('id') id: string) {
+    const userId = await this.authService.userIdFromRequest(req);
+    const conversation = await this.prisma.conversation.findFirst({ where: { id, userId } });
+    if (!conversation) throw new NotFoundException('Conversation not found.');
+    return this.prisma.conversation.delete({ where: { id } });
   }
 
   @Post(':conversationId/messages/:messageId/feedback')

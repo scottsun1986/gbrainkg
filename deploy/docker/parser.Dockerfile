@@ -9,11 +9,9 @@ RUN apt-get update \
 
 COPY apps/parser-worker/pyproject.toml apps/parser-worker/README.md ./
 RUN pip install --no-cache-dir \
-  --index-url https://download.pytorch.org/whl/cpu \
-  "torch>=2.2.2,<3.0.0" "torchvision>=0,<1.0.0"
-RUN pip install --no-cache-dir \
   "fastapi>=0.111.0" "uvicorn[standard]>=0.30.0" "pydantic>=2.7.0" \
-  "python-multipart>=0.0.9" "minio>=7.2.7" "docling>=1.1.0"
+  "python-multipart>=0.0.9" "httpx>=0.28.0" "pypdf>=5.0.0" \
+  "python-docx>=1.1.0" "openpyxl>=3.1.0" "minio>=7.2.7"
 
 COPY apps/parser-worker/src ./src
 RUN mkdir -p /var/lib/llmwiki/parser

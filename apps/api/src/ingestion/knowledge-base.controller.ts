@@ -159,7 +159,7 @@ export class KnowledgeBaseController {
       items.map((item) =>
         item.type === "industry"
           ? this.permissionService.canManageIndustryKb(userId, item.id)
-          : isSystemAdmin || item.ownerUserId === userId,
+          : item.ownerUserId === userId,
       ),
     );
     return {

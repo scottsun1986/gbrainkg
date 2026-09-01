@@ -5,6 +5,7 @@ import { PrismaClient } from "@prisma/client";
 import { readFile, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { BrainCompilerService } from "../brain-compiler/brain-compiler.service";
+import { ModelConfigService } from "../model-config.service";
 import { splitMarkdownIntoChunks } from "./markdown-chunker";
 
 @Injectable()
@@ -20,6 +21,7 @@ export class IngestionService implements OnModuleInit {
   constructor(
     @InjectQueue("ingestion-queue") private readonly ingestionQueue: Queue,
     private readonly compilerService: BrainCompilerService,
+    private readonly modelConfigService: ModelConfigService,
   ) {}
 
   async onModuleInit() {
@@ -119,6 +121,13 @@ export class IngestionService implements OnModuleInit {
       new Blob([fileBytes]),
       ext ? document.title : `${document.title}.md`,
     );
+    const ocrConfig = await this.modelConfigService.getOcrConfig();
+    if (ocrConfig) {
+      form.append("ocr_provider", ocrConfig.provider);
+      form.append("ocr_endpoint", ocrConfig.baseUrl);
+      form.append("ocr_api_key", ocrConfig.apiKey);
+      form.append("ocr_secret_key", ocrConfig.secretKey);
+    }
     const headers: Record<string, string> = {};
     const authToken = process.env.PARSER_AUTH_TOKEN || process.env.AUTH_TOKEN;
     if (authToken) headers.Authorization = `Bearer ${authToken}`;

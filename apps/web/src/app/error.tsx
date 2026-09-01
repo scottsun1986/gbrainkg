@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import Link from 'next/link';
 
 export default function Error({
   error,
@@ -23,7 +24,7 @@ export default function Error({
         <p style={{ color: '#6F6B63', lineHeight: 1.7, marginBottom: 22 }}>发生了一个未预期的错误，请重试。如果您反复遇到此问题，请联系管理员。</p>
         <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
           <button onClick={() => reset()} style={{ padding: '9px 18px', borderRadius: 7, background: '#191817', color: '#fff', border: 'none', cursor: 'pointer' }}>重试</button>
-          <a href="/" style={{ padding: '9px 18px', borderRadius: 7, background: '#F7F6F3', color: '#191817', textDecoration: 'none', border: '1px solid #E7E4DD', cursor: 'pointer' }}>返回首页</a>
+          <Link href="/" style={{ padding: '9px 18px', borderRadius: 7, background: '#F7F6F3', color: '#191817', textDecoration: 'none', border: '1px solid #E7E4DD', cursor: 'pointer' }}>返回首页</Link>
         </div>
       </section>
     </main>

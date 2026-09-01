@@ -18,7 +18,8 @@ RUN pnpm --filter web build
 FROM node:22-bookworm-slim
 ENV NODE_ENV=production
 WORKDIR /app
-RUN npm install --global pnpm@9.0.0
-COPY --from=build /app /app
+COPY --from=build /app/apps/web/.next/standalone ./
+COPY --from=build /app/apps/web/.next/static ./apps/web/.next/static
+COPY --from=build /app/apps/web/public ./apps/web/public
 EXPOSE 3000
-CMD ["pnpm", "--filter", "web", "start", "--", "--hostname", "0.0.0.0", "--port", "3000"]
+CMD ["node", "apps/web/server.js"]

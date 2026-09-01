@@ -19,15 +19,15 @@ declare global {
 // loading state.  This sentinel keeps their guards safe; App owns the real
 // loading state below.
 const dbData = true;
-// 生产构建会注入 NEXT_PUBLIC_API_URL；未注入时，生产反向代理与页面同源，
-// 必须使用当前访问地址，避免高位端口部署时错误回落到开发 API 端口 3202。
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || (
-  typeof window !== 'undefined'
-    ? (['3000', '3001', '3200'].includes(window.location.port)
-      ? `${window.location.protocol}//${window.location.hostname}:3202`
-      : window.location.origin)
-    : 'http://localhost:3202'
-);
+// The production reverse proxy serves Web and API from the same origin. Keep
+// the development API fallback only for local dev ports; never let a stale
+// NEXT_PUBLIC_API_URL from .env.local make a production browser call its own
+// localhost:3202.
+const API_BASE_URL = typeof window !== 'undefined'
+  ? (['3000', '3001', '3200'].includes(window.location.port)
+    ? (process.env.NEXT_PUBLIC_API_URL || `${window.location.protocol}//${window.location.hostname}:3202`)
+    : window.location.origin)
+  : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3202');
 const apiHeaders = () => {
   const token = typeof window !== 'undefined' ? window.localStorage.getItem('llmwiki_token') : null;
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -97,6 +97,7 @@ let ORG_TREE: any = null;
 let GRANTS: any[] = [];
 let MODELS: any = {llm:[], embedding:[], rerank:[]};
 let AUDIT: any[] = [];
+let AUDIT_META: any = { page: 1, limit: 20, total: 0, totalPages: 1 };
 let DREAM: any = null;
 let SYSTEM_STATUS: any = null;
 let USERS: any[] = [];
@@ -111,6 +112,23 @@ const TYPE_LABEL = {personal:'个人', org:'组织', industry:'行业', user:'�
 const TYPE_BADGE = (type) => <span className={`badge ${type}`}>{TYPE_LABEL[type] || type}</span>;
 
 /* ============== 通用组件 ============== */
+
+function PaginationBar({ pagination, onChange, label = '记录' }) {
+  if (!pagination || pagination.totalPages <= 1) return null;
+  const page = pagination.page || 1;
+  const totalPages = pagination.totalPages || 1;
+  return (
+    <div className="pagination-bar" style={{ marginTop: 12 }}>
+      <div>共 <span className="pagination-num">{pagination.total || 0}</span> {label}，第 <b>{page}</b> / {totalPages} 页</div>
+      <div className="pagination-controls">
+        <button className="pagination-btn" disabled={page <= 1} onClick={() => onChange(1)}>首页</button>
+        <button className="pagination-btn" disabled={page <= 1} onClick={() => onChange(page - 1)}>上一页</button>
+        <button className="pagination-btn" disabled={page >= totalPages} onClick={() => onChange(page + 1)}>下一页</button>
+        <button className="pagination-btn" disabled={page >= totalPages} onClick={() => onChange(totalPages)}>末页</button>
+      </div>
+    </div>
+  );
+}
 
 function SideNav({active, setActive, user, onLogout, kbCount=0, capabilities=[]}){
   const items = [
@@ -875,7 +893,7 @@ function UniversalDocumentViewer({ preview, onClose }) {
                       <div style={{ color: 'var(--ink-3)', fontSize: '12px', padding: '24px 0' }}>正在读取当前用户的 Compile Truth…</div>
                     ) : compileTruthError ? (
                       <div style={{ color: 'var(--danger)', fontSize: '12px', padding: '12px 0' }}>{compileTruthError}</div>
-                    ) : compileTruth ? (
+                    ) : compileTruth?.document ? (
                       <>
                         <div className="perm-list" style={{ display: 'grid', gridTemplateColumns: '150px 1fr', gap: '10px 16px', fontSize: '12px' }}>
                           <div style={{ color: 'var(--ink-3)' }}>Topic</div><div><code>{compileTruth.compileTruth.topicSlug}</code></div>
@@ -900,6 +918,10 @@ function UniversalDocumentViewer({ preview, onClose }) {
                           </div>
                         )}
                       </>
+                    ) : compileTruth ? (
+                      <div style={{ color: 'var(--ink-3)', fontSize: '12px', padding: '24px 0' }}>
+                        当前文档尚未生成可展示的 Compile Truth。
+                      </div>
                     ) : null}
                   </div>
                 </div>
@@ -1487,7 +1509,7 @@ function ChatScreen(){
           body: JSON.stringify({ message: userMsg, kb_scope: selected, conversation_id: activeConv || undefined }),
           signal: controller.signal,
         });
-        
+
         if (!res.ok) {
           let detail = `API Error (${res.status})`;
           try {
@@ -1496,7 +1518,7 @@ function ChatScreen(){
           } catch (e) {}
           throw new Error(detail);
         }
-        
+
         const reader = res.body?.getReader();
         if (!reader) throw new Error("服务器未返回有效的流式响应");
         const decoder = new TextDecoder('utf-8');
@@ -1664,17 +1686,32 @@ function ChatScreen(){
     window.dispatchEvent(evt);
   };
 
+  const renameConversation = async (conv) => {
+    const newTitle = window.prompt('请输入新的会话标题：', conv.title || '');
+    if (!newTitle || newTitle.trim() === conv.title) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/conversations/${conv.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...apiHeaders() },
+        body: JSON.stringify({ title: newTitle.trim() }),
+      });
+      if (res.ok) {
+        setConversationList((prev) => prev.map((item) => item.id === conv.id ? { ...item, title: newTitle.trim() } : item));
+        window.dispatchEvent(new CustomEvent('app-toast', { detail: '会话标题已更新' }));
+      }
+    } catch {}
+  };
+
   const showConvMenu = (e, conv) => {
     e.preventDefault();
     e.stopPropagation();
     setCtxMenu({
       x: e.clientX, y: e.clientY,
       items: [
-        { label: '打开', icon: 'chat', onClick: () => openConversation(conv.id) },
+        { label: '打开会话', icon: 'chat', onClick: () => openConversation(conv.id) },
+        { label: '重命名', icon: 'spark', onClick: () => renameConversation(conv) },
         { label: '复制标题', icon: 'copy', onClick: async () => { try { await navigator.clipboard.writeText(conv.title || ''); window.dispatchEvent(new CustomEvent('app-toast', { detail: '已复制标题' })); } catch {} } },
-        { label: '置顶', icon: 'pin', disabled: true, onClick: () => window.dispatchEvent(new CustomEvent('app-toast', { detail: '置顶功能即将上线' })) },
-        { label: '重命名', icon: 'spark', disabled: true, onClick: () => window.dispatchEvent(new CustomEvent('app-toast', { detail: '重命名功能即将上线' })) },
-        { label: '隐藏（可撤销）', icon: 'logout', danger: true, onClick: () => hideConversation(conv) },
+        { label: '隐藏会话（可撤销）', icon: 'logout', danger: true, onClick: () => hideConversation(conv) },
       ],
     });
   };
@@ -1975,7 +2012,9 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
   const [newPersonalOpen, setNewPersonalOpen] = useState(false);
   const [newTextOpen, setNewTextOpen] = useState(false);
   const fileInputRef = useRef(null);
-  const current = sel || filtered[0] || null;
+  // 过滤条件变化后，不能继续沿用不属于当前分类的旧选中项；否则“个人库”为空
+  // 时仍会渲染上一库的详情，并在后续操作中访问失效的 kbId。
+  const current = (sel && filtered.some((kb) => kb.id === sel.id) ? sel : null) || filtered[0] || null;
   const formatFileSize = (bytes: any) => {
     if (bytes === null || bytes === undefined || isNaN(Number(bytes)) || Number(bytes) <= 0) return '—';
     const n = Number(bytes);
@@ -2008,7 +2047,10 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
       }));
     } catch (error) { window.dispatchEvent(new CustomEvent('app-toast', {detail: error.message || '文档加载失败'})); }
   };
-  useEffect(() => { if (!current && filtered[0]) setSel(filtered[0]); }, [filtered.length]);
+  useEffect(() => {
+    if (!current && filtered[0]) setSel(filtered[0]);
+    if (!filtered.length && sel) setSel(null);
+  }, [filter, filtered.length, filtered[0]?.id, current?.id]);
   useEffect(() => { const target = KNOWLEDGE_BASES.find(k => k.id === initialKbId); if (target) setSel(target); }, [initialKbId]);
   useEffect(() => { void loadDocuments(current?.id); }, [current?.id]);
   useEffect(() => { const refresh = () => { if (current?.id) void loadDocuments(current.id); }; window.addEventListener('app-data-refresh', refresh); return () => window.removeEventListener('app-data-refresh', refresh); }, [current?.id]);
@@ -2164,7 +2206,7 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
           ))}
         </div>
         <div className="lib-body">
-          {filtered.map(k=>(
+          {filtered.length ? filtered.map(k=>(
             <div key={k.id} className={`kb-card ${current.id===k.id?'active':''}`} onClick={()=>setSel(k)}>
               <div className="row1">
                 <span className="nm">{k.name}</span>
@@ -2180,11 +2222,16 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
                 </span>
               </div>
             </div>
-          ))}
+          )) : (
+            <div style={{padding:'52px 20px',textAlign:'center',color:'var(--ink-3)',lineHeight:1.7}}>
+              <div style={{fontWeight:600,color:'var(--ink-2)'}}>{filter === 'personal' ? '个人库为空' : '当前分类暂无知识库'}</div>
+              <div style={{fontSize:12}}>{filter === 'personal' ? '当前还没有创建个人知识库。' : '请切换其它分类查看可用知识库。'}</div>
+            </div>
+          )}
         </div>
       </div>
 
-      <div className="lib-detail">
+      {current ? <div className="lib-detail">
         <div className="detail-head">
           <div>
             <div className="ttl">{current.name}</div>
@@ -2414,11 +2461,19 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
           {tab==='health' && <div style={{padding:24}}><h3>知识库健康度</h3><p style={{color:'var(--ink-3)'}}>健康度根据当前数据库中的文档状态计算。</p><div className="kpi-row"><div className="kpi"><div className="lbl">已发布率</div><div className="val">{docs.length ? Math.round(docs.filter(d=>d.status==='published').length/docs.length*100) : 0}%</div></div><div className="kpi"><div className="lbl">失败文档</div><div className="val">{docs.filter(d=>d.status==='failed').length}</div></div><div className="kpi"><div className="lbl">待处理</div><div className="val">{docs.filter(d=>d.status==='parsing'||d.status==='indexing').length}</div></div></div></div>}
           {tab==='settings' && <div style={{padding:24}}><h3>知识库设置</h3><div className="field"><label>名称</label><input value={current.name} readOnly/></div><div className="field"><label>类型</label><input value={current.type} readOnly/></div><div className="field"><label>可见性</label><input value={current.visibility} readOnly/></div><p className="field-hint">知识库的权限和管理员请在管理后台维护。</p></div>}
         </div>
-      </div>
+      </div> : (
+        <div className="lib-detail" style={{display:'flex',alignItems:'center',justifyContent:'center',minHeight:'420px',textAlign:'center'}}>
+          <div style={{color:'var(--ink-3)'}}>
+            <div style={{fontWeight:600,color:'var(--ink-2)',marginBottom:8}}>当前分类暂无知识库</div>
+            <div style={{fontSize:12}}>请在左侧切换其它分类，或先创建个人知识库。</div>
+            {(filter === 'all' || filter === 'personal') && <button className="btn primary" style={{marginTop:16}} onClick={()=>setNewPersonalOpen(true)}>+ 新建个人库</button>}
+          </div>
+        </div>
+      )}
       {previewDoc && <Modal title={`预览 · ${previewDoc.name}`} onClose={()=>setPreviewDoc(null)} foot={<button className="btn" onClick={()=>setPreviewDoc(null)}>关闭</button>}><div style={{whiteSpace:'pre-wrap',lineHeight:1.7,maxHeight:'60vh',overflow:'auto',fontSize:13}}>{previewDoc.content || '当前文档暂无可预览内容。'}</div></Modal>}
       <OnlinePreviewModal preview={onlinePreview} onClose={()=>setOnlinePreview(null)}/>
-      {confirmDoc && <ConfirmModal title="删除知识" msg={<>确认删除 <b style={{color:'var(--ink)'}}>{confirmDoc.name}</b>？删除后将从当前知识库移除。</>} onConfirm={()=>deleteDocument(confirmDoc)} onClose={()=>setConfirmDoc(null)}/>} 
-      {confirmKb && <ConfirmModal title="删除个人知识库" msg={<>确认删除个人知识库 <b style={{color:'var(--ink)'}}>{confirmKb.name}</b>？其中的知识将一并删除。</>} onConfirm={async()=>{const response=await fetch(`${API_BASE_URL}/api/v1/admin/kbs/${confirmKb.id}`,{method:'DELETE',headers:apiHeaders()}); const result=await response.json().catch(()=>({})); if(!response.ok) throw new Error(result.message||'删除失败'); setConfirmKb(null); setSel(null); window.dispatchEvent(new CustomEvent('app-data-refresh'));}} onClose={()=>setConfirmKb(null)}/>} 
+      {confirmDoc && <ConfirmModal title="删除知识" msg={<>确认删除 <b style={{color:'var(--ink)'}}>{confirmDoc.name}</b>？删除后将从当前知识库移除。</>} onConfirm={()=>deleteDocument(confirmDoc)} onClose={()=>setConfirmDoc(null)}/>}
+      {confirmKb && <ConfirmModal title="删除个人知识库" msg={<>确认删除个人知识库 <b style={{color:'var(--ink)'}}>{confirmKb.name}</b>？其中的知识将一并删除。</>} onConfirm={async()=>{const response=await fetch(`${API_BASE_URL}/api/v1/admin/kbs/${confirmKb.id}`,{method:'DELETE',headers:apiHeaders()}); const result=await response.json().catch(()=>({})); if(!response.ok) throw new Error(result.message||'删除失败'); setConfirmKb(null); setSel(null); window.dispatchEvent(new CustomEvent('app-data-refresh'));}} onClose={()=>setConfirmKb(null)}/>}
       {newTextOpen && <TextKnowledgeModal onClose={()=>setNewTextOpen(false)} onSave={addTextDocument}/>}
       {newPersonalOpen && <NewPersonalKBModal onClose={()=>setNewPersonalOpen(false)} onSaved={()=>{setNewPersonalOpen(false); window.dispatchEvent(new CustomEvent('app-data-refresh'));}}/>}
     </div>
@@ -3668,6 +3723,7 @@ function ModelPanel(){
       <div className="subtabs">
         <div className={`subtab ${sub==='models'?'active':''}`} onClick={()=>setSub('models')}>模型配置<span className="n">{MODELS.llm.length+MODELS.embedding.length+MODELS.rerank.length}</span></div>
         <div className={`subtab ${sub==='providers'?'active':''}`} onClick={()=>setSub('providers')}>供应商<span className="n">{PROVIDERS.length}</span></div>
+        <div className={`subtab ${sub==='ocr'?'active':''}`} onClick={()=>setSub('ocr')}>PDF OCR<span className="n">{PROVIDERS.some(p=>p.kind==='ocr')?'已配置':'未配置'}</span></div>
       </div>
 
       {sub==='models' && (
@@ -3771,7 +3827,7 @@ function ModelPanel(){
                 <div className="path" style={{fontFamily:'SF Mono,Menlo,monospace'}}>{p.url}</div>
                 <div>
                   <span className="badge" style={{background: p.kind==='gateway'?'#EDE7F8':p.kind==='selfhost'?'var(--kb-industry-soft)':'var(--surface-2)', color: p.kind==='gateway'?'#5D429A':p.kind==='selfhost'?'var(--kb-industry)':'var(--ink-3)'}}>
-                    {p.kind==='gateway'?'网关':p.kind==='selfhost'?'自托管':'外部API'}
+                    {p.kind==='ocr'?'PDF OCR':p.kind==='gateway'?'网关':p.kind==='selfhost'?'自托管':'外部API'}
                   </span>
                 </div>
                 <div style={{fontFamily:'SF Mono,Menlo,monospace',fontSize:11.5,color:'var(--ink-3)'}}>{p.keyMask}</div>
@@ -3785,18 +3841,74 @@ function ModelPanel(){
         </>
       )}
 
+      {sub==='ocr' && <OcrConfigPanel/>}
+
       {(openNewPv || editProvider) && <NewProviderModal target={editProvider} onClose={()=>{setOpenNewPv(false);setEditProvider(null)}} onSaved={()=>{setOpenNewPv(false);setEditProvider(null); window.dispatchEvent(new CustomEvent('app-data-refresh'));}}/>}
       {openNewM && <NewModelModal kind={openNewM.kind} target={openNewM.target} onClose={()=>setOpenNewM(false)} onSaved={()=>{setOpenNewM(false); window.dispatchEvent(new CustomEvent('app-data-refresh'));}}/>}
-      {confirmDelPv && <ConfirmModal title="删除供应商" msg={<>确认删除供应商 <b style={{color:'var(--ink)'}}>{confirmDelPv.name}</b>？引用此供应商的所有模型将变为不可用状态，需先迁移。</>} onConfirm={async()=>{const response=await fetch(`${API_BASE_URL}/api/v1/admin/providers/${confirmDelPv.id}`,{method:'DELETE',headers:apiHeaders()}); if(!response.ok) throw new Error('删除失败'); window.dispatchEvent(new CustomEvent('app-data-refresh'));}} onClose={()=>setConfirmDelPv(null)}/>} 
-      {confirmDelM && <ConfirmModal title="删除模型" msg={<>确认删除模型 <b style={{color:'var(--ink)'}}>{confirmDelM.name}</b>？知识库中绑定此模型的将需要回退到默认。</>} onConfirm={async()=>{const response=await fetch(`${API_BASE_URL}/api/v1/admin/models/${confirmDelM.id}`,{method:'DELETE',headers:apiHeaders()}); if(!response.ok) throw new Error('删除失败'); window.dispatchEvent(new CustomEvent('app-data-refresh'));}} onClose={()=>setConfirmDelM(null)}/>} 
+      {confirmDelPv && <ConfirmModal title="删除供应商" msg={<>确认删除供应商 <b style={{color:'var(--ink)'}}>{confirmDelPv.name}</b>？引用此供应商的所有模型将变为不可用状态，需先迁移。</>} onConfirm={async()=>{const response=await fetch(`${API_BASE_URL}/api/v1/admin/providers/${confirmDelPv.id}`,{method:'DELETE',headers:apiHeaders()}); if(!response.ok) throw new Error('删除失败'); window.dispatchEvent(new CustomEvent('app-data-refresh'));}} onClose={()=>setConfirmDelPv(null)}/>}
+      {confirmDelM && <ConfirmModal title="删除模型" msg={<>确认删除模型 <b style={{color:'var(--ink)'}}>{confirmDelM.name}</b>？知识库中绑定此模型的将需要回退到默认。</>} onConfirm={async()=>{const response=await fetch(`${API_BASE_URL}/api/v1/admin/models/${confirmDelM.id}`,{method:'DELETE',headers:apiHeaders()}); if(!response.ok) throw new Error('删除失败'); window.dispatchEvent(new CustomEvent('app-data-refresh'));}} onClose={()=>setConfirmDelM(null)}/>}
     </>
   );
 }
 
+function OcrConfigPanel(){
+  const target = PROVIDERS.find(p=>p.kind==='ocr');
+  const [apiKey, setApiKey] = useState('');
+  const [secretKey, setSecretKey] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const save = async () => {
+    if (!target && (!apiKey.trim() || !secretKey.trim())) {
+      window.dispatchEvent(new CustomEvent('app-toast',{detail:'首次配置需要填写 API Key 和 Secret Key'}));
+      return;
+    }
+    setSaving(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/admin/providers${target ? `/${target.id}` : ''}`, {
+        method: target ? 'PATCH' : 'POST',
+        headers: {'Content-Type':'application/json',...apiHeaders()},
+        body: JSON.stringify({
+          name: '百度智能云 OCR', kind: 'ocr', baseUrl: 'https://aip.baidubce.com',
+          defaultParams: {provider:'baidu', note:'扫描版/混合版 PDF 文档解析'},
+          ...(apiKey.trim() ? {apiKey:apiKey.trim()} : {}),
+          ...(secretKey.trim() ? {secretKey:secretKey.trim()} : {}),
+        }),
+      });
+      const result = await response.json().catch(()=>({}));
+      if (!response.ok) throw new Error(result.message || '保存失败');
+      setApiKey(''); setSecretKey('');
+      window.dispatchEvent(new CustomEvent('app-toast',{detail:'百度 OCR 配置已保存'}));
+      window.dispatchEvent(new CustomEvent('app-data-refresh'));
+    } catch(error) { window.dispatchEvent(new CustomEvent('app-toast',{detail:error.message || '保存失败'})); }
+    finally { setSaving(false); }
+  };
+  const test = async () => {
+    setTesting(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/admin/ocr/test`,{method:'POST',headers:apiHeaders()});
+      const result = await response.json().catch(()=>({}));
+      window.dispatchEvent(new CustomEvent('app-toast',{detail:result.status==='passed'?'百度 OCR 连接测试成功':(result.message||'百度 OCR 连接测试失败')}));
+    } catch { window.dispatchEvent(new CustomEvent('app-toast',{detail:'百度 OCR 连接测试失败'})); }
+    finally { setTesting(false); }
+  };
+  return <div className="mc">
+    <div className="mc-cat embed">
+      <div className="mc-cat-head"><span className="tag">PDF OCR · 扫描件</span><h4>百度智能云文档解析</h4><span className="hint">仅扫描版/混合版 PDF 调用；可读版不产生 OCR 费用</span></div>
+      <div style={{padding:'18px 20px',maxWidth:680}}>
+        <div className="field"><label>API Key {target?.hasApiKey && <span style={{color:'var(--success)',fontSize:11}}>（已配置：{target.keyMask}）</span>}</label><input type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder={target?.hasApiKey?'留空表示保持不变':'百度智能云 API Key'}/></div>
+        <div className="field"><label>Secret Key {target?.hasSecretKey && <span style={{color:'var(--success)',fontSize:11}}>（已配置：{target.secretKeyMask}）</span>}</label><input type="password" value={secretKey} onChange={e=>setSecretKey(e.target.value)} placeholder={target?.hasSecretKey?'留空表示保持不变':'百度智能云 Secret Key'}/></div>
+        <div className="field"><label>接口地址</label><input value="https://aip.baidubce.com" readOnly/></div>
+        <div style={{display:'flex',gap:8,marginTop:14}}><button className="btn primary" disabled={saving} onClick={save}>{saving?'保存中…':'保存配置'}</button><button className="btn" disabled={!target || testing} onClick={test}>{testing?'测试中…':'测试连接'}</button></div>
+        <div style={{marginTop:14,color:'var(--ink-3)',fontSize:12,lineHeight:1.6}}>凭据只在服务端加密保存。保存后，API 在提交解析任务时通过内部链路传递，parser 任务状态和日志不会返回密钥。</div>
+      </div>
+    </div>
+  </div>;
+}
+
 function NewProviderModal({target, onClose, onSaved}){
   const [kind, setKind] = useState(target?.kind || 'gateway');
-  const [name, setName] = useState(target?.name || ''); const [baseUrl, setBaseUrl] = useState(target?.url || ''); const [apiKey, setApiKey] = useState(''); const [note, setNote] = useState(''); const [saving, setSaving] = useState(false);
-  const save = async () => { if (!name.trim() || !baseUrl.trim()) return; setSaving(true); try { const response=await fetch(`${API_BASE_URL}/api/v1/admin/providers${target ? `/${target.id}` : ''}`,{method:target?'PATCH':'POST',headers:{'Content-Type':'application/json',...apiHeaders()},body:JSON.stringify({name,kind,baseUrl,defaultParams:{note},...(apiKey ? {apiKey} : {})})}); const result=await response.json().catch(()=>({})); if(!response.ok) throw new Error(result.message||'保存失败'); window.dispatchEvent(new CustomEvent('app-toast',{detail:'供应商已保存'})); onSaved?.(); } catch(error){window.dispatchEvent(new CustomEvent('app-toast',{detail:error.message||'保存失败'}));} finally{setSaving(false);} };
+  const [name, setName] = useState(target?.name || ''); const [baseUrl, setBaseUrl] = useState(target?.url || ''); const [apiKey, setApiKey] = useState(''); const [secretKey, setSecretKey] = useState(''); const [note, setNote] = useState(''); const [saving, setSaving] = useState(false);
+  const save = async () => { if (!name.trim() || !baseUrl.trim()) return; setSaving(true); try { const response=await fetch(`${API_BASE_URL}/api/v1/admin/providers${target ? `/${target.id}` : ''}`,{method:target?'PATCH':'POST',headers:{'Content-Type':'application/json',...apiHeaders()},body:JSON.stringify({name,kind,baseUrl,defaultParams:{note},...(apiKey ? {apiKey} : {}),...(secretKey ? {secretKey} : {})})}); const result=await response.json().catch(()=>({})); if(!response.ok) throw new Error(result.message||'保存失败'); window.dispatchEvent(new CustomEvent('app-toast',{detail:'供应商已保存'})); onSaved?.(); } catch(error){window.dispatchEvent(new CustomEvent('app-toast',{detail:error.message||'保存失败'}));} finally{setSaving(false);} };
   return (
     <Modal title={target ? `编辑供应商 · ${target.name}` : '新增供应商'} onClose={onClose} foot={
       <>
@@ -3810,10 +3922,12 @@ function NewProviderModal({target, onClose, onSaved}){
           <option value="gateway">网关（统一代理多个上游）</option>
           <option value="selfhost">自托管（TEI / vLLM / Ollama 等）</option>
           <option value="external">外部API（OpenAI / DeepSeek 等）</option>
+          <option value="ocr">PDF OCR（百度智能云）</option>
         </select>
       </div>
       <div className="field"><label>Base URL<span className="req">*</span></label><input value={baseUrl} onChange={e=>setBaseUrl(e.target.value)} placeholder="https://..."/></div>
       <div className="field"><label>API Key</label><input type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder={kind==='selfhost'?'(自托管通常不需要)':'sk-...'}/></div>
+      {kind==='ocr' && <div className="field"><label>Secret Key</label><input type="password" value={secretKey} onChange={e=>setSecretKey(e.target.value)} placeholder="百度智能云 Secret Key"/></div>}
       <div className="field"><label>备注</label><textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="该供应商用途、限速、协议说明"/></div>
     </Modal>
   );
@@ -3832,7 +3946,7 @@ function NewModelModal({kind, target, onClose, onSaved}){
     }>
       <div className="field"><label>模型名称<span className="req">*</span></label><input value={modelName} onChange={e=>setModelName(e.target.value)} placeholder="如：qwen3-max / bge-m3 / bge-reranker-v2-m3"/></div>
       <div className="field"><label>供应商<span className="req">*</span></label>
-        <select value={providerId} onChange={e=>setProviderId(e.target.value)}><option value="">选择已注册的供应商…</option>{PROVIDERS.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
+        <select value={providerId} onChange={e=>setProviderId(e.target.value)}><option value="">选择已注册的供应商…</option>{PROVIDERS.filter(p=>p.kind!=='ocr').map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
       </div>
       {kind==='llm' && (
         <div className="field-row">
@@ -3861,9 +3975,35 @@ function NewModelModal({kind, target, onClose, onSaved}){
 /* ============== AdminScreen（汇总） ============== */
 function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
   const [tab, setTab] = useState(initialTab || 'org');
+  const [auditMeta, setAuditMeta] = useState(AUDIT_META);
   useEffect(()=>{
     if (initialTab) setTab(initialTab);
   }, [initialTab]);
+  useEffect(() => setAuditMeta(AUDIT_META), [AUDIT.length, AUDIT_META.total, AUDIT_META.page]);
+  const loadAuditPage = async (page) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/admin/data?auditPage=${page}&auditLimit=20`, { headers: apiHeaders() });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || '审计日志加载失败');
+      AUDIT = (result.audit || []).map((item) => ({ ...item, when: new Date(item.when).toLocaleString('zh-CN'), what: item.action, actor: item.actor }));
+      AUDIT_META = result.auditPagination || { page, limit: 20, total: AUDIT.length, totalPages: 1 };
+      setAuditMeta(AUDIT_META);
+      if (result.dream) DREAM = result.dream;
+    } catch (error) {
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: error.message || '审计日志加载失败' }));
+    }
+  };
+  const loadDreamPage = async (page) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/admin/data?auditPage=${auditMeta.page || 1}&auditLimit=20&dreamPage=${page}`, { headers: apiHeaders() });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || 'Dream 运行记录加载失败');
+      if (result.dream) DREAM = result.dream;
+      setAuditMeta((current) => ({ ...current }));
+    } catch (error) {
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: error.message || 'Dream 运行记录加载失败' }));
+    }
+  };
   const [grantKb, setGrantKb] = useState(()=>INDUSTRY_KBS[0]?.id || '');
   // 组织树 state：支持无限层级新增
   const [orgTree, setOrgTree] = useState(()=>{
@@ -3879,7 +4019,10 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
   });
   const [adminModal, setAdminModal] = useState(null); // 设置管理员的节点
   const [addModal, setAddModal] = useState(null);     // 新增子组织的父节点
+  const [editModal, setEditModal] = useState(null);   // 编辑组织
+  const [deleteModal, setDeleteModal] = useState(null); // 删除组织
   const orgOptions = useMemo(() => flattenOrgTree(orgTree), [orgTree]);
+  const canCreateRoot = hasCapability('*', capabilities);
   const tabRules = [
     {k:'org', l:'组织架构', ic:'users', permission:'org.read'},
     {k:'users', l:'人员管理', ic:'user', permission:'org.user.read'},
@@ -3910,7 +4053,7 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
       if (!response.ok) throw new Error(result.message || `API ${response.status}`);
       const created = result.organization;
       if (!created) throw new Error('接口未返回新组织');
-      setExpandedIds(s=>new Set(s).add(parentId));   // 确保父节点展开，新节点立即可见
+      setExpandedIds(s=>parentId ? new Set(s).add(parentId) : s);   // 确保父节点展开，新节点立即可见
       setOrgTree(t=>{
         const rec = (n) => {
           if(n.id === parentId){
@@ -3918,12 +4061,88 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
           }
           return {...n, children: (n.children||[]).map(rec)};
         };
-        return parentId ? rec(t) : {...created, admins: adminUserIds.map(id => USERS.find(u=>u.id===id)?.name).filter(Boolean), children: []};
+        // 当前管理界面以树根为展示入口；新增根组织后保留原根，并将最新数据交给
+        // 全局刷新重新组装，避免把已有组织树误替换掉。
+        return parentId ? rec(t) : t;
       });
       window.dispatchEvent(new CustomEvent('app-toast', {detail:`组织「${created.name}」已保存` }));
+      if (!parentId) window.dispatchEvent(new CustomEvent('app-data-refresh'));
       return true;
     } catch (error) {
       window.dispatchEvent(new CustomEvent('app-toast', {detail:`组织保存失败：${error.message || '请稍后重试'}` }));
+      return false;
+    }
+  };
+  const updateOrganization = async (node, name, parentId) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/admin/orgs/${node.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...apiHeaders() },
+        body: JSON.stringify({ name, parentId: parentId || null }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || `API ${response.status}`);
+      const updated = result.organization;
+      if (!updated) throw new Error('接口未返回更新后的组织');
+
+      const rewritePaths = (current, oldPath, nextPath) => ({
+        ...current,
+        ...(current.id === node.id ? { ...updated } : {}),
+        path: current.path === oldPath ? nextPath : current.path.startsWith(`${oldPath}/`) ? `${nextPath}${current.path.slice(oldPath.length)}` : current.path,
+        children: (current.children || []).map((child) => rewritePaths(child, oldPath, nextPath)),
+      });
+      const detach = (current) => {
+        if (!current) return { tree: current, detached: null };
+        if (current.id === node.id) return { tree: null, detached: current };
+        let detached = null;
+        const children = [];
+        for (const child of current.children || []) {
+          const result = detach(child);
+          if (result.detached) detached = result.detached;
+          if (result.tree) children.push(result.tree);
+        }
+        return { tree: { ...current, children }, detached };
+      };
+      const attach = (current, targetId, child) => {
+        if (!current) return current;
+        if (current.id === targetId) return { ...current, children: [...(current.children || []), child] };
+        return { ...current, children: (current.children || []).map((item) => attach(item, targetId, child)) };
+      };
+      setOrgTree((tree) => {
+        if (node.parentId === (parentId || null)) return rewritePaths(tree, node.path, updated.path);
+        const result = detach(tree);
+        if (!result.detached) return tree;
+        const moved = rewritePaths({ ...result.detached, ...updated }, node.path, updated.path);
+        return parentId ? attach(result.tree, parentId, moved) : moved;
+      });
+      setEditModal(null);
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: `组织「${updated.name}」已更新` }));
+      window.dispatchEvent(new CustomEvent('app-data-refresh'));
+      return true;
+    } catch (error) {
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: `组织更新失败：${error.message || '请稍后重试'}` }));
+      return false;
+    }
+  };
+  const deleteOrganization = async (node) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/admin/orgs/${node.id}`, { method: 'DELETE', headers: apiHeaders() });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || `API ${response.status}`);
+      setOrgTree((tree) => {
+        const remove = (current) => {
+          if (!current) return current;
+          if (current.id === node.id) return null;
+          return { ...current, children: (current.children || []).map(remove).filter(Boolean) };
+        };
+        return remove(tree);
+      });
+      setDeleteModal(null);
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: `组织「${node.name}」已删除` }));
+      window.dispatchEvent(new CustomEvent('app-data-refresh'));
+      return true;
+    } catch (error) {
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: `组织删除失败：${error.message || '请稍后重试'}` }));
       return false;
     }
   };
@@ -3990,14 +4209,16 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
             setExpandedIds={setExpandedIds}
             onAddChild={(n: any)=>setAddModal(n)}
             onSetAdmin={(n: any)=>setAdminModal(n)}
+            onEdit={(n: any)=>setEditModal(n)}
+            onDelete={(n: any)=>setDeleteModal(n)}
             onActivateKb={activateKb}
             onDeactivateKb={deactivateKb}
             onManageKb={onManageKb}
-            canCreateRoot={hasCapability('*', capabilities)}
+            canCreateRoot={canCreateRoot}
           />
         )}
         {tab==='users' && <UsersPanel orgTree={orgTree} orgOptions={orgOptions} canManage={hasCapability('org.user.manage', capabilities)} capabilities={capabilities}/>}
-        {tab==='roles' && <RolesPanel canManage={hasCapability('role.manage', capabilities)}/>} 
+        {tab==='roles' && <RolesPanel canManage={hasCapability('role.manage', capabilities)}/>}
         {tab==='industry' && <IndustryKBPanel canCreate={hasCapability('kb.industry.create', capabilities)} onOpenGrant={(k)=>{setGrantKb(k.id); setTab('grant');}}/>}
         {tab==='grant' && <GrantPanel kbId={grantKb} setKbId={setGrantKb}/>}
         {tab==='model' && <ModelPanel/>}
@@ -4018,7 +4239,7 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
                 } catch (error) { window.dispatchEvent(new CustomEvent('app-toast',{detail:error.message || '维护任务提交失败'})); }
               }}><Icon name="refresh" size={12}/> 立即执行维护</button>}
             </div>
-            {DREAM && <DreamTelemetryPanel telemetry={DREAM}/>}
+            {DREAM && <DreamTelemetryPanel telemetry={DREAM} onPageChange={loadDreamPage}/>}
             <div className="audit">
               {AUDIT.map((a,i)=>(
                 <div key={i} className="audit-row">
@@ -4028,12 +4249,15 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
                 </div>
               ))}
             </div>
+            <PaginationBar pagination={auditMeta} onChange={loadAuditPage} label="条审计记录" />
           </>
         )}
         {tab==='status' && <SystemStatusPanel capabilities={capabilities}/>}
 
-          {adminModal && <OrgAdminModal node={adminModal} onClose={()=>setAdminModal(null)} onSaved={()=>{setAdminModal(null); window.dispatchEvent(new CustomEvent('app-data-refresh'));}}/>} 
-        {addModal && <AddOrgModal parent={addModal} onAdd={async (name, adminUserIds)=>{if (await addChildOrg(addModal.id, name, adminUserIds)) setAddModal(null);}} onClose={()=>setAddModal(null)}/>} 
+        {adminModal && <OrgAdminModal node={adminModal} onClose={()=>setAdminModal(null)} onSaved={()=>{setAdminModal(null); window.dispatchEvent(new CustomEvent('app-data-refresh'));}}/>}
+        {addModal && <AddOrgModal parent={addModal} orgOptions={orgOptions} canCreateRoot={canCreateRoot} onAdd={async (name, parentId, adminUserIds)=>{if (await addChildOrg(parentId, name, adminUserIds)) setAddModal(null);}} onClose={()=>setAddModal(null)}/>}
+        {editModal && <EditOrgModal node={editModal} orgOptions={orgOptions} canCreateRoot={canCreateRoot} onSave={(name, parentId)=>updateOrganization(editModal, name, parentId)} onClose={()=>setEditModal(null)}/>}
+        {deleteModal && <ConfirmModal title="删除组织" msg={<>确认删除组织 <b style={{color:'var(--ink)'}}>{deleteModal.name}</b>？删除前必须先处理该组织的下属组织；组织库会保留为已停用状态。</>} onConfirm={()=>deleteOrganization(deleteModal)} onClose={()=>setDeleteModal(null)}/>}
       </div>
     </div>
   );
@@ -4044,11 +4268,14 @@ function SystemStatusPanel({ capabilities }){
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('kbs');
   const [retryingDocId, setRetryingDocId] = useState(null);
+  const [sectionPages, setSectionPages] = useState({});
 
-  const fetchTelemetry = async () => {
+  const fetchTelemetry = async (section = '', page = 1) => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/admin/system/status-telemetry`, {
+      const query = new URLSearchParams({ limit: '20' });
+      if (section) { query.set('section', section); query.set('page', String(page)); }
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/system/status-telemetry?${query.toString()}`, {
         headers: apiHeaders()
       });
       if (res.ok) {
@@ -4061,6 +4288,11 @@ function SystemStatusPanel({ capabilities }){
     } finally {
       setLoading(false);
     }
+  };
+
+  const loadSectionPage = (section, page) => {
+    setSectionPages((current) => ({ ...current, [section]: page }));
+    void fetchTelemetry(section, page);
   };
 
   useEffect(() => {
@@ -4114,10 +4346,10 @@ function SystemStatusPanel({ capabilities }){
       <div style={{ display: 'flex', alignItems: 'flex-start', marginBottom: 20 }}>
         <div style={{ flex: 1 }}>
           <div className="h1">系统运行状态与全流程质量监控</div>
-          <div className="subline">端到端质量监控 · GBrain 知识源与 Scope 脑 · 物理存储 · 向量解析 · 事务 Outbox 队列 · 实时无 Mock</div>
+          <div className="subline">端到端全链路质量监控 · GBrain 知识源与 Scope 脑 · 物理存储 · 向量解析 · 事务 Outbox 队列 · 实时指标遥测</div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn" onClick={fetchTelemetry} disabled={loading}>
+          <button className="btn" onClick={() => fetchTelemetry()} disabled={loading}>
             <Icon name="refresh" size={12}/> {loading ? '刷新中…' : '刷新数据'}
           </button>
           {capabilities.includes('*') && (
@@ -4279,7 +4511,10 @@ function SystemStatusPanel({ capabilities }){
         ].map(t => (
           <button
             key={t.k}
-            onClick={() => setActiveTab(t.k)}
+            onClick={() => {
+              setActiveTab(t.k);
+              if ((sectionPages[t.k] || 1) > 1) void fetchTelemetry(t.k, sectionPages[t.k]);
+            }}
             style={{
               padding: '8px 4px',
               border: 'none',
@@ -4355,6 +4590,8 @@ function SystemStatusPanel({ capabilities }){
               ))}
             </div>
           )}
+          <PaginationBar pagination={inq.pagination?.kbBreakdown} onChange={(page) => loadSectionPage('kbs', page)} label="个知识库" />
+          {inq.failedDocsList?.length > 0 && <PaginationBar pagination={inq.pagination?.failedDocs} onChange={(page) => loadSectionPage('failedDocs', page)} label="个失败文档" />}
         </div>
       )}
 
@@ -4387,6 +4624,7 @@ function SystemStatusPanel({ capabilities }){
               </tbody>
             </table>
           </div>
+          <PaginationBar pagination={gbs.pagination} onChange={(page) => loadSectionPage('sources', page)} label="个 Source" />
 
           <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)', marginBottom: 8 }}>权限 Scope 脑矩阵与派生智能 (Derived Intelligence)</div>
           <div className="table-wrap">
@@ -4431,6 +4669,7 @@ function SystemStatusPanel({ capabilities }){
               </tbody>
             </table>
           </div>
+          <PaginationBar pagination={scp.pagination} onChange={(page) => loadSectionPage('scopes', page)} label="个 Scope" />
         </>
       )}
 
@@ -4469,6 +4708,7 @@ function SystemStatusPanel({ capabilities }){
               </tbody>
             </table>
           </div>
+          <PaginationBar pagination={drm.pagination} onChange={(page) => loadSectionPage('dream', page)} label="次 Dream 运行" />
         </>
       )}
 
@@ -4527,6 +4767,7 @@ function SystemStatusPanel({ capabilities }){
               </tbody>
             </table>
           </div>
+          <PaginationBar pagination={obx.pagination} onChange={(page) => loadSectionPage('outbox', page)} label="个事件" />
         </>
       )}
 
@@ -4587,7 +4828,7 @@ function SystemStatusPanel({ capabilities }){
   );
 }
 
-function DreamTelemetryPanel({telemetry}){
+function DreamTelemetryPanel({telemetry, onPageChange}){
   const last = telemetry.lastRun;
   const statusLabels = {completed:'已完成',partial:'部分完成',failed:'失败',running:'执行中',clean:'已完成'};
   const statusColors = {completed:'var(--green)',partial:'var(--amber)',failed:'var(--red)',running:'var(--blue)',clean:'var(--green)'};
@@ -4641,10 +4882,11 @@ function DreamTelemetryPanel({telemetry}){
 
     <div style={{border:'1px solid var(--line)',borderRadius:8,overflow:'hidden',background:'var(--surface)'}}>
       <div style={{padding:'10px 14px',fontSize:12,fontWeight:600,borderBottom:'1px solid var(--line)'}}>最近 Dream 运行记录</div>
-      {(telemetry.runs || []).slice(0,6).map((run)=><div key={run.id} style={{display:'grid',gridTemplateColumns:'145px 75px 1fr 120px',gap:10,padding:'9px 14px',borderBottom:'1px solid var(--line)',fontSize:11.5,alignItems:'center'}}>
+      {(telemetry.runs || []).map((run)=><div key={run.id} style={{display:'grid',gridTemplateColumns:'145px 75px 1fr 120px',gap:10,padding:'9px 14px',borderBottom:'1px solid var(--line)',fontSize:11.5,alignItems:'center'}}>
         <span>{fmt(run.startedAt)}</span><b style={{color:statusColors[run.status] || 'var(--ink)'}}>{statusLabels[run.status] || run.status}</b><span>{run.sourcesVisited || 0} 个 source · {run.sourcesSucceeded || 0} 成功 · {run.sourcesPartial || 0} 部分 · {run.queuedTopics || 0} 个待编译主题</span><span style={{color:'var(--ink-3)'}}>{run.durationMs ? `${Math.round(run.durationMs/1000)} 秒` : '—'}</span>
       </div>)}
       {!telemetry.runs?.length && <div style={{padding:16,color:'var(--ink-3)',fontSize:12}}>暂无 Dream 运行记录。</div>}
+      <PaginationBar pagination={telemetry.runsPagination} onChange={onPageChange || (() => {})} label="次 Dream 运行" />
     </div>
 
     <div style={{marginTop:10,fontSize:11,color:'var(--ink-3)'}}>当前 active source：{(telemetry.sources || []).length} 个 · 权限 Scope 脑：{scopes.length} 个 · 派生智能总结：{telemetry.derivedPagesCount || 0} 篇</div>
@@ -4652,19 +4894,33 @@ function DreamTelemetryPanel({telemetry}){
 }
 
 /* 新增子组织弹窗（支持无限层级） */
-function AddOrgModal({parent, onAdd, onClose}){
+function AddOrgModal({parent, orgOptions = [], canCreateRoot = false, onAdd, onClose}){
   const [name, setName] = useState('');
   const [admins, setAdmins] = useState([]);
+  const initialParentId = parent?.id || '';
+  const [parentId, setParentId] = useState(initialParentId);
+  const selectableParents = orgOptions.filter((option) => option.canManage || option.id === initialParentId);
   return (
-    <Modal title={parent.id ? `新增子组织 · ${parent.name}` : '新增一级组织'} onClose={onClose} foot={
+    <Modal title="新增组织" onClose={onClose} foot={
       <>
         <button className="btn" onClick={onClose}>取消</button>
-        <button className="btn primary" disabled={!name.trim()} onClick={()=>onAdd(name.trim(), admins.map(item=>item.id))}>创建</button>
+        <button className="btn primary" disabled={!name.trim() || (!parentId && !canCreateRoot)} onClick={()=>onAdd(name.trim(), parentId || null, admins.map(item=>item.id))}>创建</button>
       </>
     }>
       <div className="field">
         <label>组织名称<span className="req">*</span></label>
-        <input autoFocus value={name} onChange={e=>setName(e.target.value)} placeholder="如：合规三组 / 华东分部" onKeyDown={e=>{if(e.key==='Enter' && name.trim()) onAdd(name.trim());}}/>
+        <input autoFocus value={name} onChange={e=>setName(e.target.value)} placeholder="如：合规三组 / 华东分部" onKeyDown={e=>{if(e.key==='Enter' && name.trim() && (parentId || canCreateRoot)) onAdd(name.trim(), parentId || null, admins.map(item=>item.id));}}/>
+      </div>
+      <div className="field">
+        <label>挂载到组织<span className="req">*</span></label>
+        <select value={parentId} onChange={e=>setParentId(e.target.value)}>
+          {canCreateRoot && <option value="">作为根组织</option>}
+          {!canCreateRoot && <option value="" disabled>请选择可管理的上级组织</option>}
+          {selectableParents.map((option) => (
+            <option key={option.id} value={option.id}>{option.path}</option>
+          ))}
+        </select>
+        <div className="field-hint">只能选择当前账号有组织管理权限的节点作为上级组织；组织管理员不能创建根组织或挂载到上级组织。</div>
       </div>
       <div className="field">
         <label>组织管理员（可选）</label>
@@ -4672,7 +4928,42 @@ function AddOrgModal({parent, onAdd, onClose}){
         <div className="field-hint">管理员将同时成为该组织知识库管理员；上级组织管理员自动拥有本组织及下级组织的管理权限。被选人员还需具备“组织管理员”角色，角色可在人员/角色管理中配置。</div>
       </div>
       <div style={{padding:12,background:'var(--surface-2)',borderRadius:7,fontSize:12,color:'var(--ink-3)',lineHeight:1.6}}>
-        <b style={{color:'var(--ink)'}}>继承规则</b>：{parent.id ? `新组织自动挂到「${parent.name}」之下，其成员自动继承${parent.name === '集团总部' ? '全部组织库' : `「${parent.name}」及其上级`}的可见范围；` : '新组织将作为组织树根节点；'}可在创建后为该组织单独设置知识库管理员。
+        <b style={{color:'var(--ink)'}}>继承规则</b>：{parentId ? '新组织将挂到所选组织之下，其成员自动继承上级组织的可见范围；' : '新组织将作为组织树根节点；'}可在创建后为该组织单独设置知识库管理员。
+      </div>
+    </Modal>
+  );
+}
+
+function EditOrgModal({node, orgOptions = [], canCreateRoot = false, onSave, onClose}){
+  const [name, setName] = useState(node.name || '');
+  const [parentId, setParentId] = useState(node.parentId || '');
+  const descendants = new Set(orgOptions.filter((option) => option.path === node.path || option.path.startsWith(`${node.path}/`)).map((option) => option.id));
+  const selectableParents = orgOptions.filter((option) => !descendants.has(option.id) && (option.canManage || option.id === node.parentId));
+  const canChooseRoot = canCreateRoot;
+  return (
+    <Modal title={`编辑组织 · ${node.name}`} onClose={onClose} foot={
+      <>
+        <button className="btn" onClick={onClose}>取消</button>
+        <button className="btn primary" disabled={!name.trim() || (!parentId && !canChooseRoot)} onClick={()=>onSave(name.trim(), parentId || null)}>保存</button>
+      </>
+    }>
+      <div className="field">
+        <label>组织名称<span className="req">*</span></label>
+        <input autoFocus value={name} onChange={e=>setName(e.target.value)} placeholder="请输入组织名称"/>
+      </div>
+      <div className="field">
+        <label>挂载到组织<span className="req">*</span></label>
+        <select value={parentId} onChange={e=>setParentId(e.target.value)}>
+          {canCreateRoot && <option value="">作为根组织</option>}
+          {!canCreateRoot && !parentId && <option value="" disabled>请选择可管理的上级组织</option>}
+          {selectableParents.map((option) => (
+            <option key={option.id} value={option.id}>{option.path}</option>
+          ))}
+        </select>
+        <div className="field-hint">不能选择当前组织或其下属组织作为新的上级；组织管理员只能在自己的管理范围内调整层级。</div>
+      </div>
+      <div style={{padding:12,background:'var(--surface-2)',borderRadius:7,fontSize:12,color:'var(--ink-3)',lineHeight:1.6}}>
+        修改组织名称或上级组织后，系统会同步更新该节点及全部下属组织的物化路径，并触发权限范围重新对账。
       </div>
     </Modal>
   );
@@ -5003,6 +5294,8 @@ function OrgPanel({
   setExpandedIds,
   onAddChild,
   onSetAdmin,
+  onEdit,
+  onDelete,
   onActivateKb,
   onDeactivateKb,
   onManageKb,
@@ -5049,8 +5342,8 @@ function OrgPanel({
           <button className="btn" onClick={expandAll}>⤢ 展开全部</button>
           <button className="btn" onClick={collapseAll}>⤡ 折叠全部</button>
           {canCreateRoot && (
-            <button className="btn primary" onClick={()=>onAddChild(orgTree || {id:null,name:'根节点'})}>
-              <Icon name="plus" size={12}/> 新增一级组织
+            <button className="btn primary" onClick={()=>onAddChild({id:null,name:'根组织'})}>
+              <Icon name="plus" size={12}/> 新增组织
             </button>
           )}
         </div>
@@ -5083,6 +5376,8 @@ function OrgPanel({
                 onToggle={onToggle}
                 onAddChild={onAddChild}
                 onSetAdmin={onSetAdmin}
+                onEdit={onEdit}
+                onDelete={onDelete}
                 search={nodeSearch}
               />
             ) : (
@@ -5114,6 +5409,12 @@ function OrgPanel({
                   <button className="btn primary" style={{fontSize:'11.5px',padding:'4px 10px'}} onClick={()=>onAddChild(selectedNode)}>
                     <Icon name="plus" size={12}/> 添加子组织
                   </button>
+                )}
+                {selectedNode.canManage && (
+                  <>
+                    <button className="btn" style={{fontSize:'11.5px',padding:'4px 10px'}} onClick={()=>onEdit?.(selectedNode)}>编辑组织</button>
+                    <button className="btn danger" style={{fontSize:'11.5px',padding:'4px 10px'}} disabled={(selectedNode.children || []).length > 0} title={(selectedNode.children || []).length > 0 ? '请先处理下属组织' : '删除组织'} onClick={()=>onDelete?.(selectedNode)}>删除组织</button>
+                  </>
                 )}
               </div>
             </div>
@@ -5214,7 +5515,7 @@ function OrgPanel({
   );
 }
 
-function OrgTreeItem({node, depth, expandedIds, selectedNodeId, onSelect, onToggle, onAddChild, onSetAdmin, search}: any){
+function OrgTreeItem({node, depth, expandedIds, selectedNodeId, onSelect, onToggle, onAddChild, onSetAdmin, onEdit, onDelete, search}: any){
   const open = expandedIds.has(node.id);
   const hasChildren = node.children && node.children.length > 0;
   const isSelected = selectedNodeId === node.id;
@@ -5268,6 +5569,8 @@ function OrgTreeItem({node, depth, expandedIds, selectedNodeId, onSelect, onTogg
               onToggle={onToggle}
               onAddChild={onAddChild}
               onSetAdmin={onSetAdmin}
+              onEdit={onEdit}
+              onDelete={onDelete}
               search={search}
             />
           ))}
@@ -5991,6 +6294,7 @@ function App(){
       (MODELS[kind] ||= []).push({ ...model, name: model.modelName, provider: model.provider?.name || '—', ctx: `${Math.round((model.contextLen || 0) / 1024) || model.contextLen}K`, dim: model.dimensions ? `${model.dimensions} 维` : '', default: model.isDefault, tested: model.testStatus === 'passed' });
     });
     AUDIT = (d.audit || []).map((item: any) => ({ ...item, when: new Date(item.when).toLocaleString('zh-CN'), what: item.action, actor: item.actor }));
+    AUDIT_META = d.auditPagination || { page: 1, limit: 20, total: AUDIT.length, totalPages: 1 };
     DREAM = d.dream || null;
     SYSTEM_STATUS = d.systemStatus || null;
     setCurrentUser(d.user || null);
@@ -6109,7 +6413,7 @@ function App(){
     window.history.replaceState({}, '', '/');
   };
 
-  
+
 
 
   const [screen, setScreen] = useState('chat');
