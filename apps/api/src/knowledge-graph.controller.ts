@@ -3,6 +3,8 @@ import { PrismaClient } from '@prisma/client';
 import { AuthService } from './auth/auth.service';
 import { PermissionService } from './permission/permission.service';
 import { AuthGuard } from './auth/auth.guard';
+import { BrainRepoAdapter } from '@llmwiki/gbrain-adapter';
+import { sourceKeyForKnowledgeBase } from './brain-compiler/brain-source';
 
 type GraphNode = {
   id: string;
@@ -19,7 +21,7 @@ type GraphEdge = {
   target: string;
   type: 'contains' | 'mentions' | 'related_to';
   weight: number;
-  evidence: Array<{ documentId?: string; chunkId?: string; snippet?: string }>;
+  evidence: Array<{ documentId?: string; chunkId?: string; snippet?: string; provenance?: string }>;
 };
 
 function cleanLabel(value: string): string {
@@ -50,6 +52,9 @@ function extractTerms(title: string, chunks: Array<{ content: string; metadata: 
 @Controller('api/v1/knowledge-graph')
 export class KnowledgeGraphController {
   private readonly prisma = new PrismaClient();
+  private readonly gbrain = new BrainRepoAdapter(
+    process.env.BRAIN_REPO_BASE_PATH || '/tmp/llmwiki/brain_repos',
+  );
 
   constructor(
     private readonly authService: AuthService,
@@ -110,6 +115,48 @@ export class KnowledgeGraphController {
       }
     }
 
+    // Prefer actual GBrain page links when they exist. The original term graph
+    // remains useful as a clearly-labelled discovery aid, but never replaces
+    // an asserted/extracted relation from GBrain's graph plane.
+    const docNodeBySlug = new Map(documents.map((document) => [`docs/${document.id}`, `doc:${document.id}`]));
+    let gbrainLinks = 0;
+    let gbrainLinkErrors = 0;
+    for (const document of documents.slice(0, 120)) {
+      try {
+        const sourceRef = `gbrain://source/${sourceKeyForKnowledgeBase(document.kbId)}`;
+        const payload: any = await this.gbrain.getLinks(sourceRef, `docs/${document.id}`);
+        const links = Array.isArray(payload?.links)
+          ? payload.links
+          : Array.isArray(payload?.results)
+            ? payload.results
+            : Array.isArray(payload)
+              ? payload
+              : [];
+        for (const link of links) {
+          const targetSlug = String(link?.to || link?.to_slug || link?.target || link?.target_slug || '').trim();
+          if (!targetSlug) continue;
+          const source = `doc:${document.id}`;
+          const target = docNodeBySlug.get(targetSlug) || `gbrain:${sourceKeyForKnowledgeBase(document.kbId)}:${targetSlug}`;
+          if (!docNodeBySlug.has(targetSlug)) {
+            addNode({
+              id: target,
+              label: cleanLabel(String(link?.to_title || link?.title || targetSlug.split('/').pop() || targetSlug)),
+              type: 'concept',
+              metadata: { source: 'gbrain', slug: targetSlug, status: link?.status || 'linked' },
+            });
+          }
+          addEdge(source, target, 'related_to', [{
+            documentId: document.id,
+            snippet: String(link?.context || link?.link_type || 'GBrain relation').slice(0, 500),
+            provenance: String(link?.link_source || link?.source || 'gbrain'),
+          }]);
+          gbrainLinks += 1;
+        }
+      } catch {
+        gbrainLinkErrors += 1;
+      }
+    }
+
     // Only create co-occurrence edges supported by shared extracted terms.
     // They are deliberately labelled related_to, never presented as factual
     // causal relationships without an explicit source assertion.
@@ -131,7 +178,15 @@ export class KnowledgeGraphController {
     return {
       nodes: [...nodes.values()],
       edges: [...edges.values()],
-      stats: { knowledgeBases: new Set(documents.map((item) => item.kbId)).size, documents: documents.length, concepts: [...nodes.values()].filter((node) => node.type === 'concept').length, relations: edges.size },
+      stats: {
+        knowledgeBases: new Set(documents.map((item) => item.kbId)).size,
+        documents: documents.length,
+        concepts: [...nodes.values()].filter((node) => node.type === 'concept').length,
+        relations: edges.size,
+        gbrainLinks,
+        gbrainLinkErrors,
+        graphMode: 'gbrain-links-plus-discovery',
+      },
       scope: { userId, visibleKnowledgeBases: visibleKbIds.length, onlyPublished: true },
     };
   }

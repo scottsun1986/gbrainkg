@@ -18,18 +18,43 @@ export interface BrainEvidence {
 export interface BrainQueryResult {
   topics: string[];
   answer: string;
-  citations: Array<{ topic: string; kbId?: string; docId?: string; docTitle?: string; snippet: string; context?: string; score?: number }>;
+  citations: Array<{
+    topic: string;
+    slug?: string;
+    sourceKey?: string;
+    kbId?: string;
+    docId?: string;
+    docTitle?: string;
+    section?: string;
+    snippet: string;
+    context?: string;
+    score?: number;
+    evidence?: string;
+  }>;
   reranked?: boolean;
 }
 
 export interface BrainQueryOptions {
   breadth?: boolean;
+  operation?: 'search' | 'query';
 }
 
 export interface BrainMaintenanceResult {
   status?: string;
   schema_version?: string;
   phases?: Array<{ phase?: string; status?: string; summary?: string; reason?: string }>;
+  [key: string]: unknown;
+}
+
+export interface BrainSynthesisResult {
+  answer?: string;
+  sources?: unknown;
+  gaps?: unknown;
+  warnings?: unknown;
+  synthesis_status?: string;
+  pages_gathered?: number;
+  takes_gathered?: number;
+  cost?: unknown;
   [key: string]: unknown;
 }
 
@@ -65,6 +90,79 @@ function canonicalPage(slug: string, items: BrainEvidence[]): string {
   ].join('\n');
   const heading = body.startsWith(`# ${title}`) ? '' : `# ${title}\n\n`;
   return `${frontmatter}\n\n${heading}${body}`.trim();
+}
+
+type Passage = { heading?: string; content: string; score: number };
+
+function structuralPassages(markdown: string): Array<{ heading?: string; content: string }> {
+  const body = markdown.replace(/^---\s*[\s\S]*?---\s*/m, '').trim();
+  const lines = body.split(/\r?\n/);
+  const sections: Array<{ heading?: string; content: string }> = [];
+  let heading = '';
+  let buffer: string[] = [];
+  // This recognizes document structure, not a user-question-specific pattern:
+  // Markdown headings, Chinese chapter/article markers and enumerated clauses.
+  const boundary = /^(#{1,6}\s+.+|第[\d一二三四五六七八九十百千万〇零两]+[章节条款项].*|[（(]?[\d一二三四五六七八九十百千万]+[）).、]\s*.+)$/u;
+  const flush = () => {
+    const content = buffer.join('\n').trim();
+    if (content) sections.push({ heading: heading || undefined, content });
+  };
+  for (const line of lines) {
+    if (boundary.test(line.trim())) {
+      flush();
+      heading = line.trim();
+      buffer = [line];
+    } else {
+      buffer.push(line);
+    }
+  }
+  flush();
+  return sections.length ? sections : [{ content: body }];
+}
+
+function lexicalFeatures(value: string): Set<string> {
+  const normalized = value.toLowerCase().replace(/\s+/g, ' ').trim();
+  const features = new Set<string>();
+  for (const word of normalized.match(/[a-z0-9][a-z0-9_-]{1,}|[\u4e00-\u9fff]{2,}/g) || []) {
+    features.add(word);
+    if (/^[\u4e00-\u9fff]+$/u.test(word)) {
+      for (let size = 2; size <= Math.min(4, word.length); size += 1) {
+        for (let i = 0; i + size <= word.length; i += 1) features.add(word.slice(i, i + size));
+      }
+    }
+  }
+  return features;
+}
+
+/**
+ * Second-stage, document-local passage ranking. It runs after GBrain has
+ * retrieved a candidate page and works from generic document structure so it
+ * covers articles, clauses, tables and headings without special-casing a
+ * particular user wording such as "第 N 条".
+ */
+function localizePassage(question: string, page: string, fallback: string): Passage {
+  const queryFeatures = lexicalFeatures(question);
+  const sections = structuralPassages(page);
+  const ranked = sections.map((section) => {
+    const text = `${section.heading || ''}\n${section.content}`;
+    const features = lexicalFeatures(text);
+    let matched = 0;
+    for (const feature of queryFeatures) if (features.has(feature)) matched += 1;
+    const headingFeatures = lexicalFeatures(section.heading || '');
+    let headingMatched = 0;
+    for (const feature of queryFeatures) if (headingFeatures.has(feature)) headingMatched += 1;
+    const score = (matched / Math.max(1, queryFeatures.size)) + (headingMatched / Math.max(1, queryFeatures.size));
+    return { heading: section.heading, content: section.content, score };
+  }).sort((a, b) => b.score - a.score);
+  const best = ranked[0];
+  if (!best || best.score <= 0) return { content: fallback || page, score: 0 };
+  const index = sections.findIndex((section) => section.content === best.content);
+  const adjacent = [sections[index - 1], sections[index + 1]]
+    .filter(Boolean)
+    .map((section) => section.content)
+    .join('\n\n');
+  const content = [best.content, adjacent].filter(Boolean).join('\n\n').slice(0, 18_000);
+  return { heading: best.heading, content, score: best.score };
 }
 
 /** Production bridge to the official garrytan/gbrain CLI. */
@@ -245,6 +343,47 @@ export class BrainRepoAdapter {
     });
   }
 
+  private async runGitOutput(args: string[], cwd: string): Promise<string> {
+    return new Promise<string>((resolveOutput, reject) => {
+      const child = spawn('git', args, { cwd, stdio: 'pipe' });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (chunk: any) => { stdout += chunk.toString('utf8'); });
+      child.stderr.on('data', (chunk: any) => { stderr += chunk.toString('utf8'); });
+      child.on('error', reject);
+      child.on('close', (code: number) => code === 0
+        ? resolveOutput(stdout.trim())
+        : reject(new Error(`git ${args.join(' ')} failed (${code}): ${stderr || stdout}`)));
+    });
+  }
+
+  private configuredRemote(sourceId: string): string | null {
+    const template = String(process.env.GBRAIN_SOURCE_REMOTE_URL_TEMPLATE || '').trim();
+    if (!template) return null;
+    if (!template.includes('{source}')) {
+      throw new Error('GBRAIN_SOURCE_REMOTE_URL_TEMPLATE must contain the {source} placeholder.');
+    }
+    return template.replaceAll('{source}', sourceId);
+  }
+
+  private async ensureSourceRemote(sourceId: string, sourcePath: string): Promise<void> {
+    const remote = this.configuredRemote(sourceId);
+    if (!remote) return;
+    const existing = await this.runGitOutput(['remote', 'get-url', 'origin'], sourcePath).catch(() => '');
+    if (!existing) {
+      await this.runGit(['remote', 'add', 'origin', remote], sourcePath);
+      return;
+    }
+    if (existing !== remote) {
+      throw new Error(`GBrain source ${sourceId} remote mismatch: expected ${remote}, found ${existing}.`);
+    }
+  }
+
+  private async pushSourceIfConfigured(sourceId: string): Promise<void> {
+    if (!this.configuredRemote(sourceId)) return;
+    await this.run(['sources', 'push', sourceId, '--json']);
+  }
+
   private async ensureSearchConfig(): Promise<void> {
     const embeddingModel = process.env.GBRAIN_EMBEDDING_MODEL || '';
     const embeddingDimensions = process.env.GBRAIN_EMBEDDING_DIMENSIONS || '';
@@ -295,6 +434,7 @@ export class BrainRepoAdapter {
       await this.runGit(['add', '.gbrain-source'], sourcePath).catch(() => undefined);
       await this.runGit(['commit', '-qm', 'initialize source', '--allow-empty'], sourcePath).catch(() => undefined);
     }
+    await this.ensureSourceRemote(sourceId, sourcePath);
     let registration = { stdout: '', stderr: '' };
     try {
       registration = await this.run(['sources', 'add', sourceId, '--path', sourcePath, '--force']);
@@ -392,8 +532,20 @@ export class BrainRepoAdapter {
     if (!grouped.size) return;
     await this.runGit(['add', '-A'], sourcePath);
     await this.runGit(['commit', '-qm', 'sync knowledge documents'], sourcePath);
+    await this.pushSourceIfConfigured(sourceId);
     await this.syncSource(sourceId, grouped.size);
+    // Publish gates must verify the read plane, not merely that a CLI sync
+    // command exited successfully. A source can otherwise report a successful
+    // write while a page is absent from the query/get plane.
+    await this.verifyPages(repoPath, [...grouped.keys()]);
     this.invalidateCache(sourceId);
+  }
+
+  async verifyPages(repoPath: string, slugs: string[]): Promise<void> {
+    for (const slug of slugs) {
+      const page = await this.getPage(repoPath, slug);
+      if (!page.trim()) throw new Error(`GBrain verification failed: ${slug} has no readable page content after sync.`);
+    }
   }
 
   async replace(repoPath: string, evidence: BrainEvidence[]): Promise<void> {
@@ -421,6 +573,7 @@ export class BrainRepoAdapter {
     }
     await this.runGit(['add', '-A'], sourcePath);
     await this.runGit(['commit', '-qm', 'remove knowledge document'], sourcePath);
+    await this.pushSourceIfConfigured(sourceId);
     await this.syncSource(sourceId);
     this.invalidateCache(sourceId);
   }
@@ -438,6 +591,7 @@ export class BrainRepoAdapter {
     const sourcePath = join(this.sourceRoot, sourceId);
     await this.runGit(['add', '-A'], sourcePath);
     await this.runGit(['commit', '-qm', 'gbrain dream maintenance'], sourcePath);
+    await this.pushSourceIfConfigured(sourceId);
     this.invalidateCache(sourceId);
     // The CLI may print human-readable phase lines before its JSON document.
     // Keep the machine-readable result so the API can expose real phase
@@ -452,9 +606,57 @@ export class BrainRepoAdapter {
     }
   }
 
+  /** Invoke an official GBrain memory verb in a source-scoped local context. */
+  private async callTool(sourceId: string, tool: string, params: Record<string, unknown>): Promise<Record<string, any>> {
+    await this.ensureSource(sourceId);
+    await this.ensureSearchConfig();
+    const { stdout } = await this.run(['call', '--source', sourceId, tool, JSON.stringify(params)]);
+    return this.parseJsonObject(stdout);
+  }
+
+  /**
+   * Expensive cross-page reasoning for one explicitly authorized Source. The
+   * caller is responsible for never combining sources across an ACL boundary.
+   */
+  async synthesize(repoPath: string, question: string): Promise<BrainSynthesisResult> {
+    const sourceId = this.sourceId(repoPath);
+    return this.callTool(sourceId, 'synthesize', { question }) as Promise<BrainSynthesisResult>;
+  }
+
+  async remember(repoPath: string, fact: string, provenance: string, entity?: string): Promise<Record<string, any>> {
+    const sourceId = this.sourceId(repoPath);
+    return this.callTool(sourceId, 'remember', {
+      fact,
+      provenance,
+      ...(entity ? { entity } : {}),
+      visibility: 'private',
+    });
+  }
+
+  async forget(repoPath: string, id: string): Promise<Record<string, any>> {
+    const sourceId = this.sourceId(repoPath);
+    return this.callTool(sourceId, 'forget', { id });
+  }
+
+  async recall(repoPath: string, params: Record<string, unknown>): Promise<Record<string, any>> {
+    const sourceId = this.sourceId(repoPath);
+    return this.callTool(sourceId, 'recall', params);
+  }
+
+  async getLinks(repoPath: string, slug: string): Promise<Record<string, any>> {
+    const sourceId = this.sourceId(repoPath);
+    return this.callTool(sourceId, 'get_links', { slug });
+  }
+
+  async contextPack(repoPath: string, params: Record<string, unknown>): Promise<Record<string, any>> {
+    const sourceId = this.sourceId(repoPath);
+    return this.callTool(sourceId, 'context_pack', params);
+  }
+
   async query(repoPath: string, question: string, options: BrainQueryOptions = {}): Promise<BrainQueryResult> {
     const sourceId = this.sourceId(repoPath);
-    const cacheKey = `${sourceId}:${options.breadth ? 'broad' : 'focused'}:${question.trim()}`;
+    const operation = options.operation === 'search' ? 'search' : 'query';
+    const cacheKey = `${sourceId}:${operation}:${options.breadth ? 'broad' : 'focused'}:${question.trim()}`;
     const cached = this.queryCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
       return cached.result;
@@ -463,26 +665,37 @@ export class BrainRepoAdapter {
     // Use GBrain's official balanced retrieval stack as designed: query
     // expansion + vector/BM25/RRF + graph signals + reranker + autocut.
     // No application-side keyword rules or language-specific retries.
-    const args = [
-      'query', question,
-      '--source-id', sourceId,
-      '--mode', 'balanced',
-      '--limit', options.breadth ? '50' : '30',
-      '--detail', 'high',
-      '--snippet-chars', '1800',
-      '--json',
-    ];
+    const args = operation === 'search'
+      ? [
+        'search', question,
+        '--source-id', sourceId,
+        '--mode', 'balanced',
+        '--limit', options.breadth ? '50' : '30',
+        '--snippet-chars', '1800',
+        '--json',
+      ]
+      : [
+        'query', question,
+        '--source-id', sourceId,
+        '--mode', 'balanced',
+        '--limit', options.breadth ? '50' : '30',
+        '--detail', 'high',
+        '--snippet-chars', '1800',
+        '--json',
+      ];
     // GBrain recommends disabling autocut for broad enumeration and landscape
     // questions so the caller can judge a wider candidate set.
-    if (options.breadth) args.splice(args.length - 1, 0, '--autocut', 'false');
-    else args.splice(args.length - 1, 0, '--adaptive-return', 'true');
+    if (operation === 'query') {
+      if (options.breadth) args.splice(args.length - 1, 0, '--autocut', 'false');
+      else args.splice(args.length - 1, 0, '--adaptive-return', 'true');
+    }
     const { stdout } = await this.run(args);
-    let rawRows: Array<{ slug: string; title: string; chunk_text?: string; source_id?: string; rerank_score?: number; score?: number }> = [];
+    let rawRows: Array<{ slug: string; title: string; chunk_text?: string; source_id?: string; rerank_score?: number; score?: number; evidence?: string }> = [];
     try { rawRows = JSON.parse(stdout || '[]'); } catch { rawRows = []; }
 
     // GBrain can return multiple high-scoring chunks from one page. Collapse
     // them into one citation while retaining all distinct evidence snippets.
-    const bySlug = new Map<string, { slug: string; title: string; chunk_text: string; source_id?: string; rerank_score?: number; score?: number }>();
+    const bySlug = new Map<string, { slug: string; title: string; chunk_text: string; source_id?: string; rerank_score?: number; score?: number; evidence?: string }>();
     for (const row of rawRows) {
       if (!row.slug) continue;
       const previous = bySlug.get(row.slug);
@@ -499,12 +712,15 @@ export class BrainRepoAdapter {
     const pageBudget = Math.max(8_000, Number(process.env.GBRAIN_CONTEXT_MAX_CHARS || (options.breadth ? 120_000 : 80_000)));
     const maxParents = Math.max(1, Number(process.env.GBRAIN_CONTEXT_MAX_PARENTS || (options.breadth ? 5 : 3)));
     let remaining = pageBudget;
-    const pageContext = new Map<string, string>();
+    const pageContext = new Map<string, { content: string; section?: string }>();
     for (const row of rows.slice(0, maxParents)) {
       try {
         const page = await this.getPage(repoPath, row.slug);
         if (page && page.length <= remaining) {
-          pageContext.set(row.slug, page);
+          const passage: Passage = options.breadth
+            ? { content: page, score: 0 }
+            : localizePassage(question, page, row.chunk_text || '');
+          pageContext.set(row.slug, { content: passage.content, section: passage.heading });
           remaining -= page.length;
         }
       } catch {
@@ -513,11 +729,15 @@ export class BrainRepoAdapter {
     }
     const citations = rows.map((row) => ({
       topic: row.title || row.slug,
+      slug: row.slug,
+      sourceKey: row.source_id || sourceId,
       docId: /^docs\/[^/]+$/.test(row.slug) ? row.slug.slice('docs/'.length) : undefined,
       docTitle: row.title,
       snippet: row.chunk_text || '',
-      context: pageContext.get(row.slug) || row.chunk_text || '',
+      context: pageContext.get(row.slug)?.content || row.chunk_text || '',
+      section: pageContext.get(row.slug)?.section,
       score: typeof row.rerank_score === 'number' ? row.rerank_score : row.score,
+      evidence: row.evidence,
     }));
     const result: BrainQueryResult = {
       topics: citations.map((citation) => citation.topic),

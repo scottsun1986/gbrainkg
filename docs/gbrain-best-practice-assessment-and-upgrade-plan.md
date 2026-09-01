@@ -427,6 +427,18 @@ OpenClaw 场景通常是一个人通过 Telegram 等入口与个人 Agent 交互
 
 建议先完成 P0 的权限与段落定位闭环，再迁移到“稳定知识库 Source + OAuth federated-read”，最后接入权限范围内的官方 Synthesize 和真实 GBrain 图谱。该顺序能够在不改变现有功能需求的前提下，先消除泄漏和错答风险，再逐步获得完整的跨 Source 总结与长期知识能力。
 
+### 本轮升级实施记录
+
+本轮已将上述 P0—P3 方案落实到代码，部署时需要执行 Prisma 迁移并让后台队列完成一次访问对账：
+
+- P0：派生页新增 Source/ACL/知识 epoch 绑定；查询仅在全部来源、版本和当前选库都匹配时使用派生页。GBrain 返回的 evidence、Source、slug、分数和段落定位写入查询审计。父文档命中后按通用文档结构进行第二阶段段落排序；Markdown 入库也会把章节、条款和枚举结构作为子切片边界。
+- P1：Source 由“受众 hash”改为“一个知识库一个稳定 Source”。发布任务改为按 `(知识库 Source, 文档, 版本)` 同步一次，再失效受影响 Scope；查询只请求当前用户本次选定知识库的 Source。精确命名查询可由意图路由选择 `search`，语义/关系/广度查询使用 `query`。
+- P2：保留命名 Source 的 freshness Dream；Scope 只在 dirty 或首次生成时执行。每个受权 Source 通过 GBrain `synthesize` 生成跨页综合，结果、gaps、warnings、成本信息和来源一并写入派生页；模型不可用时明确标记为 partial，而非伪装为已综合。
+- P3：新增仅本人可访问的 GBrain Memory Verbs API（`remember`、`recall`、`forget`、`context_pack`），普通聊天不会自动写入共享知识；对话输入区提供“记住”显式入口。知识图谱优先读取 GBrain page links，同时保留清晰标注的词项发现关系。
+- 运行保障：Source 可通过 `GBRAIN_SOURCE_REMOTE_URL_TEMPLATE` 绑定私有 Git 远端并在写入/Dream 后使用 GBrain 的安全 push；未配置远端时不会把知识推送到未知位置。
+
+OAuth `federated-read` 是 GBrain HTTP/MCP 服务侧的硬边界：本项目当前后端以受信任本地 CLI 对每个已授权 Source 逐一调用，并保留数据库最终 ACL。部署 GBrain HTTP 服务并为每个用户/权限指纹配置 OAuth client 后，可将同一份稳定 Source 列表直接作为 `federated-read` 授权集，无需再迁移或复制知识内容。
+
 ## 十二、项目代码审阅范围
 
 本评估不是只根据界面或配置推断，重点审阅了以下实现：

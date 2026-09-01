@@ -48,6 +48,9 @@ describe("BrainCompilerProcessor", () => {
       .mockResolvedValue({ synced: 1, removed: 0 }),
     reconcileAccess: jest.fn().mockResolvedValue({}),
     runDreamCycle: jest.fn().mockResolvedValue({}),
+    syncKnowledgeBaseSource: jest.fn(),
+    invalidateScopesForSource: jest.fn(),
+    queueScopeSynthesis: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -58,7 +61,7 @@ describe("BrainCompilerProcessor", () => {
         { provide: ModelConfigService, useValue: modelConfigService },
         { provide: BrainCompilerService, useValue: compilerService },
         { provide: BrainScopeService, useValue: {} },
-        { provide: BrainOutboxService, useValue: {} },
+        { provide: BrainOutboxService, useValue: { logOperation: jest.fn() } },
       ],
     }).compile();
 
@@ -136,5 +139,34 @@ describe("BrainCompilerProcessor", () => {
       where: { id: { in: ["doc-1"] }, status: "indexing" },
       data: { status: "published" },
     });
+  });
+
+  it("syncs one stable knowledge-base source and then invalidates affected scopes", async () => {
+    const mockJob = {
+      name: "source-sync",
+      data: { kbId: "kb-1", docIds: ["doc-1"] },
+    } as Job;
+    compilerService.syncKnowledgeBaseSource.mockResolvedValue({
+      sourceKey: "llmwiki-kb-stable",
+      synced: 1,
+      removed: 0,
+    });
+    compilerService.invalidateScopesForSource.mockResolvedValue(["scope-1"]);
+    compilerService.queueScopeSynthesis.mockResolvedValue(undefined);
+
+    await expect(processor.process(mockJob)).resolves.toEqual({
+      status: "success",
+      sourceKey: "llmwiki-kb-stable",
+      synced: 1,
+      removed: 0,
+      affectedScopes: 1,
+    });
+    expect(compilerService.syncKnowledgeBaseSource).toHaveBeenCalledWith("kb-1", ["doc-1"]);
+    expect(mockPrisma.document.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ["doc-1"] }, status: "indexing" },
+      data: { status: "published" },
+    });
+    expect(compilerService.invalidateScopesForSource).toHaveBeenCalledWith("llmwiki-kb-stable");
+    expect(compilerService.queueScopeSynthesis).toHaveBeenCalledWith(["scope-1"], 3);
   });
 });

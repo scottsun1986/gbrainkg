@@ -191,7 +191,7 @@ describe("ChatService", () => {
             {
               message: {
                 content:
-                  '{"query":"企业研发管理规范全部条款数量","breadth":true}',
+                  '{"query":"企业研发管理规范全部条款数量","breadth":true,"operation":"query"}',
               },
             },
           ],
@@ -215,7 +215,7 @@ describe("ChatService", () => {
       expect(mockGbrainQuery).toHaveBeenCalledWith(
         "gbrain://source/test",
         "企业研发管理规范全部条款数量",
-        { breadth: true },
+        { breadth: true, operation: "query" },
       );
     } finally {
       (global as any).fetch = originalFetch;

@@ -3,10 +3,14 @@ import {
   Controller,
   Post,
   Body,
+  Delete,
+  Get,
   MessageEvent,
   Req,
   Res,
   NotFoundException,
+  Param,
+  Query,
   UseGuards,
 } from "@nestjs/common";
 import { ChatService } from "./chat.service";
@@ -25,6 +29,35 @@ export class ChatController {
   ) {}
 
   private readonly prisma = new PrismaClient();
+
+  @Get("memory")
+  async recallMemory(@Req() req: any, @Query("query") query?: string, @Query("limit") rawLimit?: string) {
+    const userId = await this.authService.userIdFromRequest(req);
+    const limit = Math.max(1, Math.min(Number(rawLimit || 20) || 20, 100));
+    return this.chatService.recallPersonalFacts(userId, query, limit);
+  }
+
+  @Post("memory")
+  async rememberMemory(@Req() req: any, @Body() body: any) {
+    const userId = await this.authService.userIdFromRequest(req);
+    const fact = String(body?.fact || "").trim();
+    if (!fact) throw new BadRequestException("fact is required.");
+    return this.chatService.rememberPersonalFact(userId, fact, typeof body?.entity === "string" ? body.entity : undefined);
+  }
+
+  @Delete("memory/:id")
+  async forgetMemory(@Req() req: any, @Param("id") id: string) {
+    const userId = await this.authService.userIdFromRequest(req);
+    return this.chatService.forgetPersonalFact(userId, id);
+  }
+
+  @Post("memory/context-pack")
+  async loadMemoryContext(@Req() req: any, @Body() body: any) {
+    const userId = await this.authService.userIdFromRequest(req);
+    const entities = String(body?.entities || "").trim();
+    if (!entities) throw new BadRequestException("entities is required.");
+    return this.chatService.personalContextPack(userId, entities, typeof body?.session_id === "string" ? body.session_id : undefined);
+  }
 
   @Post("completions")
   async streamCompletions(

@@ -350,7 +350,10 @@ model BrainDerivedPage {
   kind             String   @default("summary") // summary / concept / fact / gap / graph
   content          String
   derivedFrom      Json     @default("[]") // [{ docId, chunkOrd, snippet, title }]
+  sourceKeys       Json     @default("[]") // exact authorized sources used to derive this page
   inputFingerprint String
+  aclEpoch         Int      @default(0)
+  knowledgeEpoch   Int      @default(0)
   modelVersion     String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt

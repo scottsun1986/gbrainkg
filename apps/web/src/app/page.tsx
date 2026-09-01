@@ -1658,6 +1658,22 @@ function ChatScreen(){
     window.dispatchEvent(new CustomEvent('app-toast',{detail:response.ok?'附件已上传并进入解析队列':result.message || '附件上传失败'}));
     if (response.ok) window.dispatchEvent(new CustomEvent('app-data-refresh'));
   };
+  const rememberPersonalFact = async () => {
+    const fact = input.trim() || window.prompt('输入要保存到个人记忆的内容：', '')?.trim();
+    if (!fact) return;
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/chat/memory`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...apiHeaders() },
+        body: JSON.stringify({ fact }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || '个人记忆保存失败');
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: '已保存至个人记忆；不会写入组织或行业知识库' }));
+    } catch (error) {
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: error.message || '个人记忆保存失败' }));
+    }
+  };
 
   const openConversation = async (id) => {
     if (streaming || !id) return;
@@ -1925,6 +1941,9 @@ function ChatScreen(){
                 <div className="comp-chip" style={{opacity:KNOWLEDGE_BASES.find(k => k.id === selected[0])?.canWrite ? .7 : .4,cursor:KNOWLEDGE_BASES.find(k => k.id === selected[0])?.canWrite ? 'pointer' : 'not-allowed'}} onClick={()=>KNOWLEDGE_BASES.find(k => k.id === selected[0])?.canWrite && chatFileRef.current?.click()}>
                   <Icon name="pin" size={11}/> 上传附件
                 </div>
+                <button type="button" className="comp-chip" onClick={rememberPersonalFact} title="显式保存到仅自己可见的 GBrain 个人记忆">
+                  <Icon name="book" size={11}/> 记住
+                </button>
                 {streaming ? (
                   <button type="button" className="send-btn stop" onClick={stopStream} title="停止生成 (Esc)" aria-label="停止生成">
                     <span className="stop-icon" aria-hidden="true" />

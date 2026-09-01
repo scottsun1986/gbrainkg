@@ -4,12 +4,14 @@ import { PermissionService } from '../permission/permission.service';
 import { createHash } from 'node:crypto';
 import { BrainRepoAdapter, BrainEvidence } from '@llmwiki/gbrain-adapter';
 import { readCanonicalDocument } from './canonical-document';
+import { sourceKeyForKnowledgeBase } from './brain-source';
 
 export interface ScopeResolutionResult {
   scopeId: string;
   fingerprint: string;
   sourceKeys: string[];
   strategy: 'eager' | 'lazy';
+  status: 'active' | 'dirty' | 'compiling' | 'archived';
   aclEpoch: number;
   knowledgeEpoch: number;
 }
@@ -37,21 +39,9 @@ export class BrainScopeService {
       select: { id: true, type: true, updatedAt: true },
     });
 
-    const activeUsers = await this.prisma.user.findMany({
-      where: { status: 'active' },
-      select: { id: true },
-    });
-    const allAudienceKey = activeUsers.map((item) => item.id).sort().join(',');
-
     const sourceKeysSet = new Set<string>();
     for (const kb of kbs) {
-      const audience = (await this.permissionService.getUsersVisibleToKnowledgeBase(kb.id)).sort();
-      const scopeKey = audience.join(',') || `kb:${kb.id}`;
-      const isShared = Boolean(allAudienceKey) && scopeKey === allAudienceKey;
-      const sourceKey = isShared
-        ? 'llmwiki-shared'
-        : `llmwiki-scope-${createHash('sha256').update(scopeKey).digest('hex').slice(0, 16)}`;
-      sourceKeysSet.add(sourceKey);
+      sourceKeysSet.add(sourceKeyForKnowledgeBase(kb.id));
     }
 
     const sortedSourceKeys = Array.from(sourceKeysSet).sort();
@@ -81,7 +71,6 @@ export class BrainScopeService {
       },
       update: {
         sourceKeys: sortedSourceKeys,
-        status: 'active',
         lastAccessAt: new Date(),
       },
     });
@@ -106,6 +95,7 @@ export class BrainScopeService {
       fingerprint: scope.fingerprint,
       sourceKeys: sortedSourceKeys,
       strategy: scope.strategy as 'eager' | 'lazy',
+      status: scope.status as 'active' | 'dirty' | 'compiling' | 'archived',
       aclEpoch: scope.aclEpoch,
       knowledgeEpoch: scope.knowledgeEpoch,
     };
@@ -140,7 +130,12 @@ export class BrainScopeService {
   /**
    * 编译并派生当前 Scope 内的宏观总结、概念与事实卡片（带严密来源追踪）
    */
-  async compileScopeDerived(scopeId: string): Promise<{ derivedPagesCount: number; status: string }> {
+  async compileScopeDerived(scopeId: string): Promise<{
+    derivedPagesCount: number;
+    status: string;
+    synthesizedSources: number;
+    synthesisFallbacks: number;
+  }> {
     const db: any = this.prisma;
     const scope = await db.brainScope.findUnique({
       where: { id: scopeId },
@@ -178,8 +173,10 @@ export class BrainScopeService {
 
     const docs = Array.from(allDocsMap.values());
     if (docs.length === 0) {
-      return { derivedPagesCount: 0, status: 'empty' };
+      return { derivedPagesCount: 0, status: 'empty', synthesizedSources: 0, synthesisFallbacks: 0 };
     }
+
+    await db.brainScope.update({ where: { id: scope.id }, data: { status: 'compiling' } });
 
     const inputFingerprint = createHash('sha256')
       .update(docs.map((d) => `${d.id}:${d.version}`).sort().join(';'))
@@ -194,7 +191,42 @@ export class BrainScopeService {
       chunkOrd: doc.chunks[0]?.ord || 0,
     }));
 
-    // 1. 生成范围宏观知识全景总结 (Summary)
+    // 1. Run GBrain's official cross-page synthesis separately inside every
+    // stable Source. We never issue an unscoped global call: combining source
+    // outputs happens only for this already-authorized scope and preserves the
+    // source-level provenance needed by the final DB permission guard.
+    const synthesisQuestion = [
+      '请基于当前知识源的全部已发布内容生成一份可检索的知识概览。',
+      '覆盖制度、流程、职责、时间要求、例外和相互引用；不得编造。',
+      '请明确证据不足或相互冲突之处，并保留可追溯来源。',
+    ].join('');
+    const synthesisBySource: Array<{ sourceKey: string; answer: string; status?: string; gaps?: unknown; warnings?: unknown; cost?: unknown }> = [];
+    let synthesisFallbacks = 0;
+    if (process.env.GBRAIN_SCOPE_SYNTHESIZE_ENABLED !== '0') {
+      for (const sourceKey of sourceKeys) {
+        try {
+          const result = await this.gbrain.synthesize(`gbrain://source/${sourceKey}`, synthesisQuestion);
+          const answer = String(result.answer || '').trim();
+          if (!answer) synthesisFallbacks += 1;
+          synthesisBySource.push({
+            sourceKey,
+            answer,
+            status: typeof result.synthesis_status === 'string' ? result.synthesis_status : undefined,
+            gaps: result.gaps,
+            warnings: result.warnings,
+            cost: result.cost,
+          });
+        } catch (error: any) {
+          // A deterministic inventory remains available when the model gateway
+          // is unavailable. The status records that it is not a synthesis.
+          synthesisFallbacks += 1;
+          synthesisBySource.push({ sourceKey, answer: '', status: 'unavailable', warnings: [String(error?.message || error)] });
+        }
+      }
+    }
+
+    // 2. Publish a provenance-first Scope summary. This is not treated as a
+    // source of truth unless its exact source set and epochs still match.
     const summaryTitle = `Scope 知识资产综合全景 (${scope.fingerprint})`;
     const summaryLines = [
       `# ${summaryTitle}`,
@@ -209,6 +241,17 @@ export class BrainScopeService {
       '',
       '## 三、 溯源依据 (Derived From)',
       ...derivedEvidence.map((e) => `- 依据：\`${e.title}\` (ID: ${e.docId})`),
+      '',
+      '## 四、GBrain 跨页综合',
+      ...(synthesisBySource.length
+        ? synthesisBySource.flatMap((item) => [
+          `### Source ${item.sourceKey}`,
+          item.answer || '_本次无法生成综合结论，保留上方可追溯文档清单。_',
+          item.status ? `- synthesis_status: ${item.status}` : '',
+          item.gaps ? `- gaps: ${JSON.stringify(item.gaps)}` : '',
+          item.warnings ? `- warnings: ${JSON.stringify(item.warnings)}` : '',
+        ].filter(Boolean))
+        : ['_Scope synthesis 已由配置关闭。_']),
     ];
 
     const summaryContent = summaryLines.join('\n');
@@ -222,19 +265,25 @@ export class BrainScopeService {
         kind: 'summary',
         content: summaryContent,
         derivedFrom: derivedEvidence,
+        sourceKeys,
         inputFingerprint,
-        modelVersion: 'gbrain-derived-v1',
+        aclEpoch: scope.aclEpoch,
+        knowledgeEpoch: scope.knowledgeEpoch,
+        modelVersion: 'gbrain-synthesize-v1',
       },
       update: {
         title: summaryTitle,
         content: summaryContent,
         derivedFrom: derivedEvidence,
+        sourceKeys,
         inputFingerprint,
+        aclEpoch: scope.aclEpoch,
+        knowledgeEpoch: scope.knowledgeEpoch,
         updatedAt: new Date(),
       },
     });
 
-    // 2. 写入 Scope 专属派生源仓库并同步 (GBrain source ID 限制 <= 32 字符)
+    // 3. 写入 Scope 专属派生源仓库并同步 (GBrain source ID 限制 <= 32 字符)
     const scopeSourceId = `llmwiki-d-${scope.fingerprint}`;
     await this.gbrain.initializeSource(scopeSourceId);
     const scopeEvidences: BrainEvidence[] = [
@@ -260,7 +309,12 @@ export class BrainScopeService {
     });
 
     this.logger.log(`Successfully compiled and published derived pages for Scope ${scope.fingerprint}.`);
-    return { derivedPagesCount: 1, status: 'completed' };
+    return {
+      derivedPagesCount: 1,
+      status: synthesisFallbacks ? 'partial' : 'completed',
+      synthesizedSources: synthesisBySource.filter((item) => Boolean(item.answer)).length,
+      synthesisFallbacks,
+    };
   }
 
   /**

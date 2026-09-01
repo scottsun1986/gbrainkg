@@ -14,7 +14,7 @@ jest.mock("@llmwiki/gbrain-adapter", () => ({
 }));
 
 describe("BrainCompilerService source isolation", () => {
-  it("groups KBs by exact effective audience and keeps all-user knowledge shared", async () => {
+  it("keeps one stable source per knowledge base regardless of audience changes", async () => {
     const permission = {
       getVisibleKnowledgeBases: jest
         .fn()
@@ -43,20 +43,26 @@ describe("BrainCompilerService source isolation", () => {
 
     const plan = await (service as any).getSourcePlan("u1");
 
-    expect(plan).toHaveLength(2);
+    expect(plan).toHaveLength(3);
     expect(plan).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          sourceKey: "llmwiki-shared",
-          kind: "shared",
+          sourceKey: expect.stringMatching(/^llmwiki-kb-[a-f0-9]{16}$/),
+          kind: "industry",
           kbIds: ["kb-all"],
         }),
         expect.objectContaining({
-          kind: "private",
-          scopeKey: "u1,u2",
-          kbIds: ["kb-a", "kb-b"],
+          kind: "industry",
+          scopeKey: "kb:kb-a",
+          kbIds: ["kb-a"],
+        }),
+        expect.objectContaining({
+          kind: "org",
+          scopeKey: "kb:kb-b",
+          kbIds: ["kb-b"],
         }),
       ]),
     );
+    expect(permission.getUsersVisibleToKnowledgeBase).not.toHaveBeenCalled();
   });
 });

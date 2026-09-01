@@ -5,10 +5,13 @@ import { BrainCompilerService } from "../brain-compiler/brain-compiler.service";
 import { BrainRepoAdapter } from "@llmwiki/gbrain-adapter";
 import { PrismaClient } from "@prisma/client";
 import { ModelConfigService } from "../model-config.service";
+import { BrainOutboxService } from "../brain-compiler/brain-outbox.service";
+import { createHash } from "node:crypto";
+import { sourceKeyForKnowledgeBase } from "../brain-compiler/brain-source";
 
 import { BrainScopeService } from "../brain-compiler/brain-scope.service";
 
-type RetrievalRequest = { query: string; breadth: boolean };
+type RetrievalRequest = { query: string; breadth: boolean; operation: 'search' | 'query' };
 
 @Injectable()
 export class ChatService {
@@ -23,6 +26,7 @@ export class ChatService {
     private readonly compilerService: BrainCompilerService,
     private readonly scopeService: BrainScopeService,
     @Optional() private readonly modelConfigService?: ModelConfigService,
+    @Optional() private readonly outboxService?: BrainOutboxService,
   ) {}
 
   async handleChatStream(
@@ -45,6 +49,53 @@ export class ChatService {
     });
   }
 
+  private async personalSourceRef(userId: string): Promise<string> {
+    const kb = await this.prisma.knowledgeBase.findFirst({
+      where: { type: "personal", ownerUserId: userId, status: "active" },
+      orderBy: { createdAt: "asc" },
+      select: { id: true },
+    });
+    if (!kb) throw new Error("请先创建个人知识库后再使用个人记忆。");
+    const ref = `gbrain://source/${sourceKeyForKnowledgeBase(kb.id)}`;
+    await this.gbrain.initializeSource(sourceKeyForKnowledgeBase(kb.id));
+    return ref;
+  }
+
+  /** Explicit-only personal memory: normal conversation is never auto-written. */
+  async rememberPersonalFact(userId: string, fact: string, entity?: string) {
+    const normalized = fact.trim();
+    if (!normalized || normalized.length > 2_000) throw new Error("个人记忆内容应为 1–2000 个字符。");
+    return this.gbrain.remember(
+      await this.personalSourceRef(userId),
+      normalized,
+      `explicit platform memory by user ${userId} at ${new Date().toISOString()}`,
+      entity?.trim() || undefined,
+    );
+  }
+
+  async recallPersonalFacts(userId: string, query?: string, limit = 20) {
+    return this.gbrain.recall(await this.personalSourceRef(userId), {
+      ...(query?.trim() ? { query: query.trim() } : {}),
+      limit: Math.max(1, Math.min(limit, 100)),
+      include_pending: true,
+    });
+  }
+
+  async forgetPersonalFact(userId: string, factId: string) {
+    if (!factId.trim()) throw new Error("缺少个人记忆 ID。");
+    return this.gbrain.forget(await this.personalSourceRef(userId), factId.trim());
+  }
+
+  async personalContextPack(userId: string, entities: string, sessionId?: string) {
+    if (!entities.trim()) throw new Error("请提供要加载的实体名称。");
+    return this.gbrain.contextPack(await this.personalSourceRef(userId), {
+      entities: entities.trim(),
+      ...(sessionId?.trim() ? { session_id: sessionId.trim() } : {}),
+      budget_tokens: 800,
+      include_private: true,
+    });
+  }
+
   private async processChat(
     userId: string,
     question: string,
@@ -52,6 +103,7 @@ export class ChatService {
     conversationId: string | undefined,
     subscriber: Subscriber<MessageEvent>,
   ) {
+    const retrievalStartedAt = Date.now();
     await this.modelConfigService?.applyRuntimeConfig();
     const visibleKbs =
       await this.permissionService.getVisibleKnowledgeBases(userId);
@@ -75,16 +127,23 @@ export class ChatService {
     const brainRepo = await this.compilerService.ensureUserBrainRepo(userId);
     const userScope = await this.scopeService.resolveUserScope(userId);
     const rawRefs =
-      typeof (this.compilerService as any).getUserSourceRefs === "function"
-        ? await (this.compilerService as any).getUserSourceRefs(userId)
-        : [brainRepo.gitRepoUrl];
+      typeof (this.compilerService as any).getUserSourceRefsForKnowledgeBases === "function"
+        ? await (this.compilerService as any).getUserSourceRefsForKnowledgeBases(userId, scope)
+        : typeof (this.compilerService as any).getUserSourceRefs === "function"
+          ? await (this.compilerService as any).getUserSourceRefs(userId)
+          : [brainRepo.gitRepoUrl];
+    const selectedSourceKeys = rawRefs
+      .map((ref: string) => ref.replace(/^gbrain:\/\/source\//, ""))
+      .sort();
+    const wholeScopeSelected =
+      selectedSourceKeys.length === userScope.sourceKeys.length &&
+      selectedSourceKeys.every((key, index) => key === userScope.sourceKeys.slice().sort()[index]);
 
-    // 将用户可见的原始 Source 与 Scope 派生源合并为可查询集合
+    // Start with source documents. Permission-scoped derived summaries are
+    // only useful for broad cross-page questions, never for an exact passage
+    // lookup where they could crowd out the primary document.
     const derivedRef = `gbrain://source/llmwiki-d-${userScope.fingerprint}`;
     const sourceRefs = [...rawRefs];
-    if (await this.gbrain.isSourceMaterialized(derivedRef).catch(() => false)) {
-      sourceRefs.push(derivedRef);
-    }
 
     const conversationHistory = await this.loadConversationHistory(
       userId,
@@ -95,6 +154,12 @@ export class ChatService {
       question,
       conversationHistory,
     );
+    // A derived page is valid only for the exact permission/source set from
+    // which it was built. Never add a full-scope summary to a user-selected
+    // subset of knowledge bases or to a focused fact lookup.
+    if (retrieval.breadth && wholeScopeSelected && await this.gbrain.isSourceMaterialized(derivedRef).catch(() => false)) {
+      sourceRefs.push(derivedRef);
+    }
 
     this.logger.debug(
       `Querying brain for "${question}" in scope ${scope.join(",")} (Scope fingerprint: ${userScope.fingerprint})...`,
@@ -103,36 +168,52 @@ export class ChatService {
       sourceRefs.length > 1
         ? await this.gbrain.queryMany(sourceRefs, retrieval.query, {
             breadth: retrieval.breadth,
+            operation: retrieval.operation,
           })
         : await this.gbrain.query(
             sourceRefs[0] || brainRepo.gitRepoUrl,
             retrieval.query,
-            { breadth: retrieval.breadth },
+            { breadth: retrieval.breadth, operation: retrieval.operation },
           );
     queryResult = await this.filterQueryResultByCurrentPermission(
       queryResult,
       scope,
+      {
+        scopeId: userScope.scopeId,
+        sourceKeys: selectedSourceKeys,
+        aclEpoch: userScope.aclEpoch,
+        knowledgeEpoch: userScope.knowledgeEpoch,
+      },
     );
     // 历史文档可能在 BrainRepo 初始化前已经发布，先进行完整同步，再重新通过 BrainRepo 查询。
     if (!queryResult.answer) {
       await this.compilerService.syncUserBrainRepo(userId);
       const refreshedRefs =
-        typeof (this.compilerService as any).getUserSourceRefs === "function"
-          ? await (this.compilerService as any).getUserSourceRefs(userId)
-          : [brainRepo.gitRepoUrl];
+        typeof (this.compilerService as any).getUserSourceRefsForKnowledgeBases === "function"
+          ? await (this.compilerService as any).getUserSourceRefsForKnowledgeBases(userId, scope)
+          : typeof (this.compilerService as any).getUserSourceRefs === "function"
+            ? await (this.compilerService as any).getUserSourceRefs(userId)
+            : [brainRepo.gitRepoUrl];
       queryResult =
         refreshedRefs.length > 1
           ? await this.gbrain.queryMany(refreshedRefs, retrieval.query, {
               breadth: retrieval.breadth,
+              operation: retrieval.operation,
             })
           : await this.gbrain.query(
               refreshedRefs[0] || brainRepo.gitRepoUrl,
               retrieval.query,
-              { breadth: retrieval.breadth },
+            { breadth: retrieval.breadth, operation: retrieval.operation },
             );
       queryResult = await this.filterQueryResultByCurrentPermission(
         queryResult,
         scope,
+        {
+          scopeId: userScope.scopeId,
+          sourceKeys: selectedSourceKeys,
+          aclEpoch: userScope.aclEpoch,
+          knowledgeEpoch: userScope.knowledgeEpoch,
+        },
       );
     }
     // GBrain is the only retrieval path. Empty retrieval triggers source
@@ -145,6 +226,28 @@ export class ChatService {
       queryResult,
       retrieval.breadth,
     );
+    await this.outboxService?.logOperation("query", {
+      scopeId: userScope.scopeId,
+      phase: "retrieval_trace",
+      counts: {
+        questionHash: createHash("sha256").update(question).digest("hex").slice(0, 16),
+        rewrittenQueryHash: createHash("sha256").update(retrieval.query || question).digest("hex").slice(0, 16),
+        breadth: retrieval.breadth,
+        operation: retrieval.operation,
+        sourceKeys: selectedSourceKeys,
+        candidates: Array.isArray(queryResult.citations) ? queryResult.citations.length : 0,
+        evidence: (queryResult.citations || []).map((citation: any) => ({
+          sourceKey: citation.sourceKey,
+          documentId: citation.docId,
+          slug: citation.slug,
+          section: citation.section,
+          score: citation.score,
+          evidence: citation.evidence,
+        })),
+      },
+      durationMs: Date.now() - retrievalStartedAt,
+      status: queryResult.answer ? "success" : "warning",
+    });
     const hitTopics = queryResult.topics || [];
 
     subscriber.next({ data: { type: "meta", brain_topics_hit: hitTopics } });
@@ -171,8 +274,9 @@ export class ChatService {
           .map((cit: any, idx: number) => {
             const title = cit.docTitle || cit.topic || `参考文档 ${idx + 1}`;
             const kbName = cit.kbName ? ` (所属知识库: ${cit.kbName})` : "";
+            const section = cit.section ? `\n定位：${cit.section}` : "";
             const content = (cit.context || cit.snippet || "").trim();
-            return `【来源 ${idx + 1}】《${title}》${kbName}\n${content}`;
+            return `【来源 ${idx + 1}】《${title}》${kbName}${section}\n${content}`;
           })
           .join("\n\n---\n\n")
       : (queryResult.answer || "No truth found for this topic.");
@@ -370,7 +474,7 @@ ${compiledTruthContext}`;
       : null;
     const apiKey =
       config?.provider.apiKey || process.env.DEEPSEEK_API_KEY || "";
-    if (!apiKey) return { query: question, breadth: false };
+    if (!apiKey) return { query: question, breadth: false, operation: 'query' };
     const baseUrl = (
       config?.provider.baseUrl ||
       process.env.LLM_BASE_URL ||
@@ -379,7 +483,7 @@ ${compiledTruthContext}`;
     const modelName =
       config?.modelName || process.env.LLM_MODEL || "deepseek-chat";
     const historyWindow = prior.slice(-12000);
-    const prompt = `Analyze the current user question for knowledge-base retrieval. Rewrite it into one standalone query. Resolve references such as he/she/it/this policy/the previous item only when the conversation makes the referent unambiguous. If it starts a new topic, do not import unrelated history. Set breadth=true when answering requires broad coverage, enumeration, totals across a document, comparison of multiple sections, or "all/every/complete" evidence; otherwise false. Do not answer the question. Return JSON only: {"query":"...","breadth":false}.\n\nUntrusted conversation history:\n${historyWindow || "(none)"}\n\nCurrent question:\n${question}`;
+    const prompt = `Analyze the current user question for knowledge-base retrieval. Rewrite it into one standalone query. Resolve references such as he/she/it/this policy/the previous item only when the conversation makes the referent unambiguous. If it starts a new topic, do not import unrelated history. Set breadth=true when answering requires broad coverage, enumeration, totals across a document, comparison of multiple sections, or "all/every/complete" evidence; otherwise false. Set operation="search" only for an exact known name, title, identifier, or structured-field lookup; otherwise operation="query" for semantic, paraphrased, relational, or cross-page questions. Do not answer the question. Return JSON only: {"query":"...","breadth":false,"operation":"query"}.\n\nUntrusted conversation history:\n${historyWindow || "(none)"}\n\nCurrent question:\n${question}`;
     try {
       const response = await fetch(`${baseUrl}/chat/completions`, {
         method: "POST",
@@ -395,7 +499,7 @@ ${compiledTruthContext}`;
         }),
         signal: AbortSignal.timeout(12000),
       });
-      if (!response.ok) return { query: question, breadth: false };
+      if (!response.ok) return { query: question, breadth: false, operation: 'query' };
       const payload: any = await response.json();
       const content = String(
         payload?.choices?.[0]?.message?.content || "",
@@ -411,15 +515,16 @@ ${compiledTruthContext}`;
               ? rewritten
               : question,
           breadth: parsed?.breadth === true,
+          operation: parsed?.operation === 'search' ? 'search' : 'query',
         };
       } catch {
-        return { query: question, breadth: false };
+        return { query: question, breadth: false, operation: 'query' };
       }
     } catch (error) {
       this.logger.debug(
         `Contextual retrieval rewrite unavailable: ${error?.message || "unknown error"}`,
       );
-      return { query: question, breadth: false };
+      return { query: question, breadth: false, operation: 'query' };
     }
   }
 
@@ -430,6 +535,12 @@ ${compiledTruthContext}`;
   private async filterQueryResultByCurrentPermission(
     result: any,
     visibleKbIds: string[],
+    derivedGuard: {
+      scopeId: string;
+      sourceKeys: string[];
+      aclEpoch: number;
+      knowledgeEpoch: number;
+    },
   ): Promise<any> {
     const citations = Array.isArray(result?.citations) ? result.citations : [];
     const docIds = citations
@@ -449,11 +560,38 @@ ${compiledTruthContext}`;
         })
       : [];
     const allowed = new Map(docs.map((doc) => [doc.id, doc]));
+    const sourceKeys = [...new Set(derivedGuard.sourceKeys)].sort();
+    const derivedCandidates = citations.filter((citation: any) => !citation.docId && citation.slug);
+    const derivedPages = derivedCandidates.length
+      ? await (this.prisma as any).brainDerivedPage.findMany({
+          where: {
+            scopeId: derivedGuard.scopeId,
+            slug: { in: derivedCandidates.map((citation: any) => citation.slug) },
+            aclEpoch: derivedGuard.aclEpoch,
+            knowledgeEpoch: derivedGuard.knowledgeEpoch,
+          },
+          select: { slug: true, sourceKeys: true, derivedFrom: true },
+        })
+      : [];
+    const validDerived = new Set<string>();
+    for (const page of derivedPages) {
+      const pageSources = Array.isArray(page.sourceKeys) ? [...page.sourceKeys].sort() : [];
+      if (pageSources.length !== sourceKeys.length || pageSources.some((key: string, index: number) => key !== sourceKeys[index])) continue;
+      const docIds = (Array.isArray(page.derivedFrom) ? page.derivedFrom : [])
+        .map((item: any) => item?.docId)
+        .filter((id: any): id is string => typeof id === "string" && id.length > 0);
+      if (!docIds.length) continue;
+      const allowedCount = await this.prisma.document.count({
+        where: { id: { in: docIds }, kbId: { in: visibleKbIds }, status: "published" },
+      });
+      if (allowedCount === new Set(docIds).size) validDerived.add(page.slug);
+    }
     const filtered = citations
       .map((citation: any) => {
         if (!citation.docId) {
-          // Scope 派生智能总结页面 (Derived Page)
-          return citation;
+          // Derived knowledge never bypasses the document/ACL guard. A page
+          // created under a different source set or epoch is simply ignored.
+          return citation.slug && validDerived.has(citation.slug) ? citation : null;
         }
         const doc = allowed.get(citation.docId);
         return doc

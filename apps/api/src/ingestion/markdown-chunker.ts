@@ -20,7 +20,11 @@ type Section = { start: number; end: number; heading: string };
 
 function findSections(markdown: string): Section[] {
   const sections: Section[] = [];
-  const heading = /^#{1,6}\s+.+$/gm;
+  // Parsed office documents often have no Markdown headings. Promote their
+  // native structural boundaries (chapters, articles and enumerated clauses)
+  // into sections so retrieval can localize a passage without query-specific
+  // rules such as treating “第 N 条” as a special request.
+  const heading = /^(#{1,6}\s+.+|第[\d一二三四五六七八九十百千万〇零两]+[章节条款项].*|[（(]?[\d一二三四五六七八九十百千万]+[）).、]\s*.+)$/gmu;
   let currentStart = 0;
   let currentHeading = '';
   let match: RegExpExecArray | null;

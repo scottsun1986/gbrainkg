@@ -62,7 +62,31 @@ export class BrainCompilerProcessor extends WorkerHost {
       return { status: "success", ...res };
     }
 
-    // 3. 消费 Outbox 变更事件
+    // 3. Source-centric document indexing. A document belongs to one stable
+    // knowledge-base Source, therefore a publish event produces one sync even
+    // when thousands of users can read it.
+    if (job.name === "source-sync") {
+      const { kbId, docIds = [] } = job.data;
+      const start = Date.now();
+      const result = await this.compilerService.syncKnowledgeBaseSource(kbId, docIds);
+      if (docIds.length) {
+        await this.prisma.document.updateMany({
+          where: { id: { in: docIds }, status: "indexing" },
+          data: { status: "published" },
+        });
+      }
+      const scopeIds = await this.compilerService.invalidateScopesForSource(result.sourceKey);
+      await this.compilerService.queueScopeSynthesis(scopeIds, 3);
+      await this.outboxService.logOperation("sync", {
+        phase: "source_centric_publish",
+        counts: { ...result, documentIds: docIds, affectedScopes: scopeIds.length },
+        durationMs: Date.now() - start,
+        status: "success",
+      });
+      return { status: "success", ...result, affectedScopes: scopeIds.length };
+    }
+
+    // 4. 消费 Outbox 变更事件
     if (job.name === "process-outbox-event") {
       const { eventId } = job.data;
       const event = await db.brainChangeEvent.findUnique({
@@ -146,7 +170,7 @@ export class BrainCompilerProcessor extends WorkerHost {
       }
     }
 
-    // 4. Scope 派生智能产物编译任务
+    // 5. Scope 派生智能产物编译任务
     if (job.name === "scope-derived-compile") {
       const { scopeId } = job.data;
       const start = Date.now();
@@ -161,7 +185,7 @@ export class BrainCompilerProcessor extends WorkerHost {
       return { status: "success", ...res };
     }
 
-    // 5. 传统单主题/文档编译 Job
+    // 6. 传统单主题/文档编译 Job（兼容旧队列任务）
     const { userId, topicSlug, source, docIds = [], sourceKey } = job.data;
     this.logger.debug(
       `Starting compile job for User: ${userId}, Topic: ${topicSlug}`,

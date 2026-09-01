@@ -18,4 +18,15 @@ describe('splitMarkdownIntoChunks', () => {
     expect(chunks.every((chunk) => chunk.metadata.section === '# 研发管理')).toBe(true);
     expect(chunks.every((chunk) => chunk.charEnd > chunk.charStart)).toBe(true);
   });
+
+  it('promotes native policy clauses to stable child sections', () => {
+    const chunks = splitMarkdownIntoChunks('第一章 总则\n\n第十条 旷工\n未请假擅自不到岗的，视为旷工。\n\n第十一条 处理\n连续旷工三日可以解除劳动合同。');
+    expect(chunks).toHaveLength(3);
+    expect(chunks.map((chunk) => chunk.metadata.section)).toEqual([
+      '第一章 总则',
+      '第十条 旷工',
+      '第十一条 处理',
+    ]);
+    expect(chunks[1].content).toContain('未请假擅自不到岗');
+  });
 });

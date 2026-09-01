@@ -12,6 +12,7 @@ import { BrainRepoAdapter } from "@llmwiki/gbrain-adapter";
 import { ModelConfigService } from "../model-config.service";
 import { createHash } from "node:crypto";
 import { readCanonicalDocument } from "./canonical-document";
+import { sourceKeyForKnowledgeBase } from "./brain-source";
 
 import { BrainScopeService } from "./brain-scope.service";
 import { BrainOutboxService } from "./brain-outbox.service";
@@ -223,6 +224,34 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
     return refs;
   }
 
+  /**
+   * Return only the sources behind the knowledge bases selected for a query.
+   * Source identity is content-based (one KB = one source); access is still
+   * evaluated from the database for every request.
+   */
+  async getUserSourceRefsForKnowledgeBases(
+    userId: string,
+    knowledgeBaseIds: string[],
+  ): Promise<string[]> {
+    const requested = new Set(knowledgeBaseIds);
+    const plan = await this.getSourcePlan(userId);
+    const selected = plan.filter((definition) =>
+      definition.kbIds.some((kbId) => requested.has(kbId)),
+    );
+    if (!selected.length) return [];
+
+    // Materialize memberships before returning the references. This keeps the
+    // DB representation in sync with current ACLs and makes revocation
+    // auditable, while the query itself remains limited to the selected set.
+    await this.getUserSourceRefs(userId);
+    return selected.map((definition) => `gbrain://source/${definition.sourceKey}`);
+  }
+
+  /** Stable content-source identity. Never derive this from the audience. */
+  static sourceKeyForKnowledgeBase(kbId: string): string {
+    return sourceKeyForKnowledgeBase(kbId);
+  }
+
   private async getSourcePlan(userId: string): Promise<
     Array<{
       sourceKey: string;
@@ -237,33 +266,21 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
       where: { id: { in: visibleKbIds }, status: "active" },
       select: { id: true, type: true },
     });
-    const activeUsers = await this.prisma.user.findMany({
-      where: { status: "active" },
-      select: { id: true },
-    });
-    const allAudienceKey = activeUsers
-      .map((item) => item.id)
-      .sort()
-      .join(",");
     const groups = new Map<
       string,
       { sourceKey: string; kind: string; scopeKey: string; kbIds: string[] }
     >();
     for (const kb of kbs) {
-      // GBrain supports read isolation at source granularity. Therefore every
-      // KB—organization, industry, or personal—is placed in the source for its
-      // exact effective audience. KBs with identical audiences share a source.
-      const audience = (
-        await this.permissionService.getUsersVisibleToKnowledgeBase(kb.id)
-      ).sort();
-      const scopeKey = audience.join(",") || `kb:${kb.id}`;
-      const isShared = Boolean(allAudienceKey) && scopeKey === allAudienceKey;
-      const sourceKey = isShared
-        ? "llmwiki-shared"
-        : `llmwiki-scope-${createHash("sha256").update(scopeKey).digest("hex").slice(0, 16)}`;
+      // A Source is a durable content/repository boundary, not an ACL cache.
+      // Reusing an audience-hash Source made a KB move every time a role or
+      // organization changed. That caused stale results and unnecessary
+      // reindexing. Permission is represented by BrainSourceMember/OAuth and
+      // checked again against the application DB at answer time.
+      const sourceKey = sourceKeyForKnowledgeBase(kb.id);
+      const scopeKey = `kb:${kb.id}`;
       const group = groups.get(sourceKey) || {
         sourceKey,
-        kind: isShared ? "shared" : "private",
+        kind: kb.type,
         scopeKey,
         kbIds: [],
       };
@@ -280,7 +297,7 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
       scopeKey: string;
       kbIds: string[];
     },
-    userId: string,
+    userId?: string,
     changedDocIds: string[] = [],
   ) {
     const db: any = this.prisma as any;
@@ -297,11 +314,13 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
         scopeKey: definition.scopeKey,
       },
     });
-    await db.brainSourceMember.upsert({
-      where: { sourceId_userId: { sourceId: source.id, userId } },
-      create: { sourceId: source.id, userId },
-      update: {},
-    });
+    if (userId) {
+      await db.brainSourceMember.upsert({
+        where: { sourceId_userId: { sourceId: source.id, userId } },
+        create: { sourceId: source.id, userId },
+        update: {},
+      });
+    }
     await this.gbrain.initializeSource(definition.sourceKey);
 
     // A newly parsed document is intentionally marked indexing until this
@@ -420,6 +439,60 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  /**
+   * Source-centric sync used by ingestion. A document is indexed once per
+   * stable knowledge-base source, never once for every reader.
+   */
+  async syncKnowledgeBaseSource(kbId: string, changedDocIds: string[] = []) {
+    const kb = await this.prisma.knowledgeBase.findUnique({
+      where: { id: kbId },
+      select: { id: true, type: true, status: true },
+    });
+    if (!kb || kb.status !== "active") {
+      throw new Error(`Knowledge base ${kbId} is unavailable for source sync.`);
+    }
+    return this.syncSourceDefinition(
+      {
+        sourceKey: sourceKeyForKnowledgeBase(kb.id),
+        kind: kb.type,
+        scopeKey: `kb:${kb.id}`,
+        kbIds: [kb.id],
+      },
+      undefined,
+      changedDocIds,
+    );
+  }
+
+  /** Mark every materialized permission scope containing a source as stale. */
+  async invalidateScopesForSource(sourceKey: string): Promise<string[]> {
+    const db: any = this.prisma as any;
+    const scopes = await db.brainScope.findMany({
+      where: { sourceKeys: { array_contains: sourceKey } },
+      select: { id: true },
+    });
+    if (!scopes.length) return [];
+    await db.brainScope.updateMany({
+      where: { id: { in: scopes.map((scope: any) => scope.id) } },
+      data: { knowledgeEpoch: { increment: 1 }, status: "dirty" },
+    });
+    return scopes.map((scope: any) => scope.id);
+  }
+
+  async queueScopeSynthesis(scopeIds: string[], priority = CompilePriority.NORMAL): Promise<void> {
+    await Promise.all(scopeIds.map((scopeId) =>
+      this.compilerQueue.add(
+        "scope-derived-compile",
+        { scopeId },
+        {
+          jobId: `scope-compile-${scopeId}`,
+          priority,
+          removeOnComplete: true,
+          removeOnFail: 50,
+        },
+      ),
+    ));
+  }
+
   /** Durable, queue-triggered reconciliation after organization/role/ACL changes. */
   async reconcileAccess(): Promise<{ users: number; sourcesSynced: number; scopesReconciled: number }> {
     const users = await this.prisma.user.findMany({
@@ -434,25 +507,21 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
       await this.getUserSourceRefs(user.id);
       for (const definition of plan) {
         if (syncedSourceKeys.has(definition.sourceKey)) continue;
-        await this.syncSourceDefinition(definition, user.id);
+        const result = await this.syncSourceDefinition(definition, user.id);
+        if (result.synced || result.removed) {
+          const scopeIds = await this.invalidateScopesForSource(definition.sourceKey);
+          await this.queueScopeSynthesis(scopeIds);
+        }
         syncedSourceKeys.add(definition.sourceKey);
       }
       // 计算并更新该用户的权限 Scope
       const scopeRes = await this.scopeService.resolveUserScope(user.id);
       reconciledScopeIds.add(scopeRes.scopeId);
 
-      // 对于 eager 策略的 Scope，安排派生层编译
-      if (scopeRes.strategy === "eager") {
-        await this.compilerQueue.add(
-          "scope-derived-compile",
-          { scopeId: scopeRes.scopeId },
-          {
-            jobId: `scope-compile-${scopeRes.scopeId}`,
-            priority: CompilePriority.NORMAL,
-            removeOnComplete: true,
-            removeOnFail: 50,
-          },
-        );
+      // Scope derivation is scheduled only when its knowledge/ACL epoch is
+      // dirty. This avoids rebuilding summaries for every unaffected user.
+      if (scopeRes.strategy === "eager" && scopeRes.status === "dirty") {
+        await this.queueScopeSynthesis([scopeRes.scopeId]);
       }
     }
 
@@ -520,54 +589,26 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
       `Knowledge published in KB ${kbId}. Calculating affected users...`,
     );
 
-    const visibleUsers =
-      await this.permissionService.getUsersVisibleToKnowledgeBase(kbId);
     const publishedDocument = await this.prisma.document.findUnique({
       where: { id: docId },
       select: { version: true },
     });
     const publishVersion = publishedDocument?.version || Date.now();
-
-    const jobs = (
-      await Promise.all(
-        visibleUsers.map(async (userId) => {
-          const sourceKey =
-            (await this.getSourcePlan(userId).catch(() => [])).find((item) =>
-              item.kbIds.includes(kbId),
-            )?.sourceKey || "llmwiki-shared";
-          return topics.map((topic) => ({
-            name: "compile-job",
-            data: {
-              userId,
-              topicSlug: topic,
-              source: "knowledge_publish",
-              kbId,
-              docIds: [docId],
-              sourceKey,
-            },
-            opts: {
-              jobId: `publish-${userId}-${docId}-v${publishVersion}-${createHash(
-                "sha1",
-              )
-                .update(`${sourceKey}:${topic}`)
-                .digest("hex")
-                .slice(0, 12)}`,
-              priority: CompilePriority.NORMAL,
-              attempts: 3,
-              backoff: { type: "exponential", delay: 3_000 },
-              removeOnComplete: 200,
-              removeOnFail: 500,
-            },
-          }));
-        }),
-      )
-    ).flat();
-
-    if (jobs.length > 0) {
-      await this.compilerQueue.addBulk(jobs);
-      this.logger.log(`Added ${jobs.length} compile jobs to the queue.`);
-    }
-    return jobs.length;
+    const sourceKey = sourceKeyForKnowledgeBase(kbId);
+    await this.compilerQueue.add(
+      "source-sync",
+      { kbId, docIds: [docId], topics },
+      {
+        jobId: `source-sync-${sourceKey}-${docId}-v${publishVersion}`,
+        priority: CompilePriority.NORMAL,
+        attempts: 3,
+        backoff: { type: "exponential", delay: 3_000 },
+        removeOnComplete: 200,
+        removeOnFail: 500,
+      },
+    );
+    this.logger.log(`Added source-centric sync for document ${docId} in ${sourceKey}.`);
+    return 1;
   }
 
   async onKnowledgeDeleted(kbId: string, docId: string) {
@@ -604,6 +645,8 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
       this.logger.log(
         `Removed document ${docId} from GBrain source ${sourceKey}.`,
       );
+      const scopeIds = await this.invalidateScopesForSource(sourceKey);
+      await this.queueScopeSynthesis(scopeIds, CompilePriority.HIGH);
     }
   }
 
@@ -677,6 +720,9 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
             const res = await this.syncSourceDefinition(def, user.id);
             syncedDocs += res.synced;
             removedDocs += res.removed;
+            if (res.synced || res.removed) {
+              await this.invalidateScopesForSource(def.sourceKey);
+            }
             const dream = await this.gbrain.maintain(`gbrain://source/${def.sourceKey}`);
             const gbrainStatus = dream?.status || "completed";
             const sourceStatus = gbrainStatus === "partial" ? "partial" : "completed";
@@ -703,15 +749,33 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
       }
 
       // === Tier 2: Scope Dream (权限 Scope 跨源综合与派生智能维护) ===
-      const activeScopes = await db.brainScope.findMany({
-        where: { status: "active" },
+      const dirtyScopes = await db.brainScope.findMany({
+        where: {
+          OR: [
+            { status: "dirty" },
+            { derivedPages: { none: {} } },
+          ],
+        },
       });
-      for (const scope of activeScopes) {
+      for (const scope of dirtyScopes) {
         try {
-          await this.scopeService.compileScopeDerived(scope.id);
+          const result = await this.scopeService.compileScopeDerived(scope.id);
           scopesCompiled++;
+          sourceResults.push({
+            sourceKey: `scope:${scope.fingerprint}`,
+            kind: "scope-synthesize",
+            status: result.status,
+            synthesizedSources: result.synthesizedSources,
+            synthesisFallbacks: result.synthesisFallbacks,
+          });
         } catch (e: any) {
           this.logger.warn(`Failed Scope Dream for ${scope.fingerprint}: ${e.message}`);
+          sourceResults.push({
+            sourceKey: `scope:${scope.fingerprint}`,
+            kind: "scope-synthesize",
+            status: "failed",
+            error: String(e?.message || e),
+          });
         }
       }
 
