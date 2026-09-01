@@ -10,4 +10,3 @@ export function sourceKeyForKnowledgeBase(kbId: string): string {
     .digest("hex")
     .slice(0, 16)}`;
 }
-
