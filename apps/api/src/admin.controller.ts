@@ -634,6 +634,7 @@ export class AdminController {
       include: { provider: true },
       where: { provider: { enabled: true } }
     });
+    const runtimeModelStatus = await this.modelConfigService.getRuntimeStatus();
 
     const formatBytes = (bytes: number) => {
       if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -767,6 +768,7 @@ export class AdminController {
         totalConversations,
         totalMessages,
         totalCitations,
+        runtime: runtimeModelStatus,
         activeModels: activeModelConfigs.map((m: any) => ({
           kind: m.kind,
           modelName: m.modelName,

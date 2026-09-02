@@ -13,6 +13,13 @@ import { BrainScopeService } from "../brain-compiler/brain-scope.service";
 
 type RetrievalRequest = { query: string; breadth: boolean; operation: 'search' | 'query' };
 
+function stripInvalidCitationMarkers(value: string, citationCount: number): string {
+  return value.replace(/\[(\d+)\]/g, (full, rawIndex) => {
+    const index = Number(rawIndex);
+    return index >= 1 && index <= citationCount ? full : '';
+  });
+}
+
 @Injectable()
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
@@ -226,6 +233,7 @@ export class ChatService {
       queryResult,
       retrieval.breadth,
     );
+    queryResult = this.applyFocusedEvidenceGate(queryResult, retrieval.breadth);
     await this.outboxService?.logOperation("query", {
       scopeId: userScope.scopeId,
       phase: "retrieval_trace",
@@ -236,6 +244,7 @@ export class ChatService {
         operation: retrieval.operation,
         sourceKeys: selectedSourceKeys,
         candidates: Array.isArray(queryResult.citations) ? queryResult.citations.length : 0,
+        retrievalGate: queryResult.retrievalGate || null,
         evidence: (queryResult.citations || []).map((citation: any) => ({
           sourceKey: citation.sourceKey,
           documentId: citation.docId,
@@ -334,9 +343,10 @@ export class ChatService {
 
 【重要回答规范】：
 1. 【必须标注引用角标】：在回答正文中，每一处陈述具体事实、业务范围、规章制度、技术指标、数据或核心结论时，必须在对应陈述的末尾标注对应的引用角标，格式为 [1]、[2] 等（严格与提供的【来源 1】、【来源 2】编号对应）。例如：“中通服节能的核心业务包括数据中心绿色化与液冷技术应用[1]。”
-2. 【多源对比与完整呈现】：若提供的参考资料中包含多份涉及该问题的文档（如不同版本制度、不同管理规范），必须分别列出各份文件的具体规定，并说明其版本差异、适用条件或生效背景（例如《详细手册》与《手册V2》的不同作息安排），严禁擅自忽略其中任何一份相关文件。
-3. 【多源合并】：若多个来源共同支持某一相同结论，可合并标注如 [1][2]。严禁捏造未在参考资料中提供的引用编号。
-4. 【客观真实】：如果参考资料不足以回答用户的问题，请明确客观说明“已知知识库资料中未包含相关信息”，切勿主观编造。
+2. 【证据收敛】：参考资料是候选证据，不是都必须使用。只使用直接支持当前问题的来源；低相关、仅主题相似或无法支持答案的资料不得进入回答。精确事实问题应直接回答目标事实，不要把相邻条款或其他制度的内容扩展进来。
+3. 【多源对比与完整呈现】：只有当多份资料都直接涉及当前问题时，才分别列出各份文件的规定，并说明版本差异、适用条件或生效背景。
+4. 【多源合并】：若多个来源共同支持某一相同结论，可合并标注如 [1][2]。严禁捏造未在参考资料中提供的引用编号；可用编号严格限制在 [1] 到 [${citations.length}]。
+5. 【客观真实】：如果参考资料不足以回答用户的问题，请明确客观说明“已知知识库资料中未包含相关信息”，切勿主观编造。
 
 ${priorConversation ? `历史对话参考（仅供消歧，以当前知识库资料为准）：\n${priorConversation}\n\n` : ""}【参考知识库资料】：
 ${compiledTruthContext}`;
@@ -370,6 +380,22 @@ ${compiledTruthContext}`;
       let buffer = "";
       let fullAnswer = "";
       let totalTokens = 0;
+      let citationTail = "";
+      const emitModelContent = (rawContent: string) => {
+        const merged = citationTail + rawContent;
+        citationTail = "";
+        const trailingMarker = merged.match(/\[(\d*)$/);
+        const body = trailingMarker
+          ? merged.slice(0, -trailingMarker[0].length)
+          : merged;
+        if (trailingMarker) citationTail = trailingMarker[0];
+        const safeContent = stripInvalidCitationMarkers(body, citations.length);
+        if (safeContent) {
+          totalTokens++;
+          fullAnswer += safeContent;
+          subscriber.next({ data: { type: "delta", content: safeContent } });
+        }
+      };
 
       if (reader) {
         while (true) {
@@ -385,11 +411,7 @@ ${compiledTruthContext}`;
               try {
                 const data = JSON.parse(line.slice(6));
                 const content = data.choices[0]?.delta?.content;
-                if (content) {
-                  totalTokens++;
-                  fullAnswer += content;
-                  subscriber.next({ data: { type: "delta", content } });
-                }
+                if (content) emitModelContent(String(content));
               } catch (e) {}
             }
           }
@@ -401,11 +423,7 @@ ${compiledTruthContext}`;
         try {
           const data = JSON.parse(finalLine.slice(6));
           const content = data.choices[0]?.delta?.content;
-          if (content) {
-            totalTokens++;
-            fullAnswer += content;
-            subscriber.next({ data: { type: "delta", content } });
-          }
+          if (content) emitModelContent(String(content));
         } catch (e) {}
       }
 
@@ -710,6 +728,39 @@ ${compiledTruthContext}`;
     }
   }
 
+  /**
+   * Keep a focused answer grounded in the score neighborhood of its best
+   * evidence. GBrain's broad mode intentionally returns a wider set, while a
+   * focused question should not feed unrelated low-score documents to the
+   * answer model. The gate is score/evidence based and language agnostic.
+   */
+  private applyFocusedEvidenceGate(result: any, breadth = false): any {
+    if (breadth) return result;
+    const citations = Array.isArray(result?.citations) ? result.citations : [];
+    if (citations.length < 2) return result;
+    const scored = citations.map((citation: any, index: number) => ({
+      citation,
+      index,
+      score: typeof citation.score === "number" ? citation.score : Number(citation.score),
+    }));
+    const numeric = scored.filter((item) => Number.isFinite(item.score));
+    if (!numeric.length) return result;
+    const topItem = numeric.reduce((best, item) => item.score > best.score ? item : best);
+    const topScore = topItem.score;
+    const floor = Math.max(0.02, topScore * 0.35);
+    const filtered = scored
+      .filter((item) => item.index === topItem.index || (Number.isFinite(item.score) && item.score >= floor))
+      .map((item) => item.citation);
+    if (!filtered.length || filtered.length === citations.length) return result;
+    return {
+      ...result,
+      citations: filtered,
+      topics: filtered.map((citation: any) => citation.topic),
+      answer: filtered.map((citation: any) => citation.context || citation.snippet).filter(Boolean).join("\n\n"),
+      retrievalGate: { removed: citations.length - filtered.length, scoreFloor: floor, topScore },
+    };
+  }
+
   private emitCitationsAndComplete(
     citations: any[],
     subscriber: Subscriber<MessageEvent>,
@@ -717,7 +768,8 @@ ${compiledTruthContext}`;
     fullAnswer = "",
   ) {
     // If the LLM cited specific [n] sources, match and retain them
-    const citedMatches = fullAnswer.match(/\[(\d+)\]/g) || [];
+    const safeAnswer = stripInvalidCitationMarkers(fullAnswer, citations.length);
+    const citedMatches = safeAnswer.match(/\[(\d+)\]/g) || [];
     const citedIndices = new Set(
       citedMatches.map((m) => parseInt(m.replace(/\D/g, ""), 10)),
     );

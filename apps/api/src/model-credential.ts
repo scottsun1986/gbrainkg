@@ -44,18 +44,21 @@ export function decryptModelCredential(
   // Backward compatibility for credentials written before encryption was
   // enabled. The next provider update rewrites them in encrypted form.
   if (!stored.startsWith(PREFIX)) return stored;
-  const payload = Buffer.from(stored.slice(PREFIX.length), "base64");
-  if (payload.length < 29)
-    throw new Error("Encrypted model credential is malformed.");
-  const iv = payload.subarray(0, 12);
-  const tag = payload.subarray(12, 28);
-  const ciphertext = payload.subarray(28);
-  const decipher = createDecipheriv("aes-256-gcm", encryptionKey(), iv);
-  decipher.setAuthTag(tag);
-  return Buffer.concat([
-    decipher.update(ciphertext),
-    decipher.final(),
-  ]).toString("utf8");
+  try {
+    const payload = Buffer.from(stored.slice(PREFIX.length), "base64");
+    if (payload.length < 29) return "";
+    const iv = payload.subarray(0, 12);
+    const tag = payload.subarray(12, 28);
+    const ciphertext = payload.subarray(28);
+    const decipher = createDecipheriv("aes-256-gcm", encryptionKey(), iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([
+      decipher.update(ciphertext),
+      decipher.final(),
+    ]).toString("utf8");
+  } catch (error) {
+    return "";
+  }
 }
 
 export function isEncryptedModelCredential(

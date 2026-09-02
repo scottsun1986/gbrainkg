@@ -222,4 +222,30 @@ describe("ChatService", () => {
       delete process.env.DEEPSEEK_API_KEY;
     }
   });
+
+  it("should remove low-score distractors from focused retrieval", () => {
+    const result = (service as any).applyFocusedEvidenceGate({
+      citations: [
+        { topic: "目标制度", score: 0.33, context: "目标内容" },
+        { topic: "无关制度", score: 0.08, context: "无关内容" },
+      ],
+      topics: ["目标制度", "无关制度"],
+      answer: "目标内容\n\n无关内容",
+      reranked: true,
+    }, false);
+
+    expect(result.citations).toHaveLength(1);
+    expect(result.citations[0].topic).toBe("目标制度");
+    expect(result.retrievalGate.removed).toBe(1);
+  });
+
+  it("should retain the wider candidate set for breadth retrieval", () => {
+    const input = {
+      citations: [
+        { topic: "制度一", score: 0.33 },
+        { topic: "制度二", score: 0.08 },
+      ],
+    };
+    expect((service as any).applyFocusedEvidenceGate(input, true)).toBe(input);
+  });
 });

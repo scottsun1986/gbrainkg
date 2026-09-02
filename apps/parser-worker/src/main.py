@@ -158,6 +158,32 @@ def extract_plaintext(filename: str, content: bytes) -> str:
         text = html.unescape(re.sub(r"<[^>]+>", " ", text))
     return text.strip()
 
+
+def normalize_markdown(markdown: str, filename: str) -> str:
+    """Normalize parser output without flattening meaningful document structure.
+
+    Office converters commonly emit a title once as metadata and once as body
+    text, and legacy Word emits form-feed page breaks. Removing only repeated
+    standalone title lines keeps the original wording while preventing the
+    duplicate title from becoming a second high-ranking retrieval passage.
+    """
+    title = Path(filename).stem.strip()
+    lines = markdown.replace("\r\n", "\n").replace("\r", "\n").replace("\x0c", "\n\n").split("\n")
+    normalized: list[str] = []
+    title_seen = False
+    for raw_line in lines:
+        line = raw_line.replace("\u200b", "").replace("\ufeff", "").replace("\xa0", " ").rstrip()
+        comparable = re.sub(r"^\s*#+\s*", "", line).strip()
+        if title and comparable == title:
+            if title_seen:
+                continue
+            title_seen = True
+        normalized.append(line)
+
+    result = "\n".join(normalized)
+    result = re.sub(r"\n{3,}", "\n\n", result).strip()
+    return result
+
 def extract_legacy_word(path: Path) -> str:
     env = os.environ.copy()
     try:
@@ -673,7 +699,10 @@ async def process_file(
 
         if not task.get("markdown", "").strip():
             raise RuntimeError("Extracted Markdown is empty")
-        task["markdown"] = task["markdown"].replace("\x00", "").replace("\u0000", "")
+        task["markdown"] = normalize_markdown(
+            task["markdown"].replace("\x00", "").replace("\u0000", ""),
+            str(task.get("filename", "upload.md")),
+        )
         task["status"] = "completed"
         logger.info(
             "Task %s completed successfully via engine=%s classification=%s "

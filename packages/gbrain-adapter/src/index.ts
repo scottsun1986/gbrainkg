@@ -32,6 +32,7 @@ export interface BrainQueryResult {
     evidence?: string;
   }>;
   reranked?: boolean;
+  retrievalGate?: { removed: number; scoreFloor: number; topScore: number };
 }
 
 export interface BrainQueryOptions {
@@ -73,7 +74,22 @@ function yamlString(value: string): string {
 function canonicalPage(slug: string, items: BrainEvidence[]): string {
   const first = items[0];
   const title = (first.topic || first.sourceFile || slug).replace(/\.[^.]+$/, '').trim();
-  const body = items.map((item) => item.text.trim()).filter(Boolean).join('\n\n');
+  const rawBody = items.map((item) => item.text.trim()).filter(Boolean).join('\n\n');
+  // Converters often emit the document title as a body heading while the
+  // adapter also adds the canonical title. Keep one deterministic heading so
+  // title-only duplicates cannot consume retrieval budget or outrank content.
+  const body = rawBody
+    .split(/\r?\n/)
+    .filter((line) => {
+      const comparable = line
+        .replace(/^\s*#{1,6}\s+/, '')
+        .replace(/^\s*\*{1,2}/, '')
+        .replace(/\*{1,2}\s*$/, '')
+        .trim();
+      return comparable !== title;
+    })
+    .join('\n')
+    .replace(/^\s+|\s+$/g, '');
   const aliases = [...new Set([first.sourceFile, first.topic].filter((value): value is string => Boolean(value && value !== title)))];
   const documentId = slug.startsWith('docs/') ? slug.slice('docs/'.length) : slug;
   const frontmatter = [
@@ -102,16 +118,28 @@ function structuralPassages(markdown: string): Array<{ heading?: string; content
   let buffer: string[] = [];
   // This recognizes document structure, not a user-question-specific pattern:
   // Markdown headings, Chinese chapter/article markers and enumerated clauses.
-  const boundary = /^(#{1,6}\s+.+|第[\d一二三四五六七八九十百千万〇零两]+[章节条款项].*|[（(]?[\d一二三四五六七八九十百千万]+[）).、]\s*.+)$/u;
+  const headingBoundary = /^#{1,6}\s+.+$/u;
+  const articleBoundary = /^第\s*[\d一二三四五六七八九十百千万〇零两]+\s*[章节条款项].*$/u;
+  const numberedBoundary = /^[（(]?[\d一二三四五六七八九十百千万]+[）).、]\s*.+$/u;
+  let insideArticle = false;
   const flush = () => {
     const content = buffer.join('\n').trim();
     if (content) sections.push({ heading: heading || undefined, content });
   };
   for (const line of lines) {
-    if (boundary.test(line.trim())) {
+    const trimmed = line.trim();
+    const comparable = trimmed.replace(/^\*{1,2}/, '').replace(/\*{1,2}$/, '').trim();
+    const isHeading = headingBoundary.test(trimmed);
+    const isArticle = articleBoundary.test(comparable);
+    const isNumbered = numberedBoundary.test(trimmed);
+    // Numbered paragraphs inside an article are subclauses, not independent
+    // retrieval passages. This keeps the complete article available to the
+    // answer model while still splitting numbered lists outside articles.
+    if (isHeading || isArticle || (isNumbered && !insideArticle)) {
       flush();
       heading = line.trim();
       buffer = [line];
+      insideArticle = isArticle;
     } else {
       buffer.push(line);
     }
@@ -157,9 +185,14 @@ function localizePassage(question: string, page: string, fallback: string): Pass
   const best = ranked[0];
   if (!best || best.score <= 0) return { content: fallback || page, score: 0 };
   const index = sections.findIndex((section) => section.content === best.content);
+  // Neighboring context is useful only when it independently supports the
+  // question. Blindly appending both neighbors lets unrelated policy text
+  // enter a precise answer. This is a generic evidence gate, not a clause
+  // number special case.
   const adjacent = [sections[index - 1], sections[index + 1]]
-    .filter(Boolean)
-    .map((section) => section.content)
+    .map((section) => ({ section, rank: ranked.find((item) => item.content === section?.content) }))
+    .filter((item) => item.section && item.rank && item.rank.score >= Math.max(0.05, best.score * 0.45))
+    .map((item) => item.section!.content)
     .join('\n\n');
   const content = [best.content, adjacent].filter(Boolean).join('\n\n').slice(0, 18_000);
   return { heading: best.heading, content, score: best.score };
@@ -199,6 +232,7 @@ export class BrainRepoAdapter {
     const env: Record<string, string> = {
       ...process.env,
       GBRAIN_HOME: this.gbrainHome,
+      GBRAIN_POOL_SIZE: process.env.GBRAIN_POOL_SIZE || '2',
       PATH: `/home/scottsun/.bun/bin:${process.env.PATH || ''}`,
     };
     // Prisma accepts the `schema` query parameter, but the GBrain CLI treats
@@ -621,6 +655,25 @@ export class BrainRepoAdapter {
   async synthesize(repoPath: string, question: string): Promise<BrainSynthesisResult> {
     const sourceId = this.sourceId(repoPath);
     return this.callTool(sourceId, 'synthesize', { question }) as Promise<BrainSynthesisResult>;
+  }
+
+  /** Run GBrain's persisted graph/timeline extraction for one authorized Source. */
+  async extract(sourceId: string, options: { ner?: boolean } = {}): Promise<Record<string, any>> {
+    await this.ensureSource(sourceId);
+    await this.ensureSearchConfig();
+    const args = [
+      'extract',
+      'all',
+      '--source',
+      'db',
+      '--source-id',
+      sourceId,
+      '--include-frontmatter',
+      '--json',
+    ];
+    if (options.ner) args.splice(args.length - 1, 0, '--ner');
+    const { stdout } = await this.run(args);
+    return this.parseJsonObject(stdout);
   }
 
   async remember(repoPath: string, fact: string, provenance: string, entity?: string): Promise<Record<string, any>> {

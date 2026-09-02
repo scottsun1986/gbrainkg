@@ -57,7 +57,7 @@ export class BrainCompilerProcessor extends WorkerHost {
         phase: "two_tier_dream",
         counts: res,
         durationMs: Date.now() - start,
-        status: "success",
+        status: res.status === "completed" ? "success" : res.status === "failed" ? "failed" : "warning",
       });
       return { status: "success", ...res };
     }

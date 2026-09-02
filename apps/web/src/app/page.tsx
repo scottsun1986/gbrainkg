@@ -4719,6 +4719,28 @@ function SystemStatusPanel({ capabilities }){
                     <td><b style={{ color: statusColors[r.status] || 'var(--ink)', fontSize: 12 }}>{statusLabels[r.status] || r.status}</b></td>
                     <td>
                       <span style={{ fontSize: 12 }}>{r.sourcesVisited || 0} 个源 ({r.sourcesSucceeded || 0} 成功, {r.sourcesPartial || 0} 部分)</span>
+                      {Array.isArray(r.sourceResults) && r.sourceResults.length > 0 && (
+                        <details style={{ marginTop: 5, fontSize: 10.5 }}>
+                          <summary style={{ cursor: 'pointer', color: 'var(--ink-3)' }}>查看阶段明细</summary>
+                          <div style={{ marginTop: 5, display: 'grid', gap: 3 }}>
+                            {r.sourceResults.slice(0, 12).map((source, index) => {
+                              const graph = source.graphExtraction || {};
+                              const skipped = Array.isArray(source.expectedSkippedPhases) ? source.expectedSkippedPhases.length : 0;
+                              return (
+                                <div key={`${source.sourceKey || source.source || index}-${index}`} style={{ color: 'var(--ink-3)' }}>
+                                  <span style={{ fontFamily: 'monospace' }}>{String(source.sourceKey || source.source || 'source').slice(0, 28)}</span>
+                                  {' · '}{statusLabels[source.status] || source.status || '—'}
+                                  {' · 图谱：'}{graph.status === 'completed' ? `${graph.pagesProcessed || 0} 页 / ${graph.linksCreated || 0} links` : graph.status || '—'}
+                                  {skipped ? ` · 预期跳过 ${skipped} 阶段` : ''}
+                                  {source.failedPhases?.length ? ` · 失败：${source.failedPhases.join(', ')}` : ''}
+                                  {source.warningPhases?.length ? ` · 告警：${source.warningPhases.join(', ')}` : ''}
+                                </div>
+                              );
+                            })}
+                            {r.sourceResults.length > 12 && <div>其余 {r.sourceResults.length - 12} 个源请查看服务日志。</div>}
+                          </div>
+                        </details>
+                      )}
                     </td>
                     <td><b>{r.queuedTopics || 0}</b> 个</td>
                     <td style={{ textAlign: 'right' }}><span style={{ color: 'var(--ink-2)', fontVariantNumeric: 'tabular-nums' }}>{r.durationMs ? `${Math.round(r.durationMs / 1000)}s` : '—'}</span></td>
@@ -4841,6 +4863,18 @@ function SystemStatusPanel({ capabilities }){
               </tbody>
             </table>
           </div>
+          {rag.runtime && (
+            <div style={{ marginTop: 14, padding: '12px 14px', background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, fontSize: 12, lineHeight: 1.7 }}>
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>GBrain 实际运行态</div>
+              <div style={{ color: 'var(--ink-2)' }}>
+                {['llm', 'embedding', 'rerank'].map((kind) => {
+                  const route = rag.runtime.routes?.[kind] || {};
+                  return <span key={kind} style={{ marginRight: 16 }}>{kind === 'llm' ? 'LLM' : kind === 'embedding' ? 'Embedding' : 'Reranker'}：{route.modelName || '未配置'} {route.injected ? '🟢 已注入 GBrain' : '🔴 未注入'}</span>;
+                })}
+              </div>
+              <div style={{ color: 'var(--ink-3)' }}>连接池 {rag.runtime.gbrain?.poolSize || 2} · Scope Synthesize {rag.runtime.gbrain?.scopeSynthesizeEnabled ? '开启' : '关闭'} · 图谱增量抽取 {rag.runtime.gbrain?.graphExtractEnabled ? '开启' : '关闭'}</div>
+            </div>
+          )}
         </>
       )}
     </>

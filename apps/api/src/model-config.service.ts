@@ -31,6 +31,22 @@ export interface ResolvedModelConfig {
   };
 }
 
+export interface RuntimeModelStatus {
+  routes: Record<ModelKind, {
+    configured: boolean;
+    injected: boolean;
+    modelName: string | null;
+    baseUrl: string | null;
+  }>;
+  gbrain: {
+    bin: string;
+    home: string;
+    poolSize: number;
+    scopeSynthesizeEnabled: boolean;
+    graphExtractEnabled: boolean;
+  };
+}
+
 /** Platform DB is the source of truth for model routes and credentials. */
 @Injectable()
 export class ModelConfigService implements OnModuleDestroy {
@@ -140,6 +156,49 @@ export class ModelConfigService implements OnModuleDestroy {
     this.logger.debug(
       `Applied DB model routes (llm=${llm?.modelName ?? "none"}, embedding=${embedding?.modelName ?? "none"}, rerank=${rerank?.modelName ?? "none"}).`,
     );
+  }
+
+  /**
+   * Safe, secret-free proof that the DB-selected routes are the routes the API
+   * will pass to every GBrain child process. This is intentionally diagnostic
+   * only: credentials are never returned and the CLI itself remains private.
+   */
+  async getRuntimeStatus(): Promise<RuntimeModelStatus> {
+    const [llm, embedding, rerank] = await Promise.all([
+      this.getDefault("llm"),
+      this.getDefault("embedding"),
+      this.getDefault("rerank"),
+    ]);
+    const routes = {
+      llm: {
+        configured: Boolean(llm),
+        injected: Boolean(llm && process.env.LLM_MODEL === llm.modelName && process.env.GBRAIN_CHAT_MODEL === `deepseek:${llm.modelName}`),
+        modelName: llm?.modelName || null,
+        baseUrl: llm?.provider.baseUrl || null,
+      },
+      embedding: {
+        configured: Boolean(embedding),
+        injected: Boolean(embedding && process.env.GBRAIN_EMBEDDING_MODEL === `openai:${embedding.modelName}` && process.env.OPENAI_BASE_URL === embedding.provider.baseUrl),
+        modelName: embedding?.modelName || null,
+        baseUrl: embedding?.provider.baseUrl || null,
+      },
+      rerank: {
+        configured: Boolean(rerank),
+        injected: Boolean(rerank && process.env.LLMWIKI_RERANK_MODEL === rerank.modelName && process.env.LLMWIKI_RERANK_BASE_URL === rerank.provider.baseUrl),
+        modelName: rerank?.modelName || null,
+        baseUrl: rerank?.provider.baseUrl || null,
+      },
+    } satisfies Record<ModelKind, RuntimeModelStatus["routes"][ModelKind]>;
+    return {
+      routes,
+      gbrain: {
+        bin: process.env.GBRAIN_BIN || "/home/scottsun/.bun/bin/gbrain",
+        home: process.env.GBRAIN_HOME || "/home/scottsun/.config/gbrain",
+        poolSize: Math.max(1, Number(process.env.GBRAIN_POOL_SIZE || 2)),
+        scopeSynthesizeEnabled: process.env.GBRAIN_SCOPE_SYNTHESIZE_ENABLED !== "0",
+        graphExtractEnabled: process.env.GBRAIN_GRAPH_EXTRACT_ENABLED !== "0",
+      },
+    };
   }
 
   async onModuleDestroy() {

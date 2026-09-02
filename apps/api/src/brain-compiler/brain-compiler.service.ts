@@ -494,7 +494,13 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Durable, queue-triggered reconciliation after organization/role/ACL changes. */
-  async reconcileAccess(): Promise<{ users: number; sourcesSynced: number; scopesReconciled: number }> {
+  async reconcileAccess(): Promise<{
+    users: number;
+    sourcesSynced: number;
+    scopesReconciled: number;
+    sourcesArchived: number;
+    scopesArchived: number;
+  }> {
     const users = await this.prisma.user.findMany({
       where: { status: "active" },
       select: { id: true },
@@ -536,11 +542,23 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
         data: { status: "archived" },
       });
     }
+    const emptyScopes = await db.brainScope.findMany({
+      where: { members: { none: {} }, status: { in: ["active", "dirty", "compiling"] } },
+      select: { id: true },
+    });
+    if (emptyScopes.length) {
+      await db.brainScope.updateMany({
+        where: { id: { in: emptyScopes.map((item: any) => item.id) } },
+        data: { status: "archived" },
+      });
+    }
 
     return {
       users: users.length,
       sourcesSynced: syncedSourceKeys.size,
       scopesReconciled: reconciledScopeIds.size,
+      sourcesArchived: emptySources.length,
+      scopesArchived: emptyScopes.length,
     };
   }
 
@@ -725,7 +743,7 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
             }
             const dream = await this.gbrain.maintain(`gbrain://source/${def.sourceKey}`);
             const gbrainStatus = dream?.status || "completed";
-            const sourceStatus = gbrainStatus === "partial" ? "partial" : "completed";
+            const gbrainFailed = ["failed", "error"].includes(String(gbrainStatus));
             const phaseSummary = Array.isArray(dream?.phases)
               ? dream.phases.map((phase: any) => ({
                   phase: phase.phase,
@@ -734,6 +752,48 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
                   reason: phase.reason,
                 }))
               : [];
+            const failedPhases = phaseSummary.filter((phase: any) =>
+              ["failed", "error"].includes(String(phase.status)),
+            );
+            const warningPhases = phaseSummary.filter((phase: any) =>
+              ["warn", "warning"].includes(String(phase.status)),
+            );
+
+            // A named Source is intentionally excluded from GBrain's implicit
+            // global Dream phases. Those expected skips must not make the
+            // platform report a false failure; only actual failures/warnings
+            // degrade the Source freshness result.
+            let graphExtraction: Record<string, unknown> = {
+              status: "skipped",
+              reason: "disabled",
+            };
+            if (
+              process.env.GBRAIN_GRAPH_EXTRACT_ENABLED !== "0"
+            ) {
+              try {
+                // GBrain's extract command is incremental: unchanged Sources
+                // report zero processed pages, while a newly enabled graph
+                // still gets its first backfill without a full rebuild.
+                const extracted = await this.gbrain.extract(def.sourceKey, { ner: true });
+                graphExtraction = {
+                  status: "completed",
+                  linksCreated: Number(extracted.links_created || 0),
+                  timelineEntriesCreated: Number(extracted.timeline_entries_created || 0),
+                  pagesProcessed: Number(extracted.pages_processed || 0),
+                  skippedCrossSource: Number(extracted.skipped_cross_source || 0),
+                };
+              } catch (error: any) {
+                graphExtraction = {
+                  status: "failed",
+                  error: String(error?.message || error),
+                };
+              }
+            }
+            const sourceStatus = gbrainFailed || failedPhases.length || graphExtraction.status === "failed"
+              ? "failed"
+              : warningPhases.length
+                ? "partial"
+                : "completed";
             sourceResults.push({
               sourceKey: def.sourceKey,
               kind: def.kind,
@@ -742,6 +802,13 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
               status: sourceStatus,
               gbrainStatus,
               phases: phaseSummary,
+              expectedSkippedPhases: phaseSummary
+                .filter((phase: any) => phase.status === "skipped")
+                .map((phase: any) => phase.phase)
+                .filter(Boolean),
+              failedPhases: failedPhases.map((phase: any) => phase.phase).filter(Boolean),
+              warningPhases: warningPhases.map((phase: any) => phase.phase).filter(Boolean),
+              graphExtraction,
             });
             maintainedSources.add(def.sourceKey);
           }
@@ -782,8 +849,9 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
       this.logger.log(
         `Two-Tier Dream Cycle completed: synced ${syncedDocs} doc(s), compiled ${scopesCompiled} scope(s).`,
       );
+      const hasFailed = sourceResults.some((result) => result.status === "failed");
       const hasPartial = sourceResults.some((result) => result.status === "partial");
-      const status = hasPartial ? "partial" : "completed";
+      const status = hasFailed ? "failed" : hasPartial ? "partial" : "completed";
       await db.brainMaintenanceRun.update({
         where: { id: maintenanceRun.id },
         data: {

@@ -1,16 +1,15 @@
 [Unit]
 Description=LLMWiki API
-After=network.target postgresql@16-main.service redis-server.service llmwiki-parser.service
+After=network.target
 Wants=llmwiki-parser.service
 
 [Service]
 Type=simple
-User=ubuntu
-Group=ubuntu
-WorkingDirectory=/home/ubuntu/gbrainkg/apps/api
-EnvironmentFile=/home/ubuntu/.config/llmwiki/production.env
-Environment=PATH=/home/ubuntu/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/usr/bin/node /home/ubuntu/gbrainkg/apps/api/dist/main.js
+WorkingDirectory=/home/scottsun/gbrainkg/apps/api
+EnvironmentFile=/home/scottsun/gbrainkg/apps/api/.env
+Environment=GBRAIN_POOL_SIZE=2
+Environment=PATH=/home/scottsun/.bun/bin:/home/scottsun/.local/bin:/home/scottsun/.hermes/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/home/scottsun/.local/bin/node /home/scottsun/gbrainkg/apps/api/dist/main.js
 Restart=always
 RestartSec=5
 TimeoutStopSec=15
@@ -21,4 +20,4 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
