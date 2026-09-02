@@ -790,6 +790,28 @@ export class AdminController {
     return { queued: true, jobId: job?.id || null };
   }
 
+  @Post("brain/sources/rebuild")
+  async rebuildBrainSources(@Req() req: any) {
+    const userId = await this.authService.userIdFromRequest(req);
+    if (!(await this.permissionService.isSystemAdmin(userId)))
+      throw new ForbiddenException("Only a system administrator can rebuild GBrain sources.");
+    const startedAt = Date.now();
+    const result = await this.brainCompilerService.rebuildAllSources();
+    await this.brainOutboxService?.logOperation("sync", {
+      phase: "full_source_rebuild",
+      counts: {
+        sources: result.sources,
+        rebuilt: result.rebuilt,
+        failed: result.failed,
+        syncedDocuments: result.syncedDocuments,
+        removedDocuments: result.removedDocuments,
+      },
+      durationMs: Date.now() - startedAt,
+      status: result.failed ? "warning" : "success",
+    });
+    return result;
+  }
+
   @Post("orgs")
   async createOrg(@Req() req: any, @Body() body: any) {
     const userId = await this.authService.userIdFromRequest(req);

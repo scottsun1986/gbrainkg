@@ -152,6 +152,12 @@ model Document {
   gitCommit    String?
   uploadedById String?  @db.Uuid
   status       String   @default("parsing") // parsing/parsed/indexing/published/failed
+  parserEngine String?
+  parserClassification String?
+  parserMetadata Json?
+  qualityStatus String @default("unknown") // unknown/passed/needs_review/rejected
+  qualityScore Float?
+  qualityIssues Json?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

@@ -7,6 +7,18 @@ Legacy Word `.doc` files are supported through the userland `antiword`
 converter and then indexed as extracted UTF-8 text. Set `ANTIWORD_BIN` when
 the converter is installed at a different path.
 
+## Format routing and quality gate
+
+The worker accepts Markdown/text/CSV/HTML, `.doc`/`.docx`, PDF, `.xls`/`.xlsx`,
+PPTX, and PNG/JPEG. Native extractors are preferred for text, Word, and Excel;
+PPTX keeps slide text and tables, while embedded images require OCR when they
+contain information not present in the native slide text. A parser response
+can be technically completed but still be held at `needs_review` when it has
+too little text, encoding damage, low OCR confidence, or image placeholders.
+Only `quality_status=passed` is published to GBrain. The API persists the
+engine, PDF classification, OCR metadata, quality score, and review reasons
+for audit and troubleshooting.
+
 ## PDF routing
 
 PDFs use a cost-aware hybrid route:
@@ -21,10 +33,10 @@ PDFs use a cost-aware hybrid route:
    one exists and the task fails clearly for a pure scan.
 
 The parser task response exposes `classification`, `page_count`,
-`native_page_ratio`, `native_quality`, `engine`, and the OCR task id/page
-count. This makes it possible to verify which route was actually used. The
-default `OCR_PROVIDER=none` keeps documents on-premises; enabling a cloud OCR
-provider is an explicit data egress decision.
+`native_page_ratio`, `native_quality`, `engine`, quality fields, and the OCR
+task id/page count. This makes it possible to verify which route was actually
+used. The default `OCR_PROVIDER=none` keeps documents on-premises; enabling a
+cloud OCR provider is an explicit data egress decision.
 
 Relevant settings:
 

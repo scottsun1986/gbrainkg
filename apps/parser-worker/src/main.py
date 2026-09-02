@@ -29,7 +29,7 @@ for k in ["ALL_PROXY", "all_proxy"]:
 
 UPLOAD_ROOT = Path(os.environ.get("UPLOAD_ROOT", "/tmp/llmwiki/parser"))
 MAX_FILE_BYTES = 200 * 1024 * 1024
-SUPPORTED_EXTENSIONS = {".md", ".txt", ".csv", ".html", ".htm", ".doc", ".docx", ".pdf", ".xlsx", ".pptx", ".png", ".jpg", ".jpeg"}
+SUPPORTED_EXTENSIONS = {".md", ".txt", ".csv", ".html", ".htm", ".doc", ".docx", ".pdf", ".xls", ".xlsx", ".pptx", ".png", ".jpg", ".jpeg"}
 ANTIWORD_BIN = os.environ.get("ANTIWORD_BIN", "antiword")
 DOCLING_TIMEOUT_SECONDS = float(os.environ.get("DOCLING_TIMEOUT_SECONDS", "240"))
 PDF_PARSE_MODE = os.environ.get("PDF_PARSE_MODE", "hybrid").lower()
@@ -95,7 +95,7 @@ async def lifespan(app: FastAPI):
     yield
     cleanup_task.cancel()
 
-app = FastAPI(title="LLMWiki Parser Worker", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="LLMWiki Parser Worker", version="0.4.0", lifespan=lifespan)
 
 allowed_origins = os.environ.get('CORS_ORIGINS', 'http://localhost:3000,http://localhost:3001').split(',')
 app.add_middleware(
@@ -403,9 +403,98 @@ def extract_excel(path: Path) -> str:
                 table_lines.append("| " + " | ".join(cells) + " |")
             sheets_md.append("\n".join(table_lines))
         return "\n\n".join(sheets_md)
-    except Exception as e:
-        logger.warning(f"openpyxl extraction failed for {path}: {e}")
+    except Exception as openpyxl_error:
+        # openpyxl intentionally does not read the legacy BIFF .xls format.
+        # Keep the lightweight xlrd route optional so production can support
+        # .xls without installing the heavyweight layout engine.
+        logger.info(f"openpyxl extraction unavailable for {path}: {openpyxl_error}")
+        try:
+            import xlrd
+
+            workbook = xlrd.open_workbook(str(path), on_demand=True)
+            sheets_md = []
+            for sheet in workbook.sheets():
+                if sheet.nrows == 0:
+                    continue
+                rows = [
+                    [str(sheet.cell_value(row, col) or "").replace("|", "\\|").replace("\n", " ") for col in range(sheet.ncols)]
+                    for row in range(sheet.nrows)
+                ]
+                while rows and not any(rows[-1]):
+                    rows.pop()
+                if not rows:
+                    continue
+                width = max(len(row) for row in rows)
+                rows = [row + [""] * (width - len(row)) for row in rows]
+                lines = [f"### 工作表：{sheet.name}\n"]
+                lines.append("| " + " | ".join(rows[0]) + " |")
+                lines.append("| " + " | ".join(["---"] * width) + " |")
+                lines.extend("| " + " | ".join(row) + " |" for row in rows[1:])
+                sheets_md.append("\n".join(lines))
+            return "\n\n".join(sheets_md)
+        except Exception as xlrd_error:
+            logger.warning(f"Legacy Excel extraction failed for {path}: {xlrd_error}")
+            return ""
+
+
+def _pptx_table_markdown(table: Any) -> str:
+    rows = []
+    for row in table.rows:
+        cells = [
+            str(cell.text or "").strip().replace("|", "\\|").replace("\n", " ")
+            for cell in row.cells
+        ]
+        if any(cells):
+            rows.append(cells)
+    if not rows:
         return ""
+    width = max(len(row) for row in rows)
+    rows = [row + [""] * (width - len(row)) for row in rows]
+    lines = ["| " + " | ".join(rows[0]) + " |", "| " + " | ".join(["---"] * width) + " |"]
+    lines.extend("| " + " | ".join(row) + " |" for row in rows[1:])
+    return "\n".join(lines)
+
+
+def extract_pptx_native(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
+    """Extract slide text/tables and retain embedded images for OCR.
+
+    This is the production fallback when local Docling is intentionally
+    disabled. Native text is never discarded just because a slide also has a
+    picture; pictures are OCR'ed separately when a cloud provider is configured.
+    """
+    from pptx import Presentation
+
+    presentation = Presentation(str(path))
+    slide_blocks: list[str] = []
+    image_parts: list[dict[str, Any]] = []
+    for slide_number, slide in enumerate(presentation.slides, start=1):
+        parts: list[str] = []
+        for shape_number, shape in enumerate(slide.shapes, start=1):
+            if getattr(shape, "has_text_frame", False):
+                text = "\n".join(
+                    paragraph.text.strip()
+                    for paragraph in shape.text_frame.paragraphs
+                    if paragraph.text.strip()
+                ).strip()
+                if text:
+                    parts.append(text)
+            if getattr(shape, "has_table", False):
+                table_md = _pptx_table_markdown(shape.table)
+                if table_md:
+                    parts.append(table_md)
+            if getattr(shape, "shape_type", None) == 13:  # MSO_SHAPE_TYPE.PICTURE
+                try:
+                    image = shape.image
+                    image_parts.append({
+                        "slide": slide_number,
+                        "shape": shape_number,
+                        "ext": str(image.ext or "png"),
+                        "blob": image.blob,
+                    })
+                except Exception as image_error:
+                    logger.warning("Unable to extract PPTX image on slide %s: %s", slide_number, image_error)
+        slide_blocks.append("\n\n".join(parts).strip())
+    return slide_blocks, image_parts
 
 async def convert_with_docling(path: Path) -> str:
     """Docling deep layout extraction with compatibility guard."""
@@ -545,6 +634,83 @@ async def convert_with_baidu_ocr(
         raise TimeoutError(f"Baidu OCR task timed out after {OCR_TIMEOUT_SECONDS:g} seconds")
 
 
+async def convert_image_with_baidu_ocr(
+    path: Path, ocr_config: dict[str, str]
+) -> tuple[str, dict[str, Any]]:
+    """OCR a standalone image or an embedded PPTX image with Baidu.
+
+    The document parser endpoint is the preferred route for PDF because it
+    preserves page structure. Images have no page/document container, so use
+    Baidu's high-accuracy OCR endpoint and keep the returned line order.
+    """
+    provider = str(ocr_config.get("provider") or OCR_PROVIDER).lower()
+    if provider != "baidu":
+        raise RuntimeError("Image OCR requires a Baidu OCR provider or local Docling")
+    if path.stat().st_size > OCR_MAX_FILE_BYTES:
+        raise RuntimeError(
+            f"Image is {path.stat().st_size} bytes; OCR file limit is {OCR_MAX_FILE_BYTES} bytes"
+        )
+    try:
+        import httpx
+    except ImportError as exc:
+        raise RuntimeError("Baidu OCR requires the httpx dependency") from exc
+
+    timeout = httpx.Timeout(OCR_TIMEOUT_SECONDS, connect=30.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        endpoint_base = str(ocr_config.get("endpoint") or BAIDU_OCR_ENDPOINT).rstrip("/")
+        token = await _baidu_token(
+            client,
+            str(ocr_config.get("api_key") or BAIDU_OCR_API_KEY),
+            str(ocr_config.get("secret_key") or BAIDU_OCR_SECRET_KEY),
+            endpoint_base,
+        )
+        raw = await asyncio.to_thread(path.read_bytes)
+        response = await client.post(
+            f"{endpoint_base}/rest/2.0/ocr/v1/accurate_basic",
+            params={"access_token": token},
+            data={
+                "image": base64.b64encode(raw).decode("ascii"),
+                "detect_direction": "true",
+                "paragraph": "true",
+                "probability": "true",
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if int(payload.get("error_code", 0) or 0) != 0:
+            raise RuntimeError(
+                f"Baidu image OCR failed: {payload.get('error_msg') or payload}"
+            )
+        words_result = payload.get("words_result") or []
+        lines: list[str] = []
+        probabilities: list[float] = []
+        for item in words_result:
+            words = str(item.get("words") or "").strip() if isinstance(item, dict) else str(item).strip()
+            if not words:
+                continue
+            lines.append(words)
+            if isinstance(item, dict):
+                probability = item.get("probability")
+                if isinstance(probability, dict):
+                    probability = probability.get("average")
+                try:
+                    if probability is not None:
+                        probabilities.append(float(probability))
+                except (TypeError, ValueError):
+                    pass
+        if not lines:
+            raise RuntimeError("Baidu image OCR returned no text")
+        metadata: dict[str, Any] = {
+            "ocr_provider": "baidu",
+            "ocr_endpoint": "accurate_basic",
+            "ocr_words_result_num": len(lines),
+        }
+        if probabilities:
+            metadata["ocr_average_confidence"] = round(sum(probabilities) / len(probabilities), 4)
+        return "\n".join(lines), metadata
+
+
 async def convert_with_cloud_ocr(
     path: Path, ocr_config: dict[str, str]
 ) -> tuple[str, dict[str, Any]]:
@@ -554,6 +720,62 @@ async def convert_with_cloud_ocr(
     raise RuntimeError(
         "Scanned PDF requires an OCR provider configured as baidu (or local Docling)"
     )
+
+
+async def convert_pptx_without_docling(
+    path: Path, ocr_config: dict[str, str]
+) -> tuple[str, str, dict[str, Any]]:
+    """Build a slide-preserving Markdown representation without Docling.
+
+    Production deliberately does not install/enable Docling. Native PPTX
+    text and tables remain lossless; embedded images are sent through the
+    configured OCR provider. If a slide contains images and no OCR route is
+    available, fail closed instead of silently indexing incomplete content.
+    """
+    slide_blocks, image_parts = await asyncio.to_thread(extract_pptx_native, path)
+    provider = str(ocr_config.get("provider") or OCR_PROVIDER).lower()
+    image_by_slide: dict[int, list[str]] = {}
+    metadata: dict[str, Any] = {
+        "slide_count": len(slide_blocks),
+        "embedded_image_count": len(image_parts),
+    }
+    if image_parts and provider == "none":
+        raise RuntimeError(
+            "PPTX contains embedded images; configure Baidu OCR for complete image text extraction"
+        )
+    for position, image in enumerate(image_parts, start=1):
+        temp = tempfile.NamedTemporaryFile(
+            prefix=f"pptx-image-{position}-", suffix=f".{image['ext']}", dir=str(UPLOAD_ROOT), delete=False
+        )
+        image_path = Path(temp.name)
+        try:
+            with temp:
+                temp.write(image["blob"])
+            image_md, image_metadata = await convert_image_with_baidu_ocr(image_path, ocr_config)
+            image_by_slide.setdefault(int(image["slide"]), []).append(
+                f"### 图片区域 {image['shape']}\n\n{image_md.strip()}"
+            )
+            for key, value in image_metadata.items():
+                if key == "ocr_average_confidence" and value is not None:
+                    previous = metadata.get(key)
+                    metadata[key] = round(
+                        (float(previous) * (position - 1) + float(value)) / position, 4
+                    ) if previous is not None else value
+                elif key.startswith("ocr_"):
+                    metadata[key] = metadata.get(key, 0) + value if isinstance(value, (int, float)) else value
+        finally:
+            image_path.unlink(missing_ok=True)
+
+    sections = [f"# {path.stem}"]
+    for slide_number, block in enumerate(slide_blocks, start=1):
+        content = [block] if block else []
+        content.extend(image_by_slide.get(slide_number, []))
+        if content:
+            sections.append(f"## 第 {slide_number} 页\n\n" + "\n\n".join(content))
+    markdown = "\n\n---\n\n".join(sections)
+    if not any(block.strip() for block in slide_blocks) and not image_by_slide:
+        raise RuntimeError("PPTX contains no extractable text, tables, or OCR results")
+    return markdown, "python-pptx-native+ocr" if image_parts else "python-pptx-native", metadata
 
 
 async def convert_pdf_with_fallback(
@@ -630,6 +852,72 @@ async def convert_pdf_with_fallback(
         f"LOCAL_DOCLING_ENABLED={LOCAL_DOCLING_ENABLED}"
     )
 
+
+def assess_content_quality(markdown: str, suffix: str, task: dict[str, Any]) -> dict[str, Any]:
+    """Return a conservative quality signal before a document is published.
+
+    The parser may produce non-empty but unusable output (font encoding
+    damage, a blank image, or a PPTX with only unrecognised shapes). Quality is
+    therefore persisted separately from parser success. A review result keeps
+    the Markdown/chunks available for inspection but never enters GBrain.
+    """
+    text = str(markdown or "")
+    placeholder_count = len(re.findall(r"<!--\s*(?:image|picture|figure)\s*-->", text, flags=re.IGNORECASE))
+    quality_text = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
+    quality_text = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", quality_text)
+    meaningful = re.findall(r"[A-Za-z0-9\u4e00-\u9fff]", quality_text)
+    meaningful_count = len(meaningful)
+    replacement_count = text.count("\ufffd")
+    control_count = sum(1 for char in text if ord(char) < 32 and char not in "\n\r\t")
+    replacement_ratio = replacement_count / max(len(text), 1)
+    control_ratio = control_count / max(len(text), 1)
+    issues: list[str] = []
+    binary_input = suffix not in {".md", ".txt", ".csv", ".html", ".htm"}
+    if meaningful_count == 0:
+        issues.append("没有提取到可检索文字")
+    if binary_input and meaningful_count < 20:
+        issues.append("提取文字过少，可能是空白文件或解析不完整")
+    if replacement_ratio > 0.01:
+        issues.append("存在较多字体编码替换字符")
+    if control_ratio > 0.02:
+        issues.append("存在异常控制字符")
+    if placeholder_count and suffix in {".pptx", ".png", ".jpg", ".jpeg"}:
+        issues.append("版面解析只返回图片占位符，图片文字尚未完成 OCR")
+    confidence = task.get("ocr_average_confidence")
+    if confidence is not None:
+        try:
+            if float(confidence) < 0.75:
+                issues.append("OCR 平均置信度低于 0.75")
+        except (TypeError, ValueError):
+            pass
+    score = 1.0
+    score -= min(replacement_ratio * 4, 0.45)
+    score -= min(control_ratio * 2, 0.2)
+    if binary_input and meaningful_count < 20:
+        score -= 0.45
+    if confidence is not None:
+        try:
+            score = min(score, max(0.0, float(confidence)))
+        except (TypeError, ValueError):
+            pass
+    score = round(max(0.0, min(1.0, score)), 4)
+    status = "passed" if not issues else "needs_review"
+    if meaningful_count == 0:
+        status = "rejected"
+    return {
+        "quality_status": status,
+        "quality_score": score,
+        "quality_issues": issues,
+        "quality_metrics": {
+            "characters": len(text),
+            "meaningful_characters": meaningful_count,
+            "replacement_ratio": round(replacement_ratio, 6),
+            "control_ratio": round(control_ratio, 6),
+            "image_placeholders": placeholder_count,
+        },
+    }
+
+
 async def process_file(
     task_id: str,
     path: Path,
@@ -654,6 +942,8 @@ async def process_file(
                 task["markdown"] = md
                 task["engine"] = "python-docx"
             else:
+                if not LOCAL_DOCLING_ENABLED:
+                    raise RuntimeError("DOCX native extraction returned no text and local Docling is disabled")
                 md = await convert_with_docling(path)
                 task["markdown"] = md
                 task["engine"] = "docling"
@@ -661,11 +951,33 @@ async def process_file(
             md = await asyncio.to_thread(extract_excel, path)
             if md:
                 task["markdown"] = md
-                task["engine"] = "openpyxl"
+                task["engine"] = "openpyxl" if suffix == ".xlsx" else "xlrd"
             else:
+                if not LOCAL_DOCLING_ENABLED:
+                    raise RuntimeError("Excel native extraction returned no cells and local Docling is disabled")
                 md = await convert_with_docling(path)
                 task["markdown"] = md
                 task["engine"] = "docling"
+        elif suffix == ".pptx":
+            if LOCAL_DOCLING_ENABLED:
+                try:
+                    md = await convert_with_docling(path)
+                    if re.search(r"<!--\s*(?:image|picture|figure)\s*-->", md, flags=re.IGNORECASE):
+                        raise RuntimeError("Docling returned image placeholders; OCR is required for complete PPTX ingestion")
+                    task["markdown"] = md
+                    task["engine"] = "docling-local"
+                except Exception as docling_error:
+                    logger.warning("Local Docling PPTX conversion failed for %s: %s", path.name, docling_error)
+                    task["docling_error"] = str(docling_error)
+                    md, engine, parser_metadata = await convert_pptx_without_docling(path, ocr_config)
+                    task["markdown"] = md
+                    task["engine"] = engine
+                    task.update(parser_metadata)
+            else:
+                md, engine, parser_metadata = await convert_pptx_without_docling(path, ocr_config)
+                task["markdown"] = md
+                task["engine"] = engine
+                task.update(parser_metadata)
         elif suffix == ".pdf":
             pdf_info = await asyncio.to_thread(inspect_pdf_native, path)
             native_md = str(pdf_info.get("markdown", ""))
@@ -690,12 +1002,28 @@ async def process_file(
             task["engine"] = engine
             task.update(parser_metadata)
         else:
-            # PPT / images / others
-            if not LOCAL_DOCLING_ENABLED:
-                raise RuntimeError("Local Docling is disabled; this file type requires Docling")
-            md = await convert_with_docling(path)
-            task["markdown"] = md
-            task["engine"] = "docling-local"
+            # Standalone images use local Docling in the test profile and the
+            # cloud OCR route in production. No image is silently accepted
+            # without text extraction.
+            if LOCAL_DOCLING_ENABLED:
+                try:
+                    md = await convert_with_docling(path)
+                    if re.search(r"<!--\s*(?:image|picture|figure)\s*-->", md, flags=re.IGNORECASE):
+                        raise RuntimeError("Docling returned an image placeholder; OCR is required for complete image ingestion")
+                    task["markdown"] = md
+                    task["engine"] = "docling-local"
+                except Exception as docling_error:
+                    logger.warning("Local Docling image conversion failed for %s: %s", path.name, docling_error)
+                    task["docling_error"] = str(docling_error)
+                    md, ocr_metadata = await convert_image_with_baidu_ocr(path, ocr_config)
+                    task["markdown"] = f"# {path.stem}\n\n{md}"
+                    task["engine"] = "ocr-baidu-image"
+                    task.update(ocr_metadata)
+            else:
+                md, ocr_metadata = await convert_image_with_baidu_ocr(path, ocr_config)
+                task["markdown"] = f"# {path.stem}\n\n{md}"
+                task["engine"] = "ocr-baidu-image"
+                task.update(ocr_metadata)
 
         if not task.get("markdown", "").strip():
             raise RuntimeError("Extracted Markdown is empty")
@@ -703,6 +1031,9 @@ async def process_file(
             task["markdown"].replace("\x00", "").replace("\u0000", ""),
             str(task.get("filename", "upload.md")),
         )
+        task.update(assess_content_quality(task["markdown"], suffix, task))
+        if task["quality_status"] == "rejected":
+            raise RuntimeError("Quality gate rejected the document: " + "; ".join(task["quality_issues"]))
         task["status"] = "completed"
         logger.info(
             "Task %s completed successfully via engine=%s classification=%s "

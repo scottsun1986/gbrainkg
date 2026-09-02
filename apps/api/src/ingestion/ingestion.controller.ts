@@ -235,14 +235,21 @@ export class IngestionController {
       where: { id: docId, kbId },
     });
     if (!document) throw new NotFoundException("Document not found.");
-    if (document.status !== "failed")
-      throw new BadRequestException("Only failed documents can be retried.");
+    if (!["failed", "needs_review"].includes(document.status))
+      throw new BadRequestException(
+        "Only failed or review-held documents can be retried.",
+      );
     if (!document.rawFileOid)
       throw new BadRequestException("Original upload is no longer available.");
 
     await this.prisma.document.update({
       where: { id: docId },
-      data: { status: "parsing" },
+      data: {
+        status: "parsing",
+        qualityStatus: "unknown",
+        qualityScore: null,
+        qualityIssues: [],
+      },
     });
     await this.ingestionService.enqueue(docId, "manual-retry");
     return { document: { ...document, status: "parsing" }, status: "accepted" };

@@ -17,7 +17,9 @@ dependencies = [
     "httpx>=0.28.0",
     "pypdf>=5.0.0",
     "python-docx>=1.1.0",
+    "python-pptx>=1.0.0",
     "openpyxl>=3.1.0",
+    "xlrd>=2.0.1",
     "minio>=7.2.7",
     "docling>=1.1.0",
     # paddleocr might have heavy dependencies, adding placeholders

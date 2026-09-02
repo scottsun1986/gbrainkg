@@ -38,6 +38,8 @@ export interface BrainQueryResult {
 export interface BrainQueryOptions {
   breadth?: boolean;
   operation?: 'search' | 'query';
+  /** Bypass this process's short-lived result cache after a source rebuild. */
+  forceRefresh?: boolean;
 }
 
 export interface BrainMaintenanceResult {
@@ -305,11 +307,31 @@ export class BrainRepoAdapter {
   }
 
   private async sourcePageCount(sourceId: string): Promise<number> {
-    const row = await this.registeredSource(sourceId);
-    if (!row) throw new Error(`GBrain source ${sourceId} is not present in the source status report.`);
-    const count = Number(row.total_pages ?? row.page_count);
-    if (!Number.isFinite(count)) throw new Error(`GBrain source ${sourceId} returned no page count.`);
+    const counts = await this.getSourcePageCounts([sourceId]);
+    const count = counts.get(sourceId);
+    if (count === undefined) throw new Error(`GBrain source ${sourceId} is not present in the source status report.`);
     return count;
+  }
+
+  /**
+   * Read the GBrain read-plane page count for several sources in one CLI call.
+   * This is intentionally separate from the application mapping table: the
+   * mapping proves what the platform intended to sync, while this proves what
+   * GBrain can actually search.
+   */
+  async getSourcePageCounts(sourceIds: string[]): Promise<Map<string, number>> {
+    const requested = new Set(sourceIds);
+    if (!requested.size) return new Map();
+    const { stdout } = await this.run(['sources', 'status', '--json']);
+    const payload = this.parseJsonObject(stdout);
+    const result = new Map<string, number>();
+    for (const item of Array.isArray(payload.sources) ? payload.sources : []) {
+      const sourceId = String(item?.source_id || item?.id || '');
+      if (!requested.has(sourceId)) continue;
+      const count = Number(item?.total_pages ?? item?.page_count);
+      if (Number.isFinite(count)) result.set(sourceId, count);
+    }
+    return result;
   }
 
   private async registeredSource(sourceId: string): Promise<Record<string, any> | null> {
@@ -335,7 +357,11 @@ export class BrainRepoAdapter {
     }
   }
 
-  private async syncSource(sourceId: string, expectedAddedPages = 0): Promise<void> {
+  private async syncSource(
+    sourceId: string,
+    expectedAddedPages = 0,
+    full = false,
+  ): Promise<void> {
     const previous = this.sourceSyncLocks.get(sourceId) || Promise.resolve();
     let release!: () => void;
     const current = new Promise<void>((resolveRelease) => { release = resolveRelease; });
@@ -343,7 +369,10 @@ export class BrainRepoAdapter {
     this.sourceSyncLocks.set(sourceId, chain);
     await previous.catch(() => undefined);
     try {
-      const { stdout } = await this.run(['sync', '--source', sourceId, '--json']);
+      const args = ['sync', '--source', sourceId];
+      if (full) args.push('--full');
+      args.push('--json');
+      const { stdout } = await this.run(args);
       const payload = this.parseJsonObject(stdout);
       const sourceRows = Array.isArray(payload.sources) ? payload.sources : [];
       const sourceError = sourceRows.find((item: any) => item?.status === 'error');
@@ -575,6 +604,63 @@ export class BrainRepoAdapter {
     this.invalidateCache(sourceId);
   }
 
+  /**
+   * Rebuild one application-managed Source from its current canonical pages.
+   * The normal incremental bookmark is deliberately bypassed here: a source
+   * can have a current Git HEAD while an older page was never materialized in
+   * GBrain. Full sync is the recovery path for that class of drift.
+   */
+  async rebuild(repoPath: string, evidence: BrainEvidence[]): Promise<void> {
+    const sourceId = this.sourceId(repoPath);
+    const sourcePath = await this.ensureSource(sourceId);
+    await this.ensureSearchConfig();
+    const grouped = new Map<string, BrainEvidence[]>();
+    for (const item of evidence) {
+      const slug = item.slug || `docs/${safePart(item.topic || 'document')}`;
+      grouped.set(slug, [...(grouped.get(slug) || []), item]);
+    }
+
+    const expectedPaths = new Set<string>();
+    for (const [slug, items] of grouped) {
+      const content = canonicalPage(slug, items);
+      if (!content) continue;
+      const path = this.pagePath(sourcePath, slug);
+      expectedPaths.add(resolve(path));
+      await mkdir(dirname(path), { recursive: true });
+      const tempPath = `${path}.tmp`;
+      await writeFile(tempPath, `${content}\n`, 'utf8');
+      await rename(tempPath, path);
+    }
+
+    // Only remove canonical document pages under the application-owned docs/
+    // directory. Keep .gbrain-source and any other control files intact.
+    const docsRoot = join(sourcePath, 'docs');
+    const removeOrphanPages = async (dir: string): Promise<void> => {
+      const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+      for (const entry of entries) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) await removeOrphanPages(path);
+        else if (entry.isFile() && entry.name.endsWith('.md') && !expectedPaths.has(resolve(path))) {
+          await unlink(path);
+        }
+      }
+    };
+    await removeOrphanPages(docsRoot);
+
+    await this.runGit(['add', '-A'], sourcePath);
+    await this.runGit(['commit', '-qm', 'rebuild knowledge source'], sourcePath);
+    await this.pushSourceIfConfigured(sourceId);
+    await this.syncSource(sourceId, 0, true);
+    const indexedPages = await this.sourcePageCount(sourceId);
+    if (indexedPages !== grouped.size) {
+      throw new Error(
+        `GBrain source rebuild incomplete for ${sourceId}: expected ${grouped.size} indexed page(s), found ${indexedPages}.`,
+      );
+    }
+    if (grouped.size) await this.verifyPages(repoPath, [...grouped.keys()]);
+    this.invalidateCache(sourceId);
+  }
+
   async verifyPages(repoPath: string, slugs: string[]): Promise<void> {
     for (const slug of slugs) {
       const page = await this.getPage(repoPath, slug);
@@ -711,7 +797,7 @@ export class BrainRepoAdapter {
     const operation = options.operation === 'search' ? 'search' : 'query';
     const cacheKey = `${sourceId}:${operation}:${options.breadth ? 'broad' : 'focused'}:${question.trim()}`;
     const cached = this.queryCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
+    if (!options.forceRefresh && cached && cached.expiresAt > Date.now()) {
       return cached.result;
     }
     await this.ensureSearchConfig();
@@ -789,14 +875,22 @@ export class BrainRepoAdapter {
       snippet: row.chunk_text || '',
       context: pageContext.get(row.slug)?.content || row.chunk_text || '',
       section: pageContext.get(row.slug)?.section,
-      score: typeof row.rerank_score === 'number' ? row.rerank_score : row.score,
+      score: Number.isFinite(Number(row.rerank_score ?? row.score))
+        ? Number(row.rerank_score ?? row.score)
+        : undefined,
       evidence: row.evidence,
     }));
     const result: BrainQueryResult = {
       topics: citations.map((citation) => citation.topic),
       answer: citations.map((citation) => citation.context).filter(Boolean).join('\n\n'),
       citations,
-      reranked: rawRows.some((row) => typeof row.rerank_score === 'number'),
+      // GBrain versions/providers may serialize numeric scores as strings.
+      // Treat a valid rerank_score in either representation as authoritative;
+      // otherwise the platform fallback reranker can apply a different score
+      // scale and incorrectly remove broad-query candidates.
+      reranked: rawRows.some(
+        (row) => row.rerank_score !== undefined && Number.isFinite(Number(row.rerank_score)),
+      ),
     };
     this.queryCache.set(cacheKey, { expiresAt: Date.now() + 30_000, result });
     if (this.queryCache.size > 200) {

@@ -299,6 +299,7 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
     },
     userId?: string,
     changedDocIds: string[] = [],
+    options: { forceFull?: boolean } = {},
   ) {
     const db: any = this.prisma as any;
     const source = await db.brainSource.upsert({
@@ -347,20 +348,24 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
       existing.map((doc: any) => [doc.documentId, doc] as [string, any]),
     );
     const changedSet = new Set(changedDocIds);
-    const materialized = await this.gbrain.isSourceMaterialized(
-      `gbrain://source/${definition.sourceKey}`,
-    );
-    const toSync = desired.filter((doc) => {
-      const previous = existingById.get(doc.id);
-      return (
-        !materialized ||
-        changedSet.has(doc.id) ||
-        !previous ||
-        doc.version > previous.syncedVersion ||
-        doc.updatedAt > previous.syncedAt
-      );
-    });
-    if (toSync.length) {
+    const materialized = options.forceFull
+      ? false
+      : await this.gbrain.isSourceMaterialized(
+          `gbrain://source/${definition.sourceKey}`,
+        );
+    const toSync = options.forceFull
+      ? desired
+      : desired.filter((doc) => {
+          const previous = existingById.get(doc.id);
+          return (
+            !materialized ||
+            changedSet.has(doc.id) ||
+            !previous ||
+            doc.version > previous.syncedVersion ||
+            doc.updatedAt > previous.syncedAt
+          );
+        });
+    if (options.forceFull || toSync.length) {
       const documents = await this.prisma.document.findMany({
         where: { id: { in: toSync.map((doc) => doc.id) } },
         include: {
@@ -391,10 +396,12 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
           slug: `docs/${document.id}`,
         })),
       );
-      await this.gbrain.ingest(
-        `gbrain://source/${definition.sourceKey}`,
-        evidences,
-      );
+      const sourceRef = `gbrain://source/${definition.sourceKey}`;
+      if (options.forceFull) {
+        await this.gbrain.rebuild(sourceRef, evidences);
+      } else {
+        await this.gbrain.ingest(sourceRef, evidences);
+      }
       for (const document of documents) {
         await db.brainSourceDocument.upsert({
           where: {
@@ -443,7 +450,11 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
    * Source-centric sync used by ingestion. A document is indexed once per
    * stable knowledge-base source, never once for every reader.
    */
-  async syncKnowledgeBaseSource(kbId: string, changedDocIds: string[] = []) {
+  async syncKnowledgeBaseSource(
+    kbId: string,
+    changedDocIds: string[] = [],
+    forceFull = false,
+  ) {
     const kb = await this.prisma.knowledgeBase.findUnique({
       where: { id: kbId },
       select: { id: true, type: true, status: true },
@@ -460,7 +471,152 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
       },
       undefined,
       changedDocIds,
+      { forceFull },
     );
+  }
+
+  /**
+   * Reconcile every active knowledge-base Source against the published
+   * document inventory and rebuild each Source from canonical pages. This is
+   * an explicit recovery operation for legacy scope-source drift and is also
+   * safe to repeat because it is deterministic and source-scoped.
+   */
+  async rebuildAllSources(): Promise<{
+    sources: number;
+    rebuilt: number;
+    failed: number;
+    syncedDocuments: number;
+    removedDocuments: number;
+    results: Array<Record<string, unknown>>;
+  }> {
+    const kbs = await this.prisma.knowledgeBase.findMany({
+      where: { status: "active" },
+      select: { id: true, name: true, type: true },
+      orderBy: { createdAt: "asc" },
+    });
+    const results: Array<Record<string, unknown>> = [];
+    let syncedDocuments = 0;
+    let removedDocuments = 0;
+
+    for (const kb of kbs) {
+      try {
+        const result = await this.syncKnowledgeBaseSource(kb.id, [], true);
+        syncedDocuments += Number(result.synced || 0);
+        removedDocuments += Number(result.removed || 0);
+        const scopeIds = await this.invalidateScopesForSource(result.sourceKey);
+        if (scopeIds.length) await this.queueScopeSynthesis(scopeIds);
+        results.push({
+          kbId: kb.id,
+          kbName: kb.name,
+          type: kb.type,
+          sourceKey: result.sourceKey,
+          status: "completed",
+          synced: result.synced,
+          removed: result.removed,
+          affectedScopes: scopeIds.length,
+        });
+      } catch (error: any) {
+        results.push({
+          kbId: kb.id,
+          kbName: kb.name,
+          type: kb.type,
+          sourceKey: sourceKeyForKnowledgeBase(kb.id),
+          status: "failed",
+          error: String(error?.message || error),
+        });
+      }
+    }
+
+    // Re-materialize current memberships after the content plane is repaired.
+    // This also archives obsolete empty sources without exposing private data.
+    try {
+      await this.reconcileAccess();
+    } catch (error: any) {
+      results.push({
+        sourceKey: "access-reconciliation",
+        status: "failed",
+        error: String(error?.message || error),
+      });
+    }
+
+    return {
+      sources: kbs.length,
+      rebuilt: results.filter((item) => item.status === "completed").length,
+      failed: results.filter((item) => item.status === "failed").length,
+      syncedDocuments,
+      removedDocuments,
+      results,
+    };
+  }
+
+  /**
+   * Query-time freshness gate. The application DB is authoritative for ACL
+   * and published inventory; GBrain status is authoritative for the searchable
+   * read plane. A mismatch triggers a full deterministic rebuild before the
+   * caller is allowed to query.
+   */
+  async ensureSourcesFreshForQuery(
+    userId: string,
+    knowledgeBaseIds: string[],
+  ): Promise<{ checked: number; rebuilt: number; sourceKeys: string[] }> {
+    const requested = new Set(knowledgeBaseIds);
+    const plan = (await this.getSourcePlan(userId)).filter((definition) =>
+      definition.kbIds.some((kbId) => requested.has(kbId)),
+    );
+    if (!plan.length) return { checked: 0, rebuilt: 0, sourceKeys: [] };
+
+    const sourceIds = plan.map((definition) => definition.sourceKey);
+    const indexedPageCounts = await this.gbrain.getSourcePageCounts(sourceIds);
+    const db: any = this.prisma as any;
+    const rebuilt: string[] = [];
+
+    for (const definition of plan) {
+      const published = await this.prisma.document.findMany({
+        where: { kbId: { in: definition.kbIds }, status: "published" },
+        select: { id: true, version: true, updatedAt: true },
+      });
+      const source = await db.brainSource.findUnique({
+        where: { sourceKey: definition.sourceKey },
+        select: { id: true },
+      });
+      const mappings = source
+        ? await db.brainSourceDocument.findMany({
+            where: { sourceId: source.id },
+            select: { documentId: true, syncedVersion: true, syncedAt: true },
+          })
+        : [];
+      const mappedById = new Map<string, any>(
+        mappings.map((item: any) => [item.documentId, item]),
+      );
+      const mappingFresh =
+        mappings.length === published.length &&
+        published.every((document) => {
+          const mapping = mappedById.get(document.id);
+          return Boolean(
+            mapping &&
+              mapping.syncedVersion >= document.version &&
+              new Date(mapping.syncedAt).getTime() >=
+                new Date(document.updatedAt).getTime(),
+          );
+        });
+      const indexedPages = indexedPageCounts.get(definition.sourceKey);
+      const readPlaneFresh = indexedPages === published.length;
+      if (mappingFresh && readPlaneFresh) continue;
+
+      await this.syncSourceDefinition(definition, userId, [], {
+        forceFull: true,
+      });
+      rebuilt.push(definition.sourceKey);
+    }
+
+    if (rebuilt.length) {
+      await this.outboxService.logOperation("sync", {
+        phase: "query_freshness_reconcile",
+        counts: { checked: plan.length, rebuilt, sourceKeys: sourceIds },
+        status: "success",
+      });
+    }
+    return { checked: plan.length, rebuilt: rebuilt.length, sourceKeys: sourceIds };
   }
 
   /** Mark every materialized permission scope containing a source as stale. */

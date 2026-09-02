@@ -142,9 +142,36 @@ export class ChatService {
     const selectedSourceKeys = rawRefs
       .map((ref: string) => ref.replace(/^gbrain:\/\/source\//, ""))
       .sort();
+    let sourceFreshness: { checked: number; rebuilt: number; sourceKeys: string[] } | null = null;
+    if (typeof (this.compilerService as any).ensureSourcesFreshForQuery === "function") {
+      try {
+        sourceFreshness = await (this.compilerService as any).ensureSourcesFreshForQuery(
+          userId,
+          scope,
+        );
+        if (sourceFreshness.rebuilt > 0) {
+          this.logger.log(
+            `Query freshness gate rebuilt ${sourceFreshness.rebuilt}/${sourceFreshness.checked} source(s) before answering.`,
+          );
+        }
+      } catch (error: any) {
+        this.logger.error(
+          `Query freshness gate blocked an incomplete source: ${String(error?.message || error)}`,
+        );
+        subscriber.next({
+          data: {
+            type: "error",
+            content: "知识库索引正在对账或重建，当前不能基于不完整索引回答，请稍后重试。",
+          },
+        });
+        subscriber.complete();
+        return;
+      }
+    }
     const wholeScopeSelected =
       selectedSourceKeys.length === userScope.sourceKeys.length &&
       selectedSourceKeys.every((key, index) => key === userScope.sourceKeys.slice().sort()[index]);
+    const forceQueryRefresh = Boolean(sourceFreshness?.rebuilt);
 
     // Start with source documents. Permission-scoped derived summaries are
     // only useful for broad cross-page questions, never for an exact passage
@@ -161,6 +188,17 @@ export class ChatService {
       question,
       conversationHistory,
     );
+    // Personal memory is a separate, private GBrain retrieval arm. It never
+    // enters a shared Source and is injected with lower precedence than the
+    // currently authorized document evidence. On the first turn, use the
+    // official context_pack to warm the session; later turns use semantic
+    // recall for only the current question.
+    const personalMemory = await this.loadPersonalMemoryContext(
+      userId,
+      retrieval.query || question,
+      conversationHistory,
+      conversationId,
+    );
     // A derived page is valid only for the exact permission/source set from
     // which it was built. Never add a full-scope summary to a user-selected
     // subset of knowledge bases or to a focused fact lookup.
@@ -171,16 +209,18 @@ export class ChatService {
     this.logger.debug(
       `Querying brain for "${question}" in scope ${scope.join(",")} (Scope fingerprint: ${userScope.fingerprint})...`,
     );
+    let retrievalEscalated = false;
     let queryResult =
       sourceRefs.length > 1
-        ? await this.gbrain.queryMany(sourceRefs, retrieval.query, {
+          ? await this.gbrain.queryMany(sourceRefs, retrieval.query, {
             breadth: retrieval.breadth,
             operation: retrieval.operation,
+            ...(forceQueryRefresh ? { forceRefresh: true } : {}),
           })
         : await this.gbrain.query(
             sourceRefs[0] || brainRepo.gitRepoUrl,
             retrieval.query,
-            { breadth: retrieval.breadth, operation: retrieval.operation },
+            { breadth: retrieval.breadth, operation: retrieval.operation, ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
           );
     queryResult = await this.filterQueryResultByCurrentPermission(
       queryResult,
@@ -192,6 +232,35 @@ export class ChatService {
         knowledgeEpoch: userScope.knowledgeEpoch,
       },
     );
+    // A weak semantic hit is a signal to widen recall once, not a reason to
+    // invent application-specific keyword rules. The same standalone query
+    // is re-run with GBrain's broad/no-autocut profile so an exact section or
+    // a better parent page has a chance to enter the evidence set.
+    if (this.shouldEscalateWeakEvidence(queryResult, retrieval.breadth)) {
+      retrievalEscalated = true;
+      queryResult =
+        sourceRefs.length > 1
+          ? await this.gbrain.queryMany(sourceRefs, retrieval.query, {
+              breadth: true,
+              operation: "query",
+              ...(forceQueryRefresh ? { forceRefresh: true } : {}),
+            })
+          : await this.gbrain.query(
+              sourceRefs[0] || brainRepo.gitRepoUrl,
+              retrieval.query,
+              { breadth: true, operation: "query", ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
+            );
+      queryResult = await this.filterQueryResultByCurrentPermission(
+        queryResult,
+        scope,
+        {
+          scopeId: userScope.scopeId,
+          sourceKeys: selectedSourceKeys,
+          aclEpoch: userScope.aclEpoch,
+          knowledgeEpoch: userScope.knowledgeEpoch,
+        },
+      );
+    }
     // 历史文档可能在 BrainRepo 初始化前已经发布，先进行完整同步，再重新通过 BrainRepo 查询。
     if (!queryResult.answer) {
       await this.compilerService.syncUserBrainRepo(userId);
@@ -206,11 +275,12 @@ export class ChatService {
           ? await this.gbrain.queryMany(refreshedRefs, retrieval.query, {
               breadth: retrieval.breadth,
               operation: retrieval.operation,
+              forceRefresh: true,
             })
           : await this.gbrain.query(
               refreshedRefs[0] || brainRepo.gitRepoUrl,
               retrieval.query,
-            { breadth: retrieval.breadth, operation: retrieval.operation },
+            { breadth: retrieval.breadth, operation: retrieval.operation, forceRefresh: true },
             );
       queryResult = await this.filterQueryResultByCurrentPermission(
         queryResult,
@@ -242,7 +312,11 @@ export class ChatService {
         rewrittenQueryHash: createHash("sha256").update(retrieval.query || question).digest("hex").slice(0, 16),
         breadth: retrieval.breadth,
         operation: retrieval.operation,
+        retrievalEscalated,
         sourceKeys: selectedSourceKeys,
+        personalMemoryFacts: personalMemory.count,
+        freshnessChecked: sourceFreshness?.checked || 0,
+        freshnessRebuilt: sourceFreshness?.rebuilt || 0,
         candidates: Array.isArray(queryResult.citations) ? queryResult.citations.length : 0,
         retrievalGate: queryResult.retrievalGate || null,
         evidence: (queryResult.citations || []).map((citation: any) => ({
@@ -339,6 +413,10 @@ export class ChatService {
         )
         .join("\n");
 
+      const personalMemoryBlock = personalMemory.text
+        ? `个人长期记忆（仅当前用户可见，优先级低于当前知识库原文；不能把它冒充为公共制度证据）：\n${personalMemory.text}\n\n`
+        : "";
+
       const contextMessage = `你是一个专业的企业级知识库智能助手。请严格基于下方给出的【参考知识库资料】回答用户的问题。
 
 【重要回答规范】：
@@ -348,7 +426,7 @@ export class ChatService {
 4. 【多源合并】：若多个来源共同支持某一相同结论，可合并标注如 [1][2]。严禁捏造未在参考资料中提供的引用编号；可用编号严格限制在 [1] 到 [${citations.length}]。
 5. 【客观真实】：如果参考资料不足以回答用户的问题，请明确客观说明“已知知识库资料中未包含相关信息”，切勿主观编造。
 
-${priorConversation ? `历史对话参考（仅供消歧，以当前知识库资料为准）：\n${priorConversation}\n\n` : ""}【参考知识库资料】：
+      ${priorConversation ? `历史对话参考（仅供消歧，以当前知识库资料为准）：\n${priorConversation}\n\n` : ""}${personalMemoryBlock}【参考知识库资料】：
 ${compiledTruthContext}`;
 
       const llmResponse = await fetch(
@@ -546,6 +624,36 @@ ${compiledTruthContext}`;
     }
   }
 
+  private async loadPersonalMemoryContext(
+    userId: string,
+    query: string,
+    history: Array<{ role: "user" | "assistant"; content: string }>,
+    sessionId?: string,
+  ): Promise<{ text: string; count: number }> {
+    try {
+      const result = history.length <= 1
+        ? await this.personalContextPack(userId, query, sessionId)
+        : await this.recallPersonalFacts(userId, query, 8);
+      const facts = Array.isArray(result?.facts) ? result.facts : [];
+      if (!facts.length) return { text: String(result?.text || "").trim(), count: 0 };
+      const text = facts
+        .slice(0, 8)
+        .map((fact: any) => {
+          const value = String(fact.fact || fact.content || "").trim();
+          const entity = String(fact.entity_slug || "").trim();
+          return value ? `- ${value}${entity ? ` [${entity}]` : ""}` : "";
+        })
+        .filter(Boolean)
+        .join("\n");
+      return { text: text || String(result?.text || "").trim(), count: facts.length };
+    } catch (error) {
+      // A user without a personal KB, or a temporarily unavailable memory
+      // verb, must not make ordinary knowledge retrieval fail.
+      this.logger.debug(`Personal memory retrieval unavailable: ${error?.message || "unknown error"}`);
+      return { text: "", count: 0 };
+    }
+  }
+
   /**
    * GBrain source 是按用户编译的缓存，权限变更与索引重建之间可能存在短暂延迟。
    * 每次问答都用文档数据库再次校验命中文档，防止旧索引片段越权进入重排或 LLM 上下文。
@@ -701,7 +809,11 @@ ${compiledTruthContext}`;
       const filtered = scoredItems
         .filter((item, idx) => {
           if (idx === 0) return true; // Always keep the best hit
-          if (breadth) return idx < 8 && item.score >= 0.01;
+          // A broad query is a coverage request. Reranker score scales differ
+          // across providers (some valid scores are < 0.01), so never turn a
+          // score calibration difference into silent document loss. GBrain's
+          // candidate limit and final model evidence gate remain in effect.
+          if (breadth) return idx < 40;
           if (topScore > 0.15 && item.score < 0.08) return false;
           if (topScore > 0.3 && item.score < topScore * 0.25) return false;
           return idx < 4; // Cap focused queries at top 4
@@ -759,6 +871,13 @@ ${compiledTruthContext}`;
       answer: filtered.map((citation: any) => citation.context || citation.snippet).filter(Boolean).join("\n\n"),
       retrievalGate: { removed: citations.length - filtered.length, scoreFloor: floor, topScore },
     };
+  }
+
+  private shouldEscalateWeakEvidence(result: any, breadth = false): boolean {
+    if (breadth) return false;
+    const citations = Array.isArray(result?.citations) ? result.citations : [];
+    const evidence = String(citations[0]?.evidence || "").toLowerCase();
+    return citations.length > 0 && evidence.includes("weak");
   }
 
   private emitCitationsAndComplete(

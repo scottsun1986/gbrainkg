@@ -172,6 +172,42 @@ export class IngestionService implements OnModuleInit {
     const chunks = splitMarkdownIntoChunks(markdown);
     if (!chunks.length)
       throw new Error("Parser returned no indexable content.");
+    const qualityStatus = ["passed", "needs_review", "rejected"].includes(
+      String(parsed.quality_status),
+    )
+      ? String(parsed.quality_status)
+      : "passed";
+    const qualityScore =
+      typeof parsed.quality_score === "number" ? parsed.quality_score : null;
+    const qualityIssues = Array.isArray(parsed.quality_issues)
+      ? parsed.quality_issues.map((issue: unknown) => String(issue)).slice(0, 20)
+      : [];
+    // Persist parser facts, but never persist request credentials or the full
+    // parser response. This lets operators explain a failed/uncertain import
+    // and lets the UI distinguish "parsed" from "safe to publish".
+    const parserMetadata: Record<string, unknown> = {};
+    for (const key of [
+      "page_count",
+      "text_pages",
+      "native_chars",
+      "native_page_ratio",
+      "native_quality",
+      "ocr_provider",
+      "ocr_endpoint",
+      "ocr_task_id",
+      "ocr_words_result_num",
+      "ocr_average_confidence",
+      "ocr_cost_pages",
+      "slide_count",
+      "embedded_image_count",
+      "quality_metrics",
+      "docling_error",
+      "ocr_error",
+    ]) {
+      if (parsed[key] !== undefined && parsed[key] !== null) {
+        parserMetadata[key] = parsed[key];
+      }
+    }
     await writeFile(
       join(this.uploadRoot, documentId, "content.md"),
       markdown,
@@ -193,9 +229,32 @@ export class IngestionService implements OnModuleInit {
       }),
       this.prisma.document.update({
         where: { id: documentId },
-        data: { status: "indexing" },
+        data: {
+          status: qualityStatus === "passed" ? "indexing" : "needs_review",
+          parserEngine: parsed.engine || null,
+          parserClassification: parsed.classification || null,
+          parserMetadata: parserMetadata as any,
+          qualityStatus,
+          qualityScore,
+          qualityIssues: qualityIssues as any,
+        },
       }),
     ]);
+
+    if (qualityStatus !== "passed") {
+      this.logger.warn(
+        `Document ${documentId} parsed but was held for review: ${qualityIssues.join("; ") || qualityStatus}`,
+      );
+      return {
+        documentId,
+        status: "needs_review",
+        chunks: chunks.length,
+        parser: parsed.engine || "unknown",
+        qualityStatus,
+        qualityScore,
+        qualityIssues,
+      };
+    }
 
     const topic =
       document.title
@@ -217,12 +276,23 @@ export class IngestionService implements OnModuleInit {
       status: queuedJobs ? "indexing" : "published",
       chunks: chunks.length,
       parser: parsed.engine || "unknown",
+      qualityStatus,
+      qualityScore,
+      qualityIssues,
     };
   }
 
   async markFailed(documentId: string, reason: string) {
     await this.prisma.document
-      .update({ where: { id: documentId }, data: { status: "failed" } })
+      .update({
+        where: { id: documentId },
+        data: {
+          status: "failed",
+          qualityStatus: "rejected",
+          qualityIssues: [reason] as any,
+          parserMetadata: { error: reason } as any,
+        },
+      })
       .catch(() => undefined);
     this.logger.error(`Document ${documentId} ingestion failed: ${reason}`);
   }

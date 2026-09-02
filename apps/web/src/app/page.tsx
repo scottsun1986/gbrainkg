@@ -612,7 +612,7 @@ function UniversalDocumentViewer({ preview, onClose }) {
             className={`preview-tab-btn ${activeTab === 'parsed' ? 'active' : ''}`}
             onClick={() => setActiveTab('parsed')}
           >
-            <span>🧠</span> Docling 解析视图
+            <span>🧠</span> 标准化解析视图
           </button>
           <button
             type="button"
@@ -819,7 +819,7 @@ function UniversalDocumentViewer({ preview, onClose }) {
               {activeTab === 'chunks' && (
                 <div className="chunks-grid">
                   <div style={{ fontSize: '12px', color: 'var(--ink-3)', marginBottom: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <span>Docling 标准化分块结果 · 共 {docData?.chunks?.length || 0} 个切片 · 细粒度父子关联</span>
+                    <span>标准化分块结果 · 共 {docData?.chunks?.length || 0} 个切片 · 细粒度父子关联</span>
                     {chunkMatches.size > 0 && <span style={{ color: 'var(--evidence)', fontWeight: 600 }}>🎯 命中 {chunkMatches.size} 个问答切片</span>}
                   </div>
                   {docData?.chunks && docData.chunks.length > 0 ? (
@@ -946,6 +946,12 @@ function UniversalDocumentViewer({ preview, onClose }) {
 
                     <div style={{ color: 'var(--ink-3)' }}>索引状态</div>
                     <div><span className={`badge ${docData?.document?.status === 'published' ? 'ok' : 'indexing'}`}>{docData?.document?.status || '就绪'}</span></div>
+
+                    <div style={{ color: 'var(--ink-3)' }}>解析引擎 / 文档类型</div>
+                    <div>{docData?.document?.parserEngine || '—'}{docData?.document?.parserClassification ? ` · ${docData.document.parserClassification}` : ''}</div>
+
+                    <div style={{ color: 'var(--ink-3)' }}>入库质量门禁</div>
+                    <div>{docData?.document?.qualityStatus || 'unknown'}{typeof docData?.document?.qualityScore === 'number' ? ` · ${(docData.document.qualityScore * 100).toFixed(1)} 分` : ''}{Array.isArray(docData?.document?.qualityIssues) && docData.document.qualityIssues.length ? ` · ${docData.document.qualityIssues.join('；')}` : ''}</div>
 
                     <div style={{ color: 'var(--ink-3)' }}>切片总数</div>
                     <div>{docData?.document?.chunkCount || docData?.chunks?.length || 0} 个检索 Chunk</div>
@@ -1392,6 +1398,78 @@ function ScopePicker({visibleKbs, selected, setSelected, open, setOpen}){
   );
 }
 
+/* ============== 个人长期记忆 ============== */
+function PersonalMemoryPanel({ open, onClose }) {
+  const [query, setQuery] = useState('');
+  const [facts, setFacts] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    let cancelled = false;
+    setLoading(true);
+    fetch(`${API_BASE_URL}/api/v1/chat/memory?limit=100${query.trim() ? `&query=${encodeURIComponent(query.trim())}` : ''}`, { headers: apiHeaders() })
+      .then(async (response) => {
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.message || '个人记忆加载失败');
+        if (!cancelled) setFacts(Array.isArray(result.facts) ? result.facts : []);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setFacts([]);
+          window.dispatchEvent(new CustomEvent('app-toast', { detail: error.message || '个人记忆加载失败' }));
+        }
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [open, query, reloadKey]);
+
+  const forget = async (fact) => {
+    const id = fact?.id || fact?.fact_id;
+    if (!id) return;
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/chat/memory/${encodeURIComponent(id)}`, { method: 'DELETE', headers: apiHeaders() });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || '个人记忆删除失败');
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: '个人记忆已删除' }));
+      setReloadKey((value) => value + 1);
+    } catch (error) {
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: error.message || '个人记忆删除失败' }));
+    }
+  };
+
+  if (!open) return null;
+  return (
+    <Modal
+      title="个人长期记忆"
+      onClose={onClose}
+      foot={<button className="btn" onClick={onClose}>关闭</button>}
+    >
+      <div style={{ color: 'var(--ink-3)', fontSize: 12, lineHeight: 1.7, marginBottom: 12 }}>
+        这里的内容只属于当前账号，存放在个人 GBrain source 中，不会进入组织库或行业库。问答时仅作为低优先级的个人背景参与消歧，不能替代知识库原文证据。
+      </div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        <input className="search-input" style={{ flex: 1 }} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索个人记忆…" />
+        <button className="btn" onClick={() => setReloadKey((value) => value + 1)}>刷新</button>
+      </div>
+      {loading ? <div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-3)' }}>正在加载个人记忆…</div> : facts.length ? (
+        <div style={{ maxHeight: '48vh', overflowY: 'auto', display: 'grid', gap: 8 }}>
+          {facts.map((fact, index) => (
+            <div key={fact.id || fact.fact_id || index} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, padding: '10px 12px', border: '1px solid var(--line)', borderRadius: 8, background: 'var(--surface-2)' }}>
+              <div>
+                <div style={{ lineHeight: 1.6 }}>{fact.fact || fact.content || fact.text || '（无内容）'}</div>
+                {(fact.entity_slug || fact.created_at || fact.createdAt) && <div style={{ color: 'var(--ink-4)', fontSize: 11, marginTop: 4 }}>{fact.entity_slug ? `实体：${fact.entity_slug} · ` : ''}{fact.created_at || fact.createdAt ? new Date(fact.created_at || fact.createdAt).toLocaleString('zh-CN') : ''}</div>}
+              </div>
+              <button className="icon-btn danger" title="删除个人记忆" aria-label="删除个人记忆" onClick={() => void forget(fact)}>×</button>
+            </div>
+          ))}
+        </div>
+      ) : <div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-3)' }}>暂无个人记忆。可在输入框中填写内容后点击“记住”。</div>}
+    </Modal>
+  );
+}
+
 /* ============== 右键菜单 ============== */
 function ContextMenu({x, y, items, onClose}){
   const ref = useRef(null);
@@ -1431,6 +1509,7 @@ function ChatScreen(){
   const visibleKbs = KNOWLEDGE_BASES;
   const [selected, setSelected] = useState([]);
   const [open, setOpen] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState([]);   // {role:'user'|'ai', text, done}
   const [streaming, setStreaming] = useState(false);
@@ -1937,12 +2016,15 @@ function ChatScreen(){
                   范围 · {scopeLabel}
                   <span className="kbd">⌘K</span>
                 </div>
-                <input ref={chatFileRef} type="file" hidden accept=".md,.txt,.csv,.html,.htm,.doc,.docx,.pdf,.xlsx,.pptx,.png,.jpg,.jpeg" onChange={e=>{const file=e.target.files?.[0]; if(file) void uploadAttachment(file); e.target.value='';}}/>
+                <input ref={chatFileRef} type="file" hidden accept=".md,.txt,.csv,.html,.htm,.doc,.docx,.pdf,.xls,.xlsx,.pptx,.png,.jpg,.jpeg" onChange={e=>{const file=e.target.files?.[0]; if(file) void uploadAttachment(file); e.target.value='';}}/>
                 <div className="comp-chip" style={{opacity:KNOWLEDGE_BASES.find(k => k.id === selected[0])?.canWrite ? .7 : .4,cursor:KNOWLEDGE_BASES.find(k => k.id === selected[0])?.canWrite ? 'pointer' : 'not-allowed'}} onClick={()=>KNOWLEDGE_BASES.find(k => k.id === selected[0])?.canWrite && chatFileRef.current?.click()}>
                   <Icon name="pin" size={11}/> 上传附件
                 </div>
                 <button type="button" className="comp-chip" onClick={rememberPersonalFact} title="显式保存到仅自己可见的 GBrain 个人记忆">
                   <Icon name="book" size={11}/> 记住
+                </button>
+                <button type="button" className="comp-chip" onClick={() => setMemoryOpen(true)} title="管理仅自己可见的个人记忆">
+                  <Icon name="search" size={11}/> 记忆管理
                 </button>
                 {streaming ? (
                   <button type="button" className="send-btn stop" onClick={stopStream} title="停止生成 (Esc)" aria-label="停止生成">
@@ -2012,6 +2094,7 @@ return (
         </div>
       )}
       <OnlinePreviewModal preview={onlinePreview} onClose={()=>setOnlinePreview(null)}/>
+      <PersonalMemoryPanel open={memoryOpen} onClose={() => setMemoryOpen(false)}/>
       {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={() => setCtxMenu(null)}/>}
     </div>
   );
@@ -2062,6 +2145,10 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
           uploader: doc.uploadedBy?.displayName || doc.uploadedBy?.username || '—',
           t: new Date(doc.updatedAt || doc.createdAt).toLocaleString('zh-CN'),
           path,
+          qualityStatus: doc.qualityStatus || 'unknown',
+          qualityScore: doc.qualityScore,
+          qualityIssues: Array.isArray(doc.qualityIssues) ? doc.qualityIssues : [],
+          parserEngine: doc.parserEngine,
         };
       }));
     } catch (error) { window.dispatchEvent(new CustomEvent('app-toast', {detail: error.message || '文档加载失败'})); }
@@ -2278,7 +2365,7 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
                 }
                 event.target.value='';
               }}
-              accept=".md,.txt,.csv,.html,.htm,.doc,.docx,.pdf,.xlsx,.pptx,.png,.jpg,.jpeg"
+              accept=".md,.txt,.csv,.html,.htm,.doc,.docx,.pdf,.xls,.xlsx,.pptx,.png,.jpg,.jpeg"
             />
             {current.canWrite && <button className="btn" onClick={()=>setNewTextOpen(true)}><Icon name="plus" size={12}/> 添加文本</button>}
             {current.canWrite && <button className="btn primary" onClick={()=>fileInputRef.current?.click()}><Icon name="upload" size={12}/> 上传文档</button>}
@@ -2308,7 +2395,7 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
             >
               <Icon name="upload" size={26} className="ic" color="var(--ink-3)"/>
               <h5>拖拽文件到此处，或点击选择（支持多选批量上传）</h5>
-              <p>支持 Markdown / Word（含 .doc / .docx）/ PDF / Excel / PPT / 图片 · 单文件最大 200MB · 自动在后台异步解析与多路索引</p>
+              <p>支持 Markdown / Word（含 .doc / .docx）/ PDF / Excel（含 .xls / .xlsx）/ PPTX / 图片 · 单文件最大 200MB · 自动在后台异步解析与多路索引</p>
             </div>
           ) : (
             <div className="dropzone" style={{cursor:'default',opacity:.8}}>
@@ -2322,6 +2409,7 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
             <div className="kpi"><div className="lbl">总文档</div><div className="val">{docs.length}</div><div className="sub">来自数据库</div></div>
             <div className="kpi"><div className="lbl">已发布</div><div className="val">{docs.filter(d=>d.status==='published').length}</div><div className="sub">当前库状态</div></div>
             <div className="kpi"><div className="lbl">处理中</div><div className="val">{docs.filter(d=>d.status==='indexing'||d.status==='parsing').length}</div><div className="sub">解析 / 索引队列</div></div>
+            <div className="kpi"><div className="lbl">待复核</div><div className="val" style={{color: docs.filter(d=>d.status==='needs_review').length? 'var(--amber)':'var(--ink)'}}>{docs.filter(d=>d.status==='needs_review').length}</div><div className="sub">质量门禁暂缓发布</div></div>
             <div className="kpi"><div className="lbl">解析失败</div><div className="val" style={{color: docs.filter(d=>d.status==='failed').length? 'var(--danger)':'var(--ink)'}}>{docs.filter(d=>d.status==='failed').length}</div><div className="sub">需人工介入</div></div>
           </div>
 
@@ -2342,6 +2430,7 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
               <option value="published">已发布</option>
               <option value="indexing">索引中</option>
               <option value="parsing">解析中</option>
+              <option value="needs_review">待复核</option>
               <option value="failed">解析失败</option>
             </select>
             <select
@@ -2352,7 +2441,7 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
               <option value="all">全部格式</option>
               <option value="word">Word (.docx / .doc)</option>
               <option value="pdf">PDF (.pdf)</option>
-              <option value="excel">Excel (.xlsx / .csv)</option>
+              <option value="excel">Excel (.xls / .xlsx / .csv)</option>
               <option value="md">Markdown / 文本</option>
             </select>
             {(docSearch || docStatusFilter !== 'all' || docTypeFilter !== 'all') && (
@@ -2392,16 +2481,16 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
                     <div className="sub" title={d.path}>{d.path}</div>
                   </div>
                   <div>
-                    <span className={`status ${d.status}`}>
+                    <span className={`status ${d.status}`} title={d.qualityIssues?.length ? d.qualityIssues.join('；') : (d.parserEngine ? `解析引擎：${d.parserEngine}` : '')}>
                       <span className="d"/>
-                      {d.status==='published'?'已发布':d.status==='indexing'?'索引中':d.status==='parsing'?'解析中':'失败'}
+                      {d.status==='published'?'已发布':d.status==='indexing'?'索引中':d.status==='parsing'?'解析中':d.status==='needs_review'?'待复核':'失败'}
                     </span>
                   </div>
                   <div style={{color:'var(--ink-2)'}}>{d.uploader}<div style={{fontSize:10.5,color:'var(--ink-4)'}}>{d.t}</div></div>
                   <div style={{color:'var(--ink-3)',fontVariantNumeric:'tabular-nums'}}>{d.size}</div>
                   <div className="actions" style={{display:'flex',gap:6,justifyContent:'flex-end'}}>
                     <button className="icon-btn" title="预览" onClick={()=>previewDocument(d)} aria-label="预览"><Icon name="search" size={14}/></button>
-                    {current.canWrite && d.status==='failed' && !String(d.id).startsWith('temp-') && <button className="icon-btn" title="重试" onClick={async()=>{try{const response=await fetch(`${API_BASE_URL}/api/v1/kbs/${current.id}/documents/${d.id}/retry`,{method:'POST',headers:apiHeaders()}); const result=await response.json().catch(()=>({})); if(!response.ok) throw new Error(result.message||'重试失败'); window.dispatchEvent(new CustomEvent('app-toast',{detail:'已重新提交解析'})); await loadDocuments(current.id);}catch(error){window.dispatchEvent(new CustomEvent('app-toast',{detail:error.message||'重试失败'}));}}} aria-label="重试"><Icon name="refresh" size={14}/></button>}
+                    {current.canWrite && (d.status==='failed' || d.status==='needs_review') && !String(d.id).startsWith('temp-') && <button className="icon-btn" title="重试" onClick={async()=>{try{const response=await fetch(`${API_BASE_URL}/api/v1/kbs/${current.id}/documents/${d.id}/retry`,{method:'POST',headers:apiHeaders()}); const result=await response.json().catch(()=>({})); if(!response.ok) throw new Error(result.message||'重试失败'); window.dispatchEvent(new CustomEvent('app-toast',{detail:'已重新提交解析'})); await loadDocuments(current.id);}catch(error){window.dispatchEvent(new CustomEvent('app-toast',{detail:error.message||'重试失败'}));}}} aria-label="重试"><Icon name="refresh" size={14}/></button>}
                     {current.canWrite && !String(d.id).startsWith('temp-') && <button className="icon-btn danger" title="删除" onClick={()=>setConfirmDoc(d)} aria-label="删除"><Icon name="logout" size={14} style={{transform:'scaleX(-1)'}}/></button>}
                   </div>
                 </div>
@@ -2477,7 +2566,7 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
             </div>
           )}
           </>}
-          {tab==='health' && <div style={{padding:24}}><h3>知识库健康度</h3><p style={{color:'var(--ink-3)'}}>健康度根据当前数据库中的文档状态计算。</p><div className="kpi-row"><div className="kpi"><div className="lbl">已发布率</div><div className="val">{docs.length ? Math.round(docs.filter(d=>d.status==='published').length/docs.length*100) : 0}%</div></div><div className="kpi"><div className="lbl">失败文档</div><div className="val">{docs.filter(d=>d.status==='failed').length}</div></div><div className="kpi"><div className="lbl">待处理</div><div className="val">{docs.filter(d=>d.status==='parsing'||d.status==='indexing').length}</div></div></div></div>}
+          {tab==='health' && <div style={{padding:24}}><h3>知识库健康度</h3><p style={{color:'var(--ink-3)'}}>健康度根据当前数据库中的文档状态与解析质量门禁计算。</p><div className="kpi-row"><div className="kpi"><div className="lbl">已发布率</div><div className="val">{docs.length ? Math.round(docs.filter(d=>d.status==='published').length/docs.length*100) : 0}%</div></div><div className="kpi"><div className="lbl">待复核</div><div className="val">{docs.filter(d=>d.status==='needs_review').length}</div></div><div className="kpi"><div className="lbl">失败文档</div><div className="val">{docs.filter(d=>d.status==='failed').length}</div></div><div className="kpi"><div className="lbl">待处理</div><div className="val">{docs.filter(d=>d.status==='parsing'||d.status==='indexing').length}</div></div></div></div>}
           {tab==='settings' && <div style={{padding:24}}><h3>知识库设置</h3><div className="field"><label>名称</label><input value={current.name} readOnly/></div><div className="field"><label>类型</label><input value={current.type} readOnly/></div><div className="field"><label>可见性</label><input value={current.visibility} readOnly/></div><p className="field-hint">知识库的权限和管理员请在管理后台维护。</p></div>}
         </div>
       </div> : (
