@@ -1602,6 +1602,7 @@ function ChatScreen(){
         if (!reader) throw new Error("服务器未返回有效的流式响应");
         const decoder = new TextDecoder('utf-8');
         let accumulatedText = "";
+        let streamError = "";
         let buffer = '';
         let streamFinished = false;
 
@@ -1615,17 +1616,31 @@ function ChatScreen(){
             accumulatedText += String(data.content || '');
             updateAssistant(accumulatedText, false);
           } else if (data.type === 'error') {
-            throw new Error(String(data.content || '问答服务返回错误'));
+            streamError = String(data.content || '问答服务返回错误');
+            if (!accumulatedText) updateAssistant(streamError, false);
           } else if (data.type === 'conversation') {
             setActiveConv(data.conversation_id);
             setConversationList(list => [{ id: data.conversation_id, title: userMsg.slice(0, 120), createdAt: new Date().toISOString() }, ...list.filter(item => item.id !== data.conversation_id)]);
           } else if (data.type === 'citation') {
-            const citation = { id: `${data.index}-${data.topic_slug}`, title: data.timeline_entry?.doc_title || data.topic_slug || '知识主题', kb: data.timeline_entry?.source_kb, documentId: data.timeline_entry?.document_id, kbName: data.timeline_entry?.source_kb || '知识库', truth: '—', evidences: 1, lastUpdate: '刚刚', snippet: data.timeline_entry?.snippet || '', path: data.topic_slug };
+            const citation = { id: `${data.index}-${data.topic_slug}`, citationIndex: Number(data.index), title: data.timeline_entry?.doc_title || data.topic_slug || '知识主题', kb: data.timeline_entry?.source_kb, documentId: data.timeline_entry?.document_id, kbName: data.timeline_entry?.kb_name || data.timeline_entry?.source_kb || '知识库', truth: '—', evidences: 1, lastUpdate: '刚刚', snippet: data.timeline_entry?.snippet || '', path: data.topic_slug };
             setCitations(items => [...items, citation]);
             setMessages(items => {
               const next = [...items];
               const lastIndex = next.map(item => item.role).lastIndexOf('ai');
               if (lastIndex >= 0) next[lastIndex] = { ...next[lastIndex], sources: [...(next[lastIndex].sources || []), citation] };
+              return next;
+            });
+          } else if (data.type === 'trace' && data.node?.id) {
+            setMessages(items => {
+              const next = [...items];
+              const lastIndex = next.map(item => item.role).lastIndexOf('ai');
+              if (lastIndex < 0) return items;
+              const current = next[lastIndex];
+              const trace = Array.isArray(current.trace) ? [...current.trace] : [];
+              const nodeIndex = trace.findIndex(node => node.id === data.node.id);
+              if (nodeIndex >= 0) trace[nodeIndex] = data.node;
+              else trace.push(data.node);
+              next[lastIndex] = { ...current, trace, traceId: data.trace_id || current.traceId };
               return next;
             });
           } else if (data.type === 'done') {
@@ -1643,7 +1658,7 @@ function ChatScreen(){
         }
         buffer += decoder.decode();
         if (buffer.trim()) consumeLine(buffer);
-        updateAssistant(accumulatedText, true);
+        updateAssistant(accumulatedText || streamError, true);
         if (active) setStreaming(false);
       } catch (err) {
          if (active && err?.name !== 'AbortError') {
@@ -1687,7 +1702,7 @@ function ChatScreen(){
   const send = (preset?: string)=>{
     const text = (preset ?? input).trim();
     if(!text || streaming || selected.length===0) return;
-    setMessages(ms=>[...ms, {role:'user', text}, {role:'ai', text:'', done:false}]);
+    setMessages(ms=>[...ms, {role:'user', text}, {role:'ai', text:'', done:false, trace:[]}]);
     setInput('');
     setActiveCite(null);
     setCitations([]);
@@ -1765,9 +1780,10 @@ function ChatScreen(){
         role: message.role === 'assistant' ? 'ai' : 'user',
         text: message.content,
         done: true,
-        sources: message.role === 'assistant' && Array.isArray(message.citationsSummary) ? message.citationsSummary.map((cite, index) => ({ id: `${message.id}-${index}`, title: cite.timeline_entry?.doc_title || cite.topic_slug || '知识主题', kb: cite.timeline_entry?.source_kb, documentId: cite.timeline_entry?.document_id, kbName: cite.timeline_entry?.source_kb || '知识库', truth: '—', evidences: 1, lastUpdate: new Date(message.createdAt).toLocaleString('zh-CN'), snippet: cite.timeline_entry?.snippet || '', path: cite.topic_slug })) : [],
+        trace: message.role === 'assistant' && Array.isArray(message.processingTrace) ? message.processingTrace : [],
+        sources: message.role === 'assistant' && Array.isArray(message.citationsSummary) ? message.citationsSummary.map((cite, index) => ({ id: `${message.id}-${index}`, citationIndex: Number(cite.index || index + 1), title: cite.timeline_entry?.doc_title || cite.topic_slug || '知识主题', kb: cite.timeline_entry?.source_kb, documentId: cite.timeline_entry?.document_id, kbName: cite.timeline_entry?.kb_name || cite.timeline_entry?.source_kb || '知识库', truth: '—', evidences: 1, lastUpdate: new Date(message.createdAt).toLocaleString('zh-CN'), snippet: cite.timeline_entry?.snippet || '', path: cite.topic_slug })) : [],
       })));
-      setCitations((conversation.messages || []).flatMap(message => Array.isArray(message.citationsSummary) ? message.citationsSummary.map((cite, index) => ({ id: `${message.id}-${index}`, title: cite.timeline_entry?.doc_title || cite.topic_slug || '知识主题', kb: cite.timeline_entry?.source_kb, documentId: cite.timeline_entry?.document_id, kbName: cite.timeline_entry?.source_kb || '知识库', truth: '—', evidences: 1, lastUpdate: new Date(message.createdAt).toLocaleString('zh-CN'), snippet: cite.timeline_entry?.snippet || '' })) : []));
+      setCitations((conversation.messages || []).flatMap(message => Array.isArray(message.citationsSummary) ? message.citationsSummary.map((cite, index) => ({ id: `${message.id}-${index}`, citationIndex: Number(cite.index || index + 1), title: cite.timeline_entry?.doc_title || cite.topic_slug || '知识主题', kb: cite.timeline_entry?.source_kb, documentId: cite.timeline_entry?.document_id, kbName: cite.timeline_entry?.kb_name || cite.timeline_entry?.source_kb || '知识库', truth: '—', evidences: 1, lastUpdate: new Date(message.createdAt).toLocaleString('zh-CN'), snippet: cite.timeline_entry?.snippet || '' })) : []));
     } catch (error) { window.dispatchEvent(new CustomEvent('app-toast', {detail: error.message || '会话加载失败'})); }
   };
 
@@ -1833,7 +1849,7 @@ function ChatScreen(){
         if(m.index > last) out.push(wrap(text.slice(last, m.index), key++));
         const n = parseInt(m[1],10);
         const activeSources = (msgSources && msgSources.length > 0) ? msgSources : citations;
-        const citation = activeSources[n-1];
+        const citation = activeSources.find(source => Number(source.citationIndex) === n) || activeSources[n-1];
         out.push(<button key={key++} className={`cite-chip ${activeCite===n?'active':''}`} onClick={()=>{setActiveCite(n); if (citation) void previewCitation(citation);}}>{n}</button>);
         last = m.index + m[0].length;
       }
@@ -1942,6 +1958,16 @@ function ChatScreen(){
                   </div>
                 );
               }
+              const traceNodes = Array.isArray(msg.trace) ? msg.trace : [];
+              const traceSuccess = traceNodes.filter(node => node.status === 'success' || node.status === 'skipped').length;
+              const traceWarnings = traceNodes.filter(node => node.status === 'warning').length;
+              const traceFailed = traceNodes.filter(node => node.status === 'failed').length;
+              const traceRunning = traceNodes.filter(node => node.status === 'running').length;
+              const traceStarted = traceNodes.map(node => Date.parse(node.startedAt)).filter(Number.isFinite);
+              const traceFinished = traceNodes.map(node => Date.parse(node.finishedAt)).filter(Number.isFinite);
+              const traceDuration = traceStarted.length && traceFinished.length
+                ? Math.max(0, Math.max(...traceFinished) - Math.min(...traceStarted))
+                : null;
               return (
                 <div key={mi} className="msg msg-ai">
                   <div className="body">
@@ -1954,7 +1980,37 @@ function ChatScreen(){
                       {renderAnswer(msg.text, msg.sources)}
                       {!msg.done && <span className="cursor"/>}
                     </div>
-                    {msg.done && msg.sources?.length > 0 && <div className="answer-sources"><span>来源：</span>{msg.sources.map((source, index) => <button key={source.id || index} onClick={()=>previewCitation(source)} title="打开原始文档预览">[{index + 1}] {source.title}</button>)}</div>}
+                    {msg.done && msg.sources?.length > 0 && <div className="answer-sources"><span>来源：</span>{msg.sources.map((source, index) => <button key={source.id || index} onClick={()=>previewCitation(source)} title="打开原始文档预览">[{source.citationIndex || index + 1}] {source.title}</button>)}</div>}
+                    {traceNodes.length > 0 && (
+                      <details className="retrieval">
+                        <summary>
+                          <Icon name="spark" size={12} color="var(--evidence)"/>
+                          <span>本次响应处理调用链 ·</span>
+                          <b>{traceFailed ? `${traceFailed} 个异常` : traceRunning ? `${traceRunning} 个执行中` : `${traceSuccess}/${traceNodes.length} 个节点正常`}</b>
+                          {traceWarnings > 0 && <span className="trace-summary-warning">· {traceWarnings} 个警告</span>}
+                          {traceDuration !== null && <span className="trace-total">{traceDuration}ms</span>}
+                          <span className="trace-expand">展开 ▾</span>
+                        </summary>
+                        <div className="retrieval-body">
+                          {traceNodes.map((node, index) => (
+                            <div className={`ret-step trace-${node.status}`} key={node.id || index}>
+                              <span className="n">{node.status === 'success' ? '✓' : node.status === 'warning' ? '!' : node.status === 'failed' ? '×' : node.status === 'skipped' ? '–' : '…'}</span>
+                              <span className="txt">
+                                <b>{node.name}</b>
+                                {node.summary ? ` · ${node.summary}` : ''}
+                                {node.details && Object.keys(node.details).length > 0 && (
+                                  <details className="trace-details">
+                                    <summary>查看节点反馈</summary>
+                                    <pre>{JSON.stringify(node.details, null, 2)}</pre>
+                                  </details>
+                                )}
+                              </span>
+                              <span className="v">{node.status === 'running' ? '执行中' : node.status === 'skipped' ? '跳过' : `${node.durationMs ?? 0}ms`}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
                     {msg.done && (
                       <>
                         <div className="actions">
@@ -1963,22 +2019,6 @@ function ChatScreen(){
                           <button onClick={shareConversation}><Icon name="share" size={12}/> 分享</button>
                           <button style={{marginLeft:'auto'}} onClick={()=>saveFeedback('useful')}><Icon name="check" size={12}/> 有用</button>
                         </div>
-
-                        <details className="retrieval">
-                          <summary>
-                            <Icon name="spark" size={12} color="var(--evidence)"/>
-                            <span>大脑整理与查询 ·</span>
-                            <b>命中主题页 × 3 · Compiled Truth 作答</b>
-                            <span style={{marginLeft:'auto',fontSize:11}}>展开 ▾</span>
-                          </summary>
-                          <div className="retrieval-body">
-                            <div className="ret-step"><span className="n">1</span><span className="txt"><b>权限视图</b> · 你的大脑边界 = 可见 {selected.length}/{visibleKbs.length} 库（范围：{scopeLabel}）· 权限变更会触发大脑重编译</span><span className="v">{selected.length} 库</span></div>
-                            <div className="ret-step"><span className="n">2</span><span className="txt"><b>大脑查询</b> · gbrain 查询命中真实主题页</span><span className="v">{citations.length} 页</span></div>
-                            <div className="ret-step"><span className="n">3</span><span className="txt"><b>Compiled Truth 作答</b> · 回答来自当前知识库编译结果</span><span className="v">{citations.length} 条证据</span></div>
-                            <div className="ret-step"><span className="n">4</span><span className="txt"><b>证据链对齐</b> · 回答引用 ↔ 知识页 ↔ 原始文档</span><span className="v">实时</span></div>
-                          </div>
-                        </details>
-
                         {isLast && (
                           <div className="followup">
                             <h5>建议追问</h5>

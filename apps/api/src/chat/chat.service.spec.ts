@@ -169,7 +169,7 @@ describe("ChatService", () => {
     }
   });
 
-  it("should pass a model-classified broad retrieval profile to GBrain", async () => {
+  it("should retain the original wording while applying the broad retrieval profile on a fresh turn", async () => {
     mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(["kb-1"]);
     mockCompilerService.ensureUserBrainRepo.mockResolvedValue({
       id: "repo-1",
@@ -214,7 +214,7 @@ describe("ChatService", () => {
       await lastValueFrom(stream$.pipe(toArray()));
       expect(mockGbrainQuery).toHaveBeenCalledWith(
         "gbrain://source/test",
-        "企业研发管理规范全部条款数量",
+        "这个规范一共有多少条款",
         { breadth: true, operation: "query" },
       );
     } finally {
@@ -247,5 +247,82 @@ describe("ChatService", () => {
       ],
     };
     expect((service as any).applyFocusedEvidenceGate(input, true)).toBe(input);
+  });
+
+  it("should not escalate a high-score weak-semantic hit", () => {
+    const decision = (service as any).assessWeakEvidence({
+      citations: [{ evidence: "weak_semantic", score: 0.925 }],
+    }, false);
+
+    expect(decision.shouldEscalate).toBe(false);
+    expect(decision.weak).toBe(true);
+    expect(decision.reason).toContain("交由证据门控验证");
+  });
+
+  it("should escalate a low-score weak-semantic hit", () => {
+    const decision = (service as any).assessWeakEvidence({
+      citations: [{ evidence: "weak_semantic", score: 0.52 }],
+    }, false);
+
+    expect(decision.shouldEscalate).toBe(true);
+    expect(decision.scoreFloor).toBe(0.75);
+  });
+
+  it("should trust a high-confidence fallback rerank before expanding weak semantic evidence", () => {
+    const decision = (service as any).assessWeakEvidence({
+      citations: [{ evidence: "weak_semantic", score: 0.12, rerankScore: 0.93 }],
+    }, false);
+
+    expect(decision.shouldEscalate).toBe(false);
+    expect(decision.topScore).toBe(0.93);
+  });
+
+  it("should use the separately calibrated fallback-rerank threshold", () => {
+    expect((service as any).assessWeakEvidence({
+      citations: [{ evidence: "weak_semantic", score: 0.12, rerankScore: 0.735 }],
+    }, false)).toMatchObject({ shouldEscalate: false, scoreFloor: 0.70 });
+    expect((service as any).assessWeakEvidence({
+      citations: [{ evidence: "weak_semantic", score: 0.95, rerankScore: 0.69 }],
+    }, false)).toMatchObject({ shouldEscalate: true, scoreFloor: 0.70 });
+  });
+
+  it("should use the original wording for a fresh conversation without an LLM rewrite", async () => {
+    const originalFetch = global.fetch;
+    (global as any).fetch = jest.fn();
+    try {
+      await expect((service as any).rewriteQueryForRetrieval("员工考勤办法第十条是什么内容", [
+        { role: "user", content: "员工考勤办法第十条是什么内容" },
+      ])).resolves.toEqual({
+        query: "员工考勤办法第十条是什么内容",
+        breadth: false,
+        operation: "search",
+      });
+      expect(global.fetch).not.toHaveBeenCalled();
+    } finally {
+      (global as any).fetch = originalFetch;
+    }
+  });
+
+  it("should reserve private-memory recall for explicit personal or contextual requests", () => {
+    expect((service as any).shouldLoadPersonalMemory("员工考勤办法第十条是什么内容", [
+      { role: "user", content: "员工考勤办法第十条是什么内容" },
+    ])).toBe(false);
+    expect((service as any).shouldLoadPersonalMemory("我的账号是什么", [
+      { role: "user", content: "我的账号是什么" },
+    ])).toBe(true);
+    expect((service as any).shouldLoadPersonalMemory("那个怎么处理", [
+      { role: "user", content: "上一轮问题" },
+      { role: "assistant", content: "上一轮回答" },
+      { role: "user", content: "那个怎么处理" },
+    ])).toBe(true);
+  });
+
+  it("should not escalate explicit evidence or an already broad query", () => {
+    expect((service as any).assessWeakEvidence({
+      citations: [{ evidence: "keyword_exact", score: 0.2 }],
+    }, false).shouldEscalate).toBe(false);
+    expect((service as any).assessWeakEvidence({
+      citations: [{ evidence: "weak_semantic", score: 0.1 }],
+    }, true).shouldEscalate).toBe(false);
   });
 });

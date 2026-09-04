@@ -1,6 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { PermissionService } from '../permission/permission.service';
+import { ModelConfigService } from '../model-config.service';
 import { createHash } from 'node:crypto';
 import { BrainRepoAdapter, BrainEvidence } from '@llmwiki/gbrain-adapter';
 import { readCanonicalDocument } from './canonical-document';
@@ -25,7 +26,10 @@ export class BrainScopeService {
   );
   private readonly uploadRoot = process.env.UPLOAD_ROOT || '/tmp/llmwiki/uploads';
 
-  constructor(private readonly permissionService: PermissionService) {}
+  constructor(
+    private readonly permissionService: PermissionService,
+    @Optional() private readonly modelConfigService?: ModelConfigService,
+  ) {}
 
   /**
    * 计算并解析当前用户的权限 Scope，支持同权限用户集合自动复用
@@ -45,9 +49,6 @@ export class BrainScopeService {
     }
 
     const sortedSourceKeys = Array.from(sourceKeysSet).sort();
-    if (sortedSourceKeys.length === 0) {
-      sortedSourceKeys.push('llmwiki-shared');
-    }
 
     // 计算确定性指纹：SHA256(sortedSources)
     const fingerprint = createHash('sha256')
@@ -55,8 +56,8 @@ export class BrainScopeService {
       .digest('hex')
       .slice(0, 16);
 
-    // 判断策略：若包含共享源或权限范围包含多个用户，采用 eager，否则 lazy
-    const strategy = sortedSourceKeys.includes('llmwiki-shared') || sortedSourceKeys.length > 2 ? 'eager' : 'lazy';
+    // 判断策略：若权限范围包含多个稳定知识库，采用 eager，否则 lazy
+    const strategy = sortedSourceKeys.length >= 2 ? 'eager' : 'lazy';
 
     // 查找或创建 BrainScope
     const scope = await db.brainScope.upsert({
@@ -141,6 +142,16 @@ export class BrainScopeService {
       where: { id: scopeId },
     });
     if (!scope) throw new Error(`Scope ${scopeId} not found`);
+
+    // Debounce / throttle: if compiled within the last 5 minutes and not dirty, skip to prevent synthesis storms
+    if (scope.lastCompileAt && Date.now() - new Date(scope.lastCompileAt).getTime() < 5 * 60 * 1000 && scope.status === 'active') {
+      this.logger.log(`Scope ${scope.fingerprint} was compiled recently (${scope.lastCompileAt.toISOString()}); skipping throttled synthesis.`);
+      return { derivedPagesCount: 0, status: 'skipped_throttled', synthesizedSources: 0, synthesisFallbacks: 0 };
+    }
+
+    if (this.modelConfigService) {
+      await this.modelConfigService.applyRuntimeConfig();
+    }
 
     const sourceKeys: string[] = Array.isArray(scope.sourceKeys) ? scope.sourceKeys : [];
     this.logger.log(`Compiling derived intelligence for Scope ${scope.fingerprint} (sources: ${sourceKeys.join(',')})...`);

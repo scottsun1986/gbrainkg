@@ -19,7 +19,7 @@ type GraphEdge = {
   id: string;
   source: string;
   target: string;
-  type: 'contains' | 'mentions' | 'related_to';
+  type: 'contains' | 'mentions' | 'related_to' | 'references';
   weight: number;
   evidence: Array<{ documentId?: string; chunkId?: string; snippet?: string; provenance?: string }>;
 };
@@ -154,6 +154,22 @@ export class KnowledgeGraphController {
         }
       } catch {
         gbrainLinkErrors += 1;
+      }
+    }
+
+    // Extract explicit cross-document policy citations (e.g. 《某某规章》, 根据《...》)
+    const titleToDoc = new Map(documents.map((d) => [cleanLabel(d.title), d]));
+    for (const document of documents) {
+      const chunksContent = document.chunks.map((c) => c.content).join(' ');
+      for (const [targetTitle, targetDoc] of titleToDoc) {
+        if (targetDoc.id === document.id || targetTitle.length < 4) continue;
+        if (chunksContent.includes(`《${targetTitle}》`)) {
+          addEdge(`doc:${document.id}`, `doc:${targetDoc.id}`, 'references', [{
+            documentId: document.id,
+            snippet: `引用制度文件：《${targetTitle}》`,
+            provenance: 'policy_cross_reference',
+          }]);
+        }
       }
     }
 

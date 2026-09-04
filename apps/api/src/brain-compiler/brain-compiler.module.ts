@@ -5,10 +5,12 @@ import { BrainCompilerProcessor } from './brain-compiler.processor';
 import { BrainScopeService } from './brain-scope.service';
 import { BrainOutboxService } from './brain-outbox.service';
 import { PermissionModule } from '../permission/permission.module';
+import { ModelConfigModule } from '../model-config.module';
 
 @Module({
   imports: [
     PermissionModule,
+    ModelConfigModule,
     BullModule.registerQueue({
       name: 'dirty-compiler-queue',
     }),

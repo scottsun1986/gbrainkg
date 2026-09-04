@@ -33,6 +33,17 @@ export interface BrainQueryResult {
   }>;
   reranked?: boolean;
   retrievalGate?: { removed: number; scoreFloor: number; topScore: number };
+  diagnostics?: {
+    mode: string;
+    operation: string;
+    sourceCount: number;
+    cacheHit: boolean;
+    rawCandidates: number;
+    uniquePages: number;
+    hydratedParents: number;
+    nativeRerank: boolean;
+    stages: string[];
+  };
 }
 
 export interface BrainQueryOptions {
@@ -92,6 +103,9 @@ function canonicalPage(slug: string, items: BrainEvidence[]): string {
     })
     .join('\n')
     .replace(/^\s+|\s+$/g, '');
+  const cleanBody = body
+    .replace(/(?:\r?\n|^)(第\s*[\d一二三四五六七八九十百千万〇零两]+\s*[章节条款项].*)/gu, '\n\n$1\n')
+    .trim();
   const aliases = [...new Set([first.sourceFile, first.topic].filter((value): value is string => Boolean(value && value !== title)))];
   const documentId = slug.startsWith('docs/') ? slug.slice('docs/'.length) : slug;
   const frontmatter = [
@@ -106,8 +120,8 @@ function canonicalPage(slug: string, items: BrainEvidence[]): string {
     `document_id: ${yamlString(documentId)}`,
     '---',
   ].join('\n');
-  const heading = body.startsWith(`# ${title}`) ? '' : `# ${title}\n\n`;
-  return `${frontmatter}\n\n${heading}${body}`.trim();
+  const heading = cleanBody.startsWith(`# ${title}`) ? '' : `# ${title}\n\n`;
+  return `${frontmatter}\n\n${heading}${cleanBody}`.trim();
 }
 
 type Passage = { heading?: string; content: string; score: number };
@@ -181,7 +195,8 @@ function localizePassage(question: string, page: string, fallback: string): Pass
     const headingFeatures = lexicalFeatures(section.heading || '');
     let headingMatched = 0;
     for (const feature of queryFeatures) if (headingFeatures.has(feature)) headingMatched += 1;
-    const score = (matched / Math.max(1, queryFeatures.size)) + (headingMatched / Math.max(1, queryFeatures.size));
+    // Boost heading match weight to prioritize explicitly targeted articles/clauses/sections
+    const score = (matched / Math.max(1, queryFeatures.size)) + ((headingMatched / Math.max(1, queryFeatures.size)) * 1.5);
     return { heading: section.heading, content: section.content, score };
   }).sort((a, b) => b.score - a.score);
   const best = ranked[0];
@@ -209,6 +224,11 @@ export class BrainRepoAdapter {
   private searchConfigPromise: Promise<void> | null = null;
   private queryCache = new Map<string, { expiresAt: number; result: BrainQueryResult }>();
   private sourceSyncLocks = new Map<string, Promise<void>>();
+  // Source registration is durable GBrain state. Re-running `sources add`
+  // for every user question is both unnecessary and particularly costly for
+  // a multi-library scope. Keep only successful initializations here; a
+  // failed attempt is evicted so the next request can repair it normally.
+  private initializedSources = new Map<string, Promise<string>>();
 
   constructor(basePath: string) {
     this.sourceRoot = join(basePath, 'gbrain-sources');
@@ -235,6 +255,7 @@ export class BrainRepoAdapter {
       ...process.env,
       GBRAIN_HOME: this.gbrainHome,
       GBRAIN_POOL_SIZE: process.env.GBRAIN_POOL_SIZE || '2',
+      GBRAIN_ALLOW_UNVERIFIED_REMOTE: '1',
       PATH: `/home/scottsun/.bun/bin:${process.env.PATH || ''}`,
     };
     // Prisma accepts the `schema` query parameter, but the GBrain CLI treats
@@ -444,7 +465,7 @@ export class BrainRepoAdapter {
 
   private async pushSourceIfConfigured(sourceId: string): Promise<void> {
     if (!this.configuredRemote(sourceId)) return;
-    await this.run(['sources', 'push', sourceId, '--json']);
+    await this.run(['sources', 'push', sourceId, '--allow-unverified-remote', '--json']);
   }
 
   private async ensureSearchConfig(): Promise<void> {
@@ -533,13 +554,21 @@ export class BrainRepoAdapter {
 
   async initializeRepo(userId: string): Promise<string> {
     const sourceId = sourceIdForUser(userId);
-    await this.ensureSource(sourceId);
+    await this.initializeSource(sourceId);
     return `gbrain://source/${sourceId}`;
   }
 
   /** Initialize/register a named source without creating a per-user source. */
   async initializeSource(sourceId: string): Promise<string> {
-    await this.ensureSource(sourceId);
+    let initialization = this.initializedSources.get(sourceId);
+    if (!initialization) {
+      initialization = this.ensureSource(sourceId).catch((error: unknown) => {
+        this.initializedSources.delete(sourceId);
+        throw error;
+      });
+      this.initializedSources.set(sourceId, initialization);
+    }
+    await initialization;
     return `gbrain://source/${sourceId}`;
   }
 
@@ -798,7 +827,12 @@ export class BrainRepoAdapter {
     const cacheKey = `${sourceId}:${operation}:${options.breadth ? 'broad' : 'focused'}:${question.trim()}`;
     const cached = this.queryCache.get(cacheKey);
     if (!options.forceRefresh && cached && cached.expiresAt > Date.now()) {
-      return cached.result;
+      return {
+        ...cached.result,
+        diagnostics: cached.result.diagnostics
+          ? { ...cached.result.diagnostics, cacheHit: true }
+          : undefined,
+      };
     }
     await this.ensureSearchConfig();
     // Use GBrain's official balanced retrieval stack as designed: query
@@ -852,18 +886,24 @@ export class BrainRepoAdapter {
     const maxParents = Math.max(1, Number(process.env.GBRAIN_CONTEXT_MAX_PARENTS || (options.breadth ? 5 : 3)));
     let remaining = pageBudget;
     const pageContext = new Map<string, { content: string; section?: string }>();
-    for (const row of rows.slice(0, maxParents)) {
-      try {
-        const page = await this.getPage(repoPath, row.slug);
-        if (page && page.length <= remaining) {
-          const passage: Passage = options.breadth
-            ? { content: page, score: 0 }
-            : localizePassage(question, page, row.chunk_text || '');
-          pageContext.set(row.slug, { content: passage.content, section: passage.heading });
-          remaining -= page.length;
+    const candidateRows = rows.slice(0, maxParents);
+    const fetchedPages = await Promise.all(
+      candidateRows.map(async (row) => {
+        try {
+          const page = await this.getPage(repoPath, row.slug);
+          return { slug: row.slug, page, fallback: row.chunk_text || '' };
+        } catch {
+          return { slug: row.slug, page: '', fallback: row.chunk_text || '' };
         }
-      } catch {
-        // A stale page pointer degrades to the retrieved GBrain chunk.
+      }),
+    );
+    for (const item of fetchedPages) {
+      if (item.page && item.page.length <= remaining) {
+        const passage: Passage = options.breadth
+          ? { content: item.page, score: 0 }
+          : localizePassage(question, item.page, item.fallback);
+        pageContext.set(item.slug, { content: passage.content, section: passage.heading });
+        remaining -= item.page.length;
       }
     }
     const citations = rows.map((row) => ({
@@ -891,6 +931,27 @@ export class BrainRepoAdapter {
       reranked: rawRows.some(
         (row) => row.rerank_score !== undefined && Number.isFinite(Number(row.rerank_score)),
       ),
+      diagnostics: {
+        mode: 'balanced',
+        operation,
+        sourceCount: 1,
+        cacheHit: false,
+        rawCandidates: rawRows.length,
+        uniquePages: rows.length,
+        hydratedParents: pageContext.size,
+        nativeRerank: rawRows.some(
+          (row) => row.rerank_score !== undefined && Number.isFinite(Number(row.rerank_score)),
+        ),
+        stages: [
+          ...(operation === 'query' ? ['query-expansion'] : []),
+          'vector',
+          'bm25',
+          'rrf',
+          'graph-signals',
+          'rerank',
+          ...(operation === 'query' ? [options.breadth ? 'autocut-disabled' : 'adaptive-return'] : []),
+        ],
+      },
     };
     this.queryCache.set(cacheKey, { expiresAt: Date.now() + 30_000, result });
     if (this.queryCache.size > 200) {
@@ -911,9 +972,15 @@ export class BrainRepoAdapter {
     }
   }
 
-  /** Query the shared source plus the user's private permission-group sources. */
+  /** Query multiple authorized sources with bounded concurrency to prevent subprocess storms. */
   async queryMany(repoPaths: string[], question: string, options: BrainQueryOptions = {}): Promise<BrainQueryResult> {
-    const results = await Promise.all(repoPaths.map((repoPath) => this.query(repoPath, question, options)));
+    const concurrency = Math.max(1, Math.min(Number(process.env.GBRAIN_QUERY_CONCURRENCY || 3), 6));
+    const results: BrainQueryResult[] = [];
+    for (let i = 0; i < repoPaths.length; i += concurrency) {
+      const batch = repoPaths.slice(i, i + concurrency);
+      const batchResults = await Promise.all(batch.map((repoPath) => this.query(repoPath, question, options)));
+      results.push(...batchResults);
+    }
     const citations = results.flatMap((result) => result.citations || []);
     const unique = new Map<string, BrainQueryResult['citations'][number]>();
     for (const citation of citations) {
@@ -931,6 +998,26 @@ export class BrainRepoAdapter {
       answer: merged.map((citation) => citation.context || citation.snippet).filter(Boolean).join('\n\n'),
       citations: merged,
       reranked: results.every((result) => result.reranked),
+      diagnostics: {
+        mode: 'balanced',
+        operation: options.operation === 'search' ? 'search' : 'query',
+        sourceCount: results.length,
+        cacheHit: results.length > 0 && results.every((result) => result.diagnostics?.cacheHit),
+        rawCandidates: results.reduce((sum, result) => sum + (result.diagnostics?.rawCandidates || 0), 0),
+        uniquePages: merged.length,
+        hydratedParents: results.reduce((sum, result) => sum + (result.diagnostics?.hydratedParents || 0), 0),
+        nativeRerank: results.length > 0 && results.every((result) => result.diagnostics?.nativeRerank),
+        stages: [
+          ...(options.operation === 'search' ? [] : ['query-expansion']),
+          'vector',
+          'bm25',
+          'rrf',
+          'graph-signals',
+          'rerank',
+          ...(options.operation === 'search' ? [] : [options.breadth ? 'autocut-disabled' : 'adaptive-return']),
+          'cross-source-merge',
+        ],
+      },
     };
   }
 }

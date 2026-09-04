@@ -130,12 +130,12 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
     });
     // BrainRepo 保留为旧版数据库兼容记录；真实检索 source 由
     // getUserSourceRefs() 计算，不再为每个用户复制一份完整大脑。
-    const sourceRef = await this.gbrain.initializeSource("llmwiki-shared");
-    if (existing?.gitRepoUrl === sourceRef) return existing;
+    const userRef = `gbrain://user/${userId}`;
+    if (existing?.gitRepoUrl === userRef) return existing;
     return this.prisma.brainRepo.upsert({
       where: { userId },
-      create: { userId, gitRepoUrl: sourceRef, status: "active" },
-      update: { gitRepoUrl: sourceRef, status: "active" },
+      create: { userId, gitRepoUrl: userRef, status: "active" },
+      update: { gitRepoUrl: userRef, status: "active" },
     });
   }
 
@@ -552,22 +552,24 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
   /**
    * Query-time freshness gate. The application DB is authoritative for ACL
    * and published inventory; GBrain status is authoritative for the searchable
-   * read plane. A mismatch triggers a full deterministic rebuild before the
-   * caller is allowed to query.
+   * read plane. If drift is detected, small sources are synced synchronously,
+   * while larger sources trigger asynchronous priority rebuild and fail closed
+   * to avoid blocking the user query path.
    */
   async ensureSourcesFreshForQuery(
     userId: string,
     knowledgeBaseIds: string[],
-  ): Promise<{ checked: number; rebuilt: number; sourceKeys: string[] }> {
+  ): Promise<{ checked: number; rebuilt: number; fresh: boolean; staleSources: string[]; sourceKeys: string[] }> {
     const requested = new Set(knowledgeBaseIds);
     const plan = (await this.getSourcePlan(userId)).filter((definition) =>
       definition.kbIds.some((kbId) => requested.has(kbId)),
     );
-    if (!plan.length) return { checked: 0, rebuilt: 0, sourceKeys: [] };
+    if (!plan.length) return { checked: 0, rebuilt: 0, fresh: true, staleSources: [], sourceKeys: [] };
 
     const sourceIds = plan.map((definition) => definition.sourceKey);
     const indexedPageCounts = await this.gbrain.getSourcePageCounts(sourceIds);
     const db: any = this.prisma as any;
+    const staleDefinitions: typeof plan = [];
     const rebuilt: string[] = [];
 
     for (const definition of plan) {
@@ -603,20 +605,53 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
       const readPlaneFresh = indexedPages === published.length;
       if (mappingFresh && readPlaneFresh) continue;
 
-      await this.syncSourceDefinition(definition, userId, [], {
-        forceFull: true,
-      });
-      rebuilt.push(definition.sourceKey);
+      staleDefinitions.push(definition);
     }
 
-    if (rebuilt.length) {
+    if (staleDefinitions.length) {
+      for (const definition of staleDefinitions) {
+        const publishedCount = await this.prisma.document.count({
+          where: { kbId: { in: definition.kbIds }, status: "published" },
+        });
+        if (publishedCount <= 1) {
+          await this.syncSourceDefinition(definition, userId, [], {
+            forceFull: true,
+          });
+          rebuilt.push(definition.sourceKey);
+        } else {
+          await this.compilerQueue.add(
+            "source-sync",
+            { kbId: definition.kbIds[0], docIds: [] },
+            {
+              jobId: `rebuild-source-${definition.sourceKey}`,
+              priority: CompilePriority.CRITICAL,
+              removeOnComplete: true,
+              removeOnFail: 100,
+            },
+          );
+        }
+      }
+    }
+
+    const unbuiltStale = staleDefinitions
+      .filter((def) => !rebuilt.includes(def.sourceKey))
+      .map((def) => def.sourceKey);
+
+    if (rebuilt.length || unbuiltStale.length) {
       await this.outboxService.logOperation("sync", {
         phase: "query_freshness_reconcile",
-        counts: { checked: plan.length, rebuilt, sourceKeys: sourceIds },
-        status: "success",
+        counts: { checked: plan.length, rebuilt, unbuiltStale, sourceKeys: sourceIds },
+        status: unbuiltStale.length ? "warning" : "success",
       });
     }
-    return { checked: plan.length, rebuilt: rebuilt.length, sourceKeys: sourceIds };
+
+    return {
+      checked: plan.length,
+      rebuilt: rebuilt.length,
+      fresh: unbuiltStale.length === 0,
+      staleSources: unbuiltStale,
+      sourceKeys: sourceIds,
+    };
   }
 
   /** Mark every materialized permission scope containing a source as stale. */

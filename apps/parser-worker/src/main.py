@@ -182,6 +182,7 @@ def normalize_markdown(markdown: str, filename: str) -> str:
 
     result = "\n".join(normalized)
     result = re.sub(r"\n{3,}", "\n\n", result).strip()
+    result = re.sub(r"([^\n])\n(第\s*[\d一二三四五六七八九十百千万〇零两]+\s*[章节条款项])", r"\1\n\n\2", result)
     return result
 
 def extract_legacy_word(path: Path) -> str:

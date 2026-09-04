@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import { sourceKeyForKnowledgeBase } from "../brain-compiler/brain-source";
 
 import { BrainScopeService } from "../brain-compiler/brain-scope.service";
+import { ChatTraceRecorder } from "./chat-trace";
 
 type RetrievalRequest = { query: string; breadth: boolean; operation: 'search' | 'query' };
 
@@ -43,14 +44,17 @@ export class ChatService {
     conversationId?: string,
   ): Promise<Observable<MessageEvent>> {
     return new Observable((subscriber: Subscriber<MessageEvent>) => {
+      const trace = new ChatTraceRecorder(subscriber);
       this.processChat(
         userId,
         question,
         requestedKbScope,
         conversationId,
         subscriber,
+        trace,
       ).catch((err) => {
         this.logger.error(`Chat processing error: ${err.message}`, err.stack);
+        trace.failRunning(err);
         subscriber.error(err);
       });
     });
@@ -109,9 +113,14 @@ export class ChatService {
     requestedKbScope: string[] | string | undefined,
     conversationId: string | undefined,
     subscriber: Subscriber<MessageEvent>,
+    trace: ChatTraceRecorder,
   ) {
     const retrievalStartedAt = Date.now();
+    trace.start("runtime_config", "运行时模型配置", "读取平台数据库中的模型配置");
     await this.modelConfigService?.applyRuntimeConfig();
+    trace.finish("runtime_config", "success", "模型运行时配置已加载");
+
+    trace.start("permission_scope", "知识权限计算", "计算当前用户可读知识库及本次选择范围");
     const visibleKbs =
       await this.permissionService.getVisibleKnowledgeBases(userId);
     const parsedRequestedScope = Array.isArray(requestedKbScope)
@@ -123,6 +132,29 @@ export class ChatService {
       ? parsedRequestedScope.filter((id) => visibleKbs.includes(id))
       : visibleKbs;
 
+    const scopeRows = scope.length && (this.prisma as any).knowledgeBase?.findMany
+      ? await this.prisma.knowledgeBase.findMany({
+          where: { id: { in: scope } },
+          select: { id: true, name: true, type: true },
+        })
+      : [];
+    const rejectedScopeCount = parsedRequestedScope
+      ? parsedRequestedScope.length - scope.length
+      : 0;
+    trace.finish(
+      "permission_scope",
+      rejectedScopeCount > 0 ? "warning" : "success",
+      rejectedScopeCount > 0
+        ? `已过滤 ${rejectedScopeCount} 个无权访问的知识库`
+        : `本次可检索 ${scope.length} 个知识库`,
+      {
+        visibleCount: visibleKbs.length,
+        selectedCount: scope.length,
+        rejectedCount: rejectedScopeCount,
+        knowledgeBases: scopeRows.map((item) => ({ id: item.id, name: item.name, type: item.type })),
+      },
+    );
+
     if (scope.length === 0) {
       subscriber.next({
         data: { type: "error", content: "No visible knowledge bases found." },
@@ -131,6 +163,7 @@ export class ChatService {
       return;
     }
 
+    trace.start("source_plan", "GBrain Source 规划", "将业务权限范围映射为隔离的 GBrain Source");
     const brainRepo = await this.compilerService.ensureUserBrainRepo(userId);
     const userScope = await this.scopeService.resolveUserScope(userId);
     const rawRefs =
@@ -142,18 +175,51 @@ export class ChatService {
     const selectedSourceKeys = rawRefs
       .map((ref: string) => ref.replace(/^gbrain:\/\/source\//, ""))
       .sort();
-    let sourceFreshness: { checked: number; rebuilt: number; sourceKeys: string[] } | null = null;
+    trace.finish("source_plan", "success", `已选择 ${selectedSourceKeys.length} 个原始知识 Source`, {
+      sourceKeys: selectedSourceKeys,
+      scopeFingerprint: userScope.fingerprint,
+      aclEpoch: userScope.aclEpoch,
+      knowledgeEpoch: userScope.knowledgeEpoch,
+    });
+    let sourceFreshness: { checked: number; rebuilt: number; fresh?: boolean; staleSources?: string[]; sourceKeys: string[] } | null = null;
     if (typeof (this.compilerService as any).ensureSourcesFreshForQuery === "function") {
+      trace.start("source_freshness", "Source 新鲜度校验", "核对业务文档与 GBrain 可检索页是否一致");
       try {
         sourceFreshness = await (this.compilerService as any).ensureSourcesFreshForQuery(
           userId,
           scope,
         );
+        if (sourceFreshness && (sourceFreshness.fresh === false || (sourceFreshness.staleSources && sourceFreshness.staleSources.length > 0))) {
+          this.logger.warn(
+            `Query freshness gate found unaligned sources: ${sourceFreshness.staleSources?.join(", ")}, triggered background priority rebuild.`,
+          );
+          subscriber.next({
+            data: {
+              type: "error",
+              content: "知识库索引检测到未完成对账，系统已自动触发后台快速对账与重建，请稍后重试。",
+            },
+          });
+          trace.finish("source_freshness", "failed", "存在未完成对账的 Source，已阻止使用不完整索引作答", {
+            checked: sourceFreshness.checked,
+            rebuilt: sourceFreshness.rebuilt,
+            staleSources: sourceFreshness.staleSources || [],
+          });
+          subscriber.complete();
+          return;
+        }
         if (sourceFreshness.rebuilt > 0) {
           this.logger.log(
             `Query freshness gate rebuilt ${sourceFreshness.rebuilt}/${sourceFreshness.checked} source(s) before answering.`,
           );
         }
+        trace.finish(
+          "source_freshness",
+          sourceFreshness.rebuilt > 0 ? "warning" : "success",
+          sourceFreshness.rebuilt > 0
+            ? `查询前已同步重建 ${sourceFreshness.rebuilt} 个 Source`
+            : `已核对 ${sourceFreshness.checked} 个 Source，索引新鲜`,
+          sourceFreshness,
+        );
       } catch (error: any) {
         this.logger.error(
           `Query freshness gate blocked an incomplete source: ${String(error?.message || error)}`,
@@ -164,9 +230,14 @@ export class ChatService {
             content: "知识库索引正在对账或重建，当前不能基于不完整索引回答，请稍后重试。",
           },
         });
+        trace.finish("source_freshness", "failed", "Source 对账失败，已阻止不完整回答", {
+          error: String(error?.message || error).slice(0, 500),
+        });
         subscriber.complete();
         return;
       }
+    } else {
+      trace.skip("source_freshness", "Source 新鲜度校验", "当前编译服务未提供查询前新鲜度校验");
     }
     const wholeScopeSelected =
       selectedSourceKeys.length === userScope.sourceKeys.length &&
@@ -179,37 +250,98 @@ export class ChatService {
     const derivedRef = `gbrain://source/llmwiki-d-${userScope.fingerprint}`;
     const sourceRefs = [...rawRefs];
 
+    trace.start("conversation_context", "历史会话消歧", "读取同一会话的近期上下文");
     const conversationHistory = await this.loadConversationHistory(
       userId,
       conversationId,
       question,
     );
+    trace.finish("conversation_context", "success", `已加载 ${Math.max(0, conversationHistory.length - 1)} 条历史消息`, {
+      historyMessages: Math.max(0, conversationHistory.length - 1),
+    });
+    trace.start("query_rewrite", "检索问题改写", "结合历史指代生成独立检索问题");
     const retrieval = await this.rewriteQueryForRetrieval(
       question,
       conversationHistory,
     );
+    trace.finish("query_rewrite", "success", `使用 ${retrieval.operation} / ${retrieval.breadth ? "广覆盖" : "聚焦"} 模式`, {
+      rewrittenQuery: retrieval.query,
+      operation: retrieval.operation,
+      breadth: retrieval.breadth,
+    });
     // Personal memory is a separate, private GBrain retrieval arm. It never
     // enters a shared Source and is injected with lower precedence than the
     // currently authorized document evidence. On the first turn, use the
     // official context_pack to warm the session; later turns use semantic
     // recall for only the current question.
-    const personalMemory = await this.loadPersonalMemoryContext(
-      userId,
-      retrieval.query || question,
+    // GBrain's ambient-recall guidance reserves context_pack for real session
+    // boundaries with known standing entities, and recall for an explicit
+    // memory need. A policy/document question has neither, so do not make a
+    // private-memory subprocess compete with the authoritative Source query.
+    const shouldLoadPersonalMemory = this.shouldLoadPersonalMemory(
+      question,
       conversationHistory,
-      conversationId,
     );
+    trace.start("personal_memory", "个人记忆检索", "从当前用户私有 Source 加载相关长期记忆");
+    const personalMemoryPromise = shouldLoadPersonalMemory
+      ? this.loadPersonalMemoryContext(
+          userId,
+          retrieval.query || question,
+          conversationHistory,
+          conversationId,
+        )
+      : Promise.resolve({ text: "", count: 0 });
+    if (!shouldLoadPersonalMemory) {
+      trace.finish(
+        "personal_memory",
+        "skipped",
+        "当前问题未请求个人记忆背景，优先执行授权知识检索",
+        { matchedFacts: 0, reason: "not_memory_relevant" },
+      );
+    }
     // A derived page is valid only for the exact permission/source set from
     // which it was built. Never add a full-scope summary to a user-selected
     // subset of knowledge bases or to a focused fact lookup.
-    if (retrieval.breadth && wholeScopeSelected && await this.gbrain.isSourceMaterialized(derivedRef).catch(() => false)) {
-      sourceRefs.push(derivedRef);
+    if (retrieval.breadth && wholeScopeSelected) {
+      trace.start("scope_synthesis", "权限范围派生综述", "检查当前权限快照对应的跨 Source 综述");
+      let isMaterialized = await this.gbrain.isSourceMaterialized(derivedRef).catch(() => false);
+      if (!isMaterialized && userScope.scopeId) {
+        this.logger.log(
+          `Scope derived summary not materialized for ${userScope.fingerprint}; triggering on-demand compile...`,
+        );
+        try {
+          await this.scopeService.compileScopeDerived(userScope.scopeId);
+          isMaterialized = await this.gbrain.isSourceMaterialized(derivedRef).catch(() => false);
+        } catch (err: any) {
+          this.logger.warn(`On-demand scope compile failed: ${err.message}`);
+        }
+      }
+      if (isMaterialized) {
+        sourceRefs.push(derivedRef);
+      }
+      trace.finish(
+        "scope_synthesis",
+        isMaterialized ? "success" : "warning",
+        isMaterialized ? "已加入当前权限快照的派生综述 Source" : "派生综述不可用，本次仅检索原始知识 Source",
+        { materialized: isMaterialized, sourceKey: derivedRef.replace(/^gbrain:\/\/source\//, "") },
+      );
+    } else {
+      trace.skip(
+        "scope_synthesis",
+        "权限范围派生综述",
+        retrieval.breadth ? "用户选择了部分知识库，不使用全范围综述" : "聚焦问题优先使用原始文档证据",
+      );
     }
 
     this.logger.debug(
       `Querying brain for "${question}" in scope ${scope.join(",")} (Scope fingerprint: ${userScope.fingerprint})...`,
     );
     let retrievalEscalated = false;
+    trace.start("gbrain_retrieval", "GBrain 混合检索", "执行向量、BM25、RRF、图谱信号与重排检索", {
+      sourceCount: sourceRefs.length,
+      operation: retrieval.operation,
+      breadth: retrieval.breadth,
+    });
     let queryResult =
       sourceRefs.length > 1
           ? await this.gbrain.queryMany(sourceRefs, retrieval.query, {
@@ -222,6 +354,29 @@ export class ChatService {
             retrieval.query,
             { breadth: retrieval.breadth, operation: retrieval.operation, ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
           );
+    const rawCandidateCount = Array.isArray(queryResult.citations) ? queryResult.citations.length : 0;
+    const topEvidence = String(queryResult.citations?.[0]?.evidence || "");
+    let initialEvidenceAssessment = this.assessWeakEvidence(queryResult, retrieval.breadth);
+    trace.finish(
+      "gbrain_retrieval",
+      rawCandidateCount === 0 ? "warning" : "success",
+      rawCandidateCount === 0
+        ? "GBrain 未返回候选页面"
+        : initialEvidenceAssessment.shouldEscalate
+          ? `GBrain 返回 ${rawCandidateCount} 个候选页面，初始语义证据置信度偏低，待扩检前置信度复核`
+          : initialEvidenceAssessment.weak
+            ? `GBrain 返回 ${rawCandidateCount} 个候选页面；虽为语义命中，但分数充足，进入重排验证`
+            : `GBrain 返回 ${rawCandidateCount} 个候选页面，进入重排验证`,
+      {
+        candidateCount: rawCandidateCount,
+        rerankedByGbrain: Boolean(queryResult.reranked),
+        topEvidence: topEvidence || null,
+        topScore: queryResult.citations?.[0]?.score ?? null,
+        evidenceAssessment: initialEvidenceAssessment,
+        diagnostics: (queryResult as any).diagnostics || null,
+      },
+    );
+    trace.start("permission_guard", "结果权限复核", "按当前数据库权限和 Source 世代复核候选结果");
     queryResult = await this.filterQueryResultByCurrentPermission(
       queryResult,
       scope,
@@ -232,12 +387,59 @@ export class ChatService {
         knowledgeEpoch: userScope.knowledgeEpoch,
       },
     );
+    const aclCandidateCount = Array.isArray(queryResult.citations) ? queryResult.citations.length : 0;
+    trace.finish(
+      "permission_guard",
+      aclCandidateCount < rawCandidateCount ? "warning" : "success",
+      aclCandidateCount < rawCandidateCount
+        ? `已剔除 ${rawCandidateCount - aclCandidateCount} 个越权或过期候选`
+        : `全部 ${aclCandidateCount} 个候选通过最终权限校验`,
+      { before: rawCandidateCount, after: aclCandidateCount, removed: rawCandidateCount - aclCandidateCount },
+    );
+    // A weak semantic label is a recall signal, not proof that the first
+    // result is unsuitable. When GBrain did not return native rerank scores,
+    // use the platform's configured cross-encoder as a cheap confidence gate
+    // before launching the much more expensive broad second pass. If the
+    // cross-encoder is absent, fails, or remains uncertain, the existing
+    // broad-retrieval safety net remains unchanged.
+    if (initialEvidenceAssessment.shouldEscalate && !queryResult.reranked) {
+      trace.start("confidence_rerank", "扩检前置信度复核", "先以交叉编码重排验证首轮弱语义候选");
+      const beforeConfidenceRerank = queryResult.citations?.length || 0;
+      queryResult = await this.applyRerank(
+        retrieval.query || question,
+        queryResult,
+        retrieval.breadth,
+      );
+      initialEvidenceAssessment = this.assessWeakEvidence(queryResult, retrieval.breadth);
+      trace.finish(
+        "confidence_rerank",
+        queryResult.reranked ? "success" : "warning",
+        initialEvidenceAssessment.shouldEscalate
+          ? "首轮候选置信度仍不足，将执行广覆盖扩检"
+          : "首轮候选经交叉编码验证充分，跳过冗余扩检",
+        {
+          before: beforeConfidenceRerank,
+          after: queryResult.citations?.length || 0,
+          evidenceAssessment: initialEvidenceAssessment,
+        },
+      );
+    } else {
+      trace.skip(
+        "confidence_rerank",
+        "扩检前置信度复核",
+        initialEvidenceAssessment.shouldEscalate
+          ? "GBrain 已提供原生重排结果，直接沿用其置信度"
+          : "首轮证据已满足扩检门槛",
+      );
+    }
     // A weak semantic hit is a signal to widen recall once, not a reason to
     // invent application-specific keyword rules. The same standalone query
     // is re-run with GBrain's broad/no-autocut profile so an exact section or
     // a better parent page has a chance to enter the evidence set.
-    if (this.shouldEscalateWeakEvidence(queryResult, retrieval.breadth)) {
+    const evidenceAssessment = this.assessWeakEvidence(queryResult, retrieval.breadth);
+    if (evidenceAssessment.shouldEscalate) {
       retrievalEscalated = true;
+      trace.start("retrieval_escalation", "弱证据扩展检索", "检测到弱证据，按 GBrain 广覆盖模式扩检一次");
       queryResult =
         sourceRefs.length > 1
           ? await this.gbrain.queryMany(sourceRefs, retrieval.query, {
@@ -260,9 +462,29 @@ export class ChatService {
           knowledgeEpoch: userScope.knowledgeEpoch,
         },
       );
+      trace.finish(
+        "retrieval_escalation",
+        queryResult.citations?.length ? "success" : "warning",
+        queryResult.citations?.length
+          ? `扩检后保留 ${queryResult.citations.length} 个授权候选`
+          : "扩检后仍无可用候选",
+        { candidateCount: queryResult.citations?.length || 0 },
+      );
+    } else {
+      trace.skip(
+        "retrieval_escalation",
+        "弱证据扩展检索",
+        evidenceAssessment.reason,
+        {
+          evidence: evidenceAssessment.evidence,
+          topScore: evidenceAssessment.topScore,
+          scoreFloor: evidenceAssessment.scoreFloor,
+        },
+      );
     }
     // 历史文档可能在 BrainRepo 初始化前已经发布，先进行完整同步，再重新通过 BrainRepo 查询。
     if (!queryResult.answer) {
+      trace.start("source_reconcile_retry", "Source 对账重试", "空结果触发全量 Source 对账后重试");
       await this.compilerService.syncUserBrainRepo(userId);
       const refreshedRefs =
         typeof (this.compilerService as any).getUserSourceRefsForKnowledgeBases === "function"
@@ -292,18 +514,67 @@ export class ChatService {
           knowledgeEpoch: userScope.knowledgeEpoch,
         },
       );
+      trace.finish(
+        "source_reconcile_retry",
+        queryResult.answer ? "success" : "warning",
+        queryResult.answer ? `重试后获得 ${queryResult.citations?.length || 0} 个候选` : "完成对账但仍未检索到证据",
+        { candidateCount: queryResult.citations?.length || 0 },
+      );
+    } else {
+      trace.skip("source_reconcile_retry", "Source 对账重试", "首轮检索已有结果，无需重建重试");
     }
     // GBrain is the only retrieval path. Empty retrieval triggers source
     // reconciliation above, never a second application-specific search stack.
     // GBrain balanced mode already reranks before autocut. Keep the platform
     // reranker only as a fail-open recovery when GBrain reports no rerank
     // Always apply cross-encoder rerank & relevance filtering across candidate sources
+    const beforeRerank = queryResult.citations?.length || 0;
+    const platformRerankRequired = !queryResult.reranked;
+    trace.start("rerank", "候选重排", "统一比较跨 Source 候选并执行相关性过滤");
     queryResult = await this.applyRerank(
       retrieval.query || question,
       queryResult,
       retrieval.breadth,
     );
+    trace.finish("rerank", queryResult.reranked ? "success" : "warning", queryResult.reranked
+      ? platformRerankRequired ? "GBrain 原生重排未返回分数，平台重排已补偿完成" : "沿用 GBrain 原生语义重排结果"
+      : "重排服务不可用，沿用 GBrain 候选顺序", {
+      before: beforeRerank,
+      after: queryResult.citations?.length || 0,
+      reranked: Boolean(queryResult.reranked),
+      platformFallback: platformRerankRequired,
+    });
+    const beforeGate = queryResult.citations?.length || 0;
+    trace.start("evidence_gate", "证据收敛", "仅保留能直接支持当前问题的证据");
     queryResult = this.applyFocusedEvidenceGate(queryResult, retrieval.breadth);
+    const afterGate = queryResult.citations?.length || 0;
+    trace.finish(
+      "evidence_gate",
+      afterGate > 0 ? (afterGate < beforeGate ? "warning" : "success") : "warning",
+      afterGate > 0 ? `最终进入回答上下文 ${afterGate} 条证据` : "没有证据通过相关性门控",
+      {
+        before: beforeGate,
+        after: afterGate,
+        removed: beforeGate - afterGate,
+        retrievalGate: queryResult.retrievalGate || null,
+        evidence: (queryResult.citations || []).slice(0, 20).map((citation: any) => ({
+          documentId: citation.docId,
+          title: citation.docTitle || citation.topic,
+          section: citation.section,
+          score: citation.score,
+          evidence: citation.evidence,
+        })),
+      },
+    );
+    const personalMemory = await personalMemoryPromise;
+    if (shouldLoadPersonalMemory) {
+      trace.finish(
+        "personal_memory",
+        personalMemory.count > 0 ? "success" : "skipped",
+        personalMemory.count > 0 ? `命中 ${personalMemory.count} 条私有记忆` : "没有可用或相关的私有记忆",
+        { matchedFacts: personalMemory.count },
+      );
+    }
     await this.outboxService?.logOperation("query", {
       scopeId: userScope.scopeId,
       phase: "retrieval_trace",
@@ -335,6 +606,8 @@ export class ChatService {
 
     subscriber.next({ data: { type: "meta", brain_topics_hit: hitTopics } });
 
+    trace.start("lazy_compile", "主题页惰性编译", "检查命中主题页是否存在待编译变更");
+    let lazyCompiled = 0;
     for (const topicSlug of hitTopics) {
       const topicInfo = await this.prisma.brainTopic.findUnique({
         where: {
@@ -346,12 +619,20 @@ export class ChatService {
           `Topic ${topicSlug} is dirty, waiting for lazy compile...`,
         );
         await this.compilerService.triggerLazyCompileAndWait(userId, topicSlug);
+        lazyCompiled += 1;
       }
     }
+    trace.finish(
+      "lazy_compile",
+      "success",
+      lazyCompiled > 0 ? `已即时编译 ${lazyCompiled} 个脏主题页` : "命中主题页均无需即时重编译",
+      { checked: hitTopics.length, compiled: lazyCompiled },
+    );
 
     const citations = Array.isArray(queryResult.citations)
       ? queryResult.citations
       : [];
+    trace.start("answer_context", "回答上下文组装", "从授权证据页组装可引用的回答上下文");
     const compiledTruthContext = citations.length > 0
       ? citations
           .map((cit: any, idx: number) => {
@@ -363,6 +644,12 @@ export class ChatService {
           })
           .join("\n\n---\n\n")
       : (queryResult.answer || "No truth found for this topic.");
+    trace.finish(
+      "answer_context",
+      citations.length > 0 ? "success" : "warning",
+      citations.length > 0 ? `已组装 ${citations.length} 条可引用证据` : "没有可引用证据，仅返回检索空结果说明",
+      { citationCount: citations.length, contextChars: compiledTruthContext.length },
+    );
 
     this.logger.debug(
       "Prompting real external LLM API with Compiled Truth context...",
@@ -370,6 +657,7 @@ export class ChatService {
 
     try {
       // 从数据库中获取用户在后台页面配置的大模型信息
+      trace.start("llm_generation", "大模型流式生成", "基于授权证据生成回答并要求逐项引用");
       const modelConfig = this.modelConfigService
         ? await this.modelConfigService.getDefault("llm")
         : null;
@@ -392,11 +680,16 @@ export class ChatService {
             data: { type: "delta", content: compiledTruthContext },
           });
         }
+        trace.finish("llm_generation", "warning", "未配置大模型，直接返回检索证据上下文", {
+          model: modelName,
+          evidenceOnly: true,
+        });
         this.emitCitationsAndComplete(
           queryResult.citations || [],
           subscriber,
           0,
           compiledTruthContext,
+          trace,
         );
         return;
       }
@@ -505,13 +798,22 @@ ${compiledTruthContext}`;
         } catch (e) {}
       }
 
+      trace.finish(
+        "llm_generation",
+        fullAnswer ? "success" : "warning",
+        fullAnswer ? "大模型回答生成完成" : "大模型连接正常但未返回正文",
+        { model: modelName, outputChars: fullAnswer.length, streamedChunks: totalTokens },
+      );
+
       this.emitCitationsAndComplete(
         queryResult.citations || [],
         subscriber,
         totalTokens,
         fullAnswer,
+        trace,
       );
-    } catch (error) {
+    } catch (error: any) {
+      trace.finish("llm_generation", "failed", `大模型请求失败：${String(error?.message || error).slice(0, 300)}`);
       subscriber.next({
         data: {
           type: "error",
@@ -565,12 +867,26 @@ ${compiledTruthContext}`;
           `${message.role === "assistant" ? "assistant" : "user"}: ${message.content}`,
       )
       .join("\n");
+    const isExactClause = /第\s*[\d一二三四五六七八九十百千万〇零两]+\s*[章节条款项]|附件\s*[\d一二三四五六七八九十百千万〇零两]+/.test(question);
+    const isBroadQuery = /(一共有|总共|全部|清单|有哪些|所有|多少|几[个项条部篇]|对比|区别|概览|汇总)/.test(question);
+    const directRequest: RetrievalRequest = {
+      query: question,
+      breadth: isBroadQuery,
+      operation: isExactClause ? 'search' : 'query',
+    };
+    // A fresh turn has no antecedent to resolve. Calling an LLM to paraphrase
+    // it delays retrieval and can only add another interpretation layer; the
+    // original user wording is the highest-fidelity GBrain query. Historical
+    // turns still use the contextual rewrite below.
+    if (!prior) return directRequest;
     const config = this.modelConfigService
       ? await this.modelConfigService.getDefault("llm")
       : null;
     const apiKey =
       config?.provider.apiKey || process.env.DEEPSEEK_API_KEY || "";
-    if (!apiKey) return { query: question, breadth: false, operation: 'query' };
+    if (!apiKey) {
+      return directRequest;
+    }
     const baseUrl = (
       config?.provider.baseUrl ||
       process.env.LLM_BASE_URL ||
@@ -595,7 +911,9 @@ ${compiledTruthContext}`;
         }),
         signal: AbortSignal.timeout(12000),
       });
-      if (!response.ok) return { query: question, breadth: false, operation: 'query' };
+      if (!response.ok) {
+        return directRequest;
+      }
       const payload: any = await response.json();
       const content = String(
         payload?.choices?.[0]?.message?.content || "",
@@ -605,22 +923,28 @@ ${compiledTruthContext}`;
           content.replace(/^```json\s*/i, "").replace(/\s*```$/, ""),
         );
         const rewritten = String(parsed?.query || "").trim();
+        const operation: 'search' | 'query' = isExactClause
+          ? 'search'
+          : parsed?.operation === 'search'
+          ? 'search'
+          : 'query';
+        const breadth = isBroadQuery || parsed?.breadth === true;
         return {
           query:
             rewritten.length > 0 && rewritten.length <= 1000
               ? rewritten
               : question,
-          breadth: parsed?.breadth === true,
-          operation: parsed?.operation === 'search' ? 'search' : 'query',
+          breadth,
+          operation,
         };
       } catch {
-        return { query: question, breadth: false, operation: 'query' };
+        return directRequest;
       }
     } catch (error) {
       this.logger.debug(
         `Contextual retrieval rewrite unavailable: ${error?.message || "unknown error"}`,
       );
-      return { query: question, breadth: false, operation: 'query' };
+      return directRequest;
     }
   }
 
@@ -631,9 +955,12 @@ ${compiledTruthContext}`;
     sessionId?: string,
   ): Promise<{ text: string; count: number }> {
     try {
-      const result = history.length <= 1
-        ? await this.personalContextPack(userId, query, sessionId)
-        : await this.recallPersonalFacts(userId, query, 8);
+      // context_pack is a session-boundary assembly operation. The web app
+      // does not maintain a trusted standing-entity bank yet, so passing an
+      // arbitrary whole user question as its `entities` argument is both
+      // semantically wrong and expensive. For an explicit memory need, the
+      // official recall verb is the precise, budgeted read primitive.
+      const result = await this.recallPersonalFacts(userId, query, 8);
       const facts = Array.isArray(result?.facts) ? result.facts : [];
       if (!facts.length) return { text: String(result?.text || "").trim(), count: 0 };
       const text = facts
@@ -652,6 +979,22 @@ ${compiledTruthContext}`;
       this.logger.debug(`Personal memory retrieval unavailable: ${error?.message || "unknown error"}`);
       return { text: "", count: 0 };
     }
+  }
+
+  private shouldLoadPersonalMemory(
+    question: string,
+    history: Array<{ role: "user" | "assistant"; content: string }>,
+  ): boolean {
+    const normalized = question.trim();
+    if (!normalized) return false;
+    // Manual personal memories are private preferences/facts, not a second
+    // enterprise-document corpus. Consult them when the user explicitly asks
+    // about self/context, or when a follow-up is linguistically referential.
+    // Ordinary policy lookups stay on the authoritative knowledge Sources.
+    const asksPersonalMemory = /(?:我的|我自己|个人(?:偏好|习惯|信息|记忆)|记住(?:了|的)?|我(?:曾|之前|刚才).{0,12}(?:说|提|告诉)|偏好|习惯|账号|密码)/u.test(normalized);
+    const hasPriorTurns = history.some((message) => message.role === "assistant") || history.length > 1;
+    const refersToPriorContext = /^(?:他|她|它|这|那|该|上述|前面|之前|刚才|继续|同一个|这个|那个)/u.test(normalized);
+    return asksPersonalMemory || (hasPriorTurns && refersToPriorContext);
   }
 
   /**
@@ -682,7 +1025,12 @@ ${compiledTruthContext}`;
             kbId: { in: visibleKbIds },
             status: "published",
           },
-          select: { id: true, kbId: true, title: true },
+          select: {
+            id: true,
+            kbId: true,
+            title: true,
+            kb: { select: { name: true, type: true } },
+          },
         })
       : [];
     const allowed = new Map(docs.map((doc) => [doc.id, doc]));
@@ -721,7 +1069,13 @@ ${compiledTruthContext}`;
         }
         const doc = allowed.get(citation.docId);
         return doc
-          ? { ...citation, kbId: doc.kbId, docTitle: doc.title }
+          ? {
+              ...citation,
+              kbId: doc.kbId,
+              docTitle: doc.title,
+              kbName: (doc as any).kb?.name || citation.kbName || "默认知识库",
+              kbType: (doc as any).kb?.type,
+            }
           : null;
       })
       .filter(Boolean);
@@ -818,7 +1172,7 @@ ${compiledTruthContext}`;
           if (topScore > 0.3 && item.score < topScore * 0.25) return false;
           return idx < 4; // Cap focused queries at top 4
         })
-        .map((item) => item.citation);
+        .map((item) => ({ ...item.citation, rerankScore: item.score }));
 
       const answer = filtered
         .map((citation: any) => citation.context || citation.snippet)
@@ -853,7 +1207,11 @@ ${compiledTruthContext}`;
     const scored = citations.map((citation: any, index: number) => ({
       citation,
       index,
-      score: typeof citation.score === "number" ? citation.score : Number(citation.score),
+      score: typeof citation.rerankScore === "number"
+        ? citation.rerankScore
+        : Number.isFinite(Number(citation.rerankScore))
+          ? Number(citation.rerankScore)
+          : typeof citation.score === "number" ? citation.score : Number(citation.score),
     }));
     const numeric = scored.filter((item) => Number.isFinite(item.score));
     if (!numeric.length) return result;
@@ -873,11 +1231,60 @@ ${compiledTruthContext}`;
     };
   }
 
-  private shouldEscalateWeakEvidence(result: any, breadth = false): boolean {
-    if (breadth) return false;
+  private assessWeakEvidence(result: any, breadth = false): {
+    shouldEscalate: boolean;
+    weak: boolean;
+    evidence: string;
+    topScore: number | null;
+    scoreFloor: number;
+    reason: string;
+  } {
     const citations = Array.isArray(result?.citations) ? result.citations : [];
     const evidence = String(citations[0]?.evidence || "").toLowerCase();
-    return citations.length > 0 && evidence.includes("weak");
+    const rawRerankScore = Number(citations[0]?.rerankScore);
+    const hasFallbackRerankScore = Number.isFinite(rawRerankScore);
+    const configuredFloor = Number(
+      hasFallbackRerankScore
+        ? process.env.GBRAIN_FALLBACK_RERANK_CONFIDENCE_FLOOR || 0.70
+        : process.env.GBRAIN_WEAK_EVIDENCE_SCORE_FLOOR || 0.75,
+    );
+    const scoreFloor = Number.isFinite(configuredFloor)
+      ? Math.max(0, Math.min(configuredFloor, 2))
+      : hasFallbackRerankScore ? 0.70 : 0.75;
+    const rawScore = hasFallbackRerankScore
+      ? rawRerankScore
+      : Number(citations[0]?.score);
+    const topScore = Number.isFinite(rawScore) ? rawScore : null;
+    const weak = evidence.includes("weak");
+    if (breadth) {
+      return { shouldEscalate: false, weak, evidence, topScore, scoreFloor, reason: "当前已是广覆盖检索" };
+    }
+    if (!citations.length) {
+      return { shouldEscalate: false, weak: false, evidence, topScore, scoreFloor, reason: "首轮没有候选，将由 Source 对账重试处理" };
+    }
+    if (!weak) {
+      return { shouldEscalate: false, weak, evidence, topScore, scoreFloor, reason: "首轮证据类型明确，无需扩检" };
+    }
+    if (topScore !== null && topScore >= scoreFloor) {
+      return {
+        shouldEscalate: false,
+        weak,
+        evidence,
+        topScore,
+        scoreFloor,
+        reason: `${hasFallbackRerankScore ? "交叉编码" : "语义命中"}分数 ${topScore.toFixed(3)} 已达到扩检门槛 ${scoreFloor.toFixed(3)}，交由证据门控验证`,
+      };
+    }
+    return {
+      shouldEscalate: true,
+      weak,
+      evidence,
+      topScore,
+      scoreFloor,
+      reason: topScore === null
+        ? "语义命中缺少可比较分数，需要扩检"
+        : `${hasFallbackRerankScore ? "交叉编码" : "语义命中"}分数 ${topScore.toFixed(3)} 低于扩检门槛 ${scoreFloor.toFixed(3)}`,
+    };
   }
 
   private emitCitationsAndComplete(
@@ -885,7 +1292,9 @@ ${compiledTruthContext}`;
     subscriber: Subscriber<MessageEvent>,
     totalTokens: number,
     fullAnswer = "",
+    trace: ChatTraceRecorder,
   ) {
+    trace.start("citation_validation", "引用校验与映射", "校验回答角标并绑定到原始文档预览");
     // If the LLM cited specific [n] sources, match and retain them
     const safeAnswer = stripInvalidCitationMarkers(fullAnswer, citations.length);
     const citedMatches = safeAnswer.match(/\[(\d+)\]/g) || [];
@@ -893,28 +1302,42 @@ ${compiledTruthContext}`;
       citedMatches.map((m) => parseInt(m.replace(/\D/g, ""), 10)),
     );
 
-    let finalCitations = citations;
+    let finalCitations = citations.map((citation, index) => ({ citation, originalIndex: index + 1 }));
     if (citedIndices.size > 0) {
-      const referenced = citations.filter((_, idx) =>
-        citedIndices.has(idx + 1),
-      );
+      const referenced = finalCitations.filter((item) => citedIndices.has(item.originalIndex));
       if (referenced.length > 0) {
         finalCitations = referenced;
       }
     } else if (citations.length > 3) {
-      finalCitations = citations.slice(0, 2);
+      finalCitations = finalCitations.slice(0, 2);
     }
 
-    finalCitations.forEach((cit: any, index: number) => {
+    trace.finish(
+      "citation_validation",
+      citations.length > 0 ? "success" : "warning",
+      citations.length > 0
+        ? `回答引用 ${finalCitations.length} 个原始证据页面`
+        : "本次回答没有可绑定的原始证据",
+      {
+        candidateCitations: citations.length,
+        referencedCitations: finalCitations.map((item) => item.originalIndex),
+        invalidMarkersRemoved: safeAnswer !== fullAnswer,
+      },
+    );
+
+    finalCitations.forEach(({ citation: cit, originalIndex }: any) => {
       subscriber.next({
         data: {
           type: "citation",
-          index: index + 1,
+          index: originalIndex,
           topic_slug: cit.topic,
           timeline_entry: {
             source_kb: cit.kbId,
+            kb_name: cit.kbName || cit.kbId,
             document_id: cit.docId,
             doc_title: cit.docTitle,
+            section: cit.section,
+            score: cit.score,
             snippet: cit.snippet || '',
           },
         },

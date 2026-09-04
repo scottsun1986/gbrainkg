@@ -68,8 +68,10 @@ export class BrainCompilerProcessor extends WorkerHost {
     if (job.name === "source-sync") {
       const { kbId, docIds = [] } = job.data;
       const start = Date.now();
-      const result = await this.compilerService.syncKnowledgeBaseSource(kbId, docIds);
-      if (docIds.length) {
+      const result = docIds && docIds.length
+        ? await this.compilerService.syncKnowledgeBaseSource(kbId, docIds)
+        : await this.compilerService.syncKnowledgeBaseSource(kbId, [], true);
+      if (docIds && docIds.length) {
         await this.prisma.document.updateMany({
           where: { id: { in: docIds }, status: "indexing" },
           data: { status: "published" },
@@ -174,6 +176,7 @@ export class BrainCompilerProcessor extends WorkerHost {
     if (job.name === "scope-derived-compile") {
       const { scopeId } = job.data;
       const start = Date.now();
+      await this.modelConfigService.applyRuntimeConfig();
       const res = await this.scopeService.compileScopeDerived(scopeId);
       await this.outboxService.logOperation("scope_compile", {
         scopeId,

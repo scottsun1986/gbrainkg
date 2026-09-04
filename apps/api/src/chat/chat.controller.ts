@@ -113,44 +113,117 @@ export class ChatController {
         kb_scope,
         conversation.id,
       );
+    const requestStartedAt = Date.now();
     let answer = "";
+    let errorContent = "";
+    let traceId = "";
+    let totalTokens = 0;
     const citations: any[] = [];
+    const traceNodes = new Map<string, any>();
+    let finalizePromise: Promise<void> | null = null;
+    const writeEvent = (data: any) => {
+      if (!response.writableEnded) {
+        response.write(`data: ${JSON.stringify(data)}\n\n`);
+      }
+    };
+    const upsertPersistenceTrace = (status: string, summary: string) => {
+      const previous = traceNodes.get("message_persistence");
+      const now = new Date();
+      const startedAt = previous?.startedAt || now.toISOString();
+      const node = {
+        id: "message_persistence",
+        name: "回答与诊断链路落库",
+        status,
+        startedAt,
+        ...(status !== "running"
+          ? {
+              finishedAt: now.toISOString(),
+              durationMs: Math.max(0, now.getTime() - new Date(startedAt).getTime()),
+            }
+          : {}),
+        summary,
+      };
+      traceNodes.set(node.id, node);
+      writeEvent({ type: "trace", schema_version: 1, trace_id: traceId, node });
+    };
+    const finalize = () => {
+      if (finalizePromise) return finalizePromise;
+      finalizePromise = (async () => {
+        const content = answer || errorContent || "本次问答未生成可保存的回答。";
+        upsertPersistenceTrace("running", "正在保存回答、引用和处理链路");
+        try {
+          const created = await this.prisma.message.create({
+            data: {
+              conversationId: conversation.id,
+              role: "assistant",
+              content,
+              citationsSummary: citations,
+              processingTrace: [...traceNodes.values()],
+              latencyMs: Date.now() - requestStartedAt,
+            },
+          });
+          upsertPersistenceTrace("success", "回答、引用和处理链路已保存");
+          await this.prisma.message.update({
+            where: { id: created.id },
+            data: { processingTrace: [...traceNodes.values()] },
+          });
+        } catch (error: any) {
+          console.error("Failed to persist assistant message:", error);
+          upsertPersistenceTrace(
+            "failed",
+            `保存失败：${String(error?.message || error || "未知错误").slice(0, 300)}`,
+          );
+        } finally {
+          writeEvent({
+            type: "done",
+            total_tokens: totalTokens,
+            latency_ms: Date.now() - requestStartedAt,
+            trace_id: traceId,
+          });
+          if (!response.writableEnded) response.end();
+        }
+      })();
+      return finalizePromise;
+    };
     const subscription = stream$.subscribe({
       next: (event) => {
         if (response.writableEnded) return;
         const data: any = event.data;
         if (data?.type === "delta") answer += String(data.content || "");
         if (data?.type === "citation") citations.push(data);
-        response.write(`data: ${JSON.stringify(event.data)}\n\n`);
+        if (data?.type === "error") errorContent = String(data.content || "问答处理失败");
+        if (data?.type === "trace" && data.node?.id) {
+          traceId = String(data.trace_id || traceId);
+          traceNodes.set(data.node.id, data.node);
+        }
+        if (data?.type === "done") {
+          totalTokens = Number(data.total_tokens || 0);
+          return;
+        }
+        writeEvent(event.data);
       },
       error: (error) => {
         if (response.writableEnded) return;
-        response.write(
-          `data: ${JSON.stringify({ type: "error", content: error.message || "Chat failed" })}\n\n`,
-        );
-        response.end();
+        errorContent = `问答处理失败：${error.message || "Chat failed"}`;
+        const now = new Date().toISOString();
+        const node = {
+          id: "request_failure",
+          name: "问答处理",
+          status: "failed",
+          startedAt: now,
+          finishedAt: now,
+          durationMs: 0,
+          summary: String(error.message || "Chat failed").slice(0, 300),
+        };
+        traceNodes.set(node.id, node);
+        writeEvent({ type: "trace", schema_version: 1, trace_id: traceId, node });
+        writeEvent({ type: "error", content: errorContent });
+        void finalize();
       },
       complete: () => {
-        // RxJS 不会等待 async complete 回调；显式收口异常，确保数据库写入
-        // 失败时也能结束 SSE，不让请求悬挂。
-        void (async () => {
-          try {
-            if (answer) {
-              await this.prisma.message.create({
-                data: {
-                  conversationId: conversation.id,
-                  role: "assistant",
-                  content: answer,
-                  citationsSummary: citations,
-                },
-              });
-            }
-          } catch (error) {
-            console.error("Failed to persist assistant message:", error);
-          } finally {
-            if (!response.writableEnded) response.end();
-          }
-        })();
+        // RxJS 不会等待 async complete 回调，统一由 finalize 收口并在
+        // 消息真正落库后再向浏览器发送 done。
+        void finalize();
       },
     });
     req.on("close", () => subscription.unsubscribe());

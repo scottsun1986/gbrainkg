@@ -214,6 +214,7 @@ model Message {
   role             String   // user/assistant/system
   content          String
   citationsSummary Json?
+  processingTrace  Json?
   latencyMs        Int?
   feedback         String?
   createdAt        DateTime @default(now())
