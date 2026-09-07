@@ -28,5 +28,59 @@ describe('splitMarkdownIntoChunks', () => {
       '第十一条 处理',
     ]);
     expect(chunks[1].content).toContain('未请假擅自不到岗');
+    
+    // Clause structure should be detected and add metadata
+    expect(chunks[0].metadata.chapter_no).toBe(1);
+    expect(chunks[1].metadata.article_no).toBe(10);
+    expect(chunks[2].metadata.article_no).toBe(11);
+    expect(chunks[2].metadata.chapter_no).toBe(1); // inherited
+  });
+
+  it('detects page markers and assigns page_no', () => {
+    const chunks = splitMarkdownIntoChunks('<!-- page 5 -->\n\n# 第一章 某文档\n\n这是第一段。\n\n--- page 6 ---\n\n## 第二章\n\n这是第二段。');
+    
+    expect(chunks).toHaveLength(3);
+    expect(chunks[0].metadata.page_no).toBe(5);
+    expect(chunks[1].metadata.page_no).toBe(5);
+    expect(chunks[2].metadata.page_no).toBe(6);
+  });
+
+  it('detects markdown heading page markers and assigns page_no', () => {
+    const chunks = splitMarkdownIntoChunks('## 第 3 页\n\n这是第三页的内容。\n\n## 第 4 页\n\n这是第四页的内容。');
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0].metadata.page_no).toBe(3);
+    expect(chunks[1].metadata.page_no).toBe(4);
+  });
+
+  it('estimates token counts for Chinese text accurately', () => {
+    // Chinese chars should count roughly as 1 token each, not 0.25
+    const text = '这是一个中文句子的测试。';
+    const chunks = splitMarkdownIntoChunks(text);
+    expect(chunks[0].tokenCount).toBeGreaterThan(5);
+  });
+
+  it('links neighbor chunks with prev_chunk_ord and next_chunk_ord', () => {
+    const markdown = '# 章节一\n\n段落一。\n\n## 章节二\n\n段落二。\n\n### 章节三\n\n段落三。';
+    const chunks = splitMarkdownIntoChunks(markdown);
+    expect(chunks.length).toBe(3);
+    expect(chunks[0].metadata.prev_chunk_ord).toBeUndefined();
+    expect(chunks[0].metadata.next_chunk_ord).toBe(1);
+    expect(chunks[1].metadata.prev_chunk_ord).toBe(0);
+    expect(chunks[1].metadata.next_chunk_ord).toBe(2);
+    expect(chunks[2].metadata.prev_chunk_ord).toBe(1);
+    expect(chunks[2].metadata.next_chunk_ord).toBeUndefined();
+  });
+
+  it('propagates table headers when long tables span across chunk boundaries', () => {
+    const tableHeader = '| 岗位 | 差旅标准 | 住宿上限 |\n| --- | --- | --- |';
+    const rows = Array.from({ length: 80 }, (_, i) => `| 职级${i + 1} | 一等座${i + 1} | ${500 + i * 10}元 |`).join('\n');
+    const tableDoc = `# 差旅规范\n\n${tableHeader}\n${rows}`;
+    const chunks = splitMarkdownIntoChunks(tableDoc);
+    
+    expect(chunks.length).toBeGreaterThan(1);
+    // Every chunk of this table should have has_table = true
+    expect(chunks.every((c) => c.metadata.has_table)).toBe(true);
+    // Subsequent chunks should have the table header propagated so column semantics are preserved
+    expect(chunks[1].content).toContain('| 岗位 | 差旅标准 | 住宿上限 |');
   });
 });

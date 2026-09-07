@@ -13,7 +13,7 @@ import {
   Req,
   UseGuards,
 } from "@nestjs/common";
-import { PrismaClient } from "@prisma/client";
+import { getPrismaClient } from "./prisma";
 import { PermissionService } from "./permission/permission.service";
 import { AuthService } from "./auth/auth.service";
 import { BrainCompilerService } from "./brain-compiler/brain-compiler.service";
@@ -28,10 +28,46 @@ import {
 import { BrainOutboxService } from "./brain-compiler/brain-outbox.service";
 import { execSync } from "node:child_process";
 
+function normalizeServiceBaseUrl(value: unknown): string {
+  const raw = String(value || "").trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new BadRequestException("Provider base URL must be a valid HTTP(S) URL.");
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
+    throw new BadRequestException("Provider base URL must use HTTP(S) and cannot contain credentials.");
+  }
+  parsed.hash = '';
+  return parsed.toString().replace(/\/$/, '');
+}
+
+function boundedInteger(value: unknown, field: string, min: number, max: number): number {
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < min || number > max) {
+    throw new BadRequestException(`${field} must be an integer between ${min} and ${max}.`);
+  }
+  return number;
+}
+
+function assertGbrainRecipe(params: unknown, kind: string): void {
+  if (!params || typeof params !== 'object' || !(params as any).gbrainRecipe) return;
+  const recipe = String((params as any).gbrainRecipe).trim().toLowerCase();
+  const allowed: Record<string, string[]> = {
+    llm: ['deepseek', 'openai', 'openrouter', 'litellm', 'ollama'],
+    embedding: ['openai', 'voyage', 'ollama', 'llama-server'],
+    rerank: ['llama-server-reranker'],
+  };
+  if (!allowed[kind]?.includes(recipe)) {
+    throw new BadRequestException(`GBrain recipe ${recipe} is not valid for ${kind}.`);
+  }
+}
+
 @UseGuards(AdminGuard)
 @Controller("api/v1/admin")
 export class AdminController {
-  private readonly prisma = new PrismaClient();
+  private readonly prisma = getPrismaClient();
   constructor(
     private readonly permissionService: PermissionService,
     private readonly authService: AuthService,
@@ -1223,7 +1259,8 @@ export class AdminController {
       throw new BadRequestException(
         `User with username "${username}" or email "${email}" already exists.`,
       );
-    const user = await this.prisma.user.create({
+    const user = await this.prisma.$transaction(async tx => {
+    const created = await tx.user.create({
       data: {
         username,
         displayName,
@@ -1238,12 +1275,14 @@ export class AdminController {
         orgs: { include: { orgNode: true } },
       },
     });
-    await this.brainCompilerService.ensureUserBrainRepo(user.id);
-    await this.brainOutboxService?.emitEvent("role_change", "user", user.id, {
-      action: "create",
-      orgIds,
-      roleIds: finalRoleIds,
+    await tx.brainChangeEvent.create({ data: {
+      eventType: 'role_change', resourceType: 'user', resourceId: created.id,
+      payload: { action: 'create', orgIds, roleIds: finalRoleIds }, status: 'pending',
+    } });
+    return created;
     });
+    await this.brainOutboxService?.dispatchPending();
+    await this.brainCompilerService.ensureUserBrainRepo(user.id);
     await this.scheduleAccessReconciliation();
     return { user };
   }
@@ -1333,6 +1372,11 @@ export class AdminController {
             data: roleIds.map((roleId: string) => ({ userId: id, roleId })),
           });
       }
+      await tx.brainChangeEvent.create({ data: {
+        eventType: 'role_change', resourceType: 'user', resourceId: id,
+        payload: { action: 'update', ...(orgIds ? { orgIds } : {}), ...(roleIds ? { roleIds } : {}) },
+        status: 'pending',
+      } });
       return tx.user.findUnique({
         where: { id },
         include: {
@@ -1341,11 +1385,7 @@ export class AdminController {
         },
       });
     });
-    await this.brainOutboxService?.emitEvent("role_change", "user", id, {
-      action: "update",
-      orgIds,
-      roleIds,
-    });
+    await this.brainOutboxService?.dispatchPending();
     await this.scheduleAccessReconciliation();
     return { user };
   }
@@ -1357,13 +1397,15 @@ export class AdminController {
       throw new ForbiddenException(
         "You can only manage users in your organization or its descendants.",
       );
-    const user = await this.prisma.user.update({
-      where: { id },
-      data: { status: "disabled" },
+    const user = await this.prisma.$transaction(async tx => {
+      const updated = await tx.user.update({ where: { id }, data: { status: 'disabled' } });
+      await tx.brainChangeEvent.create({ data: {
+        eventType: 'perm_revoke', resourceType: 'user', resourceId: id,
+        payload: { action: 'disable' }, status: 'pending',
+      } });
+      return updated;
     });
-    await this.brainOutboxService?.emitEvent("perm_revoke", "user", id, {
-      action: "disable",
-    });
+    await this.brainOutboxService?.dispatchPending();
     await this.scheduleAccessReconciliation();
     return { user };
   }
@@ -1648,7 +1690,8 @@ export class AdminController {
     });
     if (duplicate)
       throw new BadRequestException("This authorization already exists.");
-    const grant = await this.prisma.industryGrant.create({
+    const grant = await this.prisma.$transaction(async tx => {
+    const created = await tx.industryGrant.create({
       data: {
         kbId,
         subjectType,
@@ -1657,12 +1700,13 @@ export class AdminController {
         expiresAt: body?.expiresAt ? new Date(body.expiresAt) : null,
       },
     });
-    await this.brainOutboxService?.emitEvent(
-      "perm_grant",
-      "knowledge_base",
-      kbId,
-      { subjectType, subjectId, grantedById, grantId: grant.id },
-    );
+    await tx.brainChangeEvent.create({ data: {
+      eventType: 'perm_grant', resourceType: 'knowledge_base', resourceId: kbId,
+      payload: { subjectType, subjectId, grantedById, grantId: created.id }, status: 'pending',
+    } });
+    return created;
+    });
+    await this.brainOutboxService?.dispatchPending();
     await this.scheduleAccessReconciliation();
     return { grant };
   }
@@ -1679,13 +1723,14 @@ export class AdminController {
       throw new ForbiddenException(
         "Industry knowledge base authorization permission required.",
       );
-    await this.prisma.industryGrant.delete({ where: { id } });
-    await this.brainOutboxService?.emitEvent(
-      "perm_revoke",
-      "knowledge_base",
-      grant.kbId,
-      { grantId: id },
-    );
+    await this.prisma.$transaction(async tx => {
+      await tx.industryGrant.delete({ where: { id } });
+      await tx.brainChangeEvent.create({ data: {
+        eventType: 'perm_revoke', resourceType: 'knowledge_base', resourceId: grant.kbId,
+        payload: { grantId: id }, status: 'pending',
+      } });
+    });
+    await this.brainOutboxService?.dispatchPending();
     await this.scheduleAccessReconciliation();
     return { ok: true };
   }
@@ -1694,7 +1739,7 @@ export class AdminController {
   async createProvider(@Req() req: any, @Body() body: any) {
     await this.authService.adminUserIdFromRequest(req);
     const name = String(body?.name || "").trim();
-    const baseUrl = String(body?.baseUrl || "").trim();
+    const baseUrl = normalizeServiceBaseUrl(body?.baseUrl);
     if (!name || !baseUrl)
       throw new BadRequestException("Provider name and base URL are required.");
     const provider = await this.prisma.modelProvider.create({
@@ -1711,7 +1756,7 @@ export class AdminController {
         defaultParams: body?.defaultParams || undefined,
       },
     });
-    await this.modelConfigService.applyRuntimeConfig();
+    await this.modelConfigService.applyRuntimeConfig(true);
     const {
       apiKeyEncrypted,
       secretKeyEncrypted,
@@ -1752,31 +1797,30 @@ export class AdminController {
     await this.authService.adminUserIdFromRequest(req);
     const provider = await this.prisma.modelProvider.findUnique({
       where: { id },
+      include: { configs: { select: { kind: true } } },
     });
     if (!provider) throw new NotFoundException("Provider not found.");
+    const nextParams = body?.defaultParams !== undefined ? body.defaultParams : provider.defaultParams;
+    for (const config of provider.configs) assertGbrainRecipe(nextParams, config.kind);
     const updated = await this.prisma.modelProvider.update({
       where: { id },
       data: {
         name:
           body?.name !== undefined ? String(body.name).trim() : provider.name,
         kind: body?.kind !== undefined ? String(body.kind) : provider.kind,
-        baseUrl:
-          body?.baseUrl !== undefined
-            ? String(body.baseUrl).trim()
-            : provider.baseUrl,
+        baseUrl: body?.baseUrl !== undefined
+          ? normalizeServiceBaseUrl(body.baseUrl)
+          : provider.baseUrl,
         apiKeyEncrypted: body?.apiKey
           ? encryptModelCredential(String(body.apiKey))
           : undefined,
         secretKeyEncrypted: body?.secretKey
           ? encryptModelCredential(String(body.secretKey))
           : undefined,
-        defaultParams:
-          body?.defaultParams !== undefined
-            ? body.defaultParams
-            : provider.defaultParams,
+        defaultParams: nextParams,
       },
     });
-    await this.modelConfigService.applyRuntimeConfig();
+    await this.modelConfigService.applyRuntimeConfig(true);
     const {
       apiKeyEncrypted,
       secretKeyEncrypted,
@@ -1807,22 +1851,23 @@ export class AdminController {
     const kind = ["llm", "embedding", "rerank"].includes(body?.kind)
       ? body.kind
       : "llm";
-    if (body?.isDefault)
-      await this.prisma.modelConfig.updateMany({
-        where: { kind },
-        data: { isDefault: false },
+    assertGbrainRecipe(provider.defaultParams, kind);
+    const contextLen = boundedInteger(body?.contextLen || 8192, "contextLen", 512, 2_000_000);
+    const dimensions = body?.dimensions ? boundedInteger(body.dimensions, "dimensions", 1, 100_000) : undefined;
+    const model = await this.prisma.$transaction(async tx => {
+      if (body?.isDefault) await tx.modelConfig.updateMany({
+        where: { kind }, data: { isDefault: false },
       });
-    const model = await this.prisma.modelConfig.create({
-      data: {
-        providerId,
-        kind,
-        modelName,
-        contextLen: Number(body?.contextLen || 8192),
-        dimensions: body?.dimensions ? Number(body.dimensions) : undefined,
-        isDefault: Boolean(body?.isDefault),
-      },
+      return tx.modelConfig.create({
+        data: {
+          providerId, kind, modelName,
+          contextLen,
+          dimensions,
+          isDefault: Boolean(body?.isDefault),
+        },
+      });
     });
-    await this.modelConfigService.applyRuntimeConfig();
+    await this.modelConfigService.applyRuntimeConfig(true);
     return { model };
   }
 
@@ -1840,37 +1885,33 @@ export class AdminController {
     const kind = body?.kind !== undefined ? String(body.kind) : existing.kind;
     if (!["llm", "embedding", "rerank"].includes(kind))
       throw new BadRequestException("Invalid model kind.");
-    if (body?.isDefault)
-      await this.prisma.modelConfig.updateMany({
-        where: { kind },
-        data: { isDefault: false },
+    const providerId = body?.providerId ? String(body.providerId) : existing.providerId;
+    const provider = await this.prisma.modelProvider.findUnique({ where: { id: providerId } });
+    if (!provider) throw new NotFoundException("Provider not found.");
+    assertGbrainRecipe(provider.defaultParams, kind);
+    const contextLen = body?.contextLen !== undefined
+      ? boundedInteger(body.contextLen, "contextLen", 512, 2_000_000)
+      : existing.contextLen;
+    const dimensions = body?.dimensions !== undefined && body.dimensions !== ""
+      ? boundedInteger(body.dimensions, "dimensions", 1, 100_000)
+      : existing.dimensions;
+    const model = await this.prisma.$transaction(async tx => {
+      if (body?.isDefault) await tx.modelConfig.updateMany({
+        where: { kind }, data: { isDefault: false },
       });
-    const model = await this.prisma.modelConfig.update({
-      where: { id },
-      data: {
-        providerId: body?.providerId
-          ? String(body.providerId)
-          : existing.providerId,
-        kind,
-        modelName:
-          body?.modelName !== undefined
-            ? String(body.modelName).trim()
-            : existing.modelName,
-        contextLen:
-          body?.contextLen !== undefined
-            ? Number(body.contextLen)
-            : existing.contextLen,
-        dimensions:
-          body?.dimensions !== undefined && body.dimensions !== ""
-            ? Number(body.dimensions)
-            : existing.dimensions,
-        isDefault:
-          body?.isDefault !== undefined
-            ? Boolean(body.isDefault)
-            : existing.isDefault,
-      },
+      return tx.modelConfig.update({
+        where: { id },
+        data: {
+          providerId,
+          kind,
+          modelName: body?.modelName !== undefined ? String(body.modelName).trim() : existing.modelName,
+          contextLen,
+          dimensions,
+          isDefault: body?.isDefault !== undefined ? Boolean(body.isDefault) : existing.isDefault,
+        },
+      });
     });
-    await this.modelConfigService.applyRuntimeConfig();
+    await this.modelConfigService.applyRuntimeConfig(true);
     return { model };
   }
 
@@ -1885,7 +1926,7 @@ export class AdminController {
       );
     }
     await this.prisma.modelConfig.delete({ where: { id } });
-    await this.modelConfigService.applyRuntimeConfig();
+    await this.modelConfigService.applyRuntimeConfig(true);
     return { ok: true };
   }
 
@@ -1902,7 +1943,10 @@ export class AdminController {
       const key = decryptModelCredential(config.provider.apiKeyEncrypted);
       const response = await fetch(
         `${config.provider.baseUrl.replace(/\/$/, "")}/models`,
-        { headers: key ? { Authorization: `Bearer ${key}` } : {} },
+        {
+          headers: key ? { Authorization: `Bearer ${key}` } : {},
+          signal: AbortSignal.timeout(10_000),
+        },
       );
       status = response.ok ? "passed" : "failed";
     } catch {
@@ -1935,6 +1979,7 @@ export class AdminController {
           headers: {
             "Content-Type": "application/x-www-form-urlencoded",
           },
+          signal: AbortSignal.timeout(10_000),
           body: new URLSearchParams({
             grant_type: "client_credentials",
             client_id: config.apiKey,

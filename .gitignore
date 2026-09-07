@@ -37,3 +37,8 @@ logs/
 
 # OS
 .DS_Store
+
+# Temporary agent & scratch work
+scratch/
+.agents/
+docs/test-reports/**/screenshots/

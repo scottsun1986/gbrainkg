@@ -17,7 +17,7 @@ import { ChatService } from "./chat.service";
 import { Observable } from "rxjs";
 import { Response } from "express";
 import { AuthService } from "../auth/auth.service";
-import { PrismaClient } from "@prisma/client";
+import { getPrismaClient } from "../prisma";
 import { AuthGuard } from "../auth/auth.guard";
 
 @UseGuards(AuthGuard)
@@ -28,7 +28,7 @@ export class ChatController {
     private readonly authService: AuthService,
   ) {}
 
-  private readonly prisma = new PrismaClient();
+  private readonly prisma = getPrismaClient();
 
   @Get("memory")
   async recallMemory(@Req() req: any, @Query("query") query?: string, @Query("limit") rawLimit?: string) {
@@ -57,6 +57,18 @@ export class ChatController {
     const entities = String(body?.entities || "").trim();
     if (!entities) throw new BadRequestException("entities is required.");
     return this.chatService.personalContextPack(userId, entities, typeof body?.session_id === "string" ? body.session_id : undefined);
+  }
+
+  @Post("search")
+  async searchKnowledge(
+    @Req() req: any,
+    @Body() body: { query: string; kb_scope?: string[]; limit?: number },
+  ) {
+    const userId = await this.authService.userIdFromRequest(req);
+    const query = String(body?.query || "").trim();
+    if (!query) throw new BadRequestException("query is required.");
+    const limit = Math.max(1, Math.min(Number(body?.limit || 10) || 10, 50));
+    return this.chatService.searchKnowledgeForAgent(userId, query, body?.kb_scope, limit);
   }
 
   @Post("completions")

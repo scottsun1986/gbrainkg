@@ -1,9 +1,9 @@
-import { PrismaClient } from '@prisma/client';
+import { disconnectPrismaClient, getPrismaClient } from '../prisma';
 import { existsSync, readFileSync } from 'node:fs';
 import { randomBytes, scryptSync } from 'node:crypto';
 import { DEFAULT_ROLES } from '../permission/permissions';
 
-const prisma = new PrismaClient();
+const prisma = getPrismaClient();
 
 function readRequiredSecret(): string {
   const file = process.env.ADMIN_INITIAL_PASSWORD_FILE;
@@ -77,4 +77,4 @@ main()
     console.error(error instanceof Error ? error.message : error);
     process.exitCode = 1;
   })
-  .finally(async () => prisma.$disconnect());
+  .finally(disconnectPrismaClient);

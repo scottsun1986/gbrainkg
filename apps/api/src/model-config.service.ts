@@ -1,5 +1,6 @@
-import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
-import { PrismaClient } from "@prisma/client";
+import { Injectable, Logger } from "@nestjs/common";
+import { getPrismaClient } from "./prisma";
+import { createHash } from "node:crypto";
 import {
   decryptModelCredential,
   encryptModelCredential,
@@ -47,13 +48,54 @@ export interface RuntimeModelStatus {
   };
 }
 
+const RECIPES: Record<ModelKind, readonly string[]> = {
+  llm: ['deepseek', 'openai', 'openrouter', 'litellm', 'ollama'],
+  embedding: ['openai', 'voyage', 'ollama', 'llama-server'],
+  rerank: ['llama-server-reranker'],
+};
+
+function modelRecipe(config: ResolvedModelConfig, fallback: string): string {
+  const params = config.provider.defaultParams && typeof config.provider.defaultParams === 'object'
+    ? config.provider.defaultParams as Record<string, unknown>
+    : {};
+  const requested = String(params.gbrainRecipe || fallback).trim().toLowerCase();
+  return RECIPES[config.kind].includes(requested) ? requested : fallback;
+}
+
+function injectRecipeKey(recipe: string, apiKey: string): void {
+  if (!apiKey) return;
+  const keyName: Record<string, string> = {
+    deepseek: 'DEEPSEEK_API_KEY', openai: 'OPENAI_API_KEY',
+    openrouter: 'OPENROUTER_API_KEY', litellm: 'LITELLM_API_KEY',
+    voyage: 'VOYAGE_API_KEY',
+  };
+  if (keyName[recipe]) process.env[keyName[recipe]] = apiKey;
+}
+
 /** Platform DB is the source of truth for model routes and credentials. */
 @Injectable()
-export class ModelConfigService implements OnModuleDestroy {
+export class ModelConfigService {
   private readonly logger = new Logger(ModelConfigService.name);
-  private readonly prisma = new PrismaClient();
+  private readonly prisma = getPrismaClient();
+  private readonly cache = new Map<ModelKind, {
+    expiresAt: number;
+    value: Promise<ResolvedModelConfig | null>;
+  }>();
+  private appliedSignature = "";
 
-  async getDefault(kind: ModelKind): Promise<ResolvedModelConfig | null> {
+  async getDefault(kind: ModelKind, force = false): Promise<ResolvedModelConfig | null> {
+    const now = Date.now();
+    const cached = this.cache.get(kind);
+    if (!force && cached && cached.expiresAt > now) return cached.value;
+    const value = this.loadDefault(kind);
+    this.cache.set(kind, {
+      expiresAt: now + Math.max(1_000, Number(process.env.MODEL_CONFIG_CACHE_MS || 5_000)),
+      value,
+    });
+    return value;
+  }
+
+  private async loadDefault(kind: ModelKind): Promise<ResolvedModelConfig | null> {
     const config =
       (await this.prisma.modelConfig.findFirst({
         where: { kind, isDefault: true, provider: { enabled: true } },
@@ -117,45 +159,60 @@ export class ModelConfigService implements OnModuleDestroy {
   }
 
   /** Project DB-selected routes into the API process and official GBrain child environment. */
-  async applyRuntimeConfig(): Promise<void> {
+  async applyRuntimeConfig(force = false): Promise<void> {
+    if (force) this.cache.clear();
     const [llm, embedding, rerank] = await Promise.all([
-      this.getDefault("llm"),
-      this.getDefault("embedding"),
-      this.getDefault("rerank"),
+      this.getDefault("llm", force),
+      this.getDefault("embedding", force),
+      this.getDefault("rerank", force),
     ]);
+    const signature = createHash("sha256").update(JSON.stringify([
+      llm && [llm.id, llm.modelName, llm.provider.baseUrl, llm.provider.apiKey],
+      embedding && [embedding.id, embedding.modelName, embedding.dimensions, embedding.provider.baseUrl, embedding.provider.apiKey],
+      rerank && [rerank.id, rerank.modelName, rerank.provider.baseUrl, rerank.provider.apiKey],
+    ])).digest("hex");
+    if (!force && signature === this.appliedSignature) return;
+    for (const key of [
+      "LLM_BASE_URL", "LLM_MODEL", "DEEPSEEK_API_KEY",
+      "GBRAIN_CHAT_MODEL", "GBRAIN_EXPANSION_MODEL", "GBRAIN_DEEPSEEK_BASE_URL",
+      "GBRAIN_EMBEDDING_MODEL", "GBRAIN_EMBEDDING_DIMENSIONS", "OPENAI_BASE_URL", "OPENAI_API_KEY",
+      "LLMWIKI_RERANK_BASE_URL", "LLMWIKI_RERANK_MODEL", "LLMWIKI_RERANK_API_KEY",
+      "GBRAIN_RERANK_MODEL", "LLAMA_SERVER_RERANKER_BASE_URL", "LLAMA_SERVER_RERANKER_API_KEY",
+      "GBRAIN_CHAT_BASE_URL", "GBRAIN_EMBEDDING_BASE_URL", "GBRAIN_RERANK_BASE_URL",
+      "OPENROUTER_API_KEY", "LITELLM_API_KEY", "VOYAGE_API_KEY",
+    ]) delete process.env[key];
     if (llm) {
+      const recipe = modelRecipe(llm, 'deepseek');
       process.env.LLM_BASE_URL = llm.provider.baseUrl;
       process.env.LLM_MODEL = llm.modelName;
-      if (llm.provider.apiKey)
-        process.env.DEEPSEEK_API_KEY = llm.provider.apiKey;
-      process.env.GBRAIN_CHAT_MODEL = `deepseek:${llm.modelName}`;
-      process.env.GBRAIN_EXPANSION_MODEL = `deepseek:${llm.modelName}`;
-      process.env.GBRAIN_DEEPSEEK_BASE_URL = llm.provider.baseUrl;
+      injectRecipeKey(recipe, llm.provider.apiKey);
+      process.env.GBRAIN_CHAT_MODEL = `${recipe}:${llm.modelName}`;
+      process.env.GBRAIN_EXPANSION_MODEL = `${recipe}:${llm.modelName}`;
+      process.env.GBRAIN_CHAT_BASE_URL = llm.provider.baseUrl;
     }
     if (embedding) {
-      // SiliconFlow exposes the OpenAI-compatible /embeddings contract.
-      process.env.GBRAIN_EMBEDDING_MODEL = `openai:${embedding.modelName}`;
+      const recipe = modelRecipe(embedding, 'openai');
+      process.env.GBRAIN_EMBEDDING_MODEL = `${recipe}:${embedding.modelName}`;
       if (embedding.dimensions)
         process.env.GBRAIN_EMBEDDING_DIMENSIONS = String(embedding.dimensions);
-      process.env.OPENAI_BASE_URL = embedding.provider.baseUrl;
-      if (embedding.provider.apiKey)
-        process.env.OPENAI_API_KEY = embedding.provider.apiKey;
+      process.env.GBRAIN_EMBEDDING_BASE_URL = embedding.provider.baseUrl;
+      injectRecipeKey(recipe, embedding.provider.apiKey);
     }
     if (rerank) {
+      const recipe = modelRecipe(rerank, 'llama-server-reranker');
       process.env.LLMWIKI_RERANK_BASE_URL = rerank.provider.baseUrl;
       process.env.LLMWIKI_RERANK_MODEL = rerank.modelName;
       if (rerank.provider.apiKey)
         process.env.LLMWIKI_RERANK_API_KEY = rerank.provider.apiKey;
-      // SiliconFlow's /v1/rerank contract matches GBrain's configurable
-      // OpenAI-style reranker recipe.
-      process.env.GBRAIN_RERANK_MODEL = `llama-server-reranker:${rerank.modelName}`;
-      process.env.LLAMA_SERVER_RERANKER_BASE_URL = rerank.provider.baseUrl;
-      if (rerank.provider.apiKey)
+      process.env.GBRAIN_RERANK_MODEL = `${recipe}:${rerank.modelName}`;
+      process.env.GBRAIN_RERANK_BASE_URL = rerank.provider.baseUrl;
+      if (recipe === 'llama-server-reranker' && rerank.provider.apiKey)
         process.env.LLAMA_SERVER_RERANKER_API_KEY = rerank.provider.apiKey;
     }
     this.logger.debug(
       `Applied DB model routes (llm=${llm?.modelName ?? "none"}, embedding=${embedding?.modelName ?? "none"}, rerank=${rerank?.modelName ?? "none"}).`,
     );
+    this.appliedSignature = signature;
   }
 
   /**
@@ -172,13 +229,13 @@ export class ModelConfigService implements OnModuleDestroy {
     const routes = {
       llm: {
         configured: Boolean(llm),
-        injected: Boolean(llm && process.env.LLM_MODEL === llm.modelName && process.env.GBRAIN_CHAT_MODEL === `deepseek:${llm.modelName}`),
+        injected: Boolean(llm && process.env.LLM_MODEL === llm.modelName && process.env.GBRAIN_CHAT_MODEL === `${modelRecipe(llm, 'deepseek')}:${llm.modelName}`),
         modelName: llm?.modelName || null,
         baseUrl: llm?.provider.baseUrl || null,
       },
       embedding: {
         configured: Boolean(embedding),
-        injected: Boolean(embedding && process.env.GBRAIN_EMBEDDING_MODEL === `openai:${embedding.modelName}` && process.env.OPENAI_BASE_URL === embedding.provider.baseUrl),
+        injected: Boolean(embedding && process.env.GBRAIN_EMBEDDING_MODEL === `${modelRecipe(embedding, 'openai')}:${embedding.modelName}` && process.env.GBRAIN_EMBEDDING_BASE_URL === embedding.provider.baseUrl),
         modelName: embedding?.modelName || null,
         baseUrl: embedding?.provider.baseUrl || null,
       },
@@ -201,7 +258,4 @@ export class ModelConfigService implements OnModuleDestroy {
     };
   }
 
-  async onModuleDestroy() {
-    await this.prisma.$disconnect();
-  }
 }

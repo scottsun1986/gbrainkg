@@ -1,0 +1,242 @@
+[
+  {
+    "id": "AUTH-01",
+    "area": "登录",
+    "expected": "本机测试超级管理员可登录",
+    "actual": "使用 admin 成功登录并获得会话",
+    "status": "PASS",
+    "shot": "screenshots/03-admin-workspace.png"
+  },
+  {
+    "id": "SETUP-01",
+    "area": "隔离测试数据",
+    "expected": "创建隔离组织、用户、三级知识库及三类行业授权",
+    "actual": "已创建 E2E-20260907-114235 夹具；所有数据使用独立前缀",
+    "status": "PASS",
+    "shot": "screenshots/03-admin-workspace.png"
+  },
+  {
+    "id": "AUTH-02",
+    "area": "登录失败处理",
+    "expected": "错误凭据被拒绝且页面不崩溃",
+    "actual": "已显示登录错误",
+    "status": "PASS",
+    "shot": "screenshots/02-login-invalid.png"
+  },
+  {
+    "id": "ING-01",
+    "area": "异步入库与发布",
+    "expected": "文本知识最终 published 并可进入检索",
+    "actual": "研发组织库=indexing；开发组织库=indexing；行业库=indexing",
+    "status": "FAIL",
+    "shot": "screenshots/03-admin-workspace.png"
+  },
+  {
+    "id": "NAV-01",
+    "area": "管理后台入口",
+    "expected": "系统管理员可进入管理后台",
+    "actual": "管理后台已在浏览器中打开",
+    "status": "PASS",
+    "shot": "screenshots/04-admin-console.png"
+  },
+  {
+    "id": "ORG-01",
+    "area": "后台-组织架构",
+    "expected": "有权限人员可打开组织架构并正常渲染",
+    "actual": "已打开并识别到页面标题",
+    "status": "PASS",
+    "shot": "screenshots/05-org-01-组织架构.png"
+  },
+  {
+    "id": "USER-01",
+    "area": "后台-人员管理",
+    "expected": "有权限人员可打开人员管理并正常渲染",
+    "actual": "已打开并识别到页面标题",
+    "status": "PASS",
+    "shot": "screenshots/05-user-01-人员管理.png"
+  },
+  {
+    "id": "ROLE-01",
+    "area": "后台-角色管理",
+    "expected": "有权限人员可打开角色管理并正常渲染",
+    "actual": "已打开并识别到页面标题",
+    "status": "PASS",
+    "shot": "screenshots/05-role-01-角色管理.png"
+  },
+  {
+    "id": "KB-08",
+    "area": "后台-行业库管理",
+    "expected": "有权限人员可打开行业库管理并正常渲染",
+    "actual": "已打开并识别到页面标题",
+    "status": "PASS",
+    "shot": "screenshots/05-kb-08-行业库管理.png"
+  },
+  {
+    "id": "MODEL-01",
+    "area": "后台-模型配置",
+    "expected": "有权限人员可打开模型配置并正常渲染",
+    "actual": "已打开并识别到页面标题",
+    "status": "PASS",
+    "shot": "screenshots/05-model-01-模型配置.png"
+  },
+  {
+    "id": "AUDIT-01",
+    "area": "后台-审计日志",
+    "expected": "有权限人员可打开审计日志并正常渲染",
+    "actual": "已打开并识别到页面标题",
+    "status": "PASS",
+    "shot": "screenshots/05-audit-01-审计日志.png"
+  },
+  {
+    "id": "OPS-01",
+    "area": "后台-系统运行监控",
+    "expected": "有权限人员可打开系统运行监控并正常渲染",
+    "actual": "已打开并识别到页面标题",
+    "status": "PASS",
+    "shot": "screenshots/05-ops-01-系统运行监控.png"
+  },
+  {
+    "id": "VIS-parent_reader",
+    "area": "知识可见范围",
+    "expected": "parent_reader 仅获得其规则允许的测试知识库",
+    "actual": "期望测试库数=1，实际命中=1",
+    "status": "PASS",
+    "shot": null
+  },
+  {
+    "id": "VIS-child_reader",
+    "area": "知识可见范围",
+    "expected": "child_reader 仅获得其规则允许的测试知识库",
+    "actual": "期望测试库数=3，实际命中=3",
+    "status": "PASS",
+    "shot": null
+  },
+  {
+    "id": "VIS-other_reader",
+    "area": "知识可见范围",
+    "expected": "other_reader 仅获得其规则允许的测试知识库",
+    "actual": "期望测试库数=0，实际命中=0",
+    "status": "PASS",
+    "shot": null
+  },
+  {
+    "id": "VIS-direct_reader",
+    "area": "知识可见范围",
+    "expected": "direct_reader 仅获得其规则允许的测试知识库",
+    "actual": "期望测试库数=1，实际命中=1",
+    "status": "PASS",
+    "shot": null
+  },
+  {
+    "id": "VIS-role_reader",
+    "area": "知识可见范围",
+    "expected": "role_reader 仅获得其规则允许的测试知识库",
+    "actual": "期望测试库数=1，实际命中=1",
+    "status": "PASS",
+    "shot": null
+  },
+  {
+    "id": "VIS-02",
+    "area": "组织库方向隔离",
+    "expected": "父组织成员不可读取下级组织库文档",
+    "actual": "直接访问开发组文档 HTTP 404",
+    "status": "PASS",
+    "shot": null
+  },
+  {
+    "id": "ING-09",
+    "area": "知识维护权限",
+    "expected": "组织库只读成员不能上传/录入知识",
+    "actual": "只读成员录入请求 HTTP 403",
+    "status": "PASS",
+    "shot": null
+  },
+  {
+    "id": "KB-07",
+    "area": "行业库创建者与管理员分离",
+    "expected": "移交管理员后创建者不能维护文档",
+    "actual": "创建者录入请求 HTTP 403",
+    "status": "PASS",
+    "shot": null
+  },
+  {
+    "id": "KB-07B",
+    "area": "行业库管理员维护",
+    "expected": "当前 KB 管理员可维护行业库内容",
+    "actual": "行业库管理员录入请求 HTTP 201",
+    "status": "PASS",
+    "shot": null
+  },
+  {
+    "id": "UI-parent_reader",
+    "area": "浏览器权限呈现",
+    "expected": "页面仅呈现有权知识库，且显示目标库",
+    "actual": "目标库已显示",
+    "status": "PASS",
+    "shot": "screenshots/06-ui-parent_reader.png"
+  },
+  {
+    "id": "UI-child_reader",
+    "area": "浏览器权限呈现",
+    "expected": "页面仅呈现有权知识库，且显示目标库",
+    "actual": "目标库已显示",
+    "status": "PASS",
+    "shot": "screenshots/06-ui-child_reader.png"
+  },
+  {
+    "id": "UI-direct_reader",
+    "area": "浏览器权限呈现",
+    "expected": "页面仅呈现有权知识库，且显示目标库",
+    "actual": "目标库已显示",
+    "status": "PASS",
+    "shot": "screenshots/06-ui-direct_reader.png"
+  },
+  {
+    "id": "RAG-01",
+    "area": "授权范围内召回",
+    "expected": "有权用户应召回行业报名标准并给出支持性来源",
+    "actual": "答案关键事实=未识别；来源=未识别",
+    "status": "FAIL",
+    "shot": "screenshots/07-chat-authorized-query.png"
+  },
+  {
+    "id": "GB-08",
+    "area": "问答处理链路",
+    "expected": "回答可展开查看权限、检索、证据、模型等节点状态",
+    "actual": "已展开并识别诊断节点",
+    "status": "PASS",
+    "shot": "screenshots/08-chat-processing-trace.png"
+  },
+  {
+    "id": "RAG-02",
+    "area": "检索前权限过滤",
+    "expected": "无权用户无法获取下级文档或其 Compiled Truth",
+    "actual": "无权 compile-truth 请求 HTTP 404",
+    "status": "PASS",
+    "shot": null
+  },
+  {
+    "id": "DOC-01",
+    "area": "文档列表与详情",
+    "expected": "有权用户可看到已发布文档及元数据",
+    "actual": "已打开组织库文档列表",
+    "status": "PASS",
+    "shot": "screenshots/09-library-document-list.png"
+  },
+  {
+    "id": "GRAPH-01",
+    "area": "知识图谱",
+    "expected": "有权用户的已发布文档构成个人可见图谱",
+    "actual": "图谱未识别有效渲染",
+    "status": "FAIL",
+    "shot": "screenshots/10-knowledge-graph.png"
+  },
+  {
+    "id": "NAV-06",
+    "area": "浏览器稳定性",
+    "expected": "关键流程无页面崩溃或 failed-to-fetch",
+    "actual": "未捕获严重浏览器错误",
+    "status": "PASS",
+    "shot": null
+  }
+]

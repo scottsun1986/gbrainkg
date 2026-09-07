@@ -1,0 +1,758 @@
+{
+  "summary": {
+    "total": 50,
+    "score": 19
+  },
+  "results": [
+    {
+      "questionId": "eval-001",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-002",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-003",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-004",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-005",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-006",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-007",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-008",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-009",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-010",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-011",
+      "success": true,
+      "metrics": {
+        "hitRate": true,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-012",
+      "success": true,
+      "metrics": {
+        "hitRate": true,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-013",
+      "success": true,
+      "metrics": {
+        "hitRate": true,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-014",
+      "success": true,
+      "metrics": {
+        "hitRate": true,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-015",
+      "success": true,
+      "metrics": {
+        "hitRate": true,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-016",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-017",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-018",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-019",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-020",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-021",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-022",
+      "success": true,
+      "metrics": {
+        "hitRate": true,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-023",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-024",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-025",
+      "success": true,
+      "metrics": {
+        "hitRate": true,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-026",
+      "success": true,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": true,
+        "noAnswerCompliance": true,
+        "permissionCompliance": true,
+        "keywordCoverage": 1
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-027",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-028",
+      "success": true,
+      "metrics": {
+        "hitRate": true,
+        "citationAccuracy": true,
+        "noAnswerCompliance": true,
+        "permissionCompliance": true,
+        "keywordCoverage": 1
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-029",
+      "success": true,
+      "metrics": {
+        "hitRate": true,
+        "citationAccuracy": true,
+        "noAnswerCompliance": true,
+        "permissionCompliance": true,
+        "keywordCoverage": 1
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-030",
+      "success": true,
+      "metrics": {
+        "hitRate": true,
+        "citationAccuracy": true,
+        "noAnswerCompliance": true,
+        "permissionCompliance": true,
+        "keywordCoverage": 1
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-031",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-032",
+      "success": true,
+      "metrics": {
+        "hitRate": true,
+        "citationAccuracy": true,
+        "noAnswerCompliance": true,
+        "permissionCompliance": true,
+        "keywordCoverage": 1
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-033",
+      "success": true,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": true,
+        "noAnswerCompliance": true,
+        "permissionCompliance": true,
+        "keywordCoverage": 1
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-034",
+      "success": true,
+      "metrics": {
+        "hitRate": true,
+        "citationAccuracy": true,
+        "noAnswerCompliance": true,
+        "permissionCompliance": true,
+        "keywordCoverage": 1
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-035",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-036",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-037",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-038",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-039",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-040",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-041",
+      "success": true,
+      "metrics": {
+        "hitRate": true,
+        "citationAccuracy": true,
+        "noAnswerCompliance": true,
+        "permissionCompliance": true,
+        "keywordCoverage": 1
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-042",
+      "success": true,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": true,
+        "noAnswerCompliance": true,
+        "permissionCompliance": true,
+        "keywordCoverage": 1
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-043",
+      "success": true,
+      "metrics": {
+        "hitRate": true,
+        "citationAccuracy": true,
+        "noAnswerCompliance": true,
+        "permissionCompliance": true,
+        "keywordCoverage": 1
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-044",
+      "success": true,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": true,
+        "noAnswerCompliance": true,
+        "permissionCompliance": true,
+        "keywordCoverage": 1
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-045",
+      "success": true,
+      "metrics": {
+        "hitRate": true,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-046",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-047",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-048",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-049",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    },
+    {
+      "questionId": "eval-050",
+      "success": false,
+      "metrics": {
+        "hitRate": false,
+        "citationAccuracy": false,
+        "noAnswerCompliance": false,
+        "permissionCompliance": true,
+        "keywordCoverage": 0
+      },
+      "details": {
+        "answer": "",
+        "citations": []
+      }
+    }
+  ]
+}

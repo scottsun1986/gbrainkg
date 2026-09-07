@@ -13,7 +13,7 @@ import {
   UseInterceptors,
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
-import { PrismaClient } from "@prisma/client";
+import { getPrismaClient } from "../prisma";
 import { randomUUID } from "node:crypto";
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
@@ -44,22 +44,7 @@ function normalizeUploadFilename(value: unknown): string {
   return raw;
 }
 
-const SUPPORTED_UPLOAD_EXTENSIONS = new Set([
-  ".md",
-  ".txt",
-  ".csv",
-  ".html",
-  ".htm",
-  ".doc",
-  ".docx",
-  ".pdf",
-  ".xls",
-  ".xlsx",
-  ".pptx",
-  ".png",
-  ".jpg",
-  ".jpeg",
-]);
+import { SUPPORTED_UPLOAD_EXTENSIONS } from './parser-capabilities';
 
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -70,7 +55,7 @@ function isUuid(value: string): boolean {
 @UseGuards(AuthGuard)
 @Controller("api/v1/kbs")
 export class IngestionController {
-  private readonly prisma = new PrismaClient();
+  private readonly prisma = getPrismaClient();
   private readonly uploadRoot =
     process.env.UPLOAD_ROOT || "/tmp/llmwiki/uploads";
 
@@ -140,7 +125,7 @@ export class IngestionController {
         status: "parsing",
       },
     });
-    await this.ingestionService.enqueue(document.id);
+    await this.ingestionService.enqueue(document.id, "upload", document.version);
     return { documents: [document], status: "accepted" };
   }
 
@@ -193,7 +178,7 @@ export class IngestionController {
         status: "parsing",
       },
     });
-    await this.ingestionService.enqueue(document.id);
+    await this.ingestionService.enqueue(document.id, "upload", document.version);
     return { documents: [document], status: "accepted" };
   }
 
@@ -242,17 +227,18 @@ export class IngestionController {
     if (!document.rawFileOid)
       throw new BadRequestException("Original upload is no longer available.");
 
-    await this.prisma.document.update({
+    const retriedDocument = await this.prisma.document.update({
       where: { id: docId },
       data: {
+        version: { increment: 1 },
         status: "parsing",
         qualityStatus: "unknown",
         qualityScore: null,
         qualityIssues: [],
       },
     });
-    await this.ingestionService.enqueue(docId, "manual-retry");
-    return { document: { ...document, status: "parsing" }, status: "accepted" };
+    await this.ingestionService.enqueue(docId, "manual-retry", retriedDocument.version);
+    return { document: retriedDocument, status: "accepted" };
   }
 
   @Delete(":kbId/documents/:docId")

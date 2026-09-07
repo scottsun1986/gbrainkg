@@ -1,11 +1,12 @@
-import { Injectable, Logger, Optional } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { Injectable, Logger, Optional, Inject } from '@nestjs/common';
+import { getPrismaClient } from '../prisma';
 import { PermissionService } from '../permission/permission.service';
 import { ModelConfigService } from '../model-config.service';
 import { createHash } from 'node:crypto';
 import { BrainRepoAdapter, BrainEvidence } from '@llmwiki/gbrain-adapter';
 import { readCanonicalDocument } from './canonical-document';
 import { sourceKeyForKnowledgeBase } from './brain-source';
+import { getSharedBrainRepoAdapter } from "./brain-adapter.provider";
 
 export interface ScopeResolutionResult {
   scopeId: string;
@@ -20,16 +21,17 @@ export interface ScopeResolutionResult {
 @Injectable()
 export class BrainScopeService {
   private readonly logger = new Logger(BrainScopeService.name);
-  private prisma = new PrismaClient();
-  private gbrain = new BrainRepoAdapter(
-    process.env.BRAIN_REPO_BASE_PATH || '/tmp/llmwiki/brain_repos',
-  );
+  private prisma = getPrismaClient();
+  private gbrain: BrainRepoAdapter;
   private readonly uploadRoot = process.env.UPLOAD_ROOT || '/tmp/llmwiki/uploads';
 
   constructor(
     private readonly permissionService: PermissionService,
     @Optional() private readonly modelConfigService?: ModelConfigService,
-  ) {}
+    @Optional() @Inject('BRAIN_REPO_ADAPTER') gbrainAdapter?: BrainRepoAdapter,
+  ) {
+    this.gbrain = gbrainAdapter ?? getSharedBrainRepoAdapter();
+  }
 
   /**
    * 计算并解析当前用户的权限 Scope，支持同权限用户集合自动复用

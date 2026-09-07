@@ -1,9 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { getPrismaClient } from '../prisma';
 
 @Injectable()
 export class AuditService {
-  private prisma = new PrismaClient();
+  private prisma = getPrismaClient();
 
   async log(params: {
     userId?: string;

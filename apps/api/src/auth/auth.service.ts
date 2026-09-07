@@ -1,12 +1,12 @@
 import { BadRequestException, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { getPrismaClient } from '../prisma';
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 
 type TokenPayload = { sub: string; exp: number };
 
 @Injectable()
 export class AuthService {
-  private readonly prisma = new PrismaClient();
+  private readonly prisma = getPrismaClient();
 
   private secret(): string {
     const secret = process.env.AUTH_SECRET;

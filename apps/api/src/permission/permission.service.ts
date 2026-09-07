@@ -1,5 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
-import { PrismaClient } from "@prisma/client";
+import { getPrismaClient } from "../prisma";
 import {
   BASE_USER_PERMISSIONS,
   DEFAULT_ROLES,
@@ -9,7 +9,7 @@ import {
 @Injectable()
 export class PermissionService implements OnModuleInit {
   private readonly logger = new Logger(PermissionService.name);
-  private prisma = new PrismaClient();
+  private prisma = getPrismaClient();
 
   async onModuleInit() {
     await this.ensureDefaultRoles();

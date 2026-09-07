@@ -13,9 +13,12 @@ export class IngestionProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<{ documentId: string }>) {
+  async process(job: Job<{ documentId: string; expectedVersion: number }>) {
     try {
-      return await this.ingestionService.processDocument(job.data.documentId);
+      return await this.ingestionService.processDocument(
+        job.data.documentId,
+        job.data.expectedVersion,
+      );
     } catch (error) {
       const attempts = Number(job.opts.attempts || 1);
       if (job.attemptsMade + 1 >= attempts) {

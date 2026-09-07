@@ -1,3 +1,5 @@
+import { estimateTokens } from '../chat/context-budget';
+
 export interface IndexedMarkdownChunk {
   ord: number;
   content: string;
@@ -9,6 +11,10 @@ export interface IndexedMarkdownChunk {
     parentContext?: string;
     chunkStrategy: string;
     overlapChars: number;
+    chapter_no?: number;
+    section_no?: number;
+    article_no?: number;
+    page_no?: number;
     [key: string]: unknown;
   };
 }
@@ -17,6 +23,45 @@ const MAX_CHARS = 1800;
 const OVERLAP_CHARS = 200;
 
 type Section = { start: number; end: number; heading: string };
+
+function parseChineseNumber(str: string): number | null {
+  const match = str.match(/\d+/);
+  if (match) return parseInt(match[0], 10);
+
+  const numMap: Record<string, number> = {
+    '零': 0, '〇': 0, '○': 0, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4,
+    '五': 5, '六': 6, '七': 7, '八': 8, '九': 9
+  };
+  
+  let total = 0;
+  let current = 0;
+  let hasDigit = false;
+  
+  for (const char of str) {
+    if (numMap[char] !== undefined) {
+      if (current === 0 && total === 0 && numMap[char] === 0) continue;
+      current = numMap[char];
+      hasDigit = true;
+    } else if (char === '十') {
+      if (current === 0) current = 1;
+      total += current * 10;
+      current = 0;
+      hasDigit = true;
+    } else if (char === '百') {
+      if (current === 0) current = 1;
+      total += current * 100;
+      current = 0;
+      hasDigit = true;
+    } else if (char === '千') {
+      if (current === 0) current = 1;
+      total += current * 1000;
+      current = 0;
+      hasDigit = true;
+    }
+  }
+  total += current;
+  return hasDigit ? total : null;
+}
 
 function findSections(markdown: string): Section[] {
   const sections: Section[] = [];
@@ -49,37 +94,137 @@ function chooseBoundary(markdown: string, start: number, targetEnd: number): num
   return line > start + Math.floor(MAX_CHARS * 0.55) ? line : targetEnd;
 }
 
+function extractTableHeader(text: string): string | null {
+  const match = text.match(/(?:^|\n)(\|[^\n]+\|\r?\n\|[-\s:|]+\|)(?:\r?\n|$)/);
+  return match ? match[1].trim() : null;
+}
+
 /**
  * Split parsed Markdown on heading boundaries and paragraph-safe windows.
  * Generates child chunks with attached parent section context for high-precision retrieval.
  */
 export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[] {
   const cleanMarkdown = (markdown || '').replace(/\0/g, '').replace(/\u0000/g, '');
+  
+  // 1. Detect page markers
+  type PageMarker = { index: number; pageNo: number };
+  const pageMarkers: PageMarker[] = [];
+  const pageRegex = /<!--\s*page\s+(\d+)\s*-->|---\s*page\s+(\d+)\s*---|(?:^|\n)##\s*第\s*(\d+)\s*页|\f/gi;
+  let pMatch: RegExpExecArray | null;
+  let autoPage = 1;
+  while ((pMatch = pageRegex.exec(cleanMarkdown))) {
+    let pageNo = autoPage + 1;
+    if (pMatch[1]) pageNo = parseInt(pMatch[1], 10);
+    else if (pMatch[2]) pageNo = parseInt(pMatch[2], 10);
+    else if (pMatch[3]) pageNo = parseInt(pMatch[3], 10);
+    
+    pageMarkers.push({ index: pMatch.index, pageNo });
+    autoPage = pageNo;
+  }
+  
+  function getPageNo(index: number): number | undefined {
+    if (pageMarkers.length === 0) return undefined;
+    let page = 1;
+    for (const marker of pageMarkers) {
+      if (marker.index <= index) {
+        page = marker.pageNo;
+      } else {
+        break;
+      }
+    }
+    return page;
+  }
+
+  // 2. Detect clause structure
+  const clauseMarkerRegex = /第[\d一二三四五六七八九十百千万〇零两]+[章节条]/g;
+  const clauseMarkersCount = (cleanMarkdown.match(clauseMarkerRegex) || []).length;
+  const hasClauseStructure = clauseMarkersCount >= 3;
+
   const chunks: IndexedMarkdownChunk[] = [];
+  
+  let currentChapter: number | undefined;
+  let currentSection: number | undefined;
+  let currentArticle: number | undefined;
+  
   for (const section of findSections(cleanMarkdown)) {
     const sectionBody = cleanMarkdown.slice(section.start, section.end).trim();
+    
+    if (hasClauseStructure && section.heading) {
+      const chapterMatch = section.heading.match(/第([\d一二三四五六七八九十百千万〇零两]+)章/);
+      if (chapterMatch) {
+        currentChapter = parseChineseNumber(chapterMatch[1]) ?? currentChapter;
+        currentSection = undefined;
+      }
+      const sectionMatch = section.heading.match(/第([\d一二三四五六七八九十百千万〇零两]+)节/);
+      if (sectionMatch) {
+        currentSection = parseChineseNumber(sectionMatch[1]) ?? currentSection;
+      }
+      const articleMatch = section.heading.match(/第([\d一二三四五六七八九十百千万〇零两]+)条/);
+      if (articleMatch) {
+        currentArticle = parseChineseNumber(articleMatch[1]) ?? currentArticle;
+      }
+    }
+
+    let lastTableHeader: string | null = extractTableHeader(sectionBody);
+
     let start = section.start;
     let first = true;
     while (start < section.end) {
-      const end = chooseBoundary(cleanMarkdown, start, Math.min(start + MAX_CHARS, section.end));
+      let end = section.end;
+      if (!hasClauseStructure || (section.end - start > 5000)) {
+        end = chooseBoundary(cleanMarkdown, start, Math.min(start + MAX_CHARS, section.end));
+      }
+      
       const raw = cleanMarkdown.slice(start, end);
-      const content = raw.trim();
+      let content = raw.trim();
       if (content) {
+        // Table header propagation (inspired by WeKnora table processing):
+        // If chunk begins with table rows but lacks header delimiter, prepend preceding header
+        const beginsWithTableRow = /^\s*\|[^\n]+\|/.test(content);
+        const containsHeader = /(?:^|\n)\|[^\n]+\|\r?\n\s*\|[-\s:|]+\|/.test(content);
+        let tableHeaderAdded = false;
+
+        if (beginsWithTableRow && !containsHeader && lastTableHeader) {
+          content = `${lastTableHeader}\n${content}`;
+          tableHeaderAdded = true;
+        }
+        if (containsHeader) {
+          const newHeader = extractTableHeader(content);
+          if (newHeader) lastTableHeader = newHeader;
+        }
+
         const withHeading = !first && section.heading && !content.startsWith(section.heading)
           ? `${section.heading}\n\n${content}`
           : content;
+          
+        const hasTableContent = containsHeader || beginsWithTableRow || tableHeaderAdded || /(?:^|\n)\|[^\n]+\|/.test(content);
+
+        const metadata: IndexedMarkdownChunk['metadata'] = {
+          section: section.heading || '文档正文',
+          parentContext: sectionBody.length <= 4000 ? sectionBody : undefined,
+          chunkStrategy: hasClauseStructure ? 'clause-based' : 'parent-child-section-window',
+          overlapChars: first ? 0 : OVERLAP_CHARS,
+          has_table: hasTableContent,
+        };
+        
+        if (hasClauseStructure) {
+          if (currentChapter !== undefined) metadata.chapter_no = currentChapter;
+          if (currentSection !== undefined) metadata.section_no = currentSection;
+          if (currentArticle !== undefined) metadata.article_no = currentArticle;
+        }
+        
+        const pageNo = getPageNo(start);
+        if (pageNo !== undefined) {
+          metadata.page_no = pageNo;
+        }
+
         chunks.push({
           ord: chunks.length,
           content: withHeading,
-          tokenCount: Math.ceil(withHeading.length / 4),
+          tokenCount: estimateTokens(withHeading),
           charStart: start,
           charEnd: end,
-          metadata: {
-            section: section.heading || '文档正文',
-            parentContext: sectionBody.length <= 4000 ? sectionBody : undefined,
-            chunkStrategy: 'parent-child-section-window',
-            overlapChars: first ? 0 : OVERLAP_CHARS,
-          },
+          metadata,
         });
       }
       if (end >= section.end) break;
@@ -88,5 +233,12 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
       first = false;
     }
   }
+
+  // Link neighbor chunks (inspired by WeKnora chunk neighbor graph)
+  for (let i = 0; i < chunks.length; i++) {
+    if (i > 0) chunks[i].metadata.prev_chunk_ord = chunks[i - 1].ord;
+    if (i < chunks.length - 1) chunks[i].metadata.next_chunk_ord = chunks[i + 1].ord;
+  }
+
   return chunks;
 }

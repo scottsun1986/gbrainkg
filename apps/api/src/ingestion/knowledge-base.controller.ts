@@ -9,7 +9,7 @@ import {
   UnauthorizedException,
   UseGuards,
 } from "@nestjs/common";
-import { PrismaClient } from "@prisma/client";
+import { getPrismaClient } from "../prisma";
 import type { Response } from "express";
 import { readFile, stat } from "node:fs/promises";
 import { extname, join } from "node:path";
@@ -109,7 +109,7 @@ function brainTopicSlug(title: string): string {
 @UseGuards(AuthGuard)
 @Controller("api/v1/kbs")
 export class KnowledgeBaseController {
-  private readonly prisma = new PrismaClient();
+  private readonly prisma = getPrismaClient();
   private readonly uploadRoot =
     process.env.UPLOAD_ROOT || "/tmp/llmwiki/uploads";
 

@@ -1,10 +1,12 @@
-import { Controller, Get, Query, Req, UseGuards } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { Body, Controller, ForbiddenException, Get, Optional, Post, Query, Req, UseGuards, Inject } from '@nestjs/common';
+import { getPrismaClient } from './prisma';
 import { AuthService } from './auth/auth.service';
 import { PermissionService } from './permission/permission.service';
 import { AuthGuard } from './auth/auth.guard';
 import { BrainRepoAdapter } from '@llmwiki/gbrain-adapter';
 import { sourceKeyForKnowledgeBase } from './brain-compiler/brain-source';
+import { GraphRagService } from './graph-rag/graph-rag.service';
+import { getSharedBrainRepoAdapter } from './brain-compiler/brain-adapter.provider';
 
 type GraphNode = {
   id: string;
@@ -51,21 +53,27 @@ function extractTerms(title: string, chunks: Array<{ content: string; metadata: 
 @UseGuards(AuthGuard)
 @Controller('api/v1/knowledge-graph')
 export class KnowledgeGraphController {
-  private readonly prisma = new PrismaClient();
-  private readonly gbrain = new BrainRepoAdapter(
-    process.env.BRAIN_REPO_BASE_PATH || '/tmp/llmwiki/brain_repos',
-  );
+  private readonly prisma = getPrismaClient();
+  private readonly gbrain: BrainRepoAdapter;
 
   constructor(
     private readonly authService: AuthService,
     private readonly permissionService: PermissionService,
-  ) {}
+    @Optional() private readonly graphRagService?: GraphRagService,
+    @Optional() @Inject('BRAIN_REPO_ADAPTER') gbrainAdapter?: BrainRepoAdapter,
+  ) {
+    this.gbrain = gbrainAdapter ?? getSharedBrainRepoAdapter();
+  }
 
   @Get()
   async getGraph(@Req() req: any, @Query('limit') rawLimit?: string) {
     const userId = await this.authService.userIdFromRequest(req);
     const visibleKbIds = await this.permissionService.getVisibleKnowledgeBases(userId);
     const limit = Math.min(Math.max(Number(rawLimit || 1000) || 1000, 1), 1000);
+
+    // Persistent heuristic rows do not carry a validated source-version
+    // contract. Build discovery from currently published documents instead.
+
     const documents = await this.prisma.document.findMany({
       where: { kbId: { in: visibleKbIds }, status: 'published' },
       orderBy: { updatedAt: 'desc' },
@@ -115,12 +123,11 @@ export class KnowledgeGraphController {
       }
     }
 
-    // Prefer actual GBrain page links when they exist. The original term graph
-    // remains useful as a clearly-labelled discovery aid, but never replaces
-    // an asserted/extracted relation from GBrain's graph plane.
+    // Prefer actual GBrain page links when they exist.
     const docNodeBySlug = new Map(documents.map((document) => [`docs/${document.id}`, `doc:${document.id}`]));
     let gbrainLinks = 0;
     let gbrainLinkErrors = 0;
+    let gbrainLinksFiltered = 0;
     for (const document of documents.slice(0, 120)) {
       try {
         const sourceRef = `gbrain://source/${sourceKeyForKnowledgeBase(document.kbId)}`;
@@ -136,19 +143,15 @@ export class KnowledgeGraphController {
           const targetSlug = String(link?.to || link?.to_slug || link?.target || link?.target_slug || '').trim();
           if (!targetSlug) continue;
           const source = `doc:${document.id}`;
-          const target = docNodeBySlug.get(targetSlug) || `gbrain:${sourceKeyForKnowledgeBase(document.kbId)}:${targetSlug}`;
-          if (!docNodeBySlug.has(targetSlug)) {
-            addNode({
-              id: target,
-              label: cleanLabel(String(link?.to_title || link?.title || targetSlug.split('/').pop() || targetSlug)),
-              type: 'concept',
-              metadata: { source: 'gbrain', slug: targetSlug, status: link?.status || 'linked' },
-            });
-          }
+          const target = docNodeBySlug.get(targetSlug);
+          // The upstream projection may outlive a removed/unpublished page.
+          // Resolve both ends against this request's published ACL-filtered set;
+          // do not expose unknown titles or unversioned link-context snippets.
+          if (!target) { gbrainLinksFiltered++; continue; }
           addEdge(source, target, 'related_to', [{
             documentId: document.id,
-            snippet: String(link?.context || link?.link_type || 'GBrain relation').slice(0, 500),
-            provenance: String(link?.link_source || link?.source || 'gbrain'),
+            snippet: 'GBrain 文档关联（发现线索，不作为原文证据）',
+            provenance: 'gbrain_discovery',
           }]);
           gbrainLinks += 1;
         }
@@ -157,7 +160,7 @@ export class KnowledgeGraphController {
       }
     }
 
-    // Extract explicit cross-document policy citations (e.g. 《某某规章》, 根据《...》)
+    // Extract explicit cross-document policy citations
     const titleToDoc = new Map(documents.map((d) => [cleanLabel(d.title), d]));
     for (const document of documents) {
       const chunksContent = document.chunks.map((c) => c.content).join(' ');
@@ -173,9 +176,6 @@ export class KnowledgeGraphController {
       }
     }
 
-    // Only create co-occurrence edges supported by shared extracted terms.
-    // They are deliberately labelled related_to, never presented as factual
-    // causal relationships without an explicit source assertion.
     const related = new Map<string, Set<string>>();
     for (const [term, docIds] of conceptDocuments) {
       const ids = [...docIds];
@@ -201,9 +201,57 @@ export class KnowledgeGraphController {
         relations: edges.size,
         gbrainLinks,
         gbrainLinkErrors,
+        gbrainLinksFiltered,
         graphMode: 'gbrain-links-plus-discovery',
       },
       scope: { userId, visibleKnowledgeBases: visibleKbIds.length, onlyPublished: true },
+    };
+  }
+
+  @Post('reindex')
+  async reindexGraph(@Req() req: any, @Body('kbId') targetKbId?: string) {
+    const userId = await this.authService.userIdFromRequest(req);
+    const visibleKbIds = await this.permissionService.getVisibleKnowledgeBases(userId);
+    // Reading a library does not authorize rebuilding its persistent projection.
+    const candidates = targetKbId ? [targetKbId].filter(id => visibleKbIds.includes(id)) : visibleKbIds;
+    const kbsToIndex: string[] = [];
+    for (const kbId of candidates) {
+      if (await this.permissionService.canManageKnowledgeBase(userId, kbId)) kbsToIndex.push(kbId);
+    }
+    if (!kbsToIndex.length) {
+      throw new ForbiddenException('No manageable knowledge bases to reindex');
+    }
+
+    const documents = await this.prisma.document.findMany({
+      where: { kbId: { in: kbsToIndex }, status: 'published' },
+      select: {
+        id: true,
+        title: true,
+        kbId: true,
+        chunks: { orderBy: { ord: 'asc' }, take: 200, select: { id: true, content: true } },
+      },
+    });
+
+    let totalEntities = 0;
+    let totalRelations = 0;
+    if (this.graphRagService) {
+      for (const doc of documents) {
+        const elements = this.graphRagService.extractGraphElements(doc.title, doc.id, doc.chunks);
+        const res = await this.graphRagService.persistGraphElements(doc.kbId, elements);
+        totalEntities += res.entityCount;
+        totalRelations += res.relationCount;
+      }
+      for (const kbId of kbsToIndex) {
+        await this.graphRagService.buildCommunitiesForKb(kbId);
+      }
+    }
+
+    return {
+      status: 'completed',
+      indexedDocuments: documents.length,
+      totalEntities,
+      totalRelations,
+      kbs: kbsToIndex,
     };
   }
 }

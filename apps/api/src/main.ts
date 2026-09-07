@@ -22,6 +22,7 @@ function loadLocalEnv() {
 async function bootstrap() {
   loadLocalEnv();
   const app = await NestFactory.create(AppModule);
+  app.enableShutdownHooks();
   
   app.use(helmet());
   app.use(express.json({ limit: '250mb' }));

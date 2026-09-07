@@ -2,7 +2,6 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
-
 generator client {
   provider        = "prisma-client-js"
   previewFeatures = ["postgresqlExtensions"]
@@ -505,4 +504,61 @@ model AuditLog {
   @@index([userId, createdAt])
   @@index([action, createdAt])
   @@index([resourceId])
+}
+
+// 知识图谱实体（GraphRAG Entity）
+model GraphEntity {
+  id          String   @id @default(uuid()) @db.Uuid
+  kbId        String   @db.Uuid
+  name        String
+  type        String   @default("concept") // concept / organization / system / policy / person / document
+  description String?
+  aliases     Json     @default("[]")
+  properties  Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  outgoingRelations GraphRelation[] @relation("SourceEntity")
+  incomingRelations GraphRelation[] @relation("TargetEntity")
+
+  @@unique([kbId, name])
+  @@index([kbId, type])
+  @@index([name])
+}
+
+// 知识图谱关系（GraphRAG Relation）
+model GraphRelation {
+  id           String   @id @default(uuid()) @db.Uuid
+  kbId         String   @db.Uuid
+  sourceId     String   @db.Uuid
+  targetId     String   @db.Uuid
+  relationType String   // contains / references / regulates / depends_on / relates_to / mentions
+  weight       Float    @default(1.0)
+  description  String?
+  provenance   Json     @default("[]") // [{ documentId, chunkId, snippet }]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @default(now()) @updatedAt
+
+  source       GraphEntity @relation("SourceEntity", fields: [sourceId], references: [id], onDelete: Cascade)
+  target       GraphEntity @relation("TargetEntity", fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceId, targetId, relationType])
+  @@index([kbId, relationType])
+  @@index([sourceId])
+  @@index([targetId])
+}
+
+// 知识图谱社区与宏观摘要（GraphRAG Community Summaries）
+model GraphCommunity {
+  id        String   @id @default(uuid()) @db.Uuid
+  kbId      String   @db.Uuid
+  title     String
+  level     Int      @default(0)
+  summary   String
+  entityIds Json     @default("[]")
+  findings  Json     @default("[]")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([kbId, level])
 }

@@ -1,0 +1,18 @@
+[
+  {
+    "id": "AUTH-02",
+    "area": "登录失败处理",
+    "expected": "错误凭据被拒绝且页面不崩溃",
+    "actual": "已显示登录错误",
+    "status": "PASS",
+    "shot": "screenshots/02-login-invalid.png"
+  },
+  {
+    "id": "AUTH-01",
+    "area": "登录",
+    "expected": "本机测试超级管理员可登录",
+    "actual": "admin/CY 均未能在浏览器登录；无法继续",
+    "status": "BLOCKED",
+    "shot": "screenshots/03-admin-workspace.png"
+  }
+]

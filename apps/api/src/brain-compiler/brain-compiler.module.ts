@@ -6,6 +6,7 @@ import { BrainScopeService } from './brain-scope.service';
 import { BrainOutboxService } from './brain-outbox.service';
 import { PermissionModule } from '../permission/permission.module';
 import { ModelConfigModule } from '../model-config.module';
+import { brainAdapterProvider } from './brain-adapter.provider';
 
 @Module({
   imports: [
@@ -16,12 +17,14 @@ import { ModelConfigModule } from '../model-config.module';
     }),
   ],
   providers: [
+    brainAdapterProvider,
     BrainCompilerService,
     BrainCompilerProcessor,
     BrainScopeService,
     BrainOutboxService,
   ],
   exports: [
+    brainAdapterProvider,
     BrainCompilerService,
     BrainScopeService,
     BrainOutboxService,

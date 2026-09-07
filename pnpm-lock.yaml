@@ -17,6 +17,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@firecrawl/anydoc':
+        specifier: 0.2.4
+        version: 0.2.4
       '@llmwiki/gbrain-adapter':
         specifier: workspace:*
         version: link:../../packages/gbrain-adapter
@@ -144,6 +147,9 @@ importers:
       docx-preview:
         specifier: ^0.4.0
         version: 0.4.0
+      dompurify:
+        specifier: 3.4.14
+        version: 3.4.14
       marked:
         specifier: ^18.0.11
         version: 18.0.11
@@ -473,6 +479,53 @@ packages:
   '@eslint/plugin-kit@0.4.1':
     resolution: {integrity: sha512-43/qtrDUokr7LJqoF2c3+RInu/t4zfrpYdoSDfYyhg52rwLV6TnOvdG4fXm7IkSB3wErkcmJS9iEhjVtOSEjjA==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+
+  '@firecrawl/anydoc-darwin-arm64@0.2.4':
+    resolution: {integrity: sha512-1Eg0rPGVMN052E7Y2+zswANS0KLaWhXvYb9CPgO8HEtclzu3hKAIJ00lIu5PF+DXafZ10ZS4fmrcP+9Ifct9qw==}
+    engines: {node: '>= 20'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@firecrawl/anydoc-darwin-x64@0.2.4':
+    resolution: {integrity: sha512-fTM8y6COu+jBqWRJ0Je0OqaDDt7YxJ8LU4ISoypO5eOBNXI3+l6tK1ZRwUclYWXGBr/6JaUWEgdyJVFfd/fpJg==}
+    engines: {node: '>= 20'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@firecrawl/anydoc-linux-arm64-gnu@0.2.4':
+    resolution: {integrity: sha512-gRrrjluTfQCjOO6wBefEP1QumYlUcGWKP7secVIO+ly8U/+DDQ70bOHW2lOGu19hA/23j7bc7bb3oLPAaBY82A==}
+    engines: {node: '>= 20'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@firecrawl/anydoc-linux-arm64-musl@0.2.4':
+    resolution: {integrity: sha512-fpzby6xqD709GmYUpnrWh7/2Csa6lwGrZrYPNGyn4KMEuJ1ibsNv6I3kdZAotMUKZ8nlNdPp32v964eBpsijcw==}
+    engines: {node: '>= 20'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@firecrawl/anydoc-linux-x64-gnu@0.2.4':
+    resolution: {integrity: sha512-yfvx+iGo2CvZH0TB9MeyNjkrd5/psNFEuxkl2Jah/VNFesPRASqjjCkDRY7tKw7fPij1u/UyFVxI6bsu6Iow9Q==}
+    engines: {node: '>= 20'}
+    cpu: [x64]
+    os: [linux]
+
+  '@firecrawl/anydoc-linux-x64-musl@0.2.4':
+    resolution: {integrity: sha512-9OWpM84c5SA/2wjfFxgfhupxziapus+7DERWmcOvkVxNp2H5Qj/9Y74c9leP2i03SjmBDl9tYWMVd3k/S3rY6w==}
+    engines: {node: '>= 20'}
+    cpu: [x64]
+    os: [linux]
+
+  '@firecrawl/anydoc-win32-x64-msvc@0.2.4':
+    resolution: {integrity: sha512-E7d14hy5kZNsMNnHiutU6r9yr53LrKXSsMSFtl0QhU/1KWuvRnjhQEuMiuW4YbsMcPlEaK10WtBVF86g9OMW6A==}
+    engines: {node: '>= 20'}
+    cpu: [x64]
+    os: [win32]
+
+  '@firecrawl/anydoc@0.2.4':
+    resolution: {integrity: sha512-rfJxa5L+nhoqR5yodcRZoGDLaSfxMTpBuhVj1gSacfW4ZGjBt4cjfErXwaKjPYrpWRTPIBye2sh36UhqgOP1Og==}
+    engines: {node: '>= 20'}
+    hasBin: true
 
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
@@ -1266,6 +1319,9 @@ packages:
 
   '@types/supertest@2.0.16':
     resolution: {integrity: sha512-6c2ogktZ06tr2ENoZivgm7YnprnhYE4ZoXGMY+oA7IuAf17M8FWvujXZGmxLv8y0PTyts4x5A+erSwVUFA8XSg==}
+
+  '@types/trusted-types@2.0.7':
+    resolution: {integrity: sha512-ScaPdn1dQczgbl0QFTeTOmVHFULt394XJgOQNoyVhZ6r2vLnMLJfBPd53SB52T/3G36VI1/g2MZaX0cwDuXsfw==}
 
   '@types/validator@13.15.10':
     resolution: {integrity: sha512-T8L6i7wCuyoK8A/ZeLYt1+q0ty3Zb9+qbSSvrIVitzT3YjZqkTZ40IbRsPanlB4h1QB3JVL1SYCdR6ngtFYcuA==}
@@ -2152,6 +2208,9 @@ packages:
 
   docx-preview@0.4.0:
     resolution: {integrity: sha512-OdKtE/uj3M4RfGarLkGjahUzRg8/kBp0Sraj1r1NAY1tp/sTpHOBqDrzVf9onMBt9vxP6SdQ6bpLCUCsFwjgcA==}
+
+  dompurify@3.4.14:
+    resolution: {integrity: sha512-dVoH9z+MY+C9IilgGCk3YfFqjLi3fChm2OiKJMzh6axrJ5qwxqWaZamgmHrpv22CN/KdbZJuGEGgfQoL00LTdg==}
 
   dunder-proto@1.0.1:
     resolution: {integrity: sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==}
@@ -4903,6 +4962,37 @@ snapshots:
       '@eslint/core': 0.17.0
       levn: 0.4.1
 
+  '@firecrawl/anydoc-darwin-arm64@0.2.4':
+    optional: true
+
+  '@firecrawl/anydoc-darwin-x64@0.2.4':
+    optional: true
+
+  '@firecrawl/anydoc-linux-arm64-gnu@0.2.4':
+    optional: true
+
+  '@firecrawl/anydoc-linux-arm64-musl@0.2.4':
+    optional: true
+
+  '@firecrawl/anydoc-linux-x64-gnu@0.2.4':
+    optional: true
+
+  '@firecrawl/anydoc-linux-x64-musl@0.2.4':
+    optional: true
+
+  '@firecrawl/anydoc-win32-x64-msvc@0.2.4':
+    optional: true
+
+  '@firecrawl/anydoc@0.2.4':
+    optionalDependencies:
+      '@firecrawl/anydoc-darwin-arm64': 0.2.4
+      '@firecrawl/anydoc-darwin-x64': 0.2.4
+      '@firecrawl/anydoc-linux-arm64-gnu': 0.2.4
+      '@firecrawl/anydoc-linux-arm64-musl': 0.2.4
+      '@firecrawl/anydoc-linux-x64-gnu': 0.2.4
+      '@firecrawl/anydoc-linux-x64-musl': 0.2.4
+      '@firecrawl/anydoc-win32-x64-msvc': 0.2.4
+
   '@humanfs/core@0.19.2':
     dependencies:
       '@humanfs/types': 0.15.0
@@ -5764,6 +5854,9 @@ snapshots:
   '@types/supertest@2.0.16':
     dependencies:
       '@types/superagent': 8.1.11
+
+  '@types/trusted-types@2.0.7':
+    optional: true
 
   '@types/validator@13.15.10': {}
 
@@ -6733,6 +6826,10 @@ snapshots:
   docx-preview@0.4.0:
     dependencies:
       jszip: 3.10.1
+
+  dompurify@3.4.14:
+    optionalDependencies:
+      '@types/trusted-types': 2.0.7
 
   dunder-proto@1.0.1:
     dependencies:

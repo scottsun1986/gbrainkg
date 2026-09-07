@@ -3,10 +3,12 @@ import {
   Logger,
   OnModuleDestroy,
   OnModuleInit,
+  Inject,
+  Optional,
 } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue, QueueEvents } from "bullmq";
-import { PrismaClient } from "@prisma/client";
+import { getPrismaClient } from "../prisma";
 import { PermissionService } from "../permission/permission.service";
 import { BrainRepoAdapter } from "@llmwiki/gbrain-adapter";
 import { ModelConfigService } from "../model-config.service";
@@ -16,6 +18,7 @@ import { sourceKeyForKnowledgeBase } from "./brain-source";
 
 import { BrainScopeService } from "./brain-scope.service";
 import { BrainOutboxService } from "./brain-outbox.service";
+import { getSharedBrainRepoAdapter } from "./brain-adapter.provider";
 
 export enum CompilePriority {
   CRITICAL = 1, // 权限撤销
@@ -28,10 +31,8 @@ export enum CompilePriority {
 @Injectable()
 export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(BrainCompilerService.name);
-  private prisma = new PrismaClient();
-  private gbrain = new BrainRepoAdapter(
-    process.env.BRAIN_REPO_BASE_PATH || "/tmp/llmwiki/brain_repos",
-  );
+  private prisma = getPrismaClient();
+  private gbrain: BrainRepoAdapter;
   private readonly uploadRoot =
     process.env.UPLOAD_ROOT || "/tmp/llmwiki/uploads";
   private readonly maintenanceTimezone =
@@ -44,7 +45,10 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
     private readonly modelConfigService: ModelConfigService,
     private readonly scopeService: BrainScopeService,
     private readonly outboxService: BrainOutboxService,
-  ) {}
+    @Optional() @Inject('BRAIN_REPO_ADAPTER') gbrainAdapter?: BrainRepoAdapter,
+  ) {
+    this.gbrain = gbrainAdapter ?? getSharedBrainRepoAdapter();
+  }
 
   async onModuleInit() {
     await this.modelConfigService.applyRuntimeConfig();
@@ -783,7 +787,6 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleDestroy() {
     await this.queueEvents?.close();
-    await this.prisma.$disconnect();
   }
 
   /**

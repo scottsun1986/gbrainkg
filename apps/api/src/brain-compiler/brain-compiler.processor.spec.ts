@@ -8,6 +8,7 @@ import { BrainScopeService } from "./brain-scope.service";
 import { BrainOutboxService } from "./brain-outbox.service";
 
 const mockPrisma = {
+  brainChangeEvent: { findUnique: jest.fn(), update: jest.fn() },
   brainRepo: {
     findUnique: jest.fn(),
     update: jest.fn(),
@@ -67,6 +68,15 @@ describe("BrainCompilerProcessor", () => {
 
     processor = module.get<BrainCompilerProcessor>(BrainCompilerProcessor);
     jest.clearAllMocks();
+  });
+
+  it('does not repeat side effects for a completed outbox event', async () => {
+    mockPrisma.brainChangeEvent.findUnique.mockResolvedValue({ id: 'event-1', status: 'completed', eventType: 'doc_change' });
+    const result = await processor.process({ name: 'process-outbox-event', data: { eventId: 'event-1' } } as Job);
+    expect(result).toMatchObject({ status: 'skipped', reason: 'Event already completed' });
+    expect(mockPrisma.brainChangeEvent.update).not.toHaveBeenCalled();
+    expect(compilerService.syncKnowledgeBaseSource).not.toHaveBeenCalled();
+    expect(compilerService.reconcileAccess).not.toHaveBeenCalled();
   });
 
   it("should process a dirty job through READ, GATHER, WRITE, SYNC", async () => {

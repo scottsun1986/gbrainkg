@@ -48,35 +48,25 @@ LOCAL_DOCLING_ENABLED = os.environ.get("LOCAL_DOCLING_ENABLED", "1").lower() not
     "no",
 }
 tasks: dict[str, dict[str, Any]] = {}
+MAX_TASKS = max(1, int(os.environ.get("PARSER_MAX_TASKS", "5000")))
+
+
+def reserve_task(task_id: str, filename: str, parser_type: str) -> None:
+    # No await between capacity check and reservation: concurrent uploads in
+    # this event loop cannot overbook or evict an in-flight task. Completed
+    # results retain their normal TTL so API polling can still retrieve them.
+    if len(tasks) >= MAX_TASKS:
+        raise HTTPException(status_code=503, detail="Parser capacity exhausted", headers={"Retry-After": "5"})
+    tasks[task_id] = {"status": "queued", "filename": filename, "parser_type": parser_type, "created_at": time.time()}
 _torchvision_compat_lib = None
 _baidu_access_token: tuple[str, float] | None = None
 
 
-def _pdf_native_quality(text: str) -> str:
-    if not text:
-        return "empty"
-    replacement_ratio = text.count("\ufffd") / max(len(text), 1)
-    control_count = sum(1 for char in text if ord(char) < 32 and char not in "\n\r\t")
-    control_ratio = control_count / max(len(text), 1)
-    return "poor" if replacement_ratio > 0.08 or control_ratio > 0.02 else "good"
+try:
+    from src.quality import _pdf_native_quality, classify_pdf, assess_content_quality
+except (ImportError, ModuleNotFoundError):
+    from quality import _pdf_native_quality, classify_pdf, assess_content_quality
 
-
-def classify_pdf(
-    page_count: int, text_pages: int, native_chars: int, native_quality: str
-) -> str:
-    """Classify a PDF from page coverage, not just total extracted length."""
-    page_ratio = text_pages / max(page_count, 1)
-    average_chars = native_chars / max(page_count, 1)
-    if (
-        native_quality == "good"
-        and native_chars >= 80
-        and (page_count == 1 or page_ratio >= 0.65)
-        and average_chars >= 80
-    ):
-        return "text"
-    if page_ratio <= 0.20 or (native_chars < 40 and native_quality != "good"):
-        return "scanned"
-    return "mixed"
 
 async def periodic_cleanup():
     while True:
@@ -127,7 +117,12 @@ def health_check():
         "pdf_parse_mode": PDF_PARSE_MODE,
         "ocr_provider": OCR_PROVIDER,
         "local_docling_enabled": LOCAL_DOCLING_ENABLED,
+        # AnyDoc is intentionally owned by the API's official Node binding;
+        # this worker only handles OCR/layout fallbacks.
+        "anydoc_available": False,
+        "anydoc_owner": "api-node",
     }
+
 
 @app.get("/metrics")
 def metrics():
@@ -854,71 +849,6 @@ async def convert_pdf_with_fallback(
     )
 
 
-def assess_content_quality(markdown: str, suffix: str, task: dict[str, Any]) -> dict[str, Any]:
-    """Return a conservative quality signal before a document is published.
-
-    The parser may produce non-empty but unusable output (font encoding
-    damage, a blank image, or a PPTX with only unrecognised shapes). Quality is
-    therefore persisted separately from parser success. A review result keeps
-    the Markdown/chunks available for inspection but never enters GBrain.
-    """
-    text = str(markdown or "")
-    placeholder_count = len(re.findall(r"<!--\s*(?:image|picture|figure)\s*-->", text, flags=re.IGNORECASE))
-    quality_text = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
-    quality_text = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", quality_text)
-    meaningful = re.findall(r"[A-Za-z0-9\u4e00-\u9fff]", quality_text)
-    meaningful_count = len(meaningful)
-    replacement_count = text.count("\ufffd")
-    control_count = sum(1 for char in text if ord(char) < 32 and char not in "\n\r\t")
-    replacement_ratio = replacement_count / max(len(text), 1)
-    control_ratio = control_count / max(len(text), 1)
-    issues: list[str] = []
-    binary_input = suffix not in {".md", ".txt", ".csv", ".html", ".htm"}
-    if meaningful_count == 0:
-        issues.append("没有提取到可检索文字")
-    if binary_input and meaningful_count < 20:
-        issues.append("提取文字过少，可能是空白文件或解析不完整")
-    if replacement_ratio > 0.01:
-        issues.append("存在较多字体编码替换字符")
-    if control_ratio > 0.02:
-        issues.append("存在异常控制字符")
-    if placeholder_count and suffix in {".pptx", ".png", ".jpg", ".jpeg"}:
-        issues.append("版面解析只返回图片占位符，图片文字尚未完成 OCR")
-    confidence = task.get("ocr_average_confidence")
-    if confidence is not None:
-        try:
-            if float(confidence) < 0.75:
-                issues.append("OCR 平均置信度低于 0.75")
-        except (TypeError, ValueError):
-            pass
-    score = 1.0
-    score -= min(replacement_ratio * 4, 0.45)
-    score -= min(control_ratio * 2, 0.2)
-    if binary_input and meaningful_count < 20:
-        score -= 0.45
-    if confidence is not None:
-        try:
-            score = min(score, max(0.0, float(confidence)))
-        except (TypeError, ValueError):
-            pass
-    score = round(max(0.0, min(1.0, score)), 4)
-    status = "passed" if not issues else "needs_review"
-    if meaningful_count == 0:
-        status = "rejected"
-    return {
-        "quality_status": status,
-        "quality_score": score,
-        "quality_issues": issues,
-        "quality_metrics": {
-            "characters": len(text),
-            "meaningful_characters": meaningful_count,
-            "replacement_ratio": round(replacement_ratio, 6),
-            "control_ratio": round(control_ratio, 6),
-            "image_placeholders": placeholder_count,
-        },
-    }
-
-
 async def process_file(
     task_id: str,
     path: Path,
@@ -929,6 +859,9 @@ async def process_file(
     task["status"] = "processing"
     try:
         suffix = path.suffix.lower()
+
+        # AnyDoc is integrated once through the API's official Node package.
+        # This execution service handles OCR and native/complex-layout fallback.
         if suffix in {".md", ".txt", ".csv", ".html", ".htm"}:
             content = await asyncio.to_thread(path.read_bytes)
             task["markdown"] = extract_plaintext(path.name, content)
@@ -1066,10 +999,6 @@ async def parse_document(
     ocr_secret_key: str | None = Form(None),
     _auth: None = Depends(verify_auth),
 ):
-    if len(tasks) >= 5000:
-        oldest_tid = min(tasks.keys(), key=lambda k: tasks[k].get("created_at", float('inf')))
-        del tasks[oldest_tid]
-
     filename = Path(file.filename or "upload.md").name
     suffix = Path(filename).suffix.lower()
     if not suffix:
@@ -1085,10 +1014,23 @@ async def parse_document(
     if len(content) > MAX_FILE_BYTES:
         raise HTTPException(status_code=413, detail="File exceeds 200 MiB limit")
 
+    if parser_type.lower() == "anydoc":
+        raise HTTPException(
+            status_code=400,
+            detail="AnyDoc parsing is natively handled by the API (Node.js). "
+            "The parser worker is reserved for OCR, antiword, and layout fallbacks. "
+            "Please route AnyDoc-capable formats through the API first."
+        )
+
     task_id = str(uuid.uuid4())
     path = UPLOAD_ROOT / f"{task_id}{suffix}"
-    await asyncio.to_thread(path.write_bytes, content)
-    tasks[task_id] = {"status": "queued", "filename": filename, "parser_type": parser_type, "created_at": time.time()}
+    reserve_task(task_id, filename, parser_type)
+    try:
+        await asyncio.to_thread(path.write_bytes, content)
+    except Exception:
+        tasks.pop(task_id, None)
+        path.unlink(missing_ok=True)
+        raise
     # Credentials are request-scoped and deliberately not copied into tasks;
     # /parse/{task_id} must never expose them.
     ocr_config = {
@@ -1101,11 +1043,39 @@ async def parse_document(
     return ParseResponse(task_id=task_id, status="accepted", message=f"File {filename} queued for parsing")
 
 @app.get("/parse/{task_id}")
-def parse_status(task_id: str):
+def parse_status(task_id: str, _auth: None = Depends(verify_auth)):
     task = tasks.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Parse task not found")
     return {"task_id": task_id, **task}
+
+
+@app.post("/parse-execute")
+async def execute_document(
+    file: UploadFile = File(...),
+    parser_type: str = "auto",
+    ocr_provider: str | None = Form(None),
+    ocr_endpoint: str | None = Form(None),
+    ocr_api_key: str | None = Form(None),
+    ocr_secret_key: str | None = Form(None),
+    _auth: None = Depends(verify_auth),
+):
+    """Execution-only interface; the calling BullMQ job owns durable retries.
+
+    No task ID needs to survive a Python restart. The original upload remains
+    in application storage and a failed HTTP execution is safely retried there.
+    Legacy async routes remain for compatibility but are not used by ingestion.
+    """
+    background = BackgroundTasks()
+    accepted = await parse_document(
+        background, file, parser_type, ocr_provider, ocr_endpoint,
+        ocr_api_key, ocr_secret_key, _auth,
+    )
+    try:
+        await background()
+        return {"task_id": accepted.task_id, **tasks[accepted.task_id]}
+    finally:
+        tasks.pop(accepted.task_id, None)
 
 if __name__ == "__main__":
     import uvicorn

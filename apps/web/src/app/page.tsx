@@ -8,7 +8,7 @@
  */
 /* eslint-disable */
 import React, { useState, useEffect, useRef, useMemo } from "react";
-import { marked } from "marked";
+import { renderMarkdown, renderPlainText } from "../lib/markdown";
 import * as XLSX from "xlsx";
 
 declare global {
@@ -379,26 +379,7 @@ function UniversalDocumentViewer({ preview, onClose }) {
   // 高亮处理后的 Markdown HTML
   const markdownHtml = useMemo(() => {
     const content = docData?.markdown_content || '';
-    if (!content) return '<p style="color:var(--ink-4);font-style:italic;">暂无结构化解析内容</p>';
-    let html = '';
-    try {
-      html = (marked.parse(content) as unknown as string) || '';
-    } catch {
-      html = `<div style="white-space:pre-wrap;">${content}</div>`;
-    }
-    if (rankedPhrases.length > 0) {
-      for (const phrase of rankedPhrases) {
-        try {
-          const str = String(phrase || '').trim();
-          if (!str) continue;
-          const escaped = str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
-          // 仅匹配 HTML 标签外部的可见文本，避免破坏 HTML 标签结构与属性
-          const regex = new RegExp(`(?![^<]*>)(${escaped})`, 'gi');
-          html = html.replace(regex, '<mark class="doc-citation-highlight">$1</mark>');
-        } catch {}
-      }
-    }
-    return html;
+    return renderMarkdown(content, rankedPhrases);
   }, [docData?.markdown_content, rankedPhrases]);
 
   // 命中切片计算
@@ -844,18 +825,7 @@ function UniversalDocumentViewer({ preview, onClose }) {
                           <div style={{ fontSize: '12.5px', color: 'var(--ink)', lineHeight: '1.6', whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>
                             {isMatch ? (
                               <span dangerouslySetInnerHTML={{
-                                __html: (() => {
-                                  let text = (chunk.content || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                                  for (const p of (rankedPhrases.length > 0 ? rankedPhrases : cleanPhrases)) {
-                                    try {
-                                      const pStr = String(p || '').trim();
-                                      if (!pStr) continue;
-                                      const escaped = pStr.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                                      text = text.replace(new RegExp(`(${escaped})`, 'gi'), '<mark class="doc-citation-highlight">$1</mark>');
-                                    } catch {}
-                                  }
-                                  return text;
-                                })()
+                                __html: renderPlainText(chunk.content || '', rankedPhrases.length > 0 ? rankedPhrases : cleanPhrases)
                               }} />
                             ) : (
                               chunk.content
@@ -4055,8 +4025,8 @@ function OcrConfigPanel(){
 
 function NewProviderModal({target, onClose, onSaved}){
   const [kind, setKind] = useState(target?.kind || 'gateway');
-  const [name, setName] = useState(target?.name || ''); const [baseUrl, setBaseUrl] = useState(target?.url || ''); const [apiKey, setApiKey] = useState(''); const [secretKey, setSecretKey] = useState(''); const [note, setNote] = useState(''); const [saving, setSaving] = useState(false);
-  const save = async () => { if (!name.trim() || !baseUrl.trim()) return; setSaving(true); try { const response=await fetch(`${API_BASE_URL}/api/v1/admin/providers${target ? `/${target.id}` : ''}`,{method:target?'PATCH':'POST',headers:{'Content-Type':'application/json',...apiHeaders()},body:JSON.stringify({name,kind,baseUrl,defaultParams:{note},...(apiKey ? {apiKey} : {}),...(secretKey ? {secretKey} : {})})}); const result=await response.json().catch(()=>({})); if(!response.ok) throw new Error(result.message||'保存失败'); window.dispatchEvent(new CustomEvent('app-toast',{detail:'供应商已保存'})); onSaved?.(); } catch(error){window.dispatchEvent(new CustomEvent('app-toast',{detail:error.message||'保存失败'}));} finally{setSaving(false);} };
+  const [name, setName] = useState(target?.name || ''); const [baseUrl, setBaseUrl] = useState(target?.url || ''); const [apiKey, setApiKey] = useState(''); const [secretKey, setSecretKey] = useState(''); const [note, setNote] = useState(target?.defaultParams?.note || ''); const [gbrainRecipe, setGbrainRecipe] = useState(target?.defaultParams?.gbrainRecipe || 'openai'); const [saving, setSaving] = useState(false);
+  const save = async () => { if (!name.trim() || !baseUrl.trim()) return; setSaving(true); try { const response=await fetch(`${API_BASE_URL}/api/v1/admin/providers${target ? `/${target.id}` : ''}`,{method:target?'PATCH':'POST',headers:{'Content-Type':'application/json',...apiHeaders()},body:JSON.stringify({name,kind,baseUrl,defaultParams:{note,gbrainRecipe},...(apiKey ? {apiKey} : {}),...(secretKey ? {secretKey} : {})})}); const result=await response.json().catch(()=>({})); if(!response.ok) throw new Error(result.message||'保存失败'); window.dispatchEvent(new CustomEvent('app-toast',{detail:'供应商已保存'})); onSaved?.(); } catch(error){window.dispatchEvent(new CustomEvent('app-toast',{detail:error.message||'保存失败'}));} finally{setSaving(false);} };
   return (
     <Modal title={target ? `编辑供应商 · ${target.name}` : '新增供应商'} onClose={onClose} foot={
       <>
@@ -4074,6 +4044,12 @@ function NewProviderModal({target, onClose, onSaved}){
         </select>
       </div>
       <div className="field"><label>Base URL<span className="req">*</span></label><input value={baseUrl} onChange={e=>setBaseUrl(e.target.value)} placeholder="https://..."/></div>
+      {kind!=='ocr' && <div className="field"><label>GBrain 协议适配</label>
+        <select value={gbrainRecipe} onChange={e=>setGbrainRecipe(e.target.value)}>
+          <option value="openai">OpenAI 兼容</option><option value="deepseek">DeepSeek</option><option value="openrouter">OpenRouter</option><option value="litellm">LiteLLM</option><option value="ollama">Ollama</option><option value="voyage">Voyage（向量）</option><option value="llama-server">llama.cpp（向量）</option><option value="llama-server-reranker">llama.cpp（重排）</option>
+        </select>
+        <div className="hint" style={{marginTop:6}}>模型类别会校验可用协议；不修改 GBrain 源码。</div>
+      </div>}
       <div className="field"><label>API Key</label><input type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder={kind==='selfhost'?'(自托管通常不需要)':'sk-...'}/></div>
       {kind==='ocr' && <div className="field"><label>Secret Key</label><input type="password" value={secretKey} onChange={e=>setSecretKey(e.target.value)} placeholder="百度智能云 Secret Key"/></div>}
       <div className="field"><label>备注</label><textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="该供应商用途、限速、协议说明"/></div>
@@ -6469,7 +6445,7 @@ function App(){
       const subject = grant.subjectType === 'user' ? (USERS.find(u => u.id === grant.subjectId)?.name || grant.subjectId) : grant.subjectType === 'role' ? (ROLES.find(r => r.id === grant.subjectId)?.name || grant.subjectId) : (d.orgs || []).find((o: any) => o.id === grant.subjectId)?.name || grant.subjectId;
       return { ...grant, subj: subject, type: grant.subjectType, exp: grant.expiresAt ? new Date(grant.expiresAt).toLocaleDateString('zh-CN') : '永久', scope: grant.subjectType };
     });
-    PROVIDERS = (d.providers || []).map((provider: any) => ({ ...provider, url: provider.baseUrl, note: provider.defaultParams ? JSON.stringify(provider.defaultParams) : '', kind: provider.kind || 'external' }));
+    PROVIDERS = (d.providers || []).map((provider: any) => ({ ...provider, url: provider.baseUrl, note: provider.defaultParams?.note || '', kind: provider.kind || 'external' }));
     MODELS = { llm: [], embedding: [], rerank: [] };
     (d.models || []).forEach((model: any) => {
       const kind = ['llm', 'embedding', 'rerank'].includes(model.kind) ? model.kind : 'llm';

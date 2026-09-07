@@ -1,22 +1,21 @@
 import { Processor, WorkerHost } from "@nestjs/bullmq";
 import { Job } from "bullmq";
-import { Logger } from "@nestjs/common";
+import { Logger, Optional, Inject } from "@nestjs/common";
 import { BrainRepoAdapter } from "@llmwiki/gbrain-adapter";
-import { PrismaClient } from "@prisma/client";
+import { getPrismaClient } from "../prisma";
 import { PermissionService } from "../permission/permission.service";
 import { ModelConfigService } from "../model-config.service";
 import { BrainCompilerService } from "./brain-compiler.service";
 import { BrainScopeService } from "./brain-scope.service";
 import { BrainOutboxService } from "./brain-outbox.service";
 import { readCanonicalDocument } from "./canonical-document";
+import { getSharedBrainRepoAdapter } from "./brain-adapter.provider";
 
 @Processor("dirty-compiler-queue")
 export class BrainCompilerProcessor extends WorkerHost {
   private readonly logger = new Logger(BrainCompilerProcessor.name);
-  private prisma = new PrismaClient();
-  private gbrain = new BrainRepoAdapter(
-    process.env.BRAIN_REPO_BASE_PATH || "/tmp/llmwiki/brain_repos",
-  );
+  private prisma = getPrismaClient();
+  private gbrain: BrainRepoAdapter;
   private readonly uploadRoot =
     process.env.UPLOAD_ROOT || "/tmp/llmwiki/uploads";
 
@@ -26,8 +25,10 @@ export class BrainCompilerProcessor extends WorkerHost {
     private readonly compilerService: BrainCompilerService,
     private readonly scopeService: BrainScopeService,
     private readonly outboxService: BrainOutboxService,
+    @Optional() @Inject('BRAIN_REPO_ADAPTER') gbrainAdapter?: BrainRepoAdapter,
   ) {
     super();
+    this.gbrain = gbrainAdapter ?? getSharedBrainRepoAdapter();
   }
 
   async process(job: Job<any, any, string>): Promise<any> {
@@ -95,6 +96,7 @@ export class BrainCompilerProcessor extends WorkerHost {
         where: { id: eventId },
       });
       if (!event) return { status: "skipped", reason: "Event not found" };
+      if (event.status === 'completed') return { status: 'skipped', reason: 'Event already completed' };
 
       await db.brainChangeEvent.update({
         where: { id: eventId },

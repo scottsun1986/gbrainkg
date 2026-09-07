@@ -1,9 +1,9 @@
-import { Injectable, Logger, MessageEvent, Optional } from "@nestjs/common";
+import { Injectable, Logger, MessageEvent, Optional, Inject } from "@nestjs/common";
 import { Observable, Subscriber } from "rxjs";
 import { PermissionService } from "../permission/permission.service";
 import { BrainCompilerService } from "../brain-compiler/brain-compiler.service";
 import { BrainRepoAdapter } from "@llmwiki/gbrain-adapter";
-import { PrismaClient } from "@prisma/client";
+import { getPrismaClient } from "../prisma";
 import { ModelConfigService } from "../model-config.service";
 import { BrainOutboxService } from "../brain-compiler/brain-outbox.service";
 import { createHash } from "node:crypto";
@@ -11,6 +11,8 @@ import { sourceKeyForKnowledgeBase } from "../brain-compiler/brain-source";
 
 import { BrainScopeService } from "../brain-compiler/brain-scope.service";
 import { ChatTraceRecorder } from "./chat-trace";
+import { getSharedBrainRepoAdapter } from "../brain-compiler/brain-adapter.provider";
+import { WeKnoraClient, WeKnoraBinding } from "../retrieval/weknora-client";
 
 type RetrievalRequest = { query: string; breadth: boolean; operation: 'search' | 'query' };
 
@@ -24,10 +26,8 @@ function stripInvalidCitationMarkers(value: string, citationCount: number): stri
 @Injectable()
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
-  private prisma = new PrismaClient();
-  private gbrain = new BrainRepoAdapter(
-    process.env.BRAIN_REPO_BASE_PATH || "/tmp/llmwiki/brain_repos",
-  );
+  private prisma = getPrismaClient();
+  private gbrain: BrainRepoAdapter;
 
   constructor(
     private readonly permissionService: PermissionService,
@@ -35,7 +35,11 @@ export class ChatService {
     private readonly scopeService: BrainScopeService,
     @Optional() private readonly modelConfigService?: ModelConfigService,
     @Optional() private readonly outboxService?: BrainOutboxService,
-  ) {}
+    @Optional() @Inject('BRAIN_REPO_ADAPTER') gbrainAdapter?: BrainRepoAdapter,
+    @Optional() @Inject('WEKNORA_CLIENT') private readonly weknoraClient?: WeKnoraClient,
+  ) {
+    this.gbrain = gbrainAdapter ?? getSharedBrainRepoAdapter();
+  }
 
   async handleChatStream(
     userId: string,
@@ -45,6 +49,7 @@ export class ChatService {
   ): Promise<Observable<MessageEvent>> {
     return new Observable((subscriber: Subscriber<MessageEvent>) => {
       const trace = new ChatTraceRecorder(subscriber);
+      const cancellation = new AbortController();
       this.processChat(
         userId,
         question,
@@ -52,11 +57,14 @@ export class ChatService {
         conversationId,
         subscriber,
         trace,
+        cancellation.signal,
       ).catch((err) => {
+        if (cancellation.signal.aborted || subscriber.closed) return;
         this.logger.error(`Chat processing error: ${err.message}`, err.stack);
         trace.failRunning(err);
         subscriber.error(err);
       });
+      return () => cancellation.abort();
     });
   }
 
@@ -107,6 +115,96 @@ export class ChatService {
     });
   }
 
+  /** Read-only structured knowledge retrieval for MCP / Agent tools */
+  async searchKnowledgeForAgent(
+    userId: string,
+    query: string,
+    requestedKbScope?: string[],
+    limit = 10,
+  ): Promise<{
+    success: boolean;
+    query: string;
+    total: number;
+    results: Array<{
+      documentId: string | null;
+      kbId: string | null;
+      title: string;
+      version?: number;
+      pageNo?: number;
+      articleNo?: string;
+      evidence: string;
+      score?: number;
+      previewUrl: string | null;
+    }>;
+  }> {
+    const visibleKbs = await this.permissionService.getVisibleKnowledgeBases(userId);
+    const parsedRequestedScope = Array.isArray(requestedKbScope)
+      ? requestedKbScope
+      : typeof requestedKbScope === "string" && requestedKbScope !== "all"
+        ? [requestedKbScope]
+        : undefined;
+    const scope = parsedRequestedScope
+      ? parsedRequestedScope.filter((id) => visibleKbs.includes(id))
+      : visibleKbs;
+
+    if (scope.length === 0) {
+      return { success: true, query, total: 0, results: [] };
+    }
+
+    const brainRepo = await this.compilerService.ensureUserBrainRepo(userId);
+    const userScope = await this.scopeService.resolveUserScope(userId);
+    const sourceRefs = (
+      await Promise.all(
+        scope.map(async (kbId) => {
+          const sourceKey = sourceKeyForKnowledgeBase(kbId);
+          if (typeof this.gbrain.initializeSource === "function") {
+            await this.gbrain.initializeSource(sourceKey);
+          }
+          return `gbrain://source/${sourceKey}`;
+        }),
+      )
+    ).filter(Boolean);
+
+    let queryResult =
+      sourceRefs.length > 1
+        ? await this.gbrain.queryMany(sourceRefs, query, { breadth: false, operation: "search" })
+        : await this.gbrain.query(sourceRefs[0] || brainRepo.gitRepoUrl, query, { breadth: false, operation: "search" });
+
+    queryResult = await this.filterQueryResultByCurrentPermission(
+      queryResult,
+      scope,
+      {
+        scopeId: userScope.scopeId,
+        sourceKeys: scope.map((id) => sourceKeyForKnowledgeBase(id)),
+        aclEpoch: userScope.aclEpoch,
+        knowledgeEpoch: userScope.knowledgeEpoch,
+      },
+    );
+
+    const citations = Array.isArray(queryResult.citations) ? queryResult.citations : [];
+    const results = citations.slice(0, limit).map((c: any) => {
+      const docId = c.docId || c.documentId || null;
+      return {
+        documentId: docId,
+        kbId: c.kbId || null,
+        title: String(c.docTitle || c.topic || "未知文档"),
+        version: typeof c.version === "number" ? c.version : undefined,
+        pageNo: typeof c.pageNo === "number" ? c.pageNo : undefined,
+        articleNo: c.articleNo || undefined,
+        evidence: String(c.evidence || ""),
+        score: typeof c.score === "number" ? c.score : undefined,
+        previewUrl: docId ? `/api/v1/ingestion/documents/${docId}/preview` : null,
+      };
+    });
+
+    return {
+      success: true,
+      query,
+      total: citations.length,
+      results,
+    };
+  }
+
   private async processChat(
     userId: string,
     question: string,
@@ -114,6 +212,7 @@ export class ChatService {
     conversationId: string | undefined,
     subscriber: Subscriber<MessageEvent>,
     trace: ChatTraceRecorder,
+    signal?: AbortSignal,
   ) {
     const retrievalStartedAt = Date.now();
     trace.start("runtime_config", "运行时模型配置", "读取平台数据库中的模型配置");
@@ -239,9 +338,10 @@ export class ChatService {
     } else {
       trace.skip("source_freshness", "Source 新鲜度校验", "当前编译服务未提供查询前新鲜度校验");
     }
+    const userScopeSourceKeys = Array.isArray(userScope?.sourceKeys) ? userScope.sourceKeys : [];
     const wholeScopeSelected =
-      selectedSourceKeys.length === userScope.sourceKeys.length &&
-      selectedSourceKeys.every((key, index) => key === userScope.sourceKeys.slice().sort()[index]);
+      selectedSourceKeys.length === userScopeSourceKeys.length &&
+      selectedSourceKeys.every((key, index) => key === userScopeSourceKeys.slice().sort()[index]);
     const forceQueryRefresh = Boolean(sourceFreshness?.rebuilt);
 
     // Start with source documents. Permission-scoped derived summaries are
@@ -263,6 +363,7 @@ export class ChatService {
     const retrieval = await this.rewriteQueryForRetrieval(
       question,
       conversationHistory,
+      signal,
     );
     trace.finish("query_rewrite", "success", `使用 ${retrieval.operation} / ${retrieval.breadth ? "广覆盖" : "聚焦"} 模式`, {
       rewrittenQuery: retrieval.query,
@@ -352,7 +453,7 @@ export class ChatService {
         : await this.gbrain.query(
             sourceRefs[0] || brainRepo.gitRepoUrl,
             retrieval.query,
-            { breadth: retrieval.breadth, operation: retrieval.operation, ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
+            { breadth: retrieval.breadth, operation: retrieval.operation, signal, ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
           );
     const rawCandidateCount = Array.isArray(queryResult.citations) ? queryResult.citations.length : 0;
     const topEvidence = String(queryResult.citations?.[0]?.evidence || "");
@@ -523,7 +624,91 @@ export class ChatService {
     } else {
       trace.skip("source_reconcile_retry", "Source 对账重试", "首轮检索已有结果，无需重建重试");
     }
-    // GBrain is the only retrieval path. Empty retrieval triggers source
+
+    // WeKnora shadow / auxiliary retrieval branch (Phase 3: dual-path validation & alignment)
+    if (this.weknoraClient) {
+      trace.start("weknora_retrieval", "WeKnora 外部检索灰度", "使用 WeKnora 执行只读外部分支检索与双路对齐");
+      try {
+        const publishedDocs = await this.prisma.document.findMany({
+          where: { kbId: { in: scope }, qualityStatus: "passed" },
+          select: { id: true, kbId: true, version: true },
+        });
+        const bindings: WeKnoraBinding[] = publishedDocs.map((doc) => ({
+          knowledgeId: doc.id,
+          documentId: doc.id,
+          kbId: doc.kbId,
+          version: doc.version,
+        }));
+        if (bindings.length === 0) {
+          trace.skip("weknora_retrieval", "WeKnora 外部检索灰度", "当前知识库范围内无有效已发布文档绑定");
+        } else {
+          const weknoraEvidences = await this.weknoraClient.search(
+            retrieval.query || question,
+            bindings,
+            signal,
+          );
+          const gbrainDocIds = new Set(
+            (queryResult.citations || []).map((c: any) => c.docId || c.documentId).filter(Boolean),
+          );
+          const overlapCount = weknoraEvidences.filter((we) => gbrainDocIds.has(we.documentId)).length;
+          const novelCount = weknoraEvidences.length - overlapCount;
+          const isHybrid = process.env.WEKNORA_HYBRID_MODE === "true" || process.env.WEKNORA_HYBRID_MODE === "1";
+
+          if (isHybrid && weknoraEvidences.length > 0) {
+            queryResult.citations = queryResult.citations || [];
+            for (const we of weknoraEvidences) {
+              if (!gbrainDocIds.has(we.documentId)) {
+                (queryResult.citations as any[]).push({
+                  topic: we.documentId,
+                  docId: we.documentId,
+                  kbId: we.kbId,
+                  version: we.documentVersion,
+                  evidence: we.content,
+                  score: we.score,
+                  externalProvider: "weknora",
+                });
+              }
+            }
+            trace.finish(
+              "weknora_retrieval",
+              "success",
+              `WeKnora 混合检索完成：已召回 ${weknoraEvidences.length} 条外部证据（重合 ${overlapCount} 条，补充 ${novelCount} 条）`,
+              {
+                weknoraCount: weknoraEvidences.length,
+                overlapCount,
+                novelCount,
+                hybrid: true,
+              },
+            );
+          } else {
+            trace.finish(
+              "weknora_retrieval",
+              "success",
+              `WeKnora 灰度对比完成：召回 ${weknoraEvidences.length} 条候选（重合 ${overlapCount} 条，独立发现 ${novelCount} 条），仅记录对比指标不污染主生成链路`,
+              {
+                weknoraCount: weknoraEvidences.length,
+                overlapCount,
+                novelCount,
+                hybrid: false,
+              },
+            );
+          }
+        }
+      } catch (err: any) {
+        this.logger.warn(`WeKnora shadow retrieval failed: ${err.message}`);
+        trace.finish("weknora_retrieval", "warning", `WeKnora 外部检索降级：${err.message}`, {
+          error: err.message,
+        });
+      }
+    } else {
+      trace.skip(
+        "weknora_retrieval",
+        "WeKnora 外部检索灰度",
+        "WeKnora 外部检索未配置或处于禁用状态（保持纯净 GBrain 知识主源）",
+      );
+    }
+
+    // GBrain is the only primary retrieval path. Empty retrieval triggers source
     // reconciliation above, never a second application-specific search stack.
     // GBrain balanced mode already reranks before autocut. Keep the platform
     // reranker only as a fail-open recovery when GBrain reports no rerank
@@ -632,18 +817,74 @@ export class ChatService {
     const citations = Array.isArray(queryResult.citations)
       ? queryResult.citations
       : [];
+
+    trace.start("version_conflict_check", "文档版本冲突检测", "检查命中文档是否存在多版本或版本更新");
+    let versionConflictNote = "";
+    if (citations.length > 0) {
+      const docTitles = Array.from(new Set(citations.map((c: any) => c.docTitle).filter(Boolean)));
+      if (docTitles.length > 0) {
+        const publishedDocs = await this.prisma.document.findMany({
+          where: {
+            kbId: { in: visibleKbs },
+            title: { in: docTitles },
+            status: "published",
+          },
+          select: { id: true, title: true, version: true },
+          orderBy: { version: "desc" },
+        });
+        const versionsByTitle = new Map<string, number[]>();
+        for (const pd of publishedDocs) {
+          const list = versionsByTitle.get(pd.title) || [];
+          if (pd.version && !list.includes(pd.version)) list.push(pd.version);
+          versionsByTitle.set(pd.title, list.sort((a, b) => b - a));
+        }
+        const conflictTitles: string[] = [];
+        for (const cit of citations as any[]) {
+          const allVers = versionsByTitle.get(cit.docTitle) || [];
+          if (allVers.length > 1) {
+            cit.versionConflict = {
+              hasConflict: true,
+              currentVersion: cit.version ?? 1,
+              allVersions: allVers,
+            };
+            if (!conflictTitles.includes(cit.docTitle)) {
+              conflictTitles.push(cit.docTitle);
+              versionConflictNote += `\n【版本提示】检测到文档《${cit.docTitle}》存在多个版本（当前选用 v${cit.version ?? 1}，库中存在: v${allVers.join(', v')}），请在回答中注明版本及生效范围。`;
+            }
+          }
+        }
+        trace.finish(
+          "version_conflict_check",
+          conflictTitles.length > 0 ? "warning" : "success",
+          conflictTitles.length > 0
+            ? `检测到 ${conflictTitles.length} 个文档存在多版本冲突: ${conflictTitles.join(", ")}`
+            : "命中文档版本均一致，未检测到多版本冲突",
+          { conflictCount: conflictTitles.length, conflictTitles },
+        );
+      } else {
+        trace.finish("version_conflict_check", "skipped", "命中文档无有效标题，跳过版本冲突检测");
+      }
+    } else {
+      trace.finish("version_conflict_check", "skipped", "未命中任何证据，跳过版本冲突检测");
+    }
+
     trace.start("answer_context", "回答上下文组装", "从授权证据页组装可引用的回答上下文");
-    const compiledTruthContext = citations.length > 0
+    let compiledTruthContext = citations.length > 0
       ? citations
           .map((cit: any, idx: number) => {
             const title = cit.docTitle || cit.topic || `参考文档 ${idx + 1}`;
             const kbName = cit.kbName ? ` (所属知识库: ${cit.kbName})` : "";
+            const pageInfo = typeof cit.pageNo === "number" ? ` [第${cit.pageNo}页]` : "";
+            const articleInfo = cit.articleNo ? ` [第${cit.articleNo}条]` : "";
             const section = cit.section ? `\n定位：${cit.section}` : "";
             const content = (cit.context || cit.snippet || "").trim();
-            return `【来源 ${idx + 1}】《${title}》${kbName}${section}\n${content}`;
+            return `【来源 ${idx + 1}】《${title}》${kbName}${pageInfo}${articleInfo}${section}\n${content}`;
           })
           .join("\n\n---\n\n")
       : (queryResult.answer || "No truth found for this topic.");
+    if (versionConflictNote) {
+      compiledTruthContext += `\n\n${versionConflictNote.trim()}`;
+    }
     trace.finish(
       "answer_context",
       citations.length > 0 ? "success" : "warning",
@@ -684,7 +925,8 @@ export class ChatService {
           model: modelName,
           evidenceOnly: true,
         });
-        this.emitCitationsAndComplete(
+        await this.emitCitationsAndComplete(
+          userId,
           queryResult.citations || [],
           subscriber,
           0,
@@ -805,7 +1047,8 @@ ${compiledTruthContext}`;
         { model: modelName, outputChars: fullAnswer.length, streamedChunks: totalTokens },
       );
 
-      this.emitCitationsAndComplete(
+      await this.emitCitationsAndComplete(
+        userId,
         queryResult.citations || [],
         subscriber,
         totalTokens,
@@ -856,7 +1099,9 @@ ${compiledTruthContext}`;
   private async rewriteQueryForRetrieval(
     question: string,
     history: Array<{ role: "user" | "assistant"; content: string }>,
+    signal?: AbortSignal,
   ): Promise<RetrievalRequest> {
+    signal?.throwIfAborted();
     const prior = history
       .filter(
         (message) => !(message.role === "user" && message.content === question),
@@ -1029,6 +1274,9 @@ ${compiledTruthContext}`;
             id: true,
             kbId: true,
             title: true,
+            version: true,
+            createdAt: true,
+            updatedAt: true,
             kb: { select: { name: true, type: true } },
           },
         })
@@ -1073,6 +1321,7 @@ ${compiledTruthContext}`;
               ...citation,
               kbId: doc.kbId,
               docTitle: doc.title,
+              version: doc.version,
               kbName: (doc as any).kb?.name || citation.kbName || "默认知识库",
               kbType: (doc as any).kb?.type,
             }
@@ -1287,7 +1536,8 @@ ${compiledTruthContext}`;
     };
   }
 
-  private emitCitationsAndComplete(
+  private async emitCitationsAndComplete(
+    userId: string,
     citations: any[],
     subscriber: Subscriber<MessageEvent>,
     totalTokens: number,
@@ -1312,16 +1562,84 @@ ${compiledTruthContext}`;
       finalCitations = finalCitations.slice(0, 2);
     }
 
+    // Third-layer independent permission check
+    let validDocIdSet = new Set<string>();
+    const docIdsToCheck = finalCitations
+      .map((item) => item.citation.docId)
+      .filter((id): id is string => typeof id === "string" && id.length > 0);
+
+    if (docIdsToCheck.length > 0) {
+      const visibleKbs = await this.permissionService.getVisibleKnowledgeBases(userId);
+      const validDocs = await this.prisma.document.findMany({
+        where: {
+          id: { in: docIdsToCheck },
+          kbId: { in: visibleKbs },
+          status: "published",
+        },
+        select: { id: true },
+      });
+      validDocIdSet = new Set(validDocs.map((d) => d.id));
+    }
+
+    const preAclCount = finalCitations.length;
+    finalCitations = finalCitations.filter(({ citation, originalIndex }) => {
+      if (citation.docId && !validDocIdSet.has(citation.docId)) {
+        this.logger.warn(`Stripping citation [${originalIndex}] (docId: ${citation.docId}) due to independent ACL check failure.`);
+        return false;
+      }
+      return true;
+    });
+
+    const statements = safeAnswer.split(/(?:\n+|[。！？])/).map(s => s.trim()).filter(s => s.length >= 5);
+    const totalStatements = statements.length;
+    let groundedStatements = 0;
+    for (const stmt of statements) {
+      const tags = stmt.match(/\[(\d+)\]/g) || [];
+      const hasValidTag = tags.some(tag => citedIndices.has(parseInt(tag.replace(/\D/g, ""), 10)));
+      if (hasValidTag) {
+        groundedStatements++;
+      } else {
+        const chars = Array.from(new Set(stmt.replace(/\s+/g, '').split('')));
+        let isGrounded = false;
+        if (chars.length > 0) {
+          for (const item of finalCitations) {
+            const contextText = String(item.citation.context || item.citation.snippet || "");
+            let overlap = 0;
+            for (const ch of chars) {
+              if (contextText.includes(ch)) overlap++;
+            }
+            if (overlap / chars.length >= 0.7) {
+              isGrounded = true;
+              break;
+            }
+          }
+        }
+        if (isGrounded) groundedStatements++;
+      }
+    }
+    const coverageRatio = totalStatements > 0 ? Number((groundedStatements / totalStatements).toFixed(2)) : 1.0;
+    const semanticCoverage = { totalStatements, groundedStatements, coverageRatio };
+
+    let traceStatus = finalCitations.length > 0 ? "success" : "warning";
+    let traceMsg = finalCitations.length > 0
+        ? `回答引用 ${finalCitations.length} 个原始证据页面`
+        : "本次回答没有可绑定的原始证据";
+
+    if (citations.length > 0 && coverageRatio < 0.5) {
+      traceStatus = "warning";
+      traceMsg += `，但证据语义覆盖率偏低 (${Math.round(coverageRatio * 100)}%)，部分结论缺少明确引用支撑`;
+    }
+
     trace.finish(
       "citation_validation",
-      citations.length > 0 ? "success" : "warning",
-      citations.length > 0
-        ? `回答引用 ${finalCitations.length} 个原始证据页面`
-        : "本次回答没有可绑定的原始证据",
+      traceStatus as "success" | "warning",
+      traceMsg,
       {
         candidateCitations: citations.length,
         referencedCitations: finalCitations.map((item) => item.originalIndex),
         invalidMarkersRemoved: safeAnswer !== fullAnswer,
+        aclStripped: preAclCount - finalCitations.length,
+        semanticCoverage,
       },
     );
 
@@ -1339,6 +1657,10 @@ ${compiledTruthContext}`;
             section: cit.section,
             score: cit.score,
             snippet: cit.snippet || '',
+            preview_url: cit.docId && cit.kbId ? `/api/v1/kbs/${cit.kbId}/documents/${cit.docId}/preview` : undefined,
+            version: cit.version,
+            page_no: cit.pageNo || cit.page_no || cit.metadata?.page_no,
+            version_conflict: cit.versionConflict,
           },
         },
       });

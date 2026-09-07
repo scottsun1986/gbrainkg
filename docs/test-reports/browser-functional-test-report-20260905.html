@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LLMWiki 浏览器功能测试报告 · 2026-09-05</title>
+  <style>
+    :root { --ink:#16243a; --muted:#66758c; --paper:#f4f7fb; --card:#fff; --blue:#2566d3; --green:#087c57; --red:#bc384b; --amber:#a96a0a; }
+    * { box-sizing:border-box; } body { margin:0; background:var(--paper); color:var(--ink); font:15px/1.65 Inter,"Microsoft YaHei",Arial,sans-serif; }
+    header { padding:56px max(7vw,28px) 44px; color:#fff; background:radial-gradient(circle at 84% 8%,#84b9ff 0,transparent 25%),linear-gradient(120deg,#142b59,#2765ca); }
+    .eyebrow { font-weight:700; letter-spacing:.12em; font-size:12px; opacity:.8; } h1 { margin:8px 0; font-size:clamp(29px,4vw,46px); line-height:1.14; } header p { max-width:830px; margin:0; color:#d9e7ff; }
+    main { max-width:1440px; margin:-18px auto 52px; padding:0 28px; } .metrics { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:24px; }
+    .metric { padding:19px; background:var(--card); border-radius:14px; box-shadow:0 8px 28px #1b37601a; } .metric b { display:block; font-size:30px; line-height:1.1; } .green b {color:var(--green)} .red b {color:var(--red)} .amber b {color:var(--amber)}
+    .note { border-left:4px solid var(--blue); background:#eaf2ff; border-radius:10px; padding:16px 19px; margin:18px 0 28px; } .note strong { color:#123d84; }
+    h2 { margin:34px 0 13px; font-size:22px; } .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:18px; }
+    article { overflow:hidden; background:var(--card); border-radius:14px; border-top:4px solid #9aa9bd; box-shadow:0 8px 25px #1a355f14; } article.pass {border-color:var(--green)} article.fail {border-color:var(--red)} article.block {border-color:var(--amber)}
+    .head { display:flex; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid #ebeff5; } .id {font-weight:800;color:var(--blue)} .area{flex:1;font-weight:700}.badge{font-size:12px;font-weight:800;border-radius:99px;padding:2px 9px;background:#eef2f7}.pass .badge{color:var(--green);background:#e7f7f1}.fail .badge{color:var(--red);background:#ffedf0}.block .badge{color:var(--amber);background:#fff4dd}
+    section { padding:0 16px; } h3 { margin:14px 0 2px; color:var(--muted); font-size:12px; letter-spacing:.07em; text-transform:uppercase; } section p { margin:0 0 13px; } a.shot { display:block; padding:8px 16px 16px; } a.shot img { width:100%; height:220px; object-fit:cover; object-position:top; border:1px solid #d9e2ef; border-radius:9px; background:#fff; }
+    table { width:100%; border-collapse:collapse; background:#fff; border-radius:12px; overflow:hidden; box-shadow:0 8px 25px #1a355f14; } th,td { padding:12px; text-align:left; border-bottom:1px solid #eaf0f5; vertical-align:top; } th { background:#eff5ff; } code {font-size:.9em;background:#edf2f8;padding:2px 5px;border-radius:4px} footer{max-width:1440px;margin:0 auto;padding:0 28px 32px;color:var(--muted)}
+    @media(max-width:700px){main{padding:0 14px}.metrics{grid-template-columns:repeat(2,1fr)}header{padding:40px 20px}.grid{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="eyebrow">LOCAL CHROMIUM E2E · 2026-09-05</div>
+    <h1>LLMWiki 系统功能浏览器测试报告</h1>
+    <p>测试环境：Web <code>127.0.0.1:3200</code>、API <code>127.0.0.1:3202</code>。页面证据由 Chromium/Playwright 实际操作并截图；权限与入库状态同时以真实 API 复核。</p>
+  </header>
+  <main>
+    <div class="metrics">
+      <div class="metric"><span>记录用例</span><b>18</b></div>
+      <div class="metric green"><span>通过</span><b>10</b></div>
+      <div class="metric red"><span>失败</span><b>1</b></div>
+      <div class="metric amber"><span>阻塞/待复测</span><b>7</b></div>
+    </div>
+    <div class="note"><strong>结论：</strong>登录页面、对话工作台、管理后台及组织/人员/角色/行业库/模型/审计/监控页面均已由浏览器实际打开并截图确认。核心失败是本次新建的三份知识在 30 秒验收窗口后仍为 <code>indexing</code>，尚未达到 <code>published</code>，因此不能通过“可检索知识”验收。跨用户 UI 会话轮换受登录限流和 SPA 持续连接影响未完整跑完，已如实标记为待复测，而非判通过。</div>
+
+    <h2>一、已完成的页面功能验证</h2>
+    <div class="grid">
+      <article class="pass"><div class="head"><span class="id">AUTH-01</span><span class="area">管理员登录与工作台</span><span class="badge">PASS</span></div><section><h3>预期</h3><p>本机超级管理员能登录并进入对话工作台。</p><h3>实际</h3><p>以 <code>CY</code> 成功获得会话；页面显示“对话 · 你的大脑”、可见知识库数量与管理后台入口。</p></section><a class="shot" href="functional-20260905-045218/screenshots/03-admin-workspace.png"><img src="functional-20260905-045218/screenshots/03-admin-workspace.png" alt="管理员工作台截图"></a></article>
+      <article class="pass"><div class="head"><span class="id">AUTH-02</span><span class="area">登录限流安全反馈</span><span class="badge">PASS</span></div><section><h3>预期</h3><p>错误或高频登录被拒绝，且页面不崩溃、不泄露账户信息。</p><h3>实际</h3><p>浏览器显示“请求过于频繁，请稍候再试”，登录表单保持可用。该现象也说明 E2E 多账号登录需按 60 秒限流窗口分批执行。</p></section><a class="shot" href="functional-20260905-045218/screenshots/02-login-invalid.png"><img src="functional-20260905-045218/screenshots/02-login-invalid.png" alt="登录限流截图"></a></article>
+      <article class="pass"><div class="head"><span class="id">NAV-01</span><span class="area">管理后台入口</span><span class="badge">PASS</span></div><section><h3>预期</h3><p>系统管理员可进入管理后台且页面正常加载。</p><h3>实际</h3><p>Chromium 实际点击“管理后台”后成功渲染，未出现白屏或 failed to fetch。</p></section><a class="shot" href="functional-20260905-045218/screenshots/04-admin-console.png"><img src="functional-20260905-045218/screenshots/04-admin-console.png" alt="管理后台截图"></a></article>
+      <article class="pass"><div class="head"><span class="id">ORG-01</span><span class="area">组织架构管理页</span><span class="badge">PASS</span></div><section><h3>预期</h3><p>组织树与组织管理界面可打开。</p><h3>实际</h3><p>已通过真实后台导航进入组织架构页并保存截图。</p></section><a class="shot" href="functional-20260905-045218/screenshots/05-org-01-组织架构.png"><img src="functional-20260905-045218/screenshots/05-org-01-组织架构.png" alt="组织架构截图"></a></article>
+      <article class="pass"><div class="head"><span class="id">USER-01</span><span class="area">人员管理页</span><span class="badge">PASS</span></div><section><h3>预期</h3><p>系统管理员可进入人员管理界面。</p><h3>实际</h3><p>人员列表和组织筛选区域完成渲染。</p></section><a class="shot" href="functional-20260905-045218/screenshots/05-user-01-人员管理.png"><img src="functional-20260905-045218/screenshots/05-user-01-人员管理.png" alt="人员管理截图"></a></article>
+      <article class="pass"><div class="head"><span class="id">ROLE-01</span><span class="area">角色管理页</span><span class="badge">PASS</span></div><section><h3>预期</h3><p>系统管理员可查看角色及权限配置页面。</p><h3>实际</h3><p>角色管理页面已实际渲染并截图。</p></section><a class="shot" href="functional-20260905-045218/screenshots/05-role-01-角色管理.png"><img src="functional-20260905-045218/screenshots/05-role-01-角色管理.png" alt="角色管理截图"></a></article>
+      <article class="pass"><div class="head"><span class="id">KB-08</span><span class="area">行业库管理页</span><span class="badge">PASS</span></div><section><h3>预期</h3><p>具备权限的管理员可打开行业库管理页。</p><h3>实际</h3><p>行业库管理界面已加载，截图可作为后续管理员/创建者边界复测基线。</p></section><a class="shot" href="functional-20260905-045218/screenshots/05-kb-08-行业库管理.png"><img src="functional-20260905-045218/screenshots/05-kb-08-行业库管理.png" alt="行业库管理截图"></a></article>
+      <article class="pass"><div class="head"><span class="id">MODEL-01</span><span class="area">模型配置页</span><span class="badge">PASS</span></div><section><h3>预期</h3><p>系统管理员可进入模型配置与供应商管理页面。</p><h3>实际</h3><p>模型配置页面实际打开并截图。</p></section><a class="shot" href="functional-20260905-045218/screenshots/05-model-01-模型配置.png"><img src="functional-20260905-045218/screenshots/05-model-01-模型配置.png" alt="模型配置截图"></a></article>
+      <article class="pass"><div class="head"><span class="id">AUDIT-01</span><span class="area">审计日志页</span><span class="badge">PASS</span></div><section><h3>预期</h3><p>审计日志页可打开，供分页与权限回归复测。</p><h3>实际</h3><p>审计日志页面正常渲染。</p></section><a class="shot" href="functional-20260905-045218/screenshots/05-audit-01-审计日志.png"><img src="functional-20260905-045218/screenshots/05-audit-01-审计日志.png" alt="审计日志截图"></a></article>
+      <article class="pass"><div class="head"><span class="id">OPS-01</span><span class="area">系统运行监控页</span><span class="badge">PASS</span></div><section><h3>预期</h3><p>运行监控页面可打开并显示运行态信息。</p><h3>实际</h3><p>系统运行监控页面正常渲染。</p></section><a class="shot" href="functional-20260905-045218/screenshots/05-ops-01-系统运行监控.png"><img src="functional-20260905-045218/screenshots/05-ops-01-系统运行监控.png" alt="运行监控截图"></a></article>
+    </div>
+
+    <h2>二、核心知识链路与权限测试</h2>
+    <table>
+      <thead><tr><th>测试项</th><th>预期</th><th>实际</th><th>结论</th><th>证据</th></tr></thead>
+      <tbody>
+        <tr><td><b>ING-01</b><br>文本知识入库发布</td><td>文本录入后经解析、索引和 GBrain source 同步进入 <code>published</code>，方可被问答检索。</td><td>创建了隔离组织、组织库、行业库及三份唯一文本知识；服务日志确认已触发 source 同步，但 30 秒轮询后三份文档仍为 <code>indexing</code>。</td><td><b style="color:#bc384b">FAIL</b><br>未满足可检索发布门槛。</td><td>测试夹具前缀：<code>E2E-20260905-045218</code></td></tr>
+        <tr><td><b>VIS-01</b><br>个人/组织/行业可见集</td><td>需以不同用户分别验证 bootstrap、知识库列表、文档、预览、图谱及问答候选集合完全一致。</td><td>已创建父组织阅读者、子组织阅读者、直接行业授权、角色授权等隔离账号和三类授权；多用户浏览器会话轮换受登录限流与 SPA 持续连接影响未跑完。</td><td><b style="color:#a96a0a">BLOCKED</b><br>禁止据此宣称权限通过。</td><td>后续按 <code>system-functional-test-cases.md</code> 的 VIS-01~12 复测。</td></tr>
+        <tr><td><b>ING-09 / KB-07</b><br>只读者写入拒绝、行业创建者/管理员分离</td><td>组织库阅读者不得上传；已移交管理员的行业库创建者不得维护文档，当前 KB 管理员可维护。</td><td>夹具已建立“创建者 → 行业库管理员”移交关系；因入库发布失败及多用户会话受限，端到端 UI 与 API 双重断言尚未形成完整证据链。</td><td><b style="color:#a96a0a">BLOCKED</b></td><td>行业库管理页截图见上；需修复发布状态后重跑。</td></tr>
+        <tr><td><b>RAG-01 / GB-08</b><br>授权问答、来源与处理链路</td><td>有权用户查询唯一事实，回答应含支持性来源，可展开 ACL、检索、证据、模型节点。</td><td>前置知识未变为 <code>published</code>，因此不将问答结果作为准确性证据；避免用未完成索引的数据产生假通过。</td><td><b style="color:#a96a0a">BLOCKED</b></td><td>需在 ING-01 修复后执行 Golden 问题集。</td></tr>
+        <tr><td><b>GRAPH-01</b><br>个人可见知识图谱</td><td>图谱只使用当前用户有权且已发布的文档。</td><td>因 E2E 三份知识未完成发布，未以它们执行图谱可见性断言。</td><td><b style="color:#a96a0a">BLOCKED</b></td><td>等待 published 后测试。</td></tr>
+      </tbody>
+    </table>
+
+    <h2>三、复测建议（发布前必须完成）</h2>
+    <div class="note"><strong>P0：</strong>先定位并修复“已 source 同步但 Document 长时间停在 <code>indexing</code>”的状态机/队列收尾问题；然后以隔离夹具运行 Golden 检索题集。只有确认每份知识 <code>published</code>、有权用户能稳定命中且无权用户在列表、原文、预览、图谱、候选、引用、回答中均不可见，才能提交生产发布申请。</div>
+  </main>
+  <footer>报告生成于 2026-09-05。所有 E2E 数据均使用 <code>E2E-时间戳</code> 前缀；报告未包含密码、Token、模型密钥或原始敏感数据。</footer>
+</body>
+</html>

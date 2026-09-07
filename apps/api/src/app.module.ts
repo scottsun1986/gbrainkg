@@ -13,6 +13,9 @@ import { AuthModule } from './auth/auth.module';
 import { ModelConfigModule } from './model-config.module';
 import { KnowledgeGraphController } from './knowledge-graph.controller';
 import { AuditModule } from './audit/audit.module';
+import { GraphRagModule } from './graph-rag/graph-rag.module';
+
+
 
 @Module({
   imports: [
@@ -34,6 +37,7 @@ import { AuditModule } from './audit/audit.module';
     AuthModule,
     ModelConfigModule,
     AuditModule,
+    GraphRagModule,
   ],
   controllers: [AppController, AdminController, KnowledgeGraphController],
   providers: [

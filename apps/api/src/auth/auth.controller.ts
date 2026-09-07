@@ -1,12 +1,12 @@
 import { Body, Controller, Get, Post, Req, UseGuards } from "@nestjs/common";
-import { PrismaClient } from "@prisma/client";
+import { getPrismaClient } from "../prisma";
 import { Throttle } from "@nestjs/throttler";
 import { AuthService } from "./auth.service";
 import { AuthGuard } from "./auth.guard";
 
 @Controller("api/v1/auth")
 export class AuthController {
-  private readonly prisma = new PrismaClient();
+  private readonly prisma = getPrismaClient();
 
   constructor(private readonly authService: AuthService) {}
 

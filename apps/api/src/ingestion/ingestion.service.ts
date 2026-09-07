@@ -1,17 +1,20 @@
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
-import { PrismaClient } from "@prisma/client";
+import { getPrismaClient } from "../prisma";
 import { readFile, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { BrainCompilerService } from "../brain-compiler/brain-compiler.service";
 import { ModelConfigService } from "../model-config.service";
 import { splitMarkdownIntoChunks } from "./markdown-chunker";
+import { assessContentQuality } from "./content-quality";
+import { parserPollBudget } from "./parser-budget";
+import { ANYDOC_UPLOAD_EXTENSIONS } from './parser-capabilities';
 
 @Injectable()
 export class IngestionService implements OnModuleInit {
   private readonly logger = new Logger(IngestionService.name);
-  private readonly prisma = new PrismaClient();
+  private readonly prisma = getPrismaClient();
   private readonly uploadRoot =
     process.env.UPLOAD_ROOT || "/tmp/llmwiki/uploads";
   private readonly parserUrl = (
@@ -38,6 +41,7 @@ export class IngestionService implements OnModuleInit {
       },
       select: {
         id: true,
+        version: true,
         kbId: true,
         title: true,
         status: true,
@@ -60,19 +64,25 @@ export class IngestionService implements OnModuleInit {
           [topic],
         );
       } else {
-        await this.enqueue(document.id, "restart-recovery");
+        await this.enqueue(document.id, "restart-recovery", document.version);
       }
     }
     if (stale.length)
       this.logger.warn(`Recovered ${stale.length} stale ingestion job(s).`);
   }
 
-  async enqueue(documentId: string, reason = "upload") {
+  async enqueue(documentId: string, reason = "upload", expectedVersion?: number) {
     try {
+      const version = expectedVersion ?? (await this.prisma.document.findUnique({
+        where: { id: documentId },
+        select: { version: true },
+      }))?.version;
+      if (!version) throw new Error(`Document ${documentId} no longer exists.`);
       await this.ingestionQueue.add(
         "parse-document",
-        { documentId, reason },
+        { documentId, reason, expectedVersion: version },
         {
+          jobId: `ingest-${documentId}-v${version}`,
           attempts: 3,
           backoff: { type: "exponential", delay: 3_000 },
           removeOnComplete: 200,
@@ -88,7 +98,7 @@ export class IngestionService implements OnModuleInit {
     }
   }
 
-  async processDocument(documentId: string) {
+  async processDocument(documentId: string, expectedVersion?: number) {
     const document = await this.prisma.document.findUnique({
       where: { id: documentId },
       select: {
@@ -97,9 +107,13 @@ export class IngestionService implements OnModuleInit {
         title: true,
         rawFileOid: true,
         status: true,
+        version: true,
       },
     });
     if (!document) throw new Error(`Document ${documentId} no longer exists.`);
+    if (expectedVersion !== undefined && document.version !== expectedVersion) {
+      return { documentId, status: document.status, skipped: true, reason: "superseded-version" };
+    }
     if (document.status === "published")
       return { documentId, status: "published", skipped: true };
     if (!document.rawFileOid)
@@ -110,60 +124,93 @@ export class IngestionService implements OnModuleInit {
       data: { status: "parsing" },
     });
 
-    const form = new FormData();
-    const fileBytes = content.buffer.slice(
-      content.byteOffset,
-      content.byteOffset + content.byteLength,
-    ) as ArrayBuffer;
-    const ext = extname(document.title);
-    form.append(
-      "file",
-      new Blob([fileBytes]),
-      ext ? document.title : `${document.title}.md`,
-    );
-    const ocrConfig = await this.modelConfigService.getOcrConfig();
-    if (ocrConfig) {
-      form.append("ocr_provider", ocrConfig.provider);
-      form.append("ocr_endpoint", ocrConfig.baseUrl);
-      form.append("ocr_api_key", ocrConfig.apiKey);
-      form.append("ocr_secret_key", ocrConfig.secretKey);
-    }
-    const headers: Record<string, string> = {};
-    const authToken = process.env.PARSER_AUTH_TOKEN || process.env.AUTH_TOKEN;
-    if (authToken) headers.Authorization = `Bearer ${authToken}`;
-    const queued = await fetch(`${this.parserUrl}/parse?parser_type=auto`, {
-      method: "POST",
-      body: form,
-      headers,
-      signal: AbortSignal.timeout(30_000),
-    });
-    if (!queued.ok) throw new Error(`Parser rejected upload: ${queued.status}`);
-    const { task_id: taskId } = (await queued.json()) as { task_id: string };
+    let parsed: any = null;
+    const conversionMetadata: Record<string, unknown> = {};
+    const ext = extname(document.title).toLowerCase();
 
-    const timeoutMs = Math.max(
-      30_000,
-      Number(process.env.PARSER_POLL_TIMEOUT_MS || 5 * 60 * 1000),
-    );
-    const deadline = Date.now() + timeoutMs;
-    let parsed: any;
-    while (Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 750));
-      const response = await fetch(`${this.parserUrl}/parse/${taskId}`, {
-        headers,
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (response.status === 404)
-        throw new Error(
-          "Parser task was lost; retrying from the preserved original file.",
+    // L1 Fast-Path: Plaintext files (.txt, .md) read directly in zero milliseconds
+    if ([".txt", ".md"].includes(ext)) {
+      const rawText = content.toString("utf8");
+      if (rawText.trim()) {
+        parsed = {
+          markdown: rawText,
+          engine: "plaintext-fastpath",
+          classification: ext.slice(1),
+          status: "completed",
+        };
+      }
+    } else if (ANYDOC_UPLOAD_EXTENSIONS.has(ext)) {
+      try {
+        const anydoc = await import("@firecrawl/anydoc");
+        if (typeof anydoc?.toMarkdown === "function") {
+          const md = await anydoc.toMarkdown(document.rawFileOid);
+          if (md && md.trim().length > 0) {
+              parsed = {
+                markdown: md,
+                engine: "anydoc",
+                classification: ext.slice(1),
+                status: "completed",
+              };
+              this.logger.log(
+                `AnyDoc converted document ${documentId}; publication quality is assessed separately.`,
+              );
+          }
+        }
+      } catch (err: any) {
+        const code = typeof err?.code === 'string' ? err.code : 'unknown';
+        // Never route a security-limit rejection to a less constrained parser.
+        if (code === 'encrypted' || code === 'resourceLimit') {
+          throw new Error(`ANYDOC_${code === 'encrypted' ? 'ENCRYPTED' : 'RESOURCE_LIMIT'}`);
+        }
+        conversionMetadata.anydoc_error_code = ['unsupported', 'needsOcr', 'malformed', 'missingPart', 'io', 'hosted'].includes(code) ? code : 'unknown';
+        if (code === 'needsOcr' && Number.isInteger(err.pageCount) && err.pageCount > 0) {
+          conversionMetadata.anydoc_page_count = err.pageCount;
+          conversionMetadata.anydoc_ocr_pages = Array.isArray(err.pages)
+            ? [...new Set(err.pages.filter((page: unknown) => Number.isInteger(page) && Number(page) > 0 && Number(page) <= err.pageCount))].slice(0, 10000)
+            : [];
+        }
+        this.logger.warn(
+          `AnyDoc conversion ${conversionMetadata.anydoc_error_code} for document ${documentId}; using configured parser fallback.`,
         );
-      if (!response.ok)
-        throw new Error(`Parser status failed: ${response.status}`);
-      parsed = await response.json();
-      if (parsed.status === "completed" || parsed.status === "failed") break;
+      }
     }
-    if (!parsed || parsed.status !== "completed")
-      throw new Error(parsed?.error || "Parser timed out.");
 
+    if (!parsed) {
+      const form = new FormData();
+      const fileBytes = content.buffer.slice(
+        content.byteOffset,
+        content.byteOffset + content.byteLength,
+      ) as ArrayBuffer;
+      form.append(
+        "file",
+        new Blob([fileBytes]),
+        ext ? document.title : `${document.title}.md`,
+      );
+      const ocrConfig = await this.modelConfigService.getOcrConfig();
+      if (ocrConfig) {
+        form.append("ocr_provider", ocrConfig.provider);
+        form.append("ocr_endpoint", ocrConfig.baseUrl);
+        form.append("ocr_api_key", ocrConfig.apiKey);
+        form.append("ocr_secret_key", ocrConfig.secretKey);
+      }
+      const headers: Record<string, string> = {};
+      const authToken = process.env.PARSER_AUTH_TOKEN || process.env.AUTH_TOKEN;
+      if (authToken) headers.Authorization = `Bearer ${authToken}`;
+      const response = await fetch(`${this.parserUrl}/parse-execute?parser_type=auto`, {
+        method: "POST",
+        body: form,
+        headers,
+        signal: AbortSignal.timeout(parserPollBudget(process.env) + 30_000),
+      });
+      if (!response.ok) throw new Error(`Parser execution failed: ${response.status}`);
+      parsed = await response.json();
+      if (!parsed || parsed.status !== "completed")
+        throw new Error(parsed?.error || "Parser timed out.");
+    }
+
+    // Inspect original output before control-character normalization can hide damage.
+    const quality = assessContentQuality(String(parsed.markdown || ""), ext, parsed);
+    parsed = { ...parsed, ...quality };
     const markdown = String(parsed.markdown || "")
       .replace(/\0/g, "")
       .replace(/\u0000/g, "")
@@ -172,20 +219,13 @@ export class IngestionService implements OnModuleInit {
     const chunks = splitMarkdownIntoChunks(markdown);
     if (!chunks.length)
       throw new Error("Parser returned no indexable content.");
-    const qualityStatus = ["passed", "needs_review", "rejected"].includes(
-      String(parsed.quality_status),
-    )
-      ? String(parsed.quality_status)
-      : "passed";
-    const qualityScore =
-      typeof parsed.quality_score === "number" ? parsed.quality_score : null;
-    const qualityIssues = Array.isArray(parsed.quality_issues)
-      ? parsed.quality_issues.map((issue: unknown) => String(issue)).slice(0, 20)
-      : [];
+    const qualityStatus = quality.quality_status;
+    const qualityScore = quality.quality_score;
+    const qualityIssues = quality.quality_issues;
     // Persist parser facts, but never persist request credentials or the full
     // parser response. This lets operators explain a failed/uncertain import
     // and lets the UI distinguish "parsed" from "safe to publish".
-    const parserMetadata: Record<string, unknown> = {};
+    const parserMetadata: Record<string, unknown> = { ...conversionMetadata };
     for (const key of [
       "page_count",
       "text_pages",
@@ -198,9 +238,14 @@ export class IngestionService implements OnModuleInit {
       "ocr_words_result_num",
       "ocr_average_confidence",
       "ocr_cost_pages",
+      "ocr_original_pages",
+      "ocr_routed_pages",
+      "ocr_page_count",
+      "ocr_model",
       "slide_count",
       "embedded_image_count",
       "quality_metrics",
+      "quality_rule_version",
       "docling_error",
       "ocr_error",
     ]) {
@@ -208,6 +253,7 @@ export class IngestionService implements OnModuleInit {
         parserMetadata[key] = parsed[key];
       }
     }
+    parserMetadata["parsed_at"] = new Date().toISOString();
     await writeFile(
       join(this.uploadRoot, documentId, "content.md"),
       markdown,

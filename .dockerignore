@@ -1,4 +1,5 @@
 node_modules/
+3dbuilding/
 **/node_modules/
 .git
 .turbo
@@ -13,6 +14,8 @@ coverage
 *.log
 .env
 .env.local
+**/.env
+**/.env.*
 design/
 docs/
 tests/

@@ -1,7 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { PrismaClient } from '@prisma/client';
+import { getPrismaClient } from '../prisma';
 
 export type ChangeEventType =
   | 'doc_change'
@@ -20,16 +20,68 @@ export type ResourceType =
   | 'org_node';
 
 @Injectable()
-export class BrainOutboxService {
+export class BrainOutboxService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(BrainOutboxService.name);
-  private prisma = new PrismaClient();
+  private prisma = getPrismaClient();
+  private dispatchTimer?: ReturnType<typeof setInterval>;
+  private dispatching = false;
+  private dispatchCursor?: string;
+
+  onModuleInit() {
+    this.dispatchTimer = setInterval(() => { void this.dispatchPending(); }, 15_000);
+    this.dispatchTimer.unref();
+    void this.dispatchPending();
+  }
+
+  onModuleDestroy() {
+    if (this.dispatchTimer) clearInterval(this.dispatchTimer);
+  }
+
+  async dispatchPending(): Promise<void> {
+    if (this.dispatching) return;
+    this.dispatching = true;
+    try {
+      const events = await this.prisma.brainChangeEvent.findMany({
+        where: { status: { in: ['pending', 'processing', 'failed'] }, retryCount: { lt: 10 } },
+        orderBy: { id: 'asc' }, take: 100,
+        ...(this.dispatchCursor ? { cursor: { id: this.dispatchCursor }, skip: 1 } : {}),
+      });
+      for (const event of events) {
+        const job = await this.compilerQueue.getJob(`outbox-event-${event.id}`);
+        if (!job) {
+          await this.enqueueEvent(event.id, event.eventType);
+        } else {
+          const state = await job.getState();
+          // Never steal an active or delayed BullMQ lease. BullMQ owns stalled
+          // worker detection; replay only terminal jobs with unfinished DB state.
+          if (state === 'failed' || state === 'completed') await job.retry(state);
+        }
+      }
+      this.dispatchCursor = events.length === 100 ? events[events.length - 1].id : undefined;
+    } catch {
+      this.logger.warn('Outbox dispatch unavailable; durable pending events will be retried');
+    } finally {
+      this.dispatching = false;
+    }
+  }
+
+  private async enqueueEvent(eventId: string, eventType: string) {
+    const isRevoke = eventType === 'perm_revoke' || eventType === 'doc_delete';
+    await this.compilerQueue.add('process-outbox-event', { eventId }, {
+      jobId: `outbox-event-${eventId}`, priority: isRevoke ? 1 : 3,
+      attempts: 3, backoff: { type: 'exponential', delay: 2000 },
+      removeOnComplete: 100, removeOnFail: 200,
+    });
+  }
 
   constructor(
     @InjectQueue('dirty-compiler-queue') private readonly compilerQueue: Queue,
   ) {}
 
   /**
-   * 事务可靠地记录变更事件，并推入异步消费队列
+   * Persist an event before queue delivery. This standalone API does not make
+   * the caller's business mutation atomic with the event; callers needing that
+   * guarantee must migrate to a shared database transaction.
    */
   async emitEvent(
     eventType: ChangeEventType,
@@ -54,19 +106,7 @@ export class BrainOutboxService {
     );
 
     // 将事件投递到队列中，高优先级处理权限撤销事件
-    const isRevoke = eventType === 'perm_revoke' || eventType === 'doc_delete';
-    await this.compilerQueue.add(
-      'process-outbox-event',
-      { eventId: event.id },
-      {
-        jobId: `outbox-event-${event.id}`,
-        priority: isRevoke ? 1 : 3, // 1: CRITICAL, 3: HIGH
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 2000 },
-        removeOnComplete: 100,
-        removeOnFail: 200,
-      },
-    );
+    await this.enqueueEvent(event.id, eventType);
 
     return event.id;
   }

@@ -1,12 +1,12 @@
 import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { getPrismaClient } from '../prisma';
 import { AuthService } from '../auth/auth.service';
 import { AuthGuard } from '../auth/auth.guard';
 
 @UseGuards(AuthGuard)
 @Controller('api/v1/conversations')
 export class ConversationController {
-  private readonly prisma = new PrismaClient();
+  private readonly prisma = getPrismaClient();
 
   constructor(private readonly authService: AuthService) {}
 
@@ -49,5 +49,23 @@ export class ConversationController {
     if (!message) throw new NotFoundException('Message not found.');
     const feedback = ['useful', 'not_useful'].includes(body?.feedback) ? body.feedback : null;
     return this.prisma.message.update({ where: { id: messageId }, data: { feedback } });
+  }
+
+  @Get(':conversationId/messages/:messageId/trace')
+  async getTrace(@Req() req: any, @Param('conversationId') conversationId: string, @Param('messageId') messageId: string) {
+    const userId = await this.authService.userIdFromRequest(req);
+    const message = await this.prisma.message.findFirst({
+      where: { id: messageId, conversationId, conversation: { userId } },
+      select: { id: true, role: true, latencyMs: true, citationsSummary: true, processingTrace: true, createdAt: true },
+    });
+    if (!message) throw new NotFoundException('Message not found.');
+    return {
+      messageId: message.id,
+      role: message.role,
+      latencyMs: message.latencyMs,
+      citations: message.citationsSummary,
+      trace: message.processingTrace,
+      createdAt: message.createdAt,
+    };
   }
 }
