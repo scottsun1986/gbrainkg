@@ -81,8 +81,8 @@ export class AuthService {
   }
 
   async changePassword(userId: string, currentPassword: string, newPassword: string) {
-    if (newPassword.length < 12) {
-      throw new BadRequestException('New password must contain at least 12 characters.');
+    if (newPassword.length < 6) {
+      throw new BadRequestException('New password must contain at least 6 characters.');
     }
     if (currentPassword === newPassword) {
       throw new BadRequestException('New password must be different from the current password.');

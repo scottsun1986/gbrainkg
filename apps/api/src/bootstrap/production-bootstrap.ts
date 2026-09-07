@@ -12,8 +12,8 @@ function readRequiredSecret(): string {
   if (!password) {
     throw new Error('ADMIN_INITIAL_PASSWORD_FILE or ADMIN_INITIAL_PASSWORD is required for the first production bootstrap.');
   }
-  if (password.length < 12) {
-    throw new Error('The initial admin password must contain at least 12 characters.');
+  if (password.length < 6) {
+    throw new Error('The initial admin password must contain at least 6 characters.');
   }
   return password;
 }
@@ -49,14 +49,14 @@ async function main() {
     update: {
       displayName: existing?.displayName || '超级管理员',
       status: 'active',
-      ...(existing?.passwordHash ? {} : { passwordHash: hashPassword(initialPassword), mustChangePassword: true }),
+      ...(existing?.passwordHash ? {} : { passwordHash: hashPassword(initialPassword), mustChangePassword: false }),
     },
     create: {
       username: 'admin',
       displayName: '超级管理员',
       email: process.env.ADMIN_EMAIL || 'admin@local.invalid',
       passwordHash: hashPassword(initialPassword),
-      mustChangePassword: true,
+      mustChangePassword: false,
       status: 'active',
       source: 'manual',
     },

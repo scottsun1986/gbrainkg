@@ -62,12 +62,12 @@ if [[ ! -s "$SECRET_FILE" ]]; then
     unset ADMIN_INITIAL_PASSWORD
   elif [[ -t 0 ]]; then
     while true; do
-      read -r -s -p "Set initial password for admin (minimum 12 characters): " admin_password
+      read -r -s -p "Set initial password for admin (minimum 6 characters): " admin_password
       echo
       read -r -s -p "Confirm initial password: " admin_password_confirm
       echo
-      [[ "$admin_password" == "$admin_password_confirm" && ${#admin_password} -ge 12 ]] && break
-      echo "Passwords must match and contain at least 12 characters."
+      [[ "$admin_password" == "$admin_password_confirm" && ${#admin_password} -ge 6 ]] && break
+      echo "Passwords must match and contain at least 6 characters."
     done
     printf '%s\n' "$admin_password" > "$SECRET_FILE"
     unset admin_password admin_password_confirm
