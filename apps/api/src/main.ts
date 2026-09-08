@@ -24,7 +24,26 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.enableShutdownHooks();
   
-  app.use(helmet());
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          baseUri: ["'self'"],
+          fontSrc: ["'self'", 'https:', 'data:'],
+          formAction: ["'self'"],
+          frameAncestors: ["'self'"],
+          imgSrc: ["'self'", 'data:', 'blob:'],
+          objectSrc: ["'self'", 'blob:', 'data:'],
+          frameSrc: ["'self'", 'blob:', 'data:'],
+          scriptSrc: ["'self'", "'unsafe-inline'"],
+          styleSrc: ["'self'", 'https:', "'unsafe-inline'"],
+          connectSrc: ["'self'", 'http:', 'https:', 'ws:', 'wss:'],
+        },
+      },
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+    }),
+  );
   app.use(express.json({ limit: '250mb' }));
   app.use(express.urlencoded({ limit: '250mb', extended: true }));
 

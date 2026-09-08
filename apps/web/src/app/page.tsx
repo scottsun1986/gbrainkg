@@ -659,13 +659,13 @@ function UniversalDocumentViewer({ preview, onClose }) {
                       <div style={{ textAlign: 'center', padding: '30px', color: 'var(--ink-3)' }}>Word 文档渲染中…</div>
                     </div>
                   ) : isPdf && rawBlobUrl ? (
-                    <object
-                      data={`${rawBlobUrl}#toolbar=1`}
-                      type="application/pdf"
-                      style={{ width: '100%', height: '100%', minHeight: '68vh', borderRadius: '8px', border: '1px solid var(--line)' }}
-                    >
-                      <iframe src={rawBlobUrl} style={{ width: '100%', height: '100%', border: 'none', minHeight: '68vh' }} />
-                    </object>
+                    <div style={{ width: '100%', height: '100%', minHeight: '72vh', position: 'relative' }}>
+                      <iframe
+                        src={`${rawBlobUrl}#toolbar=1`}
+                        title={filename}
+                        style={{ width: '100%', height: '100%', minHeight: '72vh', border: '1px solid var(--line)', borderRadius: '8px', background: '#fff' }}
+                      />
+                    </div>
                   ) : isExcel && sheetsData.names.length > 0 ? (
                     <div className="sheet-container">
                       <div className="sheet-tabs">

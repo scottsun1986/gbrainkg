@@ -541,6 +541,11 @@ export class KnowledgeBaseController {
       `inline; filename*=UTF-8''${filename}`,
     );
     response.setHeader("X-Content-Type-Options", "nosniff");
+    response.setHeader("X-Frame-Options", "SAMEORIGIN");
+    response.setHeader(
+      "Content-Security-Policy",
+      "default-src 'self'; object-src 'self' blob: data:; frame-src 'self' blob: data:; frame-ancestors 'self';",
+    );
     if (
       [".html", ".htm", ".svg"].includes(extname(document.title).toLowerCase())
     ) {
@@ -593,6 +598,11 @@ export class KnowledgeBaseController {
     );
     response.setHeader("Cache-Control", "private, no-store");
     response.setHeader("X-Content-Type-Options", "nosniff");
+    response.setHeader("X-Frame-Options", "SAMEORIGIN");
+    response.setHeader(
+      "Content-Security-Policy",
+      "default-src 'self'; object-src 'self' blob: data:; frame-src 'self' blob: data:; frame-ancestors 'self';",
+    );
     if (
       [".html", ".htm", ".svg"].includes(extname(document.title).toLowerCase())
     ) {
