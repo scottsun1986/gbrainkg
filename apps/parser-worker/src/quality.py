@@ -40,7 +40,7 @@ def assess_content_quality(markdown: str, suffix: str, task: dict[str, Any]) -> 
     the Markdown/chunks available for inspection but never enters GBrain.
     """
     text = str(markdown or "")
-    placeholder_count = len(re.findall(r"<!--\s*(?:image|picture|figure)\s*-->", text, flags=re.IGNORECASE))
+    placeholder_count = len(re.findall(r"<!--\s*(?:image|picture|figure)(?:[^\n>]*)\s*-->", text, flags=re.IGNORECASE))
     quality_text = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
     quality_text = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", quality_text)
     meaningful = re.findall(r"[A-Za-z0-9\u4e00-\u9fff]", quality_text)
@@ -68,6 +68,10 @@ def assess_content_quality(markdown: str, suffix: str, task: dict[str, Any]) -> 
                 issues.append("OCR 平均置信度低于 0.75")
         except (TypeError, ValueError):
             pass
+    if isinstance(task.get("quality_issues"), list):
+        for issue in task["quality_issues"]:
+            if isinstance(issue, str) and issue not in issues:
+                issues.append(issue)
     score = 1.0
     score -= min(replacement_ratio * 4, 0.45)
     score -= min(control_ratio * 2, 0.2)
@@ -80,8 +84,10 @@ def assess_content_quality(markdown: str, suffix: str, task: dict[str, Any]) -> 
             pass
     score = round(max(0.0, min(1.0, score)), 4)
     status = "passed" if not issues else "needs_review"
-    if meaningful_count == 0:
+    if meaningful_count == 0 or task.get("quality_status") == "rejected":
         status = "rejected"
+    elif task.get("quality_status") == "needs_review":
+        status = "needs_review"
     return {
         "quality_status": status,
         "quality_score": score,

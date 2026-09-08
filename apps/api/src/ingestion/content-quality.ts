@@ -42,7 +42,7 @@ export function assessContentQuality(markdown: string, suffix: string, facts: Re
   const meaningful = (visible.match(/[\p{L}\p{N}]/gu) || []).length;
   const replacementRatio = chars.filter(c => c === '\ufffd').length / count;
   const controlRatio = chars.filter(c => c.charCodeAt(0) < 32 && !'\n\r\t'.includes(c)).length / count;
-  const placeholders = (markdown.match(/<!--\s*(?:image|picture|figure)\s*-->/gi) || []).length;
+  const placeholders = (markdown.match(/<!--\s*(?:image|picture|figure)(?:[^\n>]*)\s*-->/gi) || []).length;
   const binary = !['.md', '.txt', '.csv', '.html', '.htm'].includes(suffix.toLowerCase());
   const issues: string[] = [];
   if (!meaningful) issues.push('没有提取到可检索文字');

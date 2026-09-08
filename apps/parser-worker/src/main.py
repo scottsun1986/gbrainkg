@@ -64,10 +64,20 @@ _baidu_access_token: tuple[str, float] | None = None
 
 try:
     from src.quality import _pdf_native_quality, classify_pdf, assess_content_quality
-    from src.extractors.vlm_extractor import is_vlm_available, enrich_markdown_with_vlm, describe_pdf_page_with_vlm
+    from src.extractors.vlm_extractor import (
+        is_vlm_available,
+        enrich_markdown_with_vlm,
+        describe_pdf_page_with_vlm,
+        describe_image_with_vlm,
+    )
 except (ImportError, ModuleNotFoundError):
     from quality import _pdf_native_quality, classify_pdf, assess_content_quality
-    from extractors.vlm_extractor import is_vlm_available, enrich_markdown_with_vlm, describe_pdf_page_with_vlm
+    from extractors.vlm_extractor import (
+        is_vlm_available,
+        enrich_markdown_with_vlm,
+        describe_pdf_page_with_vlm,
+        describe_image_with_vlm,
+    )
 
 
 async def periodic_cleanup():
@@ -721,14 +731,15 @@ async def convert_with_cloud_ocr(
 
 
 async def convert_pptx_without_docling(
-    path: Path, ocr_config: dict[str, str]
+    path: Path, ocr_config: dict[str, str], doc_title: str | None = None
 ) -> tuple[str, str, dict[str, Any]]:
     """Build a slide-preserving Markdown representation without Docling.
 
-    Production deliberately does not install/enable Docling. Native PPTX
-    text and tables remain lossless; embedded images are sent through the
-    configured OCR provider. If a slide contains images and no OCR route is
-    available, fail closed instead of silently indexing incomplete content.
+    Native PPTX text and tables remain lossless; embedded images are sent
+    through the configured OCR provider or VLM if available. If no OCR or VLM
+    route is available, preserve structured slide sections and informative image
+    placeholders so the document remains indexable and reviewable rather than
+    failing closed.
     """
     slide_blocks, image_parts = await asyncio.to_thread(extract_pptx_native, path)
     provider = str(ocr_config.get("provider") or OCR_PROVIDER).lower()
@@ -737,43 +748,111 @@ async def convert_pptx_without_docling(
         "slide_count": len(slide_blocks),
         "embedded_image_count": len(image_parts),
     }
-    if image_parts and provider == "none":
-        raise RuntimeError(
-            "PPTX contains embedded images; configure Baidu OCR for complete image text extraction"
-        )
-    for position, image in enumerate(image_parts, start=1):
-        temp = tempfile.NamedTemporaryFile(
-            prefix=f"pptx-image-{position}-", suffix=f".{image['ext']}", dir=str(UPLOAD_ROOT), delete=False
-        )
-        image_path = Path(temp.name)
-        try:
-            with temp:
-                temp.write(image["blob"])
-            image_md, image_metadata = await convert_image_with_baidu_ocr(image_path, ocr_config)
-            image_by_slide.setdefault(int(image["slide"]), []).append(
-                f"### 图片区域 {image['shape']}\n\n{image_md.strip()}"
-            )
-            for key, value in image_metadata.items():
-                if key == "ocr_average_confidence" and value is not None:
-                    previous = metadata.get(key)
-                    metadata[key] = round(
-                        (float(previous) * (position - 1) + float(value)) / position, 4
-                    ) if previous is not None else value
-                elif key.startswith("ocr_"):
-                    metadata[key] = metadata.get(key, 0) + value if isinstance(value, (int, float)) else value
-        finally:
-            image_path.unlink(missing_ok=True)
+    ocr_extracted_count = 0
+    vlm_extracted_count = 0
 
-    sections = [f"# {path.stem}"]
+    stem = Path(doc_title).stem if doc_title else path.stem
+    if image_parts:
+        if provider == "baidu":
+            for position, image in enumerate(image_parts, start=1):
+                temp = tempfile.NamedTemporaryFile(
+                    prefix=f"pptx-image-{position}-", suffix=f".{image['ext']}", dir=str(UPLOAD_ROOT), delete=False
+                )
+                image_path = Path(temp.name)
+                try:
+                    with temp:
+                        temp.write(image["blob"])
+                    try:
+                        image_md, image_metadata = await convert_image_with_baidu_ocr(image_path, ocr_config)
+                        if image_md.strip():
+                            ocr_extracted_count += 1
+                            image_by_slide.setdefault(int(image["slide"]), []).append(
+                                f"### 图片区域 {image['shape']}\n\n{image_md.strip()}"
+                            )
+                            for key, value in image_metadata.items():
+                                if key == "ocr_average_confidence" and value is not None:
+                                    previous = metadata.get(key)
+                                    metadata[key] = round(
+                                        (float(previous) * (position - 1) + float(value)) / position, 4
+                                    ) if previous is not None else value
+                                elif key.startswith("ocr_"):
+                                    metadata[key] = metadata.get(key, 0) + value if isinstance(value, (int, float)) else value
+                        else:
+                            image_by_slide.setdefault(int(image["slide"]), []).append(
+                                f"<!-- image: slide-{image['slide']}-picture-{image['shape']} -->\n*(图片区域 {image['shape']} 未识别到有效文字)*"
+                            )
+                    except Exception as ocr_err:
+                        logger.warning("Baidu OCR failed for slide %s image %s: %s", image["slide"], image["shape"], ocr_err)
+                        image_by_slide.setdefault(int(image["slide"]), []).append(
+                            f"<!-- image: slide-{image['slide']}-picture-{image['shape']} -->\n*(图片区域 {image['shape']} OCR 识别失败: {ocr_err})*"
+                        )
+                finally:
+                    image_path.unlink(missing_ok=True)
+        elif is_vlm_available():
+            for position, image in enumerate(image_parts, start=1):
+                temp = tempfile.NamedTemporaryFile(
+                    prefix=f"pptx-vlm-{position}-", suffix=f".{image['ext']}", dir=str(UPLOAD_ROOT), delete=False
+                )
+                image_path = Path(temp.name)
+                try:
+                    with temp:
+                        temp.write(image["blob"])
+                    try:
+                        vlm_desc = await describe_image_with_vlm(
+                            image_path,
+                            context_hint=f"{stem} 幻灯片第 {image['slide']} 页",
+                        )
+                        if vlm_desc.strip():
+                            vlm_extracted_count += 1
+                            image_by_slide.setdefault(int(image["slide"]), []).append(
+                                f"### 视觉内容解析 (区域 {image['shape']})\n\n{vlm_desc.strip()}"
+                            )
+                        else:
+                            image_by_slide.setdefault(int(image["slide"]), []).append(
+                                f"<!-- image: slide-{image['slide']}-picture-{image['shape']} -->\n*(幻灯片图片区域 {image['shape']} 视觉解析为空)*"
+                            )
+                    except Exception as vlm_err:
+                        logger.warning("VLM analysis failed for slide %s image %s: %s", image["slide"], image["shape"], vlm_err)
+                        image_by_slide.setdefault(int(image["slide"]), []).append(
+                            f"<!-- image: slide-{image['slide']}-picture-{image['shape']} -->\n*(幻灯片包含图片内容)*"
+                        )
+                finally:
+                    image_path.unlink(missing_ok=True)
+        else:
+            for image in image_parts:
+                image_by_slide.setdefault(int(image["slide"]), []).append(
+                    f"<!-- image: slide-{image['slide']}-picture-{image['shape']} -->\n*(幻灯片包含图片内容，当前未配置 OCR 或视觉大模型提取)*"
+                )
+
+    has_native_text = any(block.strip() for block in slide_blocks)
+    sections = [f"# {stem}"]
     for slide_number, block in enumerate(slide_blocks, start=1):
         content = [block] if block else []
         content.extend(image_by_slide.get(slide_number, []))
         if content:
             sections.append(f"## 第 {slide_number} 页\n\n" + "\n\n".join(content))
+        else:
+            sections.append(f"## 第 {slide_number} 页\n\n*(幻灯片无文字或图片内容)*")
+
+    if not slide_blocks:
+        sections.append("## 第 1 页\n\n*(空演示文稿)*")
+
     markdown = "\n\n---\n\n".join(sections)
-    if not any(block.strip() for block in slide_blocks) and not image_by_slide:
-        raise RuntimeError("PPTX contains no extractable text, tables, or OCR results")
-    return markdown, "python-pptx-native+ocr" if image_parts else "python-pptx-native", metadata
+
+    if not has_native_text and not ocr_extracted_count and not vlm_extracted_count:
+        metadata["quality_issues"] = ["幻灯片均为图片且未配置 OCR/视觉大模型，已保留页面骨架供复核"]
+        metadata["quality_status"] = "needs_review"
+
+    if ocr_extracted_count > 0:
+        engine = "python-pptx-native+ocr"
+    elif vlm_extracted_count > 0:
+        engine = "python-pptx-native+vlm"
+    elif image_parts:
+        engine = "python-pptx-native"
+    else:
+        engine = "python-pptx-native"
+
+    return markdown, engine, metadata
 
 
 async def convert_pdf_with_fallback(
@@ -905,12 +984,12 @@ async def process_file(
                 except Exception as docling_error:
                     logger.warning("Local Docling PPTX conversion failed for %s: %s", path.name, docling_error)
                     task["docling_error"] = str(docling_error)
-                    md, engine, parser_metadata = await convert_pptx_without_docling(path, ocr_config)
+                    md, engine, parser_metadata = await convert_pptx_without_docling(path, ocr_config, doc_title=task.get("filename"))
                     task["markdown"] = md
                     task["engine"] = engine
                     task.update(parser_metadata)
             else:
-                md, engine, parser_metadata = await convert_pptx_without_docling(path, ocr_config)
+                md, engine, parser_metadata = await convert_pptx_without_docling(path, ocr_config, doc_title=task.get("filename"))
                 task["markdown"] = md
                 task["engine"] = engine
                 task.update(parser_metadata)
@@ -951,15 +1030,37 @@ async def process_file(
                 except Exception as docling_error:
                     logger.warning("Local Docling image conversion failed for %s: %s", path.name, docling_error)
                     task["docling_error"] = str(docling_error)
+                    provider = str(ocr_config.get("provider") or OCR_PROVIDER).lower()
+                    if provider == "baidu":
+                        md, ocr_metadata = await convert_image_with_baidu_ocr(path, ocr_config)
+                        task["markdown"] = f"# {path.stem}\n\n{md}"
+                        task["engine"] = "ocr-baidu-image"
+                        task.update(ocr_metadata)
+                    elif is_vlm_available():
+                        vlm_desc = await describe_image_with_vlm(path, context_hint=path.stem)
+                        task["markdown"] = f"# {path.stem}\n\n{vlm_desc}"
+                        task["engine"] = "vlm-image"
+                    else:
+                        md, ocr_metadata = await convert_image_with_baidu_ocr(path, ocr_config)
+                        task["markdown"] = f"# {path.stem}\n\n{md}"
+                        task["engine"] = "ocr-baidu-image"
+                        task.update(ocr_metadata)
+            else:
+                provider = str(ocr_config.get("provider") or OCR_PROVIDER).lower()
+                if provider == "baidu":
                     md, ocr_metadata = await convert_image_with_baidu_ocr(path, ocr_config)
                     task["markdown"] = f"# {path.stem}\n\n{md}"
                     task["engine"] = "ocr-baidu-image"
                     task.update(ocr_metadata)
-            else:
-                md, ocr_metadata = await convert_image_with_baidu_ocr(path, ocr_config)
-                task["markdown"] = f"# {path.stem}\n\n{md}"
-                task["engine"] = "ocr-baidu-image"
-                task.update(ocr_metadata)
+                elif is_vlm_available():
+                    vlm_desc = await describe_image_with_vlm(path, context_hint=path.stem)
+                    task["markdown"] = f"# {path.stem}\n\n{vlm_desc}"
+                    task["engine"] = "vlm-image"
+                else:
+                    md, ocr_metadata = await convert_image_with_baidu_ocr(path, ocr_config)
+                    task["markdown"] = f"# {path.stem}\n\n{md}"
+                    task["engine"] = "ocr-baidu-image"
+                    task.update(ocr_metadata)
 
         if not task.get("markdown", "").strip():
             raise RuntimeError("Extracted Markdown is empty")

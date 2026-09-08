@@ -4,5 +4,5 @@ export const SUPPORTED_UPLOAD_EXTENSIONS = new Set([
   '.xls', '.xlsx', '.pptx', '.png', '.jpg', '.jpeg',
 ]);
 export const ANYDOC_UPLOAD_EXTENSIONS = new Set([
-  '.csv', '.doc', '.docx', '.pdf', '.xls', '.xlsx', '.pptx',
+  '.csv', '.doc', '.docx', '.pdf', '.xls', '.xlsx',
 ]);
