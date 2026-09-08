@@ -354,9 +354,12 @@ export class OpenApiController {
       const sub = stream$.subscribe({
         next: (event: any) => {
           const item = event?.data || event;
-          if (item?.type === 'token') {
-            accumulated += item.content || item.token || '';
-            res.write(`data: ${JSON.stringify({ type: 'token', content: item.content || item.token })}\n\n`);
+          if (item?.type === 'delta' || item?.type === 'token') {
+            const chunk = item.content || item.token || '';
+            accumulated += chunk;
+            res.write(`data: ${JSON.stringify({ type: 'delta', content: chunk })}\n\n`);
+          } else if (item?.type === 'citation') {
+            res.write(`data: ${JSON.stringify({ type: 'citation', citation: item.timeline_entry })}\n\n`);
           } else if (item?.type === 'citations') {
             res.write(`data: ${JSON.stringify({ type: 'citations', citations: item.citations })}\n\n`);
           } else if (item?.type === 'trace') {
@@ -398,8 +401,10 @@ export class OpenApiController {
       stream$.subscribe({
         next: (event: any) => {
           const item = event?.data || event;
-          if (item?.type === 'token') {
+          if (item?.type === 'delta' || item?.type === 'token') {
             accumulatedAnswer += item.content || item.token || '';
+          } else if (item?.type === 'citation') {
+            citations.push(item.timeline_entry);
           } else if (item?.type === 'citations') {
             citations = item.citations || [];
           } else if (item?.type === 'trace') {

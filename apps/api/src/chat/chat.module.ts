@@ -15,6 +15,6 @@ import { AgenticRagService } from './agentic-rag.service';
   imports: [PermissionModule, BrainCompilerModule, AuthModule, GraphRagModule],
   controllers: [ChatController, ConversationController],
   providers: [ChatService, weknoraClientProvider, SemanticCacheService, AgenticRagService],
-  exports: [SemanticCacheService, AgenticRagService],
+  exports: [ChatService, SemanticCacheService, AgenticRagService],
 })
 export class ChatModule {}

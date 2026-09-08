@@ -142,7 +142,8 @@ export class IngestionService implements OnModuleInit {
       }
     } else if (ANYDOC_UPLOAD_EXTENSIONS.has(ext)) {
       try {
-        const anydoc = await import("@firecrawl/anydoc");
+        // @ts-ignore
+        const anydoc: any = await import("@firecrawl/anydoc" as any).catch(() => null);
         if (typeof anydoc?.toMarkdown === "function") {
           const md = await anydoc.toMarkdown(document.rawFileOid);
           if (md && md.trim().length > 0) {

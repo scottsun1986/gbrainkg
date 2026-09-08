@@ -12,5 +12,6 @@ import { IngestionProcessor } from './ingestion.processor';
   imports: [PermissionModule, AuthModule, BrainCompilerModule, BullModule.registerQueue({ name: 'ingestion-queue' })],
   controllers: [IngestionController, KnowledgeBaseController],
   providers: [IngestionService, IngestionProcessor],
+  exports: [IngestionService],
 })
 export class IngestionModule {}
