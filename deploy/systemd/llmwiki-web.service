@@ -7,9 +7,9 @@ Wants=llmwiki-api.service
 Type=simple
 WorkingDirectory=%h/gbrainkg/apps/web
 Environment=PORT=3200
-Environment=HOSTNAME=127.0.0.1
+Environment=HOSTNAME=0.0.0.0
 Environment=PATH=%h/.local/bin:%h/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=%h/.local/bin/npm run start -- --hostname 127.0.0.1
+ExecStart=%h/.local/bin/npm run start -- --hostname 0.0.0.0
 Restart=always
 RestartSec=5
 TimeoutStopSec=15

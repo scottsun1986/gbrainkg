@@ -3,57 +3,48 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
+export PATH="$HOME/.local/bin:$HOME/.hermes/node/bin:$HOME/.bun/bin:$PATH"
 
-for command_name in docker openssl curl; do
+# Check host prerequisites
+for command_name in node pnpm python3 openssl curl; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
-    echo "$command_name is required. Install Docker Engine and the host prerequisites first." >&2
+    echo "Error: $command_name is required on host. Please install it first." >&2
     exit 1
   fi
 done
-if ! docker compose version >/dev/null 2>&1; then
-  echo "Docker Compose v2 is required." >&2
-  exit 1
-fi
 
-ENV_FILE="$ROOT_DIR/.env"
+echo "=================================================="
+echo "         LLMWiki Host-Native Installation         "
+echo "=================================================="
+
 SECRET_DIR="$ROOT_DIR/.secrets"
 SECRET_FILE="$SECRET_DIR/admin_initial_password"
-COMPOSE=(docker compose --env-file "$ENV_FILE" -f deploy/docker-compose.prod.yml)
+API_ENV="$ROOT_DIR/apps/api/.env"
+WEB_ENV="$ROOT_DIR/apps/web/.env.production"
 
-if [[ ! -f "$ENV_FILE" ]]; then
-  cp deploy/production.env.example "$ENV_FILE"
-  chmod 600 "$ENV_FILE"
+# 1. Environment configuration
+echo "[1/6] Preparing environment configuration..."
+mkdir -p "$ROOT_DIR/.local/share/llmwiki/uploads" "$ROOT_DIR/.local/share/llmwiki/brain_repos"
+mkdir -p "$HOME/.local/share/llmwiki/uploads" "$HOME/.local/share/llmwiki/brain_repos"
+
+if [[ ! -f "$API_ENV" ]]; then
+  if [[ -f "$ROOT_DIR/apps/api/.env.example" ]]; then
+    cp "$ROOT_DIR/apps/api/.env.example" "$API_ENV"
+  fi
   random_secret() { openssl rand -hex 32; }
   sed -i \
-    -e "s#replace-with-a-long-random-database-password#$(random_secret)#" \
-    -e "s#replace-with-a-long-random-redis-password#$(random_secret)#" \
-    -e "s#replace-with-a-long-random-minio-password#$(random_secret)#" \
-    -e "s#replace-with-a-long-random-auth-secret#$(random_secret)#" \
-    -e "s#replace-with-a-different-long-random-model-config-key#$(random_secret)#" \
-    -e "s#replace-with-a-long-random-parser-token#$(random_secret)#" \
-    "$ENV_FILE"
-  echo "Created $ENV_FILE with generated service secrets."
+    -e "s#replace-with-a-long-random-secret#$(random_secret)#" \
+    -e "s#replace-with-an-independent-long-random-secret#$(random_secret)#" \
+    "$API_ENV" 2>/dev/null || true
+  echo "Created $API_ENV with generated secrets."
 fi
 
-ensure_http_port() {
-  local configured_port
-  configured_port="$(awk -F= '$1 == "HTTP_PORT" {print $2}' "$ENV_FILE" | tail -n 1 | tr -d '[:space:]')"
-  if [[ -z "$configured_port" ]]; then
-    echo 'HTTP_PORT=20080' >> "$ENV_FILE"
-    configured_port=20080
-  elif [[ "$configured_port" == '80' || "$configured_port" == '8080' || "$configured_port" == '443' || "$configured_port" == '8443' ]]; then
-    sed -i "s/^HTTP_PORT=.*/HTTP_PORT=20080/" "$ENV_FILE"
-    configured_port=20080
-    echo "Migrated the legacy HTTP_PORT to $configured_port."
-  fi
-  if ! [[ "$configured_port" =~ ^[0-9]+$ ]] || (( configured_port < 20000 || configured_port > 65535 )); then
-    echo "HTTP_PORT must be between 20000 and 65535; got '$configured_port'." >&2
-    exit 1
-  fi
-}
+if [[ ! -f "$WEB_ENV" ]]; then
+  echo "NEXT_PUBLIC_API_URL=http://localhost:3202" > "$WEB_ENV"
+  echo "Created $WEB_ENV."
+fi
 
-ensure_http_port
-
+# 2. Admin initial password configuration
 mkdir -p "$SECRET_DIR"
 chmod 700 "$SECRET_DIR"
 if [[ ! -s "$SECRET_FILE" ]]; then
@@ -72,29 +63,49 @@ if [[ ! -s "$SECRET_FILE" ]]; then
     printf '%s\n' "$admin_password" > "$SECRET_FILE"
     unset admin_password admin_password_confirm
   else
-    echo "Set ADMIN_INITIAL_PASSWORD in a protected environment for unattended install." >&2
-    exit 1
+    echo "ADMIN_INITIAL_PASSWORD is not set; skipping initial admin password file creation."
   fi
-  chmod 600 "$SECRET_FILE"
+  [[ -f "$SECRET_FILE" ]] && chmod 600 "$SECRET_FILE"
 fi
 
-echo "Building production images..."
-"${COMPOSE[@]}" build api-image parser web
+# 3. Monorepo dependencies
+echo "[2/6] Installing Node dependencies..."
+pnpm install --frozen-lockfile=false
 
-echo "Starting database, cache and parser..."
-"${COMPOSE[@]}" up -d postgres redis minio parser
-"${COMPOSE[@]}" up --wait postgres redis minio parser
+# 4. Database sync
+echo "[3/6] Synchronizing database schema..."
+pnpm --filter database exec prisma generate
+pnpm --filter database exec prisma migrate deploy --schema=prisma/schema.prisma
 
-echo "Running Prisma migrations and production bootstrap..."
-"${COMPOSE[@]}" rm -sf bootstrap >/dev/null 2>&1 || true
-"${COMPOSE[@]}" up --no-deps bootstrap
+# 5. Build services
+echo "[4/6] Building API and Web frontend..."
+pnpm --filter api build
+pnpm --filter web build
 
-echo "Starting API, Web and reverse proxy..."
-"${COMPOSE[@]}" up -d api web nginx
-"${COMPOSE[@]}" up --wait api web nginx
+# Bootstrap admin if initial password file exists
+if [[ -s "$SECRET_FILE" ]]; then
+  echo "Bootstrapping initial admin user..."
+  ADMIN_INITIAL_PASSWORD_FILE="$SECRET_FILE" node "$ROOT_DIR/apps/api/dist/bootstrap/production-bootstrap.js" || true
+fi
 
-deploy/healthcheck.sh
+# 6. Install & Enable Systemd User Units
+echo "[5/6] Configuring systemd user services..."
+SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
+mkdir -p "$SYSTEMD_USER_DIR"
+
+ln -sf "$ROOT_DIR/deploy/systemd/llmwiki-parser.service" "$SYSTEMD_USER_DIR/llmwiki-parser.service"
+ln -sf "$ROOT_DIR/deploy/systemd/llmwiki-api.service" "$SYSTEMD_USER_DIR/llmwiki-api.service"
+ln -sf "$ROOT_DIR/deploy/systemd/llmwiki-web.service" "$SYSTEMD_USER_DIR/llmwiki-web.service"
+
+systemctl --user daemon-reload
+systemctl --user enable --now llmwiki-parser.service llmwiki-api.service llmwiki-web.service
+systemctl --user restart llmwiki-parser.service llmwiki-api.service llmwiki-web.service
+loginctl enable-linger "$USER" 2>/dev/null || true
+
+# 7. Health check
+echo "[6/6] Verifying service health..."
+sleep 2
+"$ROOT_DIR/deploy/healthcheck.sh"
+
 echo
-echo "Installation complete. Login username: admin"
-echo "The first login must use the configured initial password and then set a new password."
-echo "No demo users, organizations, knowledge bases or documents were created."
+echo "Installation complete. Systemd services are active and managed via systemctl --user."

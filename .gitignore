@@ -40,5 +40,6 @@ logs/
 
 # Temporary agent & scratch work
 scratch/
+screenshots/
 .agents/
 docs/test-reports/**/screenshots/

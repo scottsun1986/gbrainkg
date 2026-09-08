@@ -1,10 +1,31 @@
-# LLMWiki 生产一键部署
+# LLMWiki 生产环境部署 (宿主机原生架构 / Host-Native)
 
-本目录提供局域网生产部署方案。生产环境只会初始化一个超级管理员账号 `admin` 和内置角色，不会创建演示用户、组织、知识库或文档。
+生产环境采用与测试环境一致的**宿主机原生部署模式（Host-Native via Systemd）**，直接运行在 Linux 宿主机上，无需通过 Docker Compose 封装应用容器，提供极佳的性能、直观的日志与便捷的运维体验。
 
-## 新机器安装
+## 架构说明
 
-要求：Docker Engine、Docker Compose v2、至少 8GB 内存；如果需要解析复杂 PDF/DOCX，建议 16GB 以上内存。
+- **Web 前端 (`llmwiki-web.service`)**: Next.js 生产包，监听端口 `3200`（绑定 `0.0.0.0:3200`，局域网与本机均可访问）。
+- **API 后端 (`llmwiki-api.service`)**: NestJS 生产包，监听端口 `3202`（`0.0.0.0:3202`），内置 GBrain 知识引擎与混合检索通道。
+- **解析服务 (`llmwiki-parser.service`)**: FastAPI / Uvicorn Python 微服务，监听端口 `8100` (`127.0.0.1:8100`)。
+- **存储与缓存**:
+  - PostgreSQL (带 `pgvector` 扩展，监听端口 `5433` 或 `5432`)
+  - Redis (监听端口 `6379`)
+  - 文档上传路径: `~/.local/share/llmwiki/uploads`
+  - GBrain 知识库数据: `~/.local/share/llmwiki/brain_repos`
+
+---
+
+## 快速安装与部署
+
+### 1. 环境依赖
+
+- **Node.js**: >= 18 (推荐 Node 20 LTS)
+- **pnpm**: >= 9.0
+- **Python**: >= 3.10 (含 FastAPI, Uvicorn, PyPDF 等依赖)
+- **PostgreSQL**: 16+ (带 pgvector 扩展)
+- **Redis**: 7+
+
+### 2. 执行一键安装
 
 在项目根目录执行：
 
@@ -12,58 +33,57 @@
 ./deploy/install.sh
 ```
 
-安装脚本会：
-
-1. 生成 `.env` 和服务端随机密钥；
-2. 交互式设置 `admin` 初始密码；
-3. 构建 API、Web、Parser 和 GBrain 镜像；
-4. 启动 PostgreSQL/pgvector、Redis、MinIO 和 Parser；
-5. 执行 Prisma 生产迁移；
-6. 幂等创建 `admin` 和内置角色；
-7. 启动 API、Web 和 Nginx；
+一键安装脚本自动完成以下步骤：
+1. 检查宿主机环境依赖（Node、pnpm、Python3、curl 等）；
+2. 自动准备 `apps/api/.env` 与 `apps/web/.env.production`，生成强随机密钥；
+3. 安装 monorepo Node 依赖 (`pnpm install`)；
+4. 执行 Prisma 客户端生成与数据库迁移 (`prisma migrate deploy`)；
+5. 编译构建 API 后端与 Web 前端；
+6. 自动注册并启用 Systemd 用户服务 (`~/.config/systemd/user/llmwiki-*.service`)；
+7. 开启用户会话守护 (`loginctl enable-linger $USER`)，确保终端登出后服务持续运行；
 8. 执行健康检查并输出局域网访问地址。
 
-也可以用于无人值守安装，但初始密码应通过受保护的环境变量传入，不要写入脚本或 Git：
+---
 
-```bash
-ADMIN_INITIAL_PASSWORD='至少12位的临时密码' ./deploy/install.sh
-```
+## 生产升级维护
 
-首次登录必须修改密码。初始密码实际保存于 `.secrets/admin_initial_password`，该目录已加入 `.gitignore`。
-
-## 升级
-
-保留 PostgreSQL、MinIO、Redis、上传原件、GBrain source 和管理员密码，仅重新构建镜像、执行迁移并滚动启动服务：
+代码更新后，仅需在根目录下执行一键升级：
 
 ```bash
 ./deploy/upgrade.sh
 ```
 
-## 访问
+升级脚本会自动完成依赖更新、数据库迁移、重新构建 API 与 Web 前端、平滑重启 systemd 用户服务并执行健康检查。
 
-默认通过 Nginx 暴露 `HTTP_PORT`，默认为 `20080`。生产端口要求为 `20000-65535`，不使用 80、8080、443、8443：
+---
 
-```text
-http://服务器局域网IP:20080/
-```
+## 访问与验证
 
-如需使用其他高位端口，修改根目录 `.env` 中的 `HTTP_PORT` 后执行 `./deploy/upgrade.sh`。访问地址改变时，同时将 `WEB_ORIGIN` 改为实际的协议、主机和端口。
+- **Web 管理界面**: `http://<服务器局域网IP>:3200` 或 `http://localhost:3200`
+- **API 接口地址**: `http://<服务器局域网IP>:3202` 或 `http://localhost:3202`
+- **初始管理员账号**: `admin`
 
-数据库、Redis、MinIO、Parser 和 API 不映射到宿主机端口，仅在 Compose 内部网络通信。若接入 HTTPS，可在 Nginx 前增加局域网证书网关，或扩展 `deploy/docker/nginx.prod.conf`。
+---
 
-## 重要生产注意事项
+## 常用运维命令 (Systemd)
 
-- 不要执行 `packages/database/prisma/seed-full.ts` 或开发用 `seed.ts`。
-- 不要把 `.env`、`.secrets/`、模型 API Key 或上传文件提交到仓库。
-- 模型供应商和模型配置在登录后通过管理界面添加，密钥在数据库中加密保存。
-- 首次上线前应备份 PostgreSQL、MinIO 和 `brain_data` 卷。
-- `install.sh` 不会删除既有数据；重装或卸载时也不要在未确认备份前使用 `docker compose down -v`。
-
-## 常用运维命令
+所有的应用进程均通过 `systemd --user` 进行生命周期管理：
 
 ```bash
-docker compose --env-file .env -f deploy/docker-compose.prod.yml ps
-docker compose --env-file .env -f deploy/docker-compose.prod.yml logs -f api
-docker compose --env-file .env -f deploy/docker-compose.prod.yml logs -f parser
-deploy/healthcheck.sh
+# 查看服务运行状态
+systemctl --user status llmwiki-web.service llmwiki-api.service llmwiki-parser.service
+
+# 重启全部服务
+systemctl --user restart llmwiki-parser.service llmwiki-api.service llmwiki-web.service
+
+# 停止服务
+systemctl --user stop llmwiki-web.service llmwiki-api.service llmwiki-parser.service
+
+# 查看实时日志
+journalctl --user -u llmwiki-web -f
+journalctl --user -u llmwiki-api -f
+journalctl --user -u llmwiki-parser -f
+
+# 执行健康检查
+./deploy/healthcheck.sh
 ```

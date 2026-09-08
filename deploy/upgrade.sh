@@ -3,30 +3,44 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
-[[ -f .env ]] || { echo "Missing .env. Run deploy/install.sh first." >&2; exit 1; }
+export PATH="$HOME/.local/bin:$HOME/.hermes/node/bin:$HOME/.bun/bin:$PATH"
+echo "=================================================="
+echo "            LLMWiki Production Upgrade            "
+echo "=================================================="
 
-COMPOSE=(docker compose --env-file .env -f deploy/docker-compose.prod.yml)
+# 1. Check prerequisites
+for cmd in node pnpm python3 curl; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "Error: $cmd is required on host." >&2
+    exit 1
+  fi
+done
 
-configured_port="$(awk -F= '$1 == "HTTP_PORT" {print $2}' .env | tail -n 1 | tr -d '[:space:]')"
-if [[ "$configured_port" == '80' || "$configured_port" == '8080' || "$configured_port" == '443' || "$configured_port" == '8443' ]]; then
-  sed -i "s/^HTTP_PORT=.*/HTTP_PORT=20080/" .env
-  configured_port=20080
-  echo "Migrated the legacy HTTP_PORT to $configured_port."
-elif [[ -z "$configured_port" ]]; then
-  echo 'HTTP_PORT=20080' >> .env
-  configured_port=20080
-fi
-if ! [[ "$configured_port" =~ ^[0-9]+$ ]] || (( configured_port < 20000 || configured_port > 65535 )); then
-  echo "HTTP_PORT must be between 20000 and 65535; got '$configured_port'." >&2
-  exit 1
-fi
+# 2. Install Node dependencies
+echo "[1/5] Installing package dependencies..."
+pnpm install --frozen-lockfile=false
 
-"${COMPOSE[@]}" build api-image parser web
-"${COMPOSE[@]}" up -d postgres redis minio parser
-"${COMPOSE[@]}" up --wait postgres redis minio parser
-"${COMPOSE[@]}" rm -sf bootstrap >/dev/null 2>&1 || true
-"${COMPOSE[@]}" up --no-deps bootstrap
-"${COMPOSE[@]}" up -d api web nginx
-"${COMPOSE[@]}" up --wait api web nginx
+# 3. Database migrations / sync
+echo "[2/5] Synchronizing database schema..."
+pnpm --filter database exec prisma generate
+pnpm --filter database exec prisma migrate deploy --schema=prisma/schema.prisma
+
+# 4. Build API
+echo "[3/5] Building API backend..."
+pnpm --filter api build
+
+# 5. Build Web
+echo "[4/5] Building Web frontend..."
+pnpm --filter web build
+
+# 6. Restart Systemd User Services
+echo "[5/5] Reloading and restarting systemd user services..."
+systemctl --user daemon-reload
+systemctl --user restart llmwiki-parser.service llmwiki-api.service llmwiki-web.service
+
+# 7. Healthcheck
+echo "Verifying service health..."
+sleep 2
 deploy/healthcheck.sh
-echo "Upgrade complete. Existing data and the admin password were preserved."
+
+echo "Upgrade complete. Native services are up to date."

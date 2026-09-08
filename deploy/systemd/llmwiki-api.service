@@ -5,11 +5,11 @@ Wants=llmwiki-parser.service
 
 [Service]
 Type=simple
-WorkingDirectory=/home/scottsun/gbrainkg/apps/api
-EnvironmentFile=/home/scottsun/gbrainkg/apps/api/.env
+WorkingDirectory=%h/gbrainkg/apps/api
+EnvironmentFile=%h/gbrainkg/apps/api/.env
 Environment=GBRAIN_POOL_SIZE=2
-Environment=PATH=/home/scottsun/.bun/bin:/home/scottsun/.local/bin:/home/scottsun/.hermes/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/home/scottsun/.local/bin/node /home/scottsun/gbrainkg/apps/api/dist/main.js
+Environment=PATH=%h/.bun/bin:%h/.local/bin:%h/.hermes/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=%h/.local/bin/node %h/gbrainkg/apps/api/dist/main.js
 Restart=always
 RestartSec=5
 TimeoutStopSec=15
