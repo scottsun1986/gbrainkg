@@ -708,7 +708,11 @@ async def convert_image_with_baidu_ocr(
                 except (TypeError, ValueError):
                     pass
         if not lines:
-            raise RuntimeError("Baidu image OCR returned no text")
+            return "", {
+                "ocr_provider": "baidu",
+                "ocr_endpoint": "accurate_basic",
+                "ocr_words_result_num": 0,
+            }
         metadata: dict[str, Any] = {
             "ocr_provider": "baidu",
             "ocr_endpoint": "accurate_basic",
