@@ -20,7 +20,7 @@ export function proxy(request: NextRequest) {
   // Add security headers
   const response = NextResponse.next();
   response.headers.set('X-Content-Type-Options', 'nosniff');
-  response.headers.set('X-Frame-Options', 'DENY');
+  response.headers.set('X-Frame-Options', 'SAMEORIGIN');
   return response;
 }
 
