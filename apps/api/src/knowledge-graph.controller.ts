@@ -6,6 +6,7 @@ import { AuthGuard } from './auth/auth.guard';
 import { BrainRepoAdapter } from '@llmwiki/gbrain-adapter';
 import { sourceKeyForKnowledgeBase } from './brain-compiler/brain-source';
 import { GraphRagService } from './graph-rag/graph-rag.service';
+import { ModelConfigService } from './model-config.service';
 import { getSharedBrainRepoAdapter } from './brain-compiler/brain-adapter.provider';
 
 type GraphNode = {
@@ -60,6 +61,7 @@ export class KnowledgeGraphController {
     private readonly authService: AuthService,
     private readonly permissionService: PermissionService,
     @Optional() private readonly graphRagService?: GraphRagService,
+    @Optional() private readonly modelConfigService?: ModelConfigService,
     @Optional() @Inject('BRAIN_REPO_ADAPTER') gbrainAdapter?: BrainRepoAdapter,
   ) {
     this.gbrain = gbrainAdapter ?? getSharedBrainRepoAdapter();
@@ -235,8 +237,28 @@ export class KnowledgeGraphController {
     let totalEntities = 0;
     let totalRelations = 0;
     if (this.graphRagService) {
+      let llmConfig: { baseUrl: string; apiKey: string; modelName: string } | null = null;
+      if (this.modelConfigService) {
+        try {
+          const cfg = await this.modelConfigService.getDefault('llm');
+          if (cfg) {
+            llmConfig = {
+              baseUrl: (cfg.provider.baseUrl || process.env.LLM_BASE_URL || '').replace(/\/$/, ''),
+              apiKey: cfg.provider.apiKey || process.env.DEEPSEEK_API_KEY || '',
+              modelName: cfg.modelName || process.env.LLM_MODEL || 'deepseek-chat',
+            };
+          }
+        } catch {}
+      }
+
       for (const doc of documents) {
-        const elements = this.graphRagService.extractGraphElements(doc.title, doc.id, doc.chunks);
+        const elements = await this.graphRagService.extractGraphElementsHybrid(
+          doc.title,
+          doc.id,
+          doc.chunks,
+          1,
+          llmConfig,
+        );
         const res = await this.graphRagService.persistGraphElements(doc.kbId, elements);
         totalEntities += res.entityCount;
         totalRelations += res.relationCount;

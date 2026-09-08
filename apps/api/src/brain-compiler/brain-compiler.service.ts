@@ -18,6 +18,7 @@ import { sourceKeyForKnowledgeBase } from "./brain-source";
 
 import { BrainScopeService } from "./brain-scope.service";
 import { BrainOutboxService } from "./brain-outbox.service";
+import { BrainBackupService } from "./brain-backup.service";
 import { getSharedBrainRepoAdapter } from "./brain-adapter.provider";
 
 export enum CompilePriority {
@@ -46,6 +47,7 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
     private readonly scopeService: BrainScopeService,
     private readonly outboxService: BrainOutboxService,
     @Optional() @Inject('BRAIN_REPO_ADAPTER') gbrainAdapter?: BrainRepoAdapter,
+    @Optional() private readonly backupService?: BrainBackupService,
   ) {
     this.gbrain = gbrainAdapter ?? getSharedBrainRepoAdapter();
   }
@@ -443,6 +445,16 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
       where: { id: source.id },
       data: { lastSyncAt: new Date(), status: "active" },
     });
+    if (this.backupService) {
+      const repoPath = typeof (this.gbrain as any).getSourcePath === 'function'
+        ? (this.gbrain as any).getSourcePath(definition.sourceKey)
+        : null;
+      if (repoPath) {
+        this.backupService.pushBackup(repoPath, definition.sourceKey).catch((err) => {
+          this.logger.warn(`Source backup failed for ${definition.sourceKey}: ${err.message}`);
+        });
+      }
+    }
     return {
       sourceKey: definition.sourceKey,
       synced: toSync.length,

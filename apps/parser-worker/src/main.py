@@ -64,8 +64,10 @@ _baidu_access_token: tuple[str, float] | None = None
 
 try:
     from src.quality import _pdf_native_quality, classify_pdf, assess_content_quality
+    from src.extractors.vlm_extractor import is_vlm_available, enrich_markdown_with_vlm, describe_pdf_page_with_vlm
 except (ImportError, ModuleNotFoundError):
     from quality import _pdf_native_quality, classify_pdf, assess_content_quality
+    from extractors.vlm_extractor import is_vlm_available, enrich_markdown_with_vlm, describe_pdf_page_with_vlm
 
 
 async def periodic_cleanup():
@@ -965,6 +967,27 @@ async def process_file(
             task["markdown"].replace("\x00", "").replace("\u0000", ""),
             str(task.get("filename", "upload.md")),
         )
+
+        # VLM enrichment: describe charts, diagrams, and visual elements
+        if is_vlm_available() and task.get("markdown", ""):
+            try:
+                enriched_md, vlm_meta = await enrich_markdown_with_vlm(
+                    task["markdown"],
+                    path,
+                    context_hint=str(task.get("filename", "")),
+                )
+                task["markdown"] = enriched_md
+                task.update(vlm_meta)
+                if vlm_meta.get("vlm_descriptions_added", 0) > 0:
+                    logger.info(
+                        "VLM enriched %d visual elements in task %s",
+                        vlm_meta["vlm_descriptions_added"],
+                        task_id,
+                    )
+            except Exception as vlm_err:
+                logger.warning("VLM enrichment failed for task %s: %s", task_id, vlm_err)
+                task["vlm_error"] = str(vlm_err)
+
         task.update(assess_content_quality(task["markdown"], suffix, task))
         if task["quality_status"] == "rejected":
             raise RuntimeError("Quality gate rejected the document: " + "; ".join(task["quality_issues"]))

@@ -562,3 +562,19 @@ model GraphCommunity {
 
   @@index([kbId, level])
 }
+
+model SemanticCache {
+  id               String   @id @default(dbgenerated("gen_random_uuid()::text"))
+  queryText        String
+  // queryEmbedding is managed via raw SQL (vector type not natively supported by Prisma)
+  scopeFingerprint String
+  knowledgeEpoch   Int      @default(0)
+  responseContent  String
+  citations        Json?
+  processingTrace  Json?
+  modelName        String?
+  hitCount         Int      @default(0)
+  lastHitAt        DateTime?
+  createdAt        DateTime @default(now())
+  expiresAt        DateTime?
+}

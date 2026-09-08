@@ -8,10 +8,13 @@ import { ConversationController } from './conversation.controller';
 
 import { GraphRagModule } from '../graph-rag/graph-rag.module';
 import { weknoraClientProvider } from '../retrieval/weknora.provider';
+import { SemanticCacheService } from './semantic-cache.service';
+import { AgenticRagService } from './agentic-rag.service';
 
 @Module({
   imports: [PermissionModule, BrainCompilerModule, AuthModule, GraphRagModule],
   controllers: [ChatController, ConversationController],
-  providers: [ChatService, weknoraClientProvider],
+  providers: [ChatService, weknoraClientProvider, SemanticCacheService, AgenticRagService],
+  exports: [SemanticCacheService, AgenticRagService],
 })
 export class ChatModule {}

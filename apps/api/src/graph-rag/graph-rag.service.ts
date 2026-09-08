@@ -191,6 +191,222 @@ export class GraphRagService {
   }
 
   /**
+   * Uses LLM to extract entities and relations from a chunk with higher accuracy
+   * than regex-based extraction. Falls back to regex on LLM failure.
+   */
+  async extractEntitiesWithLLM(
+    chunkContent: string,
+    docTitle: string,
+    docId: string,
+    chunkId: string | undefined,
+    documentVersion: number,
+    llmConfig: { baseUrl: string; apiKey: string; modelName: string } | null,
+  ): Promise<{ entities: ExtractedEntity[]; relations: ExtractedRelation[] }> {
+    if (!llmConfig || !chunkContent.trim() || chunkContent.length < 50) {
+      return { entities: [], relations: [] };
+    }
+
+    const prompt = `请从以下文本中提取知识图谱的实体和关系。
+
+文本:
+${chunkContent.slice(0, 4000)}
+
+请以 JSON 格式输出，格式如下：
+{
+  "entities": [
+    {"name": "实体名", "type": "concept|organization|system|policy|person|document", "description": "简短描述"}
+  ],
+  "relations": [
+    {"source": "源实体名", "target": "目标实体名", "type": "contains|references|regulates|depends_on|relates_to|mentions", "evidence": "原文证据"}
+  ]
+}
+
+要求：
+1. 实体名必须是文本中明确出现的名词或专有名词
+2. 每条关系必须附带 evidence（原文中的依据）
+3. type 必须是指定的枚举值之一
+4. 过滤掉过于泛化的词（如"内容"、"文档"、"目录"等）
+5. 只输出 JSON，不要其他内容`;
+
+    try {
+      const response = await fetch(`${llmConfig.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${llmConfig.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: llmConfig.modelName,
+          messages: [
+            { role: 'system', content: '你是一个专业的知识图谱构建助手。只输出合法的 JSON。' },
+            { role: 'user', content: prompt },
+          ],
+          temperature: 0,
+          max_tokens: 1500,
+          response_format: { type: 'json_object' },
+        }),
+        signal: AbortSignal.timeout(20000),
+      });
+
+      if (!response.ok) {
+        this.logger.warn(`LLM entity extraction failed: HTTP ${response.status}`);
+        return { entities: [], relations: [] };
+      }
+
+      const payload: any = await response.json();
+      let content = String(payload?.choices?.[0]?.message?.content || '').trim();
+      
+      // Try to extract JSON from markdown code blocks if present
+      const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) content = jsonMatch[1].trim();
+      
+      const parsed = JSON.parse(content);
+      
+      const entities: ExtractedEntity[] = [];
+      const relations: ExtractedRelation[] = [];
+      const validTypes: EntityType[] = ['concept', 'organization', 'system', 'policy', 'document'];
+      const validRelTypes: RelationType[] = ['contains', 'references', 'regulates', 'depends_on', 'relates_to', 'mentions'];
+
+      if (Array.isArray(parsed.entities)) {
+        for (const e of parsed.entities) {
+          if (!e.name || typeof e.name !== 'string' || e.name.length < 2 || e.name.length > 80) continue;
+          const type = validTypes.includes(e.type) ? e.type : this.classifyEntityType(e.name);
+          entities.push({
+            name: cleanLabel(e.name),
+            type,
+            description: e.description || undefined,
+            sourceDocId: docId,
+          });
+        }
+      }
+
+      if (Array.isArray(parsed.relations)) {
+        for (const r of parsed.relations) {
+          if (!r.source || !r.target || r.source === r.target) continue;
+          const relType = validRelTypes.includes(r.type) ? r.type : 'relates_to';
+          relations.push({
+            sourceName: cleanLabel(r.source),
+            targetName: cleanLabel(r.target),
+            relationType: relType,
+            description: r.evidence || undefined,
+            snippet: r.evidence || undefined,
+            provenanceDocId: docId,
+            chunkId,
+            weight: 2.0, // Higher weight for LLM-extracted relations
+            documentVersion,
+          });
+        }
+      }
+
+      this.logger.log(`LLM extracted ${entities.length} entities, ${relations.length} relations from chunk`);
+      return { entities, relations };
+    } catch (err) {
+      this.logger.warn(`LLM entity extraction error: ${err instanceof Error ? err.message : String(err)}`);
+      return { entities: [], relations: [] };
+    }
+  }
+
+  /**
+   * Hybrid extraction: combines fast regex extraction with LLM deep extraction.
+   * LLM is used selectively for chunks with high entity density or complex content.
+   */
+  async extractGraphElementsHybrid(
+    title: string,
+    docId: string,
+    chunks: Array<{ id?: string; content: string; metadata?: any }>,
+    documentVersion: number | undefined,
+    llmConfig: { baseUrl: string; apiKey: string; modelName: string } | null,
+    options: { llmSampleRate?: number; maxLlmChunks?: number } = {},
+  ): Promise<{ entities: ExtractedEntity[]; relations: ExtractedRelation[] }> {
+    // Step 1: Always run fast regex extraction
+    const regexResult = this.extractGraphElements(title, docId, chunks, documentVersion);
+    
+    if (!llmConfig) {
+      return regexResult;
+    }
+
+    // Step 2: Select chunks for LLM deep extraction
+    const sampleRate = options.llmSampleRate ?? 0.3; // Process 30% of chunks with LLM
+    const maxLlmChunks = options.maxLlmChunks ?? 20;
+    
+    // Prioritize chunks with high entity density (more regex matches) or tables
+    const scoredChunks = chunks.map((chunk, idx) => {
+      let score = 0;
+      if (chunk.content.includes('|') && chunk.content.includes('---')) score += 2; // tables
+      if (/[《「"]/.test(chunk.content)) score += 1; // policy references
+      if (/第[\d一二三四五六七八九十]+[章节条]/.test(chunk.content)) score += 1; // clause structure
+      if (chunk.content.length > 500) score += 1; // substantial content
+      return { chunk, idx, score };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, Math.min(Math.ceil(chunks.length * sampleRate), maxLlmChunks));
+
+    // Step 3: Run LLM extraction on selected chunks (with concurrency limit)
+    const allLlmEntities: ExtractedEntity[] = [];
+    const allLlmRelations: ExtractedRelation[] = [];
+    const concurrency = 3;
+    const version = documentVersion ?? 1;
+
+    for (let i = 0; i < scoredChunks.length; i += concurrency) {
+      const batch = scoredChunks.slice(i, i + concurrency);
+      const results = await Promise.allSettled(
+        batch.map(({ chunk }) =>
+          this.extractEntitiesWithLLM(
+            chunk.content,
+            title,
+            docId,
+            chunk.id,
+            version,
+            llmConfig,
+          ),
+        ),
+      );
+      for (const result of results) {
+        if (result.status === 'fulfilled') {
+          allLlmEntities.push(...result.value.entities);
+          allLlmRelations.push(...result.value.relations);
+        }
+      }
+    }
+
+    // Step 4: Merge regex + LLM results (deduplicate entities by name)
+    const entityMap = new Map<string, ExtractedEntity>();
+    for (const e of regexResult.entities) {
+      entityMap.set(e.name, e);
+    }
+    for (const e of allLlmEntities) {
+      if (!entityMap.has(e.name)) {
+        entityMap.set(e.name, e);
+      } else if (e.description && !entityMap.get(e.name)!.description) {
+        // LLM provides better descriptions
+        entityMap.set(e.name, { ...entityMap.get(e.name)!, description: e.description });
+      }
+    }
+
+    // Deduplicate relations
+    const relKey = (r: ExtractedRelation) => `${r.sourceName}|${r.targetName}|${r.relationType}`;
+    const relMap = new Map<string, ExtractedRelation>();
+    for (const r of regexResult.relations) {
+      relMap.set(relKey(r), r);
+    }
+    for (const r of allLlmRelations) {
+      const key = relKey(r);
+      if (!relMap.has(key)) {
+        relMap.set(key, r);
+      }
+    }
+
+    this.logger.log(
+      `Hybrid extraction: regex=${regexResult.entities.length} entities, LLM=${allLlmEntities.length} entities, merged=${entityMap.size} entities`,
+    );
+
+    return {
+      entities: Array.from(entityMap.values()),
+      relations: Array.from(relMap.values()),
+    };
+  }
+
+  /**
    * Persists extracted entities & relations to the database.
    * Merges duplicates gracefully.
    */

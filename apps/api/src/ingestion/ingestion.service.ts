@@ -10,6 +10,7 @@ import { splitMarkdownIntoChunks } from "./markdown-chunker";
 import { assessContentQuality } from "./content-quality";
 import { parserPollBudget } from "./parser-budget";
 import { ANYDOC_UPLOAD_EXTENSIONS } from './parser-capabilities';
+import { enrichChunksWithContext } from './contextual-retrieval';
 
 @Injectable()
 export class IngestionService implements OnModuleInit {
@@ -219,6 +220,38 @@ export class IngestionService implements OnModuleInit {
     const chunks = splitMarkdownIntoChunks(markdown);
     if (!chunks.length)
       throw new Error("Parser returned no indexable content.");
+
+    // --- Contextual Retrieval: enrich chunks with document-level context ---
+    let enrichedChunks = chunks;
+    const contextualEnabled = process.env.CONTEXTUAL_RETRIEVAL_ENABLED !== 'false';
+    if (contextualEnabled && chunks.length > 1 && markdown.length >= 500) {
+      try {
+        const llmConfig = await this.modelConfigService.getDefault('llm');
+        if (llmConfig) {
+          enrichedChunks = await enrichChunksWithContext(
+            markdown,
+            chunks,
+            {
+              baseUrl: (llmConfig.provider.baseUrl || process.env.LLM_BASE_URL || '').replace(/\/$/, ''),
+              apiKey: llmConfig.provider.apiKey || process.env.DEEPSEEK_API_KEY || '',
+              modelName: llmConfig.modelName || process.env.LLM_MODEL || 'deepseek-chat',
+            },
+            {
+              concurrency: Number(process.env.CONTEXTUAL_RETRIEVAL_CONCURRENCY || 5),
+              documentTitle: document.title,
+            },
+          );
+          this.logger.log(
+            `Contextual Retrieval enriched ${enrichedChunks.filter(c => c.metadata.contextual_prefix).length}/${chunks.length} chunks for document ${documentId}`,
+          );
+        }
+      } catch (err) {
+        this.logger.warn(
+          `Contextual Retrieval failed for document ${documentId}, using original chunks: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
     const qualityStatus = quality.quality_status;
     const qualityScore = quality.quality_score;
     const qualityIssues = quality.quality_issues;
@@ -262,7 +295,7 @@ export class IngestionService implements OnModuleInit {
     await this.prisma.$transaction([
       this.prisma.chunk.deleteMany({ where: { documentId } }),
       this.prisma.chunk.createMany({
-        data: chunks.map((chunk) => ({
+        data: enrichedChunks.map((chunk) => ({
           documentId,
           kbId: document.kbId,
           ord: chunk.ord,

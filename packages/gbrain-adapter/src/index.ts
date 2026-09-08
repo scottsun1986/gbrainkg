@@ -324,6 +324,10 @@ export class BrainRepoAdapter {
     return match[1];
   }
 
+  getSourcePath(sourceId: string): string {
+    return join(this.sourceRoot, sourceId);
+  }
+
   private async run(args: string[], input?: string, signal?: AbortSignal): Promise<{ stdout: string; stderr: string }> {
     signal?.throwIfAborted();
     const isReadOnly = ['status', 'query', 'search', 'get'].includes(args[0]) || (args[0] === 'sources' && args[1] === 'status') || (args[0] === 'migrate' && args.includes('--status'));

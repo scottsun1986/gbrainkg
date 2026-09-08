@@ -13,6 +13,9 @@ import { BrainScopeService } from "../brain-compiler/brain-scope.service";
 import { ChatTraceRecorder } from "./chat-trace";
 import { getSharedBrainRepoAdapter } from "../brain-compiler/brain-adapter.provider";
 import { WeKnoraClient, WeKnoraBinding } from "../retrieval/weknora-client";
+import { GraphRagService } from "../graph-rag/graph-rag.service";
+import { SemanticCacheService } from "./semantic-cache.service";
+import { AgenticRagService } from "./agentic-rag.service";
 
 type RetrievalRequest = { query: string; breadth: boolean; operation: 'search' | 'query' };
 
@@ -37,6 +40,9 @@ export class ChatService {
     @Optional() private readonly outboxService?: BrainOutboxService,
     @Optional() @Inject('BRAIN_REPO_ADAPTER') gbrainAdapter?: BrainRepoAdapter,
     @Optional() @Inject('WEKNORA_CLIENT') private readonly weknoraClient?: WeKnoraClient,
+    @Optional() private readonly semanticCacheService?: SemanticCacheService,
+    @Optional() private readonly agenticRagService?: AgenticRagService,
+    @Optional() private readonly graphRagService?: GraphRagService,
   ) {
     this.gbrain = gbrainAdapter ?? getSharedBrainRepoAdapter();
   }
@@ -648,6 +654,41 @@ export class ChatService {
       selectedSourceKeys.every((key, index) => key === userScopeSourceKeys.slice().sort()[index]);
     const forceQueryRefresh = Boolean(sourceFreshness?.rebuilt);
 
+    if (this.semanticCacheService && !forceQueryRefresh) {
+      try {
+        const cachedHit = await this.semanticCacheService.lookup(
+          question,
+          userScope.fingerprint,
+          userScope.knowledgeEpoch,
+        );
+        if (cachedHit) {
+          trace.start("semantic_cache", "语义缓存命中", `命中相似问题缓存 (相似度: ${Number(cachedHit.similarity || 1).toFixed(3)})`);
+          subscriber.next({
+            data: { type: "delta", content: cachedHit.responseContent },
+          });
+          if (Array.isArray(cachedHit.citations)) {
+            for (const cit of cachedHit.citations) {
+              subscriber.next({
+                data: { type: "citation", timeline_entry: cit },
+              });
+            }
+          }
+          trace.finish("semantic_cache", "success", "直接复用经权限校验的缓存回答", {
+            cacheId: cachedHit.id,
+            hitCount: cachedHit.hitCount,
+            similarity: cachedHit.similarity,
+          });
+          subscriber.next({
+            data: { type: "done", total_tokens: 0, latency_ms: Date.now() - retrievalStartedAt },
+          });
+          subscriber.complete();
+          return;
+        }
+      } catch (cacheErr) {
+        this.logger.debug(`Semantic cache lookup error: ${cacheErr instanceof Error ? cacheErr.message : String(cacheErr)}`);
+      }
+    }
+
     // Start with source documents. Permission-scoped derived summaries are
     // only useful for broad cross-page questions, never for an exact passage
     // lookup where they could crowd out the primary document.
@@ -669,10 +710,20 @@ export class ChatService {
       conversationHistory,
       signal,
     );
-    trace.finish("query_rewrite", "success", `使用 ${retrieval.operation} / ${retrieval.breadth ? "广覆盖" : "聚焦"} 模式`, {
+    let agenticComplexity = 'simple';
+    if (this.agenticRagService) {
+      try {
+        agenticComplexity = await this.agenticRagService.classifyQuery(retrieval.query);
+        if (agenticComplexity !== 'simple') {
+          retrieval.breadth = true;
+        }
+      } catch (e) {}
+    }
+    trace.finish("query_rewrite", "success", `使用 ${retrieval.operation} / ${retrieval.breadth ? "广覆盖" : "聚焦"} 模式${agenticComplexity !== 'simple' ? ` (多跳路由: ${agenticComplexity})` : ''}`, {
       rewrittenQuery: retrieval.query,
       operation: retrieval.operation,
       breadth: retrieval.breadth,
+      complexity: agenticComplexity,
     });
     // Personal memory is a separate, private GBrain retrieval arm. It never
     // enters a shared Source and is injected with lower precedence than the
@@ -1189,6 +1240,16 @@ export class ChatService {
     if (versionConflictNote) {
       compiledTruthContext += `\n\n${versionConflictNote.trim()}`;
     }
+    if (this.graphRagService && scope.length > 0) {
+      try {
+        const localGraph = await this.graphRagService.searchLocalGraph(scope, retrieval.query, 6);
+        if (localGraph.formattedContext) {
+          compiledTruthContext += `\n\n${localGraph.formattedContext}`;
+        }
+      } catch (err) {
+        this.logger.debug(`GraphRAG search omitted: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
     trace.finish(
       "answer_context",
       citations.length > 0 ? "success" : "warning",
@@ -1358,6 +1419,9 @@ ${compiledTruthContext}`;
         totalTokens,
         fullAnswer,
         trace,
+        question,
+        userScope,
+        modelName,
       );
     } catch (error: any) {
       trace.finish("llm_generation", "failed", `大模型请求失败：${String(error?.message || error).slice(0, 300)}`);
@@ -1847,6 +1911,9 @@ ${compiledTruthContext}`;
     totalTokens: number,
     fullAnswer = "",
     trace: ChatTraceRecorder,
+    question?: string,
+    userScope?: { fingerprint: string; knowledgeEpoch: number },
+    modelName?: string,
   ) {
     trace.start("citation_validation", "引用校验与映射", "校验回答角标并绑定到原始文档预览");
     // If the LLM cited specific [n] sources, match and retain them
@@ -1972,6 +2039,20 @@ ${compiledTruthContext}`;
     subscriber.next({
       data: { type: "done", total_tokens: totalTokens, latency_ms: 0 },
     });
+    if (this.semanticCacheService && question && userScope?.fingerprint && fullAnswer.trim()) {
+      this.semanticCacheService.store(
+        question,
+        null,
+        userScope.fingerprint,
+        userScope.knowledgeEpoch,
+        fullAnswer,
+        finalCitations.map((item: any) => item.citation),
+        modelName || null,
+        null,
+      ).catch((err) => {
+        this.logger.debug(`Semantic cache store failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
     subscriber.complete();
   }
 }
