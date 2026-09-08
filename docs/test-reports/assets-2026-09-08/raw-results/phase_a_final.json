@@ -1,0 +1,278 @@
+[
+ {
+  "file": "01_tiny_note.md",
+  "status": "published",
+  "quality": "passed",
+  "issues": [],
+  "chunks": 1,
+  "engine": "plaintext-fastpath"
+ },
+ {
+  "file": "02_legal_clauses.md",
+  "status": "needs_review",
+  "quality": "needs_review",
+  "issues": [
+   "存在重复的条款编号（如第三十一条）"
+  ],
+  "chunks": 164,
+  "engine": "plaintext-fastpath"
+ },
+ {
+  "file": "02b_legal_clean.md",
+  "status": "needs_review",
+  "quality": "needs_review",
+  "issues": [
+   "条款编号存在明显跳空断层"
+  ],
+  "chunks": 99,
+  "engine": "plaintext-fastpath"
+ },
+ {
+  "file": "02c_legal_clean2.md",
+  "status": "published",
+  "quality": "passed",
+  "issues": [],
+  "chunks": 106,
+  "engine": "plaintext-fastpath"
+ },
+ {
+  "file": "03_deep_headings.md",
+  "status": "published",
+  "quality": "passed",
+  "issues": [],
+  "chunks": 65,
+  "engine": "plaintext-fastpath"
+ },
+ {
+  "file": "04_big_table.md",
+  "status": "published",
+  "quality": "passed",
+  "issues": [],
+  "chunks": 4,
+  "engine": "plaintext-fastpath"
+ },
+ {
+  "file": "05_mixed_charset.md",
+  "status": "published",
+  "quality": "passed",
+  "issues": [],
+  "chunks": 6,
+  "engine": "plaintext-fastpath"
+ },
+ {
+  "file": "06_ultra_long_25k.md",
+  "status": "published",
+  "quality": "passed",
+  "issues": [],
+  "chunks": 121,
+  "engine": "plaintext-fastpath"
+ },
+ {
+  "file": "07_malformed.md",
+  "status": "published",
+  "quality": "passed",
+  "issues": [],
+  "chunks": 2,
+  "engine": "plaintext-fastpath"
+ },
+ {
+  "file": "10_plain_text.txt",
+  "status": "published",
+  "quality": "passed",
+  "issues": [],
+  "chunks": 6,
+  "engine": "plaintext-fastpath"
+ },
+ {
+  "file": "11_roster.csv",
+  "status": "published",
+  "quality": "passed",
+  "issues": [],
+  "chunks": 15,
+  "engine": "anydoc"
+ },
+ {
+  "file": "12_product_intro.html",
+  "status": "published",
+  "quality": "passed",
+  "issues": [],
+  "chunks": 1,
+  "engine": "plaintext"
+ },
+ {
+  "file": "20_regulation.docx",
+  "status": "published",
+  "quality": "passed",
+  "issues": [],
+  "chunks": 241,
+  "engine": "anydoc"
+ },
+ {
+  "file": "21_large_3mb.docx",
+  "status": "published",
+  "quality": "passed",
+  "issues": [],
+  "chunks": 2601,
+  "engine": "anydoc"
+ },
+ {
+  "file": "22_assessment_2krows.xlsx",
+  "status": "published",
+  "quality": "passed",
+  "issues": [],
+  "chunks": 52,
+  "engine": "anydoc"
+ },
+ {
+  "file": "23_large_100krows.xlsx",
+  "status": "failed",
+  "quality": "rejected",
+  "issues": [
+   "ANYDOC_RESOURCE_LIMIT"
+  ],
+  "chunks": 0,
+  "engine": null
+ },
+ {
+  "file": "24_training_60slides.pptx",
+  "status": "published",
+  "quality": "passed",
+  "issues": [],
+  "chunks": 61,
+  "engine": "docling-local"
+ },
+ {
+  "file": "30_whitepaper_12p.pdf",
+  "status": "published",
+  "quality": "passed",
+  "issues": [],
+  "chunks": 24,
+  "engine": "pypdf-native"
+ },
+ {
+  "file": "31_longdoc_80p.pdf",
+  "status": "published",
+  "quality": "passed",
+  "issues": [],
+  "chunks": 154,
+  "engine": "pypdf-native"
+ },
+ {
+  "file": "40_fake_legacy.doc",
+  "status": "failed",
+  "quality": "rejected",
+  "issues": [
+   "Processing failed for 40_fake_legacy.doc: RuntimeError (Legacy .doc conversion failed: /home/scottsun/.local/share/llmwiki/uploads/75447dbf-b442-4e98-9afa-bb5646ad5c65.doc is not a Word Document. It seems to be a ZIP file, so is probably an OpenDocument file, or a \"docx\" file from MS Word 2007 or newer (antiword only handles binary format documents from MS Word 2003 and earlier))"
+  ],
+  "chunks": 0,
+  "engine": null
+ },
+ {
+  "file": "41_ocr_test.png",
+  "status": "failed",
+  "quality": "rejected",
+  "issues": [
+   "fetch failed"
+  ],
+  "chunks": 0,
+  "engine": null
+ },
+ {
+  "file": "50_empty.txt",
+  "status": "failed",
+  "quality": "rejected",
+  "issues": [
+   "Processing failed for 50_empty.txt: RuntimeError (Extracted Markdown is empty)"
+  ],
+  "chunks": 0,
+  "engine": null
+ },
+ {
+  "file": "51_whitespace.md",
+  "status": "failed",
+  "quality": "rejected",
+  "issues": [
+   "Processing failed for 51_whitespace.md: RuntimeError (Extracted Markdown is empty)"
+  ],
+  "chunks": 0,
+  "engine": null
+ },
+ {
+  "file": "52_corrupt.docx",
+  "status": "failed",
+  "quality": "rejected",
+  "issues": [
+   "Processing failed for 52_corrupt.docx: ConversionError (Conversion failed for: c6f83de6-65bd-45bf-bde5-51f92cf8e489.docx with status: failure. Errors: MsWordDocumentBackend could not load document with hash be00b305810d6434fc64706478d9a5d5a7004066035ad082900a407debdf4601)"
+  ],
+  "chunks": 0,
+  "engine": null
+ },
+ {
+  "file": "53_corrupt.pdf",
+  "status": "failed",
+  "quality": "rejected",
+  "issues": [
+   "Processing failed for 53_corrupt.pdf: RuntimeError (No parser produced content for 722b97f1-095c-4ad7-a438-19c95278de7a.pdf; classification=unknown, OCR_PROVIDER=none, LOCAL_DOCLING_ENABLED=True)"
+  ],
+  "chunks": 0,
+  "engine": null
+ },
+ {
+  "file": "54_corrupt.xlsx",
+  "status": "failed",
+  "quality": "rejected",
+  "issues": [
+   "Processing failed for 54_corrupt.xlsx: ConversionError (Conversion failed for: 3948d546-d91a-4770-865a-673dbdf02cc5.xlsx with status: failure. Errors: MsExcelDocumentBackend could not load document with hash a9288a3c98899bb8dba78ce2f8cc4f803c9075395967e7bb2b18d4b68942fc20)"
+  ],
+  "chunks": 0,
+  "engine": null
+ },
+ {
+  "file": "concurrent_0.md",
+  "status": "published",
+  "quality": "passed",
+  "issues": [],
+  "chunks": 1,
+  "engine": "plaintext-fastpath"
+ },
+ {
+  "file": "concurrent_1.md",
+  "status": "published",
+  "quality": "passed",
+  "issues": [],
+  "chunks": 1,
+  "engine": "plaintext-fastpath"
+ },
+ {
+  "file": "concurrent_2.md",
+  "status": "published",
+  "quality": "passed",
+  "issues": [],
+  "chunks": 1,
+  "engine": "plaintext-fastpath"
+ },
+ {
+  "file": "concurrent_3.md",
+  "status": "published",
+  "quality": "passed",
+  "issues": [],
+  "chunks": 1,
+  "engine": "plaintext-fastpath"
+ },
+ {
+  "file": "concurrent_4.md",
+  "status": "published",
+  "quality": "passed",
+  "issues": [],
+  "chunks": 1,
+  "engine": "plaintext-fastpath"
+ },
+ {
+  "file": "xss-probe-1788869542.md",
+  "status": "published",
+  "quality": "passed",
+  "issues": [],
+  "chunks": 1,
+  "engine": "plaintext-fastpath"
+ }
+]

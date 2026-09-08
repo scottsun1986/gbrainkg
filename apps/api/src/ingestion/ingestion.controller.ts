@@ -78,6 +78,21 @@ export class IngestionController {
     const userId = await this.authService.userIdFromRequest(req);
     if (!file) throw new BadRequestException("A file is required.");
 
+    // Fast-fail empty content synchronously: such uploads must never occupy
+    // an ingestion-queue slot behind long-running parses of large documents.
+    if (!file.size || !file.buffer || file.buffer.length === 0) {
+      throw new BadRequestException("上传的文件为空，已拒绝受理。");
+    }
+    const filename = normalizeUploadFilename(file.originalname);
+    const extension = extname(filename).toLowerCase();
+    const textLikeExtensions = new Set([".md", ".txt", ".csv", ".html", ".htm"]);
+    if (
+      textLikeExtensions.has(extension) &&
+      !file.buffer.toString("utf8").trim()
+    ) {
+      throw new BadRequestException("文件内容为空或纯空白，已拒绝受理。");
+    }
+
     const kb = await this.prisma.knowledgeBase.findUnique({
       where: { id: kbId },
       select: {
@@ -106,8 +121,7 @@ export class IngestionController {
       );
 
     const documentId = randomUUID();
-    const filename = normalizeUploadFilename(file.originalname);
-    if (!SUPPORTED_UPLOAD_EXTENSIONS.has(extname(filename).toLowerCase())) {
+    if (!SUPPORTED_UPLOAD_EXTENSIONS.has(extension)) {
       throw new BadRequestException("Unsupported file type.");
     }
     const rawPath = `${documentId}/${filename}`;
@@ -125,7 +139,14 @@ export class IngestionController {
         status: "parsing",
       },
     });
-    await this.ingestionService.enqueue(document.id, "upload", document.version);
+    await this.ingestionService.enqueue(
+      document.id,
+      "upload",
+      document.version,
+      // Small files ride a high-priority lane so negative/boundary cases and
+      // light documents are not stuck behind long parses of large files.
+      file.size <= 1_000_000 ? 1 : 10,
+    );
     return { documents: [document], status: "accepted" };
   }
 
@@ -178,7 +199,7 @@ export class IngestionController {
         status: "parsing",
       },
     });
-    await this.ingestionService.enqueue(document.id, "upload", document.version);
+    await this.ingestionService.enqueue(document.id, "upload", document.version, 1);
     return { documents: [document], status: "accepted" };
   }
 

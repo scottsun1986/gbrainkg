@@ -8,14 +8,20 @@ export interface ContextualRetrievalConfig {
 }
 
 export interface ContextualRetrievalOptions {
-  concurrency?: number;      // default 5
+  concurrency?: number;      // default 4
   documentTitle?: string;    // used in prompt for better context
   enabled?: boolean;         // default true, can be disabled
+  timeoutMs?: number;        // default 30000
+  retries?: number;          // default 1 (one retry after a failed attempt)
 }
 
 const MAX_DOCUMENT_LENGTH = 60000;
 const MIN_CHUNK_TOKENS = 50;
 const MIN_DOC_LENGTH = 500;
+// Cost guard: per-chunk LLM enrichment is O(chunks). Beyond this many chunks
+// the marginal retrieval value drops while cost/latency explode (a 2600-chunk
+// bulk document previously stalled the queue for 30+ minutes).
+const MAX_ENRICH_CHUNKS = Number(process.env.CONTEXTUAL_RETRIEVAL_MAX_CHUNKS || 300);
 
 export async function enrichChunksWithContext(
   fullMarkdown: string,
@@ -25,13 +31,19 @@ export async function enrichChunksWithContext(
 ): Promise<IndexedMarkdownChunk[]> {
   const isEnabled = options?.enabled !== false; // Default true
   const documentLength = fullMarkdown.length;
-  
+
   if (!isEnabled || !config || documentLength < MIN_DOC_LENGTH || chunks.length === 0) {
     console.log(`[ContextualRetrieval] Skipping enrichment. enabled: ${isEnabled}, config: ${!!config}, docLength: ${documentLength}, chunks: ${chunks.length}`);
     return chunks;
   }
+  if (chunks.length > MAX_ENRICH_CHUNKS) {
+    console.log(`[ContextualRetrieval] Skipping enrichment for ${chunks.length} chunks (> limit ${MAX_ENRICH_CHUNKS}). Cost guard active.`);
+    return chunks;
+  }
 
-  const concurrency = options?.concurrency ?? 5;
+  const concurrency = options?.concurrency ?? 4;
+  const timeoutMs = options?.timeoutMs ?? 30_000;
+  const maxAttempts = 1 + Math.max(0, options?.retries ?? 1);
   const safeMarkdown = fullMarkdown.substring(0, MAX_DOCUMENT_LENGTH);
   
   const systemPrompt = `你是一个专业的文档分析助手。你的任务是为一个长文档中的指定文本块提供上下文描述。
@@ -63,7 +75,7 @@ ${safeMarkdown}
         return; // Skip
       }
 
-      try {
+      const enrichOnce = async (): Promise<string | null> => {
         const response = await fetch(`${config.baseUrl}/chat/completions`, {
           method: 'POST',
           headers: {
@@ -79,7 +91,7 @@ ${safeMarkdown}
             temperature: 0,
             max_tokens: 200,
           }),
-          signal: AbortSignal.timeout(15000),
+          signal: AbortSignal.timeout(timeoutMs),
         });
 
         if (!response.ok) {
@@ -87,27 +99,40 @@ ${safeMarkdown}
         }
 
         const data = await response.json();
-        const contextDescription = data.choices?.[0]?.message?.content?.trim();
+        return data.choices?.[0]?.message?.content?.trim() || null;
+      };
 
-        if (contextDescription) {
-          const prefix = `[上下文: ${contextDescription}]\n\n`;
-          enrichedChunks[originalIndex] = {
-            ...chunk,
-            content: prefix + chunk.content,
-            metadata: {
-              ...chunk.metadata,
-              contextual_prefix: prefix,
-              contextual_retrieval: true,
-            } as IndexedMarkdownChunk['metadata'],
-          };
-          
-          enrichedChunks[originalIndex].tokenCount = estimateTokens(enrichedChunks[originalIndex].content);
-          successCount++;
-        } else {
-          failCount++;
+      let contextDescription: string | null = null;
+      try {
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          try {
+            contextDescription = await enrichOnce();
+            break;
+          } catch (error) {
+            if (attempt >= maxAttempts) throw error;
+            await new Promise((resolve) => setTimeout(resolve, 800 * attempt));
+          }
         }
       } catch (error) {
         console.warn(`[ContextualRetrieval] Error enriching chunk ${originalIndex}:`, error);
+        failCount++;
+      }
+
+      if (contextDescription) {
+        const prefix = `[上下文: ${contextDescription}]\n\n`;
+        enrichedChunks[originalIndex] = {
+          ...chunk,
+          content: prefix + chunk.content,
+          metadata: {
+            ...chunk.metadata,
+            contextual_prefix: prefix,
+            contextual_retrieval: true,
+          } as IndexedMarkdownChunk['metadata'],
+        };
+
+        enrichedChunks[originalIndex].tokenCount = estimateTokens(enrichedChunks[originalIndex].content);
+        successCount++;
+      } else {
         failCount++;
       }
     });

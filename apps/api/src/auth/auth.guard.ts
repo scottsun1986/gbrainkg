@@ -1,4 +1,4 @@
-import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
+import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { PermissionService } from '../permission/permission.service';
 
@@ -15,15 +15,24 @@ export class AuthGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
+    // Missing/invalid credentials must surface as 401 (RFC 6750) so clients
+    // can distinguish "re-authenticate" from "authenticated but forbidden".
+    let userId: string;
     try {
-      const userId = await this.authService.userIdFromRequest(request);
-      const passwordChangeEndpoint = String(request.path || '').endsWith('/auth/change-password') || String(request.path || '').endsWith('/auth/me');
-      if (!passwordChangeEndpoint && await this.authService.isPasswordChangeRequired(userId)) return false;
-      request.user = { id: userId };
-      return true;
+      userId = await this.authService.userIdFromRequest(request);
     } catch {
+      throw new UnauthorizedException("Invalid or missing credentials.");
+    }
+    if (!userId) throw new UnauthorizedException("Invalid or missing credentials.");
+    if (
+      !String(request.path || '').endsWith('/auth/change-password') &&
+      !String(request.path || '').endsWith('/auth/me') &&
+      (await this.authService.isPasswordChangeRequired(userId))
+    ) {
       return false;
     }
+    request.user = { id: userId };
+    return true;
   }
 }
 

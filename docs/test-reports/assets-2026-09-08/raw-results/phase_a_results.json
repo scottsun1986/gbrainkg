@@ -1,0 +1,797 @@
+{
+  "kbId": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+  "results": [
+    {
+      "file": "01_tiny_note.md",
+      "size_bytes": 84,
+      "expect": "accept",
+      "upload": {
+        "http": 201,
+        "documents": [
+          {
+            "id": "da21843d-5871-4851-8fcf-3196f1b8d745",
+            "kbId": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+            "mdPath": "da21843d-5871-4851-8fcf-3196f1b8d745/content.md",
+            "title": "01_tiny_note.md",
+            "sourceType": "upload",
+            "rawFileOid": "/home/scottsun/.local/share/llmwiki/uploads/da21843d-5871-4851-8fcf-3196f1b8d745/01_tiny_note.md",
+            "version": 1,
+            "gitCommit": null,
+            "uploadedById": "0e7a51f6-f4c3-46a0-87bd-d23d4d7280d4",
+            "status": "parsing",
+            "parserEngine": null,
+            "parserClassification": null,
+            "parserMetadata": null,
+            "qualityStatus": "unknown",
+            "qualityScore": null,
+            "qualityIssues": null,
+            "createdAt": "2026-09-08T11:55:26.219Z",
+            "updatedAt": "2026-09-08T11:55:26.219Z"
+          }
+        ],
+        "status": "accepted"
+      },
+      "verdict": "FAIL(no docId: {\"http\": 201, \"documents\": [{\"id\": \"da21843d-5871-4851-8fcf-3196f1b8d745\", \"kbId\": \"ae01630a-7445-4b9b-8c11-8f24cefc043c\", \"mdPath\": \"da21843d-5871-48)"
+    },
+    {
+      "file": "02_legal_clauses.md",
+      "size_bytes": 30484,
+      "expect": "accept",
+      "upload": {
+        "http": 201,
+        "documents": [
+          {
+            "id": "43e6cff4-eb7c-4c82-a53b-1ec3c14418ec",
+            "kbId": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+            "mdPath": "43e6cff4-eb7c-4c82-a53b-1ec3c14418ec/content.md",
+            "title": "02_legal_clauses.md",
+            "sourceType": "upload",
+            "rawFileOid": "/home/scottsun/.local/share/llmwiki/uploads/43e6cff4-eb7c-4c82-a53b-1ec3c14418ec/02_legal_clauses.md",
+            "version": 1,
+            "gitCommit": null,
+            "uploadedById": "0e7a51f6-f4c3-46a0-87bd-d23d4d7280d4",
+            "status": "parsing",
+            "parserEngine": null,
+            "parserClassification": null,
+            "parserMetadata": null,
+            "qualityStatus": "unknown",
+            "qualityScore": null,
+            "qualityIssues": null,
+            "createdAt": "2026-09-08T11:55:26.293Z",
+            "updatedAt": "2026-09-08T11:55:26.293Z"
+          }
+        ],
+        "status": "accepted"
+      },
+      "verdict": "FAIL(no docId: {\"http\": 201, \"documents\": [{\"id\": \"43e6cff4-eb7c-4c82-a53b-1ec3c14418ec\", \"kbId\": \"ae01630a-7445-4b9b-8c11-8f24cefc043c\", \"mdPath\": \"43e6cff4-eb7c-4c)"
+    },
+    {
+      "file": "03_deep_headings.md",
+      "size_bytes": 21768,
+      "expect": "accept",
+      "upload": {
+        "http": 201,
+        "documents": [
+          {
+            "id": "d095f4e0-e714-4976-8503-b21342b1d069",
+            "kbId": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+            "mdPath": "d095f4e0-e714-4976-8503-b21342b1d069/content.md",
+            "title": "03_deep_headings.md",
+            "sourceType": "upload",
+            "rawFileOid": "/home/scottsun/.local/share/llmwiki/uploads/d095f4e0-e714-4976-8503-b21342b1d069/03_deep_headings.md",
+            "version": 1,
+            "gitCommit": null,
+            "uploadedById": "0e7a51f6-f4c3-46a0-87bd-d23d4d7280d4",
+            "status": "parsing",
+            "parserEngine": null,
+            "parserClassification": null,
+            "parserMetadata": null,
+            "qualityStatus": "unknown",
+            "qualityScore": null,
+            "qualityIssues": null,
+            "createdAt": "2026-09-08T11:55:26.329Z",
+            "updatedAt": "2026-09-08T11:55:26.329Z"
+          }
+        ],
+        "status": "accepted"
+      },
+      "verdict": "FAIL(no docId: {\"http\": 201, \"documents\": [{\"id\": \"d095f4e0-e714-4976-8503-b21342b1d069\", \"kbId\": \"ae01630a-7445-4b9b-8c11-8f24cefc043c\", \"mdPath\": \"d095f4e0-e714-49)"
+    },
+    {
+      "file": "04_big_table.md",
+      "size_bytes": 7651,
+      "expect": "accept",
+      "upload": {
+        "http": 201,
+        "documents": [
+          {
+            "id": "ba284eaf-1dbc-4bd8-a40a-2705488b6a0c",
+            "kbId": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+            "mdPath": "ba284eaf-1dbc-4bd8-a40a-2705488b6a0c/content.md",
+            "title": "04_big_table.md",
+            "sourceType": "upload",
+            "rawFileOid": "/home/scottsun/.local/share/llmwiki/uploads/ba284eaf-1dbc-4bd8-a40a-2705488b6a0c/04_big_table.md",
+            "version": 1,
+            "gitCommit": null,
+            "uploadedById": "0e7a51f6-f4c3-46a0-87bd-d23d4d7280d4",
+            "status": "parsing",
+            "parserEngine": null,
+            "parserClassification": null,
+            "parserMetadata": null,
+            "qualityStatus": "unknown",
+            "qualityScore": null,
+            "qualityIssues": null,
+            "createdAt": "2026-09-08T11:55:26.355Z",
+            "updatedAt": "2026-09-08T11:55:26.355Z"
+          }
+        ],
+        "status": "accepted"
+      },
+      "verdict": "FAIL(no docId: {\"http\": 201, \"documents\": [{\"id\": \"ba284eaf-1dbc-4bd8-a40a-2705488b6a0c\", \"kbId\": \"ae01630a-7445-4b9b-8c11-8f24cefc043c\", \"mdPath\": \"ba284eaf-1dbc-4b)"
+    },
+    {
+      "file": "05_mixed_charset.md",
+      "size_bytes": 734,
+      "expect": "accept",
+      "upload": {
+        "http": 201,
+        "documents": [
+          {
+            "id": "4d51101f-56d4-4f27-8fc8-67cc9b4f1e50",
+            "kbId": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+            "mdPath": "4d51101f-56d4-4f27-8fc8-67cc9b4f1e50/content.md",
+            "title": "05_mixed_charset.md",
+            "sourceType": "upload",
+            "rawFileOid": "/home/scottsun/.local/share/llmwiki/uploads/4d51101f-56d4-4f27-8fc8-67cc9b4f1e50/05_mixed_charset.md",
+            "version": 1,
+            "gitCommit": null,
+            "uploadedById": "0e7a51f6-f4c3-46a0-87bd-d23d4d7280d4",
+            "status": "parsing",
+            "parserEngine": null,
+            "parserClassification": null,
+            "parserMetadata": null,
+            "qualityStatus": "unknown",
+            "qualityScore": null,
+            "qualityIssues": null,
+            "createdAt": "2026-09-08T11:55:26.385Z",
+            "updatedAt": "2026-09-08T11:55:26.385Z"
+          }
+        ],
+        "status": "accepted"
+      },
+      "verdict": "FAIL(no docId: {\"http\": 201, \"documents\": [{\"id\": \"4d51101f-56d4-4f27-8fc8-67cc9b4f1e50\", \"kbId\": \"ae01630a-7445-4b9b-8c11-8f24cefc043c\", \"mdPath\": \"4d51101f-56d4-4f)"
+    },
+    {
+      "file": "06_ultra_long_25k.md",
+      "size_bytes": 105118,
+      "expect": "accept",
+      "upload": {
+        "http": 201,
+        "documents": [
+          {
+            "id": "15d0075e-43b3-4fe3-9ef5-d69ef5dbe69f",
+            "kbId": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+            "mdPath": "15d0075e-43b3-4fe3-9ef5-d69ef5dbe69f/content.md",
+            "title": "06_ultra_long_25k.md",
+            "sourceType": "upload",
+            "rawFileOid": "/home/scottsun/.local/share/llmwiki/uploads/15d0075e-43b3-4fe3-9ef5-d69ef5dbe69f/06_ultra_long_25k.md",
+            "version": 1,
+            "gitCommit": null,
+            "uploadedById": "0e7a51f6-f4c3-46a0-87bd-d23d4d7280d4",
+            "status": "parsing",
+            "parserEngine": null,
+            "parserClassification": null,
+            "parserMetadata": null,
+            "qualityStatus": "unknown",
+            "qualityScore": null,
+            "qualityIssues": null,
+            "createdAt": "2026-09-08T11:55:26.408Z",
+            "updatedAt": "2026-09-08T11:55:26.408Z"
+          }
+        ],
+        "status": "accepted"
+      },
+      "verdict": "FAIL(no docId: {\"http\": 201, \"documents\": [{\"id\": \"15d0075e-43b3-4fe3-9ef5-d69ef5dbe69f\", \"kbId\": \"ae01630a-7445-4b9b-8c11-8f24cefc043c\", \"mdPath\": \"15d0075e-43b3-4f)"
+    },
+    {
+      "file": "07_malformed.md",
+      "size_bytes": 408,
+      "expect": "accept",
+      "upload": {
+        "http": 201,
+        "documents": [
+          {
+            "id": "e5bdda0d-1f91-4adc-aeef-dbc1e5573fa6",
+            "kbId": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+            "mdPath": "e5bdda0d-1f91-4adc-aeef-dbc1e5573fa6/content.md",
+            "title": "07_malformed.md",
+            "sourceType": "upload",
+            "rawFileOid": "/home/scottsun/.local/share/llmwiki/uploads/e5bdda0d-1f91-4adc-aeef-dbc1e5573fa6/07_malformed.md",
+            "version": 1,
+            "gitCommit": null,
+            "uploadedById": "0e7a51f6-f4c3-46a0-87bd-d23d4d7280d4",
+            "status": "parsing",
+            "parserEngine": null,
+            "parserClassification": null,
+            "parserMetadata": null,
+            "qualityStatus": "unknown",
+            "qualityScore": null,
+            "qualityIssues": null,
+            "createdAt": "2026-09-08T11:55:26.423Z",
+            "updatedAt": "2026-09-08T11:55:26.423Z"
+          }
+        ],
+        "status": "accepted"
+      },
+      "verdict": "FAIL(no docId: {\"http\": 201, \"documents\": [{\"id\": \"e5bdda0d-1f91-4adc-aeef-dbc1e5573fa6\", \"kbId\": \"ae01630a-7445-4b9b-8c11-8f24cefc043c\", \"mdPath\": \"e5bdda0d-1f91-4a)"
+    },
+    {
+      "file": "10_plain_text.txt",
+      "size_bytes": 24490,
+      "expect": "accept",
+      "upload": {
+        "http": 201,
+        "documents": [
+          {
+            "id": "9f975b29-a7a2-41d7-a67e-0dd7dd9da009",
+            "kbId": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+            "mdPath": "9f975b29-a7a2-41d7-a67e-0dd7dd9da009/content.md",
+            "title": "10_plain_text.txt",
+            "sourceType": "upload",
+            "rawFileOid": "/home/scottsun/.local/share/llmwiki/uploads/9f975b29-a7a2-41d7-a67e-0dd7dd9da009/10_plain_text.txt",
+            "version": 1,
+            "gitCommit": null,
+            "uploadedById": "0e7a51f6-f4c3-46a0-87bd-d23d4d7280d4",
+            "status": "parsing",
+            "parserEngine": null,
+            "parserClassification": null,
+            "parserMetadata": null,
+            "qualityStatus": "unknown",
+            "qualityScore": null,
+            "qualityIssues": null,
+            "createdAt": "2026-09-08T11:55:26.439Z",
+            "updatedAt": "2026-09-08T11:55:26.439Z"
+          }
+        ],
+        "status": "accepted"
+      },
+      "verdict": "FAIL(no docId: {\"http\": 201, \"documents\": [{\"id\": \"9f975b29-a7a2-41d7-a67e-0dd7dd9da009\", \"kbId\": \"ae01630a-7445-4b9b-8c11-8f24cefc043c\", \"mdPath\": \"9f975b29-a7a2-41)"
+    },
+    {
+      "file": "11_roster.csv",
+      "size_bytes": 21344,
+      "expect": "accept",
+      "upload": {
+        "http": 201,
+        "documents": [
+          {
+            "id": "bb23661d-d9a1-4b8b-bd47-0f2ff08612ed",
+            "kbId": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+            "mdPath": "bb23661d-d9a1-4b8b-bd47-0f2ff08612ed/content.md",
+            "title": "11_roster.csv",
+            "sourceType": "upload",
+            "rawFileOid": "/home/scottsun/.local/share/llmwiki/uploads/bb23661d-d9a1-4b8b-bd47-0f2ff08612ed/11_roster.csv",
+            "version": 1,
+            "gitCommit": null,
+            "uploadedById": "0e7a51f6-f4c3-46a0-87bd-d23d4d7280d4",
+            "status": "parsing",
+            "parserEngine": null,
+            "parserClassification": null,
+            "parserMetadata": null,
+            "qualityStatus": "unknown",
+            "qualityScore": null,
+            "qualityIssues": null,
+            "createdAt": "2026-09-08T11:55:26.456Z",
+            "updatedAt": "2026-09-08T11:55:26.456Z"
+          }
+        ],
+        "status": "accepted"
+      },
+      "verdict": "FAIL(no docId: {\"http\": 201, \"documents\": [{\"id\": \"bb23661d-d9a1-4b8b-bd47-0f2ff08612ed\", \"kbId\": \"ae01630a-7445-4b9b-8c11-8f24cefc043c\", \"mdPath\": \"bb23661d-d9a1-4b)"
+    },
+    {
+      "file": "12_product_intro.html",
+      "size_bytes": 576,
+      "expect": "accept",
+      "upload": {
+        "http": 201,
+        "documents": [
+          {
+            "id": "8667d3c0-acbc-429f-b329-a64eb189f8c0",
+            "kbId": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+            "mdPath": "8667d3c0-acbc-429f-b329-a64eb189f8c0/content.md",
+            "title": "12_product_intro.html",
+            "sourceType": "upload",
+            "rawFileOid": "/home/scottsun/.local/share/llmwiki/uploads/8667d3c0-acbc-429f-b329-a64eb189f8c0/12_product_intro.html",
+            "version": 1,
+            "gitCommit": null,
+            "uploadedById": "0e7a51f6-f4c3-46a0-87bd-d23d4d7280d4",
+            "status": "parsing",
+            "parserEngine": null,
+            "parserClassification": null,
+            "parserMetadata": null,
+            "qualityStatus": "unknown",
+            "qualityScore": null,
+            "qualityIssues": null,
+            "createdAt": "2026-09-08T11:55:26.476Z",
+            "updatedAt": "2026-09-08T11:55:26.476Z"
+          }
+        ],
+        "status": "accepted"
+      },
+      "verdict": "FAIL(no docId: {\"http\": 201, \"documents\": [{\"id\": \"8667d3c0-acbc-429f-b329-a64eb189f8c0\", \"kbId\": \"ae01630a-7445-4b9b-8c11-8f24cefc043c\", \"mdPath\": \"8667d3c0-acbc-42)"
+    },
+    {
+      "file": "20_regulation.docx",
+      "size_bytes": 38756,
+      "expect": "accept",
+      "upload": {
+        "http": 201,
+        "documents": [
+          {
+            "id": "5dc9c685-9a54-4a76-8fbc-d32e26fa9cef",
+            "kbId": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+            "mdPath": "5dc9c685-9a54-4a76-8fbc-d32e26fa9cef/content.md",
+            "title": "20_regulation.docx",
+            "sourceType": "upload",
+            "rawFileOid": "/home/scottsun/.local/share/llmwiki/uploads/5dc9c685-9a54-4a76-8fbc-d32e26fa9cef/20_regulation.docx",
+            "version": 1,
+            "gitCommit": null,
+            "uploadedById": "0e7a51f6-f4c3-46a0-87bd-d23d4d7280d4",
+            "status": "parsing",
+            "parserEngine": null,
+            "parserClassification": null,
+            "parserMetadata": null,
+            "qualityStatus": "unknown",
+            "qualityScore": null,
+            "qualityIssues": null,
+            "createdAt": "2026-09-08T11:55:26.492Z",
+            "updatedAt": "2026-09-08T11:55:26.492Z"
+          }
+        ],
+        "status": "accepted"
+      },
+      "verdict": "FAIL(no docId: {\"http\": 201, \"documents\": [{\"id\": \"5dc9c685-9a54-4a76-8fbc-d32e26fa9cef\", \"kbId\": \"ae01630a-7445-4b9b-8c11-8f24cefc043c\", \"mdPath\": \"5dc9c685-9a54-4a)"
+    },
+    {
+      "file": "21_large_3mb.docx",
+      "size_bytes": 55895,
+      "expect": "accept",
+      "upload": {
+        "http": 201,
+        "documents": [
+          {
+            "id": "3d0685c2-aef8-49f9-8666-ae30d7ee720a",
+            "kbId": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+            "mdPath": "3d0685c2-aef8-49f9-8666-ae30d7ee720a/content.md",
+            "title": "21_large_3mb.docx",
+            "sourceType": "upload",
+            "rawFileOid": "/home/scottsun/.local/share/llmwiki/uploads/3d0685c2-aef8-49f9-8666-ae30d7ee720a/21_large_3mb.docx",
+            "version": 1,
+            "gitCommit": null,
+            "uploadedById": "0e7a51f6-f4c3-46a0-87bd-d23d4d7280d4",
+            "status": "parsing",
+            "parserEngine": null,
+            "parserClassification": null,
+            "parserMetadata": null,
+            "qualityStatus": "unknown",
+            "qualityScore": null,
+            "qualityIssues": null,
+            "createdAt": "2026-09-08T11:55:26.507Z",
+            "updatedAt": "2026-09-08T11:55:26.507Z"
+          }
+        ],
+        "status": "accepted"
+      },
+      "verdict": "FAIL(no docId: {\"http\": 201, \"documents\": [{\"id\": \"3d0685c2-aef8-49f9-8666-ae30d7ee720a\", \"kbId\": \"ae01630a-7445-4b9b-8c11-8f24cefc043c\", \"mdPath\": \"3d0685c2-aef8-49)"
+    },
+    {
+      "file": "22_assessment_2krows.xlsx",
+      "size_bytes": 67797,
+      "expect": "accept",
+      "upload": {
+        "http": 201,
+        "documents": [
+          {
+            "id": "2141b94d-71e3-43da-85a7-2a170974e7a2",
+            "kbId": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+            "mdPath": "2141b94d-71e3-43da-85a7-2a170974e7a2/content.md",
+            "title": "22_assessment_2krows.xlsx",
+            "sourceType": "upload",
+            "rawFileOid": "/home/scottsun/.local/share/llmwiki/uploads/2141b94d-71e3-43da-85a7-2a170974e7a2/22_assessment_2krows.xlsx",
+            "version": 1,
+            "gitCommit": null,
+            "uploadedById": "0e7a51f6-f4c3-46a0-87bd-d23d4d7280d4",
+            "status": "parsing",
+            "parserEngine": null,
+            "parserClassification": null,
+            "parserMetadata": null,
+            "qualityStatus": "unknown",
+            "qualityScore": null,
+            "qualityIssues": null,
+            "createdAt": "2026-09-08T11:55:26.521Z",
+            "updatedAt": "2026-09-08T11:55:26.521Z"
+          }
+        ],
+        "status": "accepted"
+      },
+      "verdict": "FAIL(no docId: {\"http\": 201, \"documents\": [{\"id\": \"2141b94d-71e3-43da-85a7-2a170974e7a2\", \"kbId\": \"ae01630a-7445-4b9b-8c11-8f24cefc043c\", \"mdPath\": \"2141b94d-71e3-43)"
+    },
+    {
+      "file": "23_large_100krows.xlsx",
+      "size_bytes": 3100839,
+      "expect": "accept",
+      "upload": {
+        "http": 201,
+        "documents": [
+          {
+            "id": "99f201de-17fa-4b36-b879-3d7afae61333",
+            "kbId": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+            "mdPath": "99f201de-17fa-4b36-b879-3d7afae61333/content.md",
+            "title": "23_large_100krows.xlsx",
+            "sourceType": "upload",
+            "rawFileOid": "/home/scottsun/.local/share/llmwiki/uploads/99f201de-17fa-4b36-b879-3d7afae61333/23_large_100krows.xlsx",
+            "version": 1,
+            "gitCommit": null,
+            "uploadedById": "0e7a51f6-f4c3-46a0-87bd-d23d4d7280d4",
+            "status": "parsing",
+            "parserEngine": null,
+            "parserClassification": null,
+            "parserMetadata": null,
+            "qualityStatus": "unknown",
+            "qualityScore": null,
+            "qualityIssues": null,
+            "createdAt": "2026-09-08T11:55:26.560Z",
+            "updatedAt": "2026-09-08T11:55:26.560Z"
+          }
+        ],
+        "status": "accepted"
+      },
+      "verdict": "FAIL(no docId: {\"http\": 201, \"documents\": [{\"id\": \"99f201de-17fa-4b36-b879-3d7afae61333\", \"kbId\": \"ae01630a-7445-4b9b-8c11-8f24cefc043c\", \"mdPath\": \"99f201de-17fa-4b)"
+    },
+    {
+      "file": "24_training_60slides.pptx",
+      "size_bytes": 83911,
+      "expect": "accept",
+      "upload": {
+        "http": 201,
+        "documents": [
+          {
+            "id": "dd2f966b-cc13-4e51-82d0-1c04060de0d6",
+            "kbId": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+            "mdPath": "dd2f966b-cc13-4e51-82d0-1c04060de0d6/content.md",
+            "title": "24_training_60slides.pptx",
+            "sourceType": "upload",
+            "rawFileOid": "/home/scottsun/.local/share/llmwiki/uploads/dd2f966b-cc13-4e51-82d0-1c04060de0d6/24_training_60slides.pptx",
+            "version": 1,
+            "gitCommit": null,
+            "uploadedById": "0e7a51f6-f4c3-46a0-87bd-d23d4d7280d4",
+            "status": "parsing",
+            "parserEngine": null,
+            "parserClassification": null,
+            "parserMetadata": null,
+            "qualityStatus": "unknown",
+            "qualityScore": null,
+            "qualityIssues": null,
+            "createdAt": "2026-09-08T11:55:26.578Z",
+            "updatedAt": "2026-09-08T11:55:26.578Z"
+          }
+        ],
+        "status": "accepted"
+      },
+      "verdict": "FAIL(no docId: {\"http\": 201, \"documents\": [{\"id\": \"dd2f966b-cc13-4e51-82d0-1c04060de0d6\", \"kbId\": \"ae01630a-7445-4b9b-8c11-8f24cefc043c\", \"mdPath\": \"dd2f966b-cc13-4e)"
+    },
+    {
+      "file": "30_whitepaper_12p.pdf",
+      "size_bytes": 14482,
+      "expect": "accept",
+      "upload": {
+        "http": 201,
+        "documents": [
+          {
+            "id": "c387047d-350c-4f10-a64a-e0dcb381f6a4",
+            "kbId": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+            "mdPath": "c387047d-350c-4f10-a64a-e0dcb381f6a4/content.md",
+            "title": "30_whitepaper_12p.pdf",
+            "sourceType": "upload",
+            "rawFileOid": "/home/scottsun/.local/share/llmwiki/uploads/c387047d-350c-4f10-a64a-e0dcb381f6a4/30_whitepaper_12p.pdf",
+            "version": 1,
+            "gitCommit": null,
+            "uploadedById": "0e7a51f6-f4c3-46a0-87bd-d23d4d7280d4",
+            "status": "parsing",
+            "parserEngine": null,
+            "parserClassification": null,
+            "parserMetadata": null,
+            "qualityStatus": "unknown",
+            "qualityScore": null,
+            "qualityIssues": null,
+            "createdAt": "2026-09-08T11:55:26.597Z",
+            "updatedAt": "2026-09-08T11:55:26.597Z"
+          }
+        ],
+        "status": "accepted"
+      },
+      "verdict": "FAIL(no docId: {\"http\": 201, \"documents\": [{\"id\": \"c387047d-350c-4f10-a64a-e0dcb381f6a4\", \"kbId\": \"ae01630a-7445-4b9b-8c11-8f24cefc043c\", \"mdPath\": \"c387047d-350c-4f)"
+    },
+    {
+      "file": "31_longdoc_80p.pdf",
+      "size_bytes": 81039,
+      "expect": "accept",
+      "upload": {
+        "http": 201,
+        "documents": [
+          {
+            "id": "242a7443-199e-4226-b539-a01eba6da171",
+            "kbId": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+            "mdPath": "242a7443-199e-4226-b539-a01eba6da171/content.md",
+            "title": "31_longdoc_80p.pdf",
+            "sourceType": "upload",
+            "rawFileOid": "/home/scottsun/.local/share/llmwiki/uploads/242a7443-199e-4226-b539-a01eba6da171/31_longdoc_80p.pdf",
+            "version": 1,
+            "gitCommit": null,
+            "uploadedById": "0e7a51f6-f4c3-46a0-87bd-d23d4d7280d4",
+            "status": "parsing",
+            "parserEngine": null,
+            "parserClassification": null,
+            "parserMetadata": null,
+            "qualityStatus": "unknown",
+            "qualityScore": null,
+            "qualityIssues": null,
+            "createdAt": "2026-09-08T11:55:26.617Z",
+            "updatedAt": "2026-09-08T11:55:26.617Z"
+          }
+        ],
+        "status": "accepted"
+      },
+      "verdict": "FAIL(no docId: {\"http\": 201, \"documents\": [{\"id\": \"242a7443-199e-4226-b539-a01eba6da171\", \"kbId\": \"ae01630a-7445-4b9b-8c11-8f24cefc043c\", \"mdPath\": \"242a7443-199e-42)"
+    },
+    {
+      "file": "40_fake_legacy.doc",
+      "size_bytes": 4096,
+      "expect": "accept",
+      "upload": {
+        "http": 201,
+        "documents": [
+          {
+            "id": "c63fcf4d-61a8-47c2-a8e1-c25767c38d4d",
+            "kbId": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+            "mdPath": "c63fcf4d-61a8-47c2-a8e1-c25767c38d4d/content.md",
+            "title": "40_fake_legacy.doc",
+            "sourceType": "upload",
+            "rawFileOid": "/home/scottsun/.local/share/llmwiki/uploads/c63fcf4d-61a8-47c2-a8e1-c25767c38d4d/40_fake_legacy.doc",
+            "version": 1,
+            "gitCommit": null,
+            "uploadedById": "0e7a51f6-f4c3-46a0-87bd-d23d4d7280d4",
+            "status": "parsing",
+            "parserEngine": null,
+            "parserClassification": null,
+            "parserMetadata": null,
+            "qualityStatus": "unknown",
+            "qualityScore": null,
+            "qualityIssues": null,
+            "createdAt": "2026-09-08T11:55:26.630Z",
+            "updatedAt": "2026-09-08T11:55:26.630Z"
+          }
+        ],
+        "status": "accepted"
+      },
+      "verdict": "FAIL(no docId: {\"http\": 201, \"documents\": [{\"id\": \"c63fcf4d-61a8-47c2-a8e1-c25767c38d4d\", \"kbId\": \"ae01630a-7445-4b9b-8c11-8f24cefc043c\", \"mdPath\": \"c63fcf4d-61a8-47)"
+    },
+    {
+      "file": "41_ocr_test.png",
+      "size_bytes": 17660,
+      "expect": "accept",
+      "upload": {
+        "http": 201,
+        "documents": [
+          {
+            "id": "e887451b-4fd9-4ed0-a679-9a6c685bb44b",
+            "kbId": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+            "mdPath": "e887451b-4fd9-4ed0-a679-9a6c685bb44b/content.md",
+            "title": "41_ocr_test.png",
+            "sourceType": "upload",
+            "rawFileOid": "/home/scottsun/.local/share/llmwiki/uploads/e887451b-4fd9-4ed0-a679-9a6c685bb44b/41_ocr_test.png",
+            "version": 1,
+            "gitCommit": null,
+            "uploadedById": "0e7a51f6-f4c3-46a0-87bd-d23d4d7280d4",
+            "status": "parsing",
+            "parserEngine": null,
+            "parserClassification": null,
+            "parserMetadata": null,
+            "qualityStatus": "unknown",
+            "qualityScore": null,
+            "qualityIssues": null,
+            "createdAt": "2026-09-08T11:55:26.644Z",
+            "updatedAt": "2026-09-08T11:55:26.644Z"
+          }
+        ],
+        "status": "accepted"
+      },
+      "verdict": "FAIL(no docId: {\"http\": 201, \"documents\": [{\"id\": \"e887451b-4fd9-4ed0-a679-9a6c685bb44b\", \"kbId\": \"ae01630a-7445-4b9b-8c11-8f24cefc043c\", \"mdPath\": \"e887451b-4fd9-4e)"
+    },
+    {
+      "file": "50_empty.txt",
+      "size_bytes": 0,
+      "expect": "accept",
+      "upload": {
+        "http": 201,
+        "documents": [
+          {
+            "id": "a87da576-3dc1-4f90-b907-3ea6437127d8",
+            "kbId": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+            "mdPath": "a87da576-3dc1-4f90-b907-3ea6437127d8/content.md",
+            "title": "50_empty.txt",
+            "sourceType": "upload",
+            "rawFileOid": "/home/scottsun/.local/share/llmwiki/uploads/a87da576-3dc1-4f90-b907-3ea6437127d8/50_empty.txt",
+            "version": 1,
+            "gitCommit": null,
+            "uploadedById": "0e7a51f6-f4c3-46a0-87bd-d23d4d7280d4",
+            "status": "parsing",
+            "parserEngine": null,
+            "parserClassification": null,
+            "parserMetadata": null,
+            "qualityStatus": "unknown",
+            "qualityScore": null,
+            "qualityIssues": null,
+            "createdAt": "2026-09-08T11:55:26.660Z",
+            "updatedAt": "2026-09-08T11:55:26.660Z"
+          }
+        ],
+        "status": "accepted"
+      },
+      "verdict": "FAIL(no docId: {\"http\": 201, \"documents\": [{\"id\": \"a87da576-3dc1-4f90-b907-3ea6437127d8\", \"kbId\": \"ae01630a-7445-4b9b-8c11-8f24cefc043c\", \"mdPath\": \"a87da576-3dc1-4f)"
+    },
+    {
+      "file": "51_whitespace.md",
+      "size_bytes": 11,
+      "expect": "accept",
+      "upload": {
+        "http": 201,
+        "documents": [
+          {
+            "id": "1cf4eaa0-1f37-4624-8115-254474719075",
+            "kbId": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+            "mdPath": "1cf4eaa0-1f37-4624-8115-254474719075/content.md",
+            "title": "51_whitespace.md",
+            "sourceType": "upload",
+            "rawFileOid": "/home/scottsun/.local/share/llmwiki/uploads/1cf4eaa0-1f37-4624-8115-254474719075/51_whitespace.md",
+            "version": 1,
+            "gitCommit": null,
+            "uploadedById": "0e7a51f6-f4c3-46a0-87bd-d23d4d7280d4",
+            "status": "parsing",
+            "parserEngine": null,
+            "parserClassification": null,
+            "parserMetadata": null,
+            "qualityStatus": "unknown",
+            "qualityScore": null,
+            "qualityIssues": null,
+            "createdAt": "2026-09-08T11:55:26.673Z",
+            "updatedAt": "2026-09-08T11:55:26.673Z"
+          }
+        ],
+        "status": "accepted"
+      },
+      "verdict": "FAIL(no docId: {\"http\": 201, \"documents\": [{\"id\": \"1cf4eaa0-1f37-4624-8115-254474719075\", \"kbId\": \"ae01630a-7445-4b9b-8c11-8f24cefc043c\", \"mdPath\": \"1cf4eaa0-1f37-46)"
+    },
+    {
+      "file": "52_corrupt.docx",
+      "size_bytes": 2052,
+      "expect": "accept",
+      "upload": {
+        "http": 201,
+        "documents": [
+          {
+            "id": "e078b6f3-f5d8-49cb-8eb7-bce7e684ad63",
+            "kbId": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+            "mdPath": "e078b6f3-f5d8-49cb-8eb7-bce7e684ad63/content.md",
+            "title": "52_corrupt.docx",
+            "sourceType": "upload",
+            "rawFileOid": "/home/scottsun/.local/share/llmwiki/uploads/e078b6f3-f5d8-49cb-8eb7-bce7e684ad63/52_corrupt.docx",
+            "version": 1,
+            "gitCommit": null,
+            "uploadedById": "0e7a51f6-f4c3-46a0-87bd-d23d4d7280d4",
+            "status": "parsing",
+            "parserEngine": null,
+            "parserClassification": null,
+            "parserMetadata": null,
+            "qualityStatus": "unknown",
+            "qualityScore": null,
+            "qualityIssues": null,
+            "createdAt": "2026-09-08T11:55:26.686Z",
+            "updatedAt": "2026-09-08T11:55:26.686Z"
+          }
+        ],
+        "status": "accepted"
+      },
+      "verdict": "FAIL(no docId: {\"http\": 201, \"documents\": [{\"id\": \"e078b6f3-f5d8-49cb-8eb7-bce7e684ad63\", \"kbId\": \"ae01630a-7445-4b9b-8c11-8f24cefc043c\", \"mdPath\": \"e078b6f3-f5d8-49)"
+    },
+    {
+      "file": "53_corrupt.pdf",
+      "size_bytes": 1039,
+      "expect": "accept",
+      "upload": {
+        "http": 201,
+        "documents": [
+          {
+            "id": "51e28dd4-2526-43ce-abb2-230ece948e39",
+            "kbId": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+            "mdPath": "51e28dd4-2526-43ce-abb2-230ece948e39/content.md",
+            "title": "53_corrupt.pdf",
+            "sourceType": "upload",
+            "rawFileOid": "/home/scottsun/.local/share/llmwiki/uploads/51e28dd4-2526-43ce-abb2-230ece948e39/53_corrupt.pdf",
+            "version": 1,
+            "gitCommit": null,
+            "uploadedById": "0e7a51f6-f4c3-46a0-87bd-d23d4d7280d4",
+            "status": "parsing",
+            "parserEngine": null,
+            "parserClassification": null,
+            "parserMetadata": null,
+            "qualityStatus": "unknown",
+            "qualityScore": null,
+            "qualityIssues": null,
+            "createdAt": "2026-09-08T11:55:26.698Z",
+            "updatedAt": "2026-09-08T11:55:26.698Z"
+          }
+        ],
+        "status": "accepted"
+      },
+      "verdict": "FAIL(no docId: {\"http\": 201, \"documents\": [{\"id\": \"51e28dd4-2526-43ce-abb2-230ece948e39\", \"kbId\": \"ae01630a-7445-4b9b-8c11-8f24cefc043c\", \"mdPath\": \"51e28dd4-2526-43)"
+    },
+    {
+      "file": "54_corrupt.xlsx",
+      "size_bytes": 516,
+      "expect": "accept",
+      "upload": {
+        "http": 201,
+        "documents": [
+          {
+            "id": "ff9116bc-3806-4f27-8a2e-3846bbda2613",
+            "kbId": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+            "mdPath": "ff9116bc-3806-4f27-8a2e-3846bbda2613/content.md",
+            "title": "54_corrupt.xlsx",
+            "sourceType": "upload",
+            "rawFileOid": "/home/scottsun/.local/share/llmwiki/uploads/ff9116bc-3806-4f27-8a2e-3846bbda2613/54_corrupt.xlsx",
+            "version": 1,
+            "gitCommit": null,
+            "uploadedById": "0e7a51f6-f4c3-46a0-87bd-d23d4d7280d4",
+            "status": "parsing",
+            "parserEngine": null,
+            "parserClassification": null,
+            "parserMetadata": null,
+            "qualityStatus": "unknown",
+            "qualityScore": null,
+            "qualityIssues": null,
+            "createdAt": "2026-09-08T11:55:26.710Z",
+            "updatedAt": "2026-09-08T11:55:26.710Z"
+          }
+        ],
+        "status": "accepted"
+      },
+      "verdict": "FAIL(no docId: {\"http\": 201, \"documents\": [{\"id\": \"ff9116bc-3806-4f27-8a2e-3846bbda2613\", \"kbId\": \"ae01630a-7445-4b9b-8c11-8f24cefc043c\", \"mdPath\": \"ff9116bc-3806-4f)"
+    },
+    {
+      "file": "55_wrong_ext.exe.exe",
+      "size_bytes": 512,
+      "expect": "reject",
+      "upload": {
+        "http": 400,
+        "message": "Unsupported file type.",
+        "error": "Bad Request",
+        "statusCode": 400
+      },
+      "verdict": "PASS"
+    },
+    {
+      "file": "56_oversize_201mb.txt",
+      "size_bytes": 210763776,
+      "expect": "reject",
+      "upload": {
+        "http": 413,
+        "message": "File too large",
+        "error": "Payload Too Large",
+        "statusCode": 413
+      },
+      "verdict": "PASS"
+    }
+  ]
+}

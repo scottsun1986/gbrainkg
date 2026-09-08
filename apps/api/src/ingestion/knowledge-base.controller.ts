@@ -1,13 +1,18 @@
 import {
+  BadRequestException,
   Controller,
+  Delete,
+  ForbiddenException,
   Get,
   NotFoundException,
   Param,
+  Post,
   Query,
   Req,
   Res,
   UnauthorizedException,
   UseGuards,
+  Body,
 } from "@nestjs/common";
 import { getPrismaClient } from "../prisma";
 import type { Response } from "express";
@@ -16,6 +21,7 @@ import { extname, join } from "node:path";
 import { homedir } from "node:os";
 import { PermissionService } from "../permission/permission.service";
 import { AuthService } from "../auth/auth.service";
+import { BrainCompilerService } from "../brain-compiler/brain-compiler.service";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { AuthGuard } from "../auth/auth.guard";
 
@@ -116,10 +122,81 @@ export class KnowledgeBaseController {
   constructor(
     private readonly permissionService: PermissionService,
     private readonly authService: AuthService,
+    private readonly compilerService: BrainCompilerService,
   ) {}
 
   private async currentUser(req: any): Promise<string> {
     return this.authService.userIdFromRequest(req);
+  }
+
+  /**
+   * Self-service personal knowledge-base creation. Personal KBs are a
+   * first-class product capability for every user (project plan P0-8) and must
+   * not require admin capabilities: the admin KB endpoint is guarded by
+   * AdminGuard, which ordinary users cannot pass.
+   */
+  @Post("personal")
+  async createPersonalKnowledgeBase(
+    @Req() req: any,
+    @Body() body: { name?: string; description?: string },
+  ) {
+    const userId = await this.currentUser(req);
+    const name = String(body?.name || "").trim();
+    if (!name) throw new BadRequestException("Knowledge base name is required.");
+    const normalizedName = name.slice(0, 120);
+    const existing = await this.prisma.knowledgeBase.count({
+      where: { type: "personal", ownerUserId: userId, status: "active" },
+    });
+    if (existing >= 20) {
+      throw new BadRequestException("Personal knowledge base limit (20) reached.");
+    }
+    const knowledgeBase = await this.prisma.knowledgeBase.create({
+      data: {
+        name: normalizedName,
+        type: "personal",
+        description: String(body?.description || "").slice(0, 500),
+        gitRepoUrl: `db://${normalizedName}`,
+        ownerUserId: userId,
+      },
+      include: { _count: { select: { documents: true } } },
+    });
+    // Keep the compile layer's membership in sync without waiting for the
+    // next 15-minute reconciliation sweep.
+    await this.compilerService
+      .queueAccessReconciliation()
+      .catch(() => undefined);
+    return {
+      knowledgeBase: {
+        ...(knowledgeBase as any),
+        documentCount: (knowledgeBase as any)._count?.documents ?? 0,
+      },
+    };
+  }
+
+  /**
+   * Self-service deletion of one's own personal knowledge base (archive
+   * semantics, matching the admin endpoint).
+   */
+  @Delete("personal/:kbId")
+  async deletePersonalKnowledgeBase(@Req() req: any, @Param("kbId") kbId: string) {
+    const userId = await this.currentUser(req);
+    const kb = await this.prisma.knowledgeBase.findUnique({
+      where: { id: kbId },
+      select: { id: true, type: true, ownerUserId: true, status: true },
+    });
+    if (!kb) throw new NotFoundException("Knowledge base not found.");
+    if (kb.type !== "personal" || kb.ownerUserId !== userId) {
+      throw new ForbiddenException("You can only delete your own personal knowledge base.");
+    }
+    if (kb.status !== "active") throw new NotFoundException("Knowledge base not found.");
+    const knowledgeBase = await this.prisma.knowledgeBase.update({
+      where: { id: kbId },
+      data: { status: "archived" },
+    });
+    await this.compilerService
+      .queueAccessReconciliation()
+      .catch(() => undefined);
+    return { knowledgeBase };
   }
 
   @Get()

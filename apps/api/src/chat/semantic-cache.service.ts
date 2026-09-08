@@ -1,16 +1,31 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { getPrismaClient } from '../prisma';
 import { ModelConfigService } from '../model-config.service';
 
 @Injectable()
-export class SemanticCacheService {
+export class SemanticCacheService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SemanticCacheService.name);
   private readonly prisma = getPrismaClient();
   private readonly enabled = process.env.SEMANTIC_CACHE_ENABLED !== 'false';
   private readonly similarityThreshold = Number(process.env.SEMANTIC_CACHE_SIMILARITY || '0.96');
   private readonly ttlHours = Number(process.env.SEMANTIC_CACHE_TTL_HOURS || '24');
+  private cleanupTimer?: NodeJS.Timeout;
 
   constructor(private readonly modelConfigService: ModelConfigService) {}
+
+  onModuleInit(): void {
+    // Expired rows are never matched at lookup time (epoch + TTL check), but
+    // without periodic cleanup they accumulate forever. Sweep hourly.
+    const intervalMs = Number(process.env.SEMANTIC_CACHE_CLEANUP_INTERVAL_MS || 3_600_000);
+    this.cleanupTimer = setInterval(() => {
+      this.cleanup().catch(() => undefined);
+    }, intervalMs);
+    this.cleanupTimer.unref?.();
+  }
+
+  onModuleDestroy(): void {
+    if (this.cleanupTimer) clearInterval(this.cleanupTimer);
+  }
 
   private async getEmbedding(text: string): Promise<number[] | null> {
     try {

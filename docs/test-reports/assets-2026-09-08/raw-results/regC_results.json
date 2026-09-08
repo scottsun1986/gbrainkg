@@ -1,0 +1,89 @@
+{
+ "ts": "R293808",
+ "results": [
+  {
+   "id": "PM-01",
+   "desc": "A组读者可见A组组织库",
+   "actual": true,
+   "verdict": "PASS"
+  },
+  {
+   "id": "PM-02",
+   "desc": "A组读者可见被授权行业库",
+   "actual": true,
+   "verdict": "PASS"
+  },
+  {
+   "id": "PM-03",
+   "desc": "B组读者不可见A组组织库",
+   "actual": true,
+   "verdict": "PASS"
+  },
+  {
+   "id": "PM-04",
+   "desc": "B组读者不可见行业库",
+   "actual": true,
+   "verdict": "PASS"
+  },
+  {
+   "id": "PM-05",
+   "desc": "A组读者查到机密A",
+   "actual": "http=201",
+   "verdict": "PASS"
+  },
+  {
+   "id": "PM-06",
+   "desc": "B组读者内容不泄露",
+   "actual": "http=201",
+   "verdict": "PASS"
+  },
+  {
+   "id": "PM-07",
+   "desc": "B组读者查不到行业库机密",
+   "actual": "http=201",
+   "verdict": "PASS"
+  },
+  {
+   "id": "PM-08",
+   "desc": "B组读者越权scope被拒(403)",
+   "actual": "http=403",
+   "verdict": "PASS"
+  },
+  {
+   "id": "PM-09",
+   "desc": "B组读者向A组库上传被拒",
+   "actual": "http=403",
+   "verdict": "PASS"
+  },
+  {
+   "id": "PM-10",
+   "desc": "B组读者自助个人库创建并写入(修复后)",
+   "actual": "kb201/text=201",
+   "verdict": "PASS"
+  },
+  {
+   "id": "PM-11",
+   "desc": "A组读者不可见B组个人库",
+   "actual": true,
+   "verdict": "PASS"
+  },
+  {
+   "id": "PM-12",
+   "desc": "A组读者检索不到B组机密",
+   "actual": true,
+   "verdict": "FAIL"
+  },
+  {
+   "id": "PM-13",
+   "desc": "撤销后A组读者立即不可见",
+   "actual": true,
+   "verdict": "PASS"
+  },
+  {
+   "id": "PM-14",
+   "desc": "撤销后行业库机密不泄露",
+   "actual": true,
+   "verdict": "PASS"
+  }
+ ]
+}

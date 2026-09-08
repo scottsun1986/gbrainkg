@@ -86,6 +86,9 @@ export class ChatController {
       throw new BadRequestException("Message is too long.");
     if (Array.isArray(kb_scope) && kb_scope.length > 100)
       throw new BadRequestException("Knowledge-base scope is too large.");
+    // Requested scope must be a subset of the caller's visible knowledge
+    // bases; otherwise reject with 403 before any stream is opened.
+    await this.chatService.assertRequestedScopeAuthorized(userId, kb_scope);
     let conversation = body.conversation_id
       ? await this.prisma.conversation.findFirst({
           where: { id: body.conversation_id, userId },

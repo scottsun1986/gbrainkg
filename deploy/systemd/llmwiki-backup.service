@@ -1,0 +1,9 @@
+[Unit]
+Description=LLMWiki daily backup (database + files)
+
+[Service]
+Type=oneshot
+Environment=BACKUP_ROOT=%h/.local/share/llmwiki/backups
+ExecStart=%h/gbrainkg/deploy/backup.sh
+StandardOutput=journal
+StandardError=journal

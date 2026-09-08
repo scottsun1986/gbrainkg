@@ -33,11 +33,14 @@ test('configuration changes cannot reuse a previous retrieval cache entry', asyn
   let calls = 0;
   adapter.ensureSearchConfig = async () => { adapter.searchConfigSignature = signature; };
   adapter.run = async () => { calls++; return { stdout: '[]', stderr: '' }; };
-  await adapter.query('gbrain://source/one', 'question');
-  await adapter.query('gbrain://source/one', 'question');
+  // Use search mode: query mode intentionally retries a keyword search when
+  // the balanced query returns zero rows, which would add one extra run() per
+  // cache miss and blur the cache-invalidation assertion below.
+  await adapter.query('gbrain://source/one', 'question', { operation: 'search' });
+  await adapter.query('gbrain://source/one', 'question', { operation: 'search' });
   assert.equal(calls, 1);
   signature = 'model-v2';
-  await adapter.query('gbrain://source/one', 'question');
+  await adapter.query('gbrain://source/one', 'question', { operation: 'search' });
   assert.equal(calls, 2);
 });
 

@@ -1,0 +1,86 @@
+[
+  {
+    "id": "RB-01",
+    "desc": "无Token访问 /kbs → 401/403(记录实际码)",
+    "actual": 403,
+    "verdict": "PASS"
+  },
+  {
+    "id": "RB-02",
+    "desc": "伪造Token → 401/403(记录实际码)",
+    "actual": 403,
+    "verdict": "PASS"
+  },
+  {
+    "id": "RB-03",
+    "desc": "篡改Token签名 → 401/403(记录实际码)",
+    "actual": 403,
+    "verdict": "PASS"
+  },
+  {
+    "id": "RB-04",
+    "desc": "无Token访问 /admin/data → 401/403",
+    "actual": 403,
+    "verdict": "PASS"
+  },
+  {
+    "id": "RB-05",
+    "desc": "非法UUID → 4xx非500",
+    "actual": 404,
+    "verdict": "PASS"
+  },
+  {
+    "id": "RB-06",
+    "desc": "SQL注入样例查询参数不引发500",
+    "actual": 200,
+    "verdict": "PASS"
+  },
+  {
+    "id": "RB-07",
+    "desc": "连续错误登录触发限流(429出现)",
+    "actual": "8x401,4x429",
+    "verdict": "PASS"
+  },
+  {
+    "id": "RB-08",
+    "desc": "空问题 → 4xx非500",
+    "actual": 400,
+    "verdict": "PASS"
+  },
+  {
+    "id": "RB-09",
+    "desc": "超长问题(4万字符)不引发500",
+    "actual": 400,
+    "verdict": "PASS"
+  },
+  {
+    "id": "RB-10",
+    "desc": "OpenAPI spec 可访问且为JSON",
+    "actual": 200,
+    "verdict": "PASS"
+  },
+  {
+    "id": "RB-11",
+    "desc": "Open-API 无凭证 → 401",
+    "actual": 401,
+    "verdict": "PASS"
+  },
+  {
+    "id": "RB-12",
+    "desc": "/health 200",
+    "actual": 200,
+    "verdict": "PASS"
+  },
+  {
+    "id": "RB-13",
+    "desc": "5并发上传全部受理",
+    "actual": [
+      201,
+      201,
+      201,
+      201,
+      201
+    ],
+    "verdict": "PASS"
+  }
+]

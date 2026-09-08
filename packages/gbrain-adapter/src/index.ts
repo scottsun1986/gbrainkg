@@ -33,6 +33,7 @@ export interface BrainQueryResult {
   }>;
   reranked?: boolean;
   retrievalGate?: { removed: number; scoreFloor: number; topScore: number };
+  documentDiversity?: { demoted: number; maxPerDoc: number };
   diagnostics?: {
     mode: string;
     operation: string;

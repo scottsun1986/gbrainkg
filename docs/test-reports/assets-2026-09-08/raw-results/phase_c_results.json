@@ -1,0 +1,102 @@
+{
+  "ts": "09193519",
+  "orgs": {
+    "root": "7b745dfe-3717-4a39-83ff-cc09000a92e2",
+    "a": "68dc7e11-da62-413d-bbda-2dad205ac447",
+    "b": "35615b78-a70c-48c8-915f-694d364970e6"
+  },
+  "users": {
+    "a": "daa4bffe-502b-4299-8b56-d19615e1c4e7",
+    "b": "35ec7035-b871-4f38-83d6-3989a07e6fa2"
+  },
+  "kbs": {
+    "orgA": "1d84f855-e891-4ea2-9130-ca76a2e5f950",
+    "industry": "4e33f7db-cb72-42f9-946b-2066533063cb"
+  },
+  "results": [
+    {
+      "id": "PM-01",
+      "desc": "A组读者可见A组组织库",
+      "expect": true,
+      "actual": false,
+      "verdict": "FAIL(expect=True)"
+    },
+    {
+      "id": "PM-02",
+      "desc": "A组读者可见被授权行业库",
+      "expect": true,
+      "actual": false,
+      "verdict": "FAIL(expect=True)"
+    },
+    {
+      "id": "PM-03",
+      "desc": "B组读者不可见A组组织库(同父不同子)",
+      "expect": false,
+      "actual": false,
+      "verdict": "PASS"
+    },
+    {
+      "id": "PM-04",
+      "desc": "B组读者不可见行业库(未授权)",
+      "expect": false,
+      "actual": false,
+      "verdict": "PASS"
+    },
+    {
+      "id": "PM-05",
+      "desc": "A组读者可查到机密A",
+      "expect": true,
+      "actual": false,
+      "verdict": "FAIL(expect=True)"
+    },
+    {
+      "id": "PM-06",
+      "desc": "B组读者查不到机密A(内容不泄露)",
+      "expect": true,
+      "actual": true,
+      "verdict": "PASS"
+    },
+    {
+      "id": "PM-07",
+      "desc": "B组读者查不到行业库机密",
+      "expect": true,
+      "actual": true,
+      "verdict": "PASS"
+    },
+    {
+      "id": "PM-08",
+      "desc": "B组读者强制指定A组库scope被拒(403/404)",
+      "expect": true,
+      "actual": false,
+      "verdict": "FAIL(expect=True)"
+    },
+    {
+      "id": "PM-09",
+      "desc": "B组读者向A组库上传被拒",
+      "expect": true,
+      "actual": true,
+      "verdict": "PASS"
+    },
+    {
+      "id": "PM-10",
+      "desc": "B组读者个人库自助创建并写入",
+      "expect": "201",
+      "actual": "403: {\"message\":\"Forbidden resource\",\"error\":\"Forbidden\",\"statusCode\":403}",
+      "verdict": "FAIL(expect=201)"
+    },
+    {
+      "id": "PM-13",
+      "desc": "撤销行业库授权后A组读者立即不可见",
+      "expect": false,
+      "actual": false,
+      "verdict": "PASS"
+    },
+    {
+      "id": "PM-14",
+      "desc": "撤销后A组读者检索不到行业库机密",
+      "expect": true,
+      "actual": true,
+      "verdict": "PASS"
+    }
+  ]
+}

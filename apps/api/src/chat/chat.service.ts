@@ -1,4 +1,4 @@
-import { Injectable, Logger, MessageEvent, Optional, Inject } from "@nestjs/common";
+import { Injectable, Logger, MessageEvent, Optional, Inject, ForbiddenException } from "@nestjs/common";
 import { Observable, Subscriber } from "rxjs";
 import { PermissionService } from "../permission/permission.service";
 import { BrainCompilerService } from "../brain-compiler/brain-compiler.service";
@@ -13,6 +13,7 @@ import { BrainScopeService } from "../brain-compiler/brain-scope.service";
 import { ChatTraceRecorder } from "./chat-trace";
 import { getSharedBrainRepoAdapter } from "../brain-compiler/brain-adapter.provider";
 import { WeKnoraClient, WeKnoraBinding } from "../retrieval/weknora-client";
+import { estimateTokens } from "./context-budget";
 import { GraphRagService } from "../graph-rag/graph-rag.service";
 import { SemanticCacheService } from "./semantic-cache.service";
 import { AgenticRagService } from "./agentic-rag.service";
@@ -45,6 +46,30 @@ export class ChatService {
     @Optional() private readonly graphRagService?: GraphRagService,
   ) {
     this.gbrain = gbrainAdapter ?? getSharedBrainRepoAdapter();
+  }
+
+  /**
+   * Reject (HTTP 403) any requested retrieval scope that contains knowledge
+   * bases the caller cannot see. Implements the platform rule that a requested
+   * scope must be a subset of visible_kbs — silently filtering would let a
+   * caller believe they are querying an inaccessible library.
+   */
+  async assertRequestedScopeAuthorized(
+    userId: string,
+    requestedKbScope?: string[] | string,
+  ): Promise<void> {
+    if (!requestedKbScope || requestedKbScope === "all") return;
+    const requested = Array.isArray(requestedKbScope)
+      ? requestedKbScope.map((id) => String(id))
+      : [String(requestedKbScope)];
+    if (!requested.length) return;
+    const visibleKbs = await this.permissionService.getVisibleKnowledgeBases(userId);
+    const unauthorized = requested.filter((id) => !visibleKbs.includes(id));
+    if (unauthorized.length > 0) {
+      throw new ForbiddenException(
+        `Requested knowledge-base scope includes ${unauthorized.length} knowledge base(s) you cannot access.`,
+      );
+    }
   }
 
   async handleChatStream(
@@ -432,7 +457,7 @@ export class ChatService {
     };
   }
 
-  private extractSearchKeywords(query: string): string[] {
+  private extractSearchKeywords(query: string, domainTerms: string[] = []): string[] {
     const cleaned = this.cleanRetrievalQuery(query);
     const delimiterRegex = /[，。！？；：、“”（）《》【】\n\r\t,.;:?!"'()\[\]{}以及关于分别根据在与和中对从到等有无由按若且应被将使把为因让其各所如何哪些具体要求请详细对比此时情况阈值何种主要怎样多少]/g;
     const allQueryTexts = [
@@ -450,16 +475,12 @@ export class ChatService {
         if (!/^\d+$/.test(m)) set.add(m);
       }
 
-      const domainTerms = [
-        "数据跨境", "出境", "加密传输", "无人系统", "总则", "技术加密", "特殊豁免", "附则", "第一条", "第三条", "第二十四条", "第四十一条",
-        "一级安全偏航", "偏航事故", "传感器", "历史未检修", "隐患记录", "扣除", "安全积分", "连带处分", "第十五条", "第三十二条", "处分", "停飞", "绩效",
-        "极端气象", "雷达", "红外", "双失效", "接管", "黑匣子", "遥测", "遥控", "频率", "着陆保护", "降落伞", "气囊", "第九条", "第二十八条", "第三十六条",
-        "研发阶段", "试验阶段", "研发试验", "商业量产", "量产运营", "自主避障", "安全冗余", "冗余裕度", "第七条", "第二十条", "120米", "300米", "50米", "150米",
-        "量子抗性", "512位", "格密码", "15毫秒", "双向握手", "延迟", "通信安全", "防御", "安全风险", "重放攻击", "物理自毁",
-        "指标体系", "度量指标", "考核指标", "绩效考核", "研发人员", "研发效能", "考勤方式", "旷工", "考勤管理"
-      ];
+      // KB-level retrieval hint terms are provided by the caller from
+      // KnowledgeBase.domainTerms (admin-maintained, default empty). No
+      // application-side hardcoded domain vocabulary: deployments must stay
+      // corpus-agnostic.
       for (const term of domainTerms) {
-        if (qText.includes(term)) set.add(term);
+        if (term && qText.includes(term)) set.add(term);
       }
       for (const p of parts) {
         if (p.length >= 2 && p.length <= 30) set.add(p);
@@ -474,6 +495,41 @@ export class ChatService {
       }
     }
     return Array.from(set);
+  }
+
+  /**
+   * Load admin-maintained KB-level retrieval hint terms for the current scope.
+   * Replaces the legacy hardcoded application-side domain vocabulary so that
+   * deployments stay corpus-agnostic. Terms are cached per process for a short
+   * window to avoid a KB query on every retrieval.
+   */
+  private scopeDomainTermsCache = new Map<string, { terms: string[]; expiresAt: number }>();
+
+  private async loadScopeDomainTerms(scope: string[]): Promise<string[]> {
+    if (!scope.length || !this.prisma || !(this.prisma as any).knowledgeBase?.findMany) return [];
+    const cacheKey = [...scope].sort().join(",");
+    const cached = this.scopeDomainTermsCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.terms;
+    try {
+      const rows = await (this.prisma as any).knowledgeBase.findMany({
+        where: { id: { in: scope } },
+        select: { domainTerms: true },
+      });
+      const terms: string[] = [];
+      for (const row of rows) {
+        const raw = row?.domainTerms;
+        if (Array.isArray(raw)) {
+          for (const term of raw) {
+            const value = String(term || "").trim();
+            if (value) terms.push(value);
+          }
+        }
+      }
+      this.scopeDomainTermsCache.set(cacheKey, { terms, expiresAt: Date.now() + 120_000 });
+      return terms;
+    } catch {
+      return [];
+    }
   }
 
   async searchChunksFallback(
@@ -497,7 +553,8 @@ export class ChatService {
       return [];
     }
 
-    const keywords = this.extractSearchKeywords(query);
+    const domainTerms = await this.loadScopeDomainTerms(scope);
+    const keywords = this.extractSearchKeywords(query, domainTerms);
     if (!keywords.length) {
       return [];
     }
@@ -524,7 +581,7 @@ export class ChatService {
             },
           },
         },
-        take: 120,
+        take: 400,
       });
 
       if (!chunks || chunks.length === 0) {
@@ -545,7 +602,19 @@ export class ChatService {
 
       scored.sort((a: any, b: any) => b.score - a.score);
 
-      const topSelected = scored.slice(0, Math.max(limit, 15));
+      // Document diversity quota: a high-volume near-duplicate document must
+      // not crowd smaller documents out of the fallback candidate pool.
+      const maxPerDoc = Math.max(2, Number(process.env.RETRIEVAL_MAX_CHUNKS_PER_DOC || 4));
+      const perDocCount = new Map<string, number>();
+      const topSelected: typeof scored = [];
+      for (const item of scored) {
+        const docKey = item.chunk.documentId || "unknown";
+        const count = perDocCount.get(docKey) || 0;
+        if (count >= maxPerDoc) continue;
+        perDocCount.set(docKey, count + 1);
+        topSelected.push(item);
+        if (topSelected.length >= Math.max(limit, 15)) break;
+      }
       if (!topSelected.length) return [];
 
       const docIds = Array.from(new Set(topSelected.map((s: any) => s.chunk.documentId)));
@@ -769,11 +838,11 @@ export class ChatService {
             data: { type: "delta", content: cachedHit.responseContent },
           });
           if (Array.isArray(cachedHit.citations)) {
-            for (const cit of cachedHit.citations) {
+            cachedHit.citations.forEach((cit, citIndex) => {
               subscriber.next({
-                data: { type: "citation", timeline_entry: cit },
+                data: { type: "citation", index: citIndex + 1, timeline_entry: this.normalizeTimelineEntry(cit) },
               });
-            }
+            });
           }
           trace.finish("semantic_cache", "success", "直接复用经权限校验的缓存回答", {
             cacheId: cachedHit.id,
@@ -917,24 +986,47 @@ export class ChatService {
         .join("\n");
 
       const inventoryEvidence = `【知识库全景资产统计与制度清单】\n当前授权知识库范围包含 ${kbMap.size} 个知识库，共收录 ${accessibleDocs.length} 篇权威制度与文档：\n\n${kbSummary}`;
-      const invCitation = {
-        topic: "知识库全景资产统计与制度清单",
-        docTitle: accessibleDocs[0]?.title || "知识库全景",
-        section: "知识库全景资产统计与制度清单",
-        evidence: inventoryEvidence,
-        snippet: inventoryEvidence,
+      // One synthetic citation per knowledge base. The inventory is a system
+      // statistic, so citations must NOT bind to an arbitrary first document
+      // (which previously made the panel point at an unrelated file purely due
+      // to alphabetical order). docId-less citations skip document ACL binding
+      // and render without a preview link by design.
+      const kbIdByName = new Map<string, string>();
+      for (const d of accessibleDocs) {
+        const kbName = d.kb?.name || "默认知识库";
+        if (d.kb?.id && !kbIdByName.has(kbName)) kbIdByName.set(kbName, d.kb.id);
+      }
+      const inventoryCitations: any[] = Array.from(kbMap.entries()).map(([name, titles], index) => ({
+        topic: `${name} · 文档清单`,
+        docTitle: `${name}（${titles.length} 篇文档）`,
+        section: "知识库全景资产统计",
+        evidence: `【${name} · 文档清单】共 ${titles.length} 篇：\n${titles.map((t) => `* 《${t}》`).join("\n")}`,
+        snippet: `${name}：共 ${titles.length} 篇文档（${titles.slice(0, 5).map((t) => `《${t}》`).join("、")}${titles.length > 5 ? " 等" : ""}）`,
         context: inventoryEvidence,
-        score: 1.2,
-        docId: accessibleDocs[0]?.id,
-        kbId: accessibleDocs[0]?.kb?.id || scope[0],
-        version: accessibleDocs[0]?.version || 1,
-        previewUrl: accessibleDocs[0] ? `/api/v1/kbs/${accessibleDocs[0].kb?.id || scope[0]}/documents/${accessibleDocs[0].id}/preview` : undefined,
-        rerankScore: 1.2,
-      };
+        score: Number((1.2 - index * 0.01).toFixed(3)),
+        kbId: kbIdByName.get(name) || scope[0],
+        kbName: name,
+        inventory: true,
+        rerankScore: Number((1.2 - index * 0.01).toFixed(3)),
+      }));
+      if (inventoryCitations.length === 0) {
+        inventoryCitations.push({
+          topic: "知识库全景资产统计",
+          docTitle: "知识库全景（0 篇文档）",
+          section: "知识库全景资产统计",
+          evidence: "当前授权范围内没有已发布的知识文档。",
+          snippet: "当前授权范围内没有已发布的知识文档。",
+          context: "当前授权范围内没有已发布的知识文档。",
+          score: 1.2,
+          kbId: scope[0],
+          inventory: true,
+          rerankScore: 1.2,
+        });
+      }
       queryResult = {
-        topics: [invCitation.topic],
+        topics: inventoryCitations.map((c) => c.topic),
         answer: inventoryEvidence,
-        citations: [invCitation],
+        citations: inventoryCitations,
         reranked: true,
         diagnostics: { mode: "inventory", operation: "inventory", sourceCount: kbMap.size, cacheHit: false, rawCandidates: accessibleDocs.length, uniquePages: accessibleDocs.length, hydratedParents: 1, nativeRerank: true, stages: ["inventory-dict"] } as any,
       };
@@ -947,7 +1039,11 @@ export class ChatService {
         totalKbs: kbMap.size,
       });
     } else {
-      const effectiveOp = "search";
+      // Trust the retrieval planner's operation decision (LLM rewrite or the
+      // deterministic exact-clause/fresh-turn path). "search" is reserved for
+      // exact name/title/identifier lookups; semantic questions must keep the
+      // richer "query" stack (query expansion + graph signals + adaptive return).
+      const effectiveOp: "search" | "query" = retrieval.operation === "search" ? "search" : "query";
       trace.start("gbrain_retrieval", "GBrain 混合检索", "执行向量、BM25、RRF、图谱信号与重排检索", {
         sourceCount: sourceRefs.length,
         operation: effectiveOp,
@@ -1374,6 +1470,16 @@ export class ChatService {
       platformFallback: platformRerankRequired,
     });
     const beforeGate = queryResult.citations?.length || 0;
+    trace.start("document_diversity", "证据多样性配额", "限制单一文档可占用的证据席位，防止高体量近重复文档挤占其它文档证据");
+    queryResult = this.applyDocumentDiversity(queryResult, retrieval.breadth);
+    trace.finish(
+      "document_diversity",
+      queryResult.documentDiversity ? "warning" : "success",
+      queryResult.documentDiversity
+        ? `已将 ${(queryResult.documentDiversity as any).demoted} 条同文档超额证据降权出上下文（每文档上限 ${(queryResult.documentDiversity as any).maxPerDoc} 条）`
+        : "各文档证据分布均衡，无需配额干预",
+      { ...(queryResult.documentDiversity || {}), after: queryResult.citations?.length || 0 },
+    );
     trace.start("evidence_gate", "证据收敛", "仅保留能直接支持当前问题的证据");
     queryResult = this.applyFocusedEvidenceGate(queryResult, retrieval.breadth);
     const afterGate = queryResult.citations?.length || 0;
@@ -1619,7 +1725,7 @@ export class ChatService {
 3. 【多源对比与完整呈现】：只有当多份资料都直接涉及当前问题时，才分别列出各份文件的规定，并说明版本差异、适用条件或生效背景。
 4. 【多源合并】：若多个来源共同支持某一相同结论，可合并标注如 [1][2]。严禁捏造未在参考资料中提供的引用编号；可用编号严格限制在 [1] 到 [${citations.length}]。
 5. 【客观真实】：如果参考资料不足以回答用户的问题，请明确客观说明“已知知识库资料中未包含相关信息”，切勿主观编造。
-
+${queryResult?.diagnostics?.mode === "inventory" ? `6. 【全景统计规范】：本次是知识库/文档盘点类问题，参考资料按知识库逐一给出文档清单。请分知识库逐项呈现统计结果，并在每个知识库的统计陈述末尾标注它对应的引用角标（如 [1]、[2]），让用户可逐库核对。\n` : ""}
       ${priorConversation ? `历史对话参考（仅供消歧，以当前知识库资料为准）：\n${priorConversation}\n\n` : ""}${personalMemoryBlock}【参考知识库资料】：
 ${compiledTruthContext}`;
 
@@ -1668,7 +1774,7 @@ ${compiledTruthContext}`;
         if (trailingMarker) citationTail = trailingMarker[0];
         const safeContent = stripInvalidCitationMarkers(body, citations.length);
         if (safeContent) {
-          totalTokens++;
+          totalTokens += estimateTokens(safeContent);
           fullAnswer += safeContent;
           subscriber.next({ data: { type: "delta", content: safeContent } });
         }
@@ -1989,8 +2095,15 @@ ${compiledTruthContext}`;
     const filtered = citations
       .map((citation: any) => {
         if (!citation.docId) {
-          // Derived knowledge never bypasses the document/ACL guard. A page
-          // created under a different source set or epoch is simply ignored.
+          // Synthetic inventory citations (per-KB document statistics) carry no
+          // document binding. Authorize them at the knowledge-base level: the
+          // source KB must be within the caller's visible set. Everything else
+          // without a docId (derived pages) must still match a derived page
+          // created under the exact same source set/epoch — a page created
+          // under a different source set or epoch is simply ignored.
+          if (citation.inventory && citation.kbId && visibleKbIds.includes(citation.kbId)) {
+            return citation;
+          }
           return citation.slug && validDerived.has(citation.slug) ? citation : null;
         }
         const doc = allowed.get(citation.docId);
@@ -2122,6 +2235,41 @@ ${compiledTruthContext}`;
   }
 
   /**
+   * Cap how many evidence slots a single document may occupy. Bulk
+   * near-duplicate documents (e.g. thousands of template records) can
+   * otherwise flood the reranked candidate list and crowd out the true
+   * evidence from smaller documents, producing refusals on questions the
+   * corpus actually answers. Score order is preserved; breadth mode allows a
+   * higher quota since enumeration benefits from wider per-document coverage.
+   */
+  private applyDocumentDiversity(result: any, breadth = false): any {
+    const citations = Array.isArray(result?.citations) ? result.citations : [];
+    if (citations.length <= 1) return result;
+    const maxPerDoc = Math.max(1, Number(process.env.RETRIEVAL_MAX_EVIDENCE_PER_DOC || (breadth ? 8 : 4)));
+    const perDoc = new Map<string, number>();
+    const kept: any[] = [];
+    let demoted = 0;
+    for (const citation of citations) {
+      const key = String(citation.docId || citation.topic || "unknown");
+      const count = perDoc.get(key) || 0;
+      if (count >= maxPerDoc) {
+        demoted++;
+        continue;
+      }
+      perDoc.set(key, count + 1);
+      kept.push(citation);
+    }
+    if (!demoted || kept.length === citations.length) return result;
+    return {
+      ...result,
+      citations: kept,
+      topics: kept.map((citation: any) => citation.topic),
+      answer: kept.map((citation: any) => citation.context || citation.snippet).filter(Boolean).join("\n\n"),
+      documentDiversity: { demoted, maxPerDoc },
+    };
+  }
+
+  /**
    * Keep a focused answer grounded in the score neighborhood of its best
    * evidence. GBrain's broad mode intentionally returns a wider set, while a
    * focused question should not feed unrelated low-score documents to the
@@ -2211,6 +2359,36 @@ ${compiledTruthContext}`;
       reason: topScore === null
         ? "语义命中缺少可比较分数，需要扩检"
         : `${hasFallbackRerankScore ? "交叉编码" : "语义命中"}分数 ${topScore.toFixed(3)} 低于扩检门槛 ${scoreFloor.toFixed(3)}`,
+    };
+  }
+
+  /**
+   * Semantic-cache entries store raw citation objects (camelCase), while the
+   * SSE replay path must emit the snake_case timeline_entry contract the
+   * frontend reads (doc_title / document_id / kb_name / preview_url).
+   * Normalize defensively so replayed citations keep their title, preview
+   * link and KB attribution.
+   */
+  private normalizeTimelineEntry(cit: any) {
+    if (!cit || typeof cit !== "object") return cit;
+    const sourceKb = cit.source_kb ?? cit.kbId ?? cit.kb;
+    const documentId = cit.document_id ?? cit.docId;
+    return {
+      source_kb: sourceKb,
+      kb_name: cit.kb_name ?? cit.kbName ?? sourceKb,
+      document_id: documentId,
+      doc_title: cit.doc_title ?? cit.docTitle ?? cit.topic,
+      section: cit.section,
+      score: cit.score,
+      snippet: cit.snippet ?? cit.evidence ?? "",
+      preview_url:
+        cit.preview_url ??
+        (documentId && sourceKb
+          ? `/api/v1/kbs/${sourceKb}/documents/${documentId}/preview`
+          : undefined),
+      version: cit.version,
+      page_no: cit.page_no ?? cit.pageNo,
+      version_conflict: cit.version_conflict ?? cit.versionConflict,
     };
   }
 

@@ -267,6 +267,67 @@ function UniversalDocumentViewer({ preview, onClose }) {
     return scored.slice(0, 15).map((item) => item.phrase);
   }, [cleanPhrases, docData?.markdown_content]);
 
+  // 整块锚定高亮：检索命中的单位是"知识切片(chunk)"，而逐句匹配会把命中
+  // 打散到全文各处、且常落在错误位置。这里先把引用片段归一化后与文档的
+  // 知识切片逐一比对，锁定命中的那个切片，再以该切片自身的行/句作为高亮
+  // 短语 —— 高亮自然聚集在整块内容上，而不是散落的句级碎片。
+  const chunkAnchoredPhrases = useMemo(() => {
+    if (!snippet || !docData?.chunks || !docData.chunks.length) return null;
+    const stripDecorations = (s) => String(s || '')
+      .replace(/\[上下文:[^\]]*\]/g, '')
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/【第[^】]{1,6}】/g, '');
+    const norm = (s) => stripDecorations(s).replace(/\s+/g, '').toLowerCase();
+    const target = norm(snippet).slice(0, 400);
+    if (target.length < 12) return null;
+
+    let best = null;
+    let bestScore = 0;
+    for (const chunk of docData.chunks) {
+      const c = norm(chunk.content);
+      if (!c) continue;
+      let score = 0;
+      if (c.includes(target)) {
+        score = 2 + target.length / Math.max(1, c.length);
+      } else {
+        const w = Math.min(60, target.length);
+        if (w >= 20) {
+          for (let i = 0; i + w <= target.length; i += 20) {
+            if (c.includes(target.slice(i, i + w))) {
+              score = Math.max(score, 1 + w / target.length);
+              break;
+            }
+          }
+        }
+      }
+      if (score > bestScore) { bestScore = score; best = chunk; }
+    }
+    // 置信不足时不启用整块锚定，退回句级短语
+    if (!best || bestScore < 0.8) return null;
+
+    // 用命中切片自身的行/句生成高亮短语（保持切片内顺序），确保"整块都高亮"
+    const lines = stripDecorations(best.content)
+      .split(/\n+/)
+      .flatMap((line) => line.split(/(?<=[。！？；;])/))
+      .map((line) => line
+        .replace(/\*\*(.*?)\*\*/g, '$1').replace(/\*(.*?)\*/g, '$1')
+        .replace(/`([^`]+)`/g, '$1')
+        .replace(/^[#\s\-*>`:|0-9.()（）【】]+/, '')
+        .replace(/[#\s\-*>`:|]+$/, '')
+        .replace(/\s+/g, ' ').trim())
+      .filter((line) => line.length >= 6 && line.length <= 160);
+    const unique = Array.from(new Set(lines));
+    // 整块锚定切片覆盖不足（如仅命中表格注入等非常规内容）时退回句级短语
+    return unique.length >= 2 ? unique.slice(0, 60) : null;
+  }, [snippet, docData?.chunks]);
+
+  // 最终高亮短语：整块锚定优先 → 全文唯一性打分 → 原始清洗短语
+  const highlightPhrases = useMemo(() => {
+    if (chunkAnchoredPhrases && chunkAnchoredPhrases.length) return chunkAnchoredPhrases;
+    if (rankedPhrases.length) return rankedPhrases;
+    return cleanPhrases;
+  }, [chunkAnchoredPhrases, rankedPhrases, cleanPhrases]);
+
   useEffect(() => {
     if (!kbId || !docId) {
       setLoading(false);
@@ -347,14 +408,14 @@ function UniversalDocumentViewer({ preview, onClose }) {
   // 高亮处理后的 Markdown HTML
   const markdownHtml = useMemo(() => {
     const content = docData?.markdown_content || '';
-    return renderMarkdown(content, rankedPhrases);
-  }, [docData?.markdown_content, rankedPhrases]);
+    return renderMarkdown(content, highlightPhrases);
+  }, [docData?.markdown_content, highlightPhrases]);
 
   // 命中切片计算
   const chunkMatches = useMemo(() => {
     if (!docData?.chunks || !docData.chunks.length) return new Set();
     const matched = new Set();
-    const phrases = rankedPhrases.length > 0 ? rankedPhrases : cleanPhrases;
+    const phrases = highlightPhrases;
     docData.chunks.forEach((chunk) => {
       const text = chunk.content || '';
       if (phrases.some((p) => {
@@ -369,7 +430,7 @@ function UniversalDocumentViewer({ preview, onClose }) {
       if (firstMatch) matched.add(firstMatch.id);
     }
     return matched;
-  }, [docData?.chunks, rankedPhrases, cleanPhrases, snippet]);
+  }, [docData?.chunks, highlightPhrases, snippet]);
 
   // 自动滚动定位到高亮最密集的区域
   useEffect(() => {
@@ -803,7 +864,7 @@ function UniversalDocumentViewer({ preview, onClose }) {
                           <div style={{ fontSize: '12.5px', color: 'var(--ink)', lineHeight: '1.6', whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>
                             {isMatch ? (
                               <span dangerouslySetInnerHTML={{
-                                __html: renderPlainText(chunk.content || '', rankedPhrases.length > 0 ? rankedPhrases : cleanPhrases)
+                                __html: renderPlainText(chunk.content || '', highlightPhrases)
                               }} />
                             ) : (
                               chunk.content
@@ -2569,7 +2630,7 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
       {previewDoc && <Modal title={`预览 · ${previewDoc.name}`} onClose={()=>setPreviewDoc(null)} foot={<button className="btn" onClick={()=>setPreviewDoc(null)}>关闭</button>}><div style={{whiteSpace:'pre-wrap',lineHeight:1.7,maxHeight:'60vh',overflow:'auto',fontSize:13}}>{previewDoc.content || '当前文档暂无可预览内容。'}</div></Modal>}
       <OnlinePreviewModal preview={onlinePreview} onClose={()=>setOnlinePreview(null)}/>
       {confirmDoc && <ConfirmModal title="删除知识" msg={<>确认删除 <b style={{color:'var(--ink)'}}>{confirmDoc.name}</b>？删除后将从当前知识库移除。</>} onConfirm={()=>deleteDocument(confirmDoc)} onClose={()=>setConfirmDoc(null)}/>}
-      {confirmKb && <ConfirmModal title="删除个人知识库" msg={<>确认删除个人知识库 <b style={{color:'var(--ink)'}}>{confirmKb.name}</b>？其中的知识将一并删除。</>} onConfirm={async()=>{const response=await fetch(`${API_BASE_URL}/api/v1/admin/kbs/${confirmKb.id}`,{method:'DELETE',headers:apiHeaders()}); const result=await response.json().catch(()=>({})); if(!response.ok) throw new Error(result.message||'删除失败'); setConfirmKb(null); setSel(null); window.dispatchEvent(new CustomEvent('app-data-refresh'));}} onClose={()=>setConfirmKb(null)}/>}
+      {confirmKb && <ConfirmModal title="删除个人知识库" msg={<>确认删除个人知识库 <b style={{color:'var(--ink)'}}>{confirmKb.name}</b>？其中的知识将一并删除。</>} onConfirm={async()=>{const response=await fetch(`${API_BASE_URL}/api/v1/kbs/personal/${confirmKb.id}`,{method:'DELETE',headers:apiHeaders()}); const result=await response.json().catch(()=>({})); if(!response.ok) throw new Error(result.message||'删除失败'); setConfirmKb(null); setSel(null); window.dispatchEvent(new CustomEvent('app-data-refresh'));}} onClose={()=>setConfirmKb(null)}/>}
       {newTextOpen && <TextKnowledgeModal onClose={()=>setNewTextOpen(false)} onSave={addTextDocument}/>}
       {newPersonalOpen && <NewPersonalKBModal onClose={()=>setNewPersonalOpen(false)} onSaved={()=>{setNewPersonalOpen(false); window.dispatchEvent(new CustomEvent('app-data-refresh'));}}/>}
     </div>
@@ -2584,7 +2645,7 @@ function NewPersonalKBModal({onClose, onSaved}){
     if (!name.trim()) return;
     setSaving(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/admin/kbs`, {method:'POST',headers:{'Content-Type':'application/json',...apiHeaders()},body:JSON.stringify({name:name.trim(),description:description.trim(),type:'personal'})});
+      const response = await fetch(`${API_BASE_URL}/api/v1/kbs/personal`, {method:'POST',headers:{'Content-Type':'application/json',...apiHeaders()},body:JSON.stringify({name:name.trim(),description:description.trim(),type:'personal'})});
       const result = await response.json().catch(()=>({}));
       if (!response.ok) throw new Error(result.message || '创建失败');
       window.dispatchEvent(new CustomEvent('app-toast',{detail:'个人知识库已创建'})); onSaved?.();

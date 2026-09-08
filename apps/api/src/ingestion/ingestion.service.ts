@@ -72,7 +72,12 @@ export class IngestionService implements OnModuleInit {
       this.logger.warn(`Recovered ${stale.length} stale ingestion job(s).`);
   }
 
-  async enqueue(documentId: string, reason = "upload", expectedVersion?: number) {
+  async enqueue(
+    documentId: string,
+    reason = "upload",
+    expectedVersion?: number,
+    priority = 5,
+  ) {
     try {
       const version = expectedVersion ?? (await this.prisma.document.findUnique({
         where: { id: documentId },
@@ -88,6 +93,10 @@ export class IngestionService implements OnModuleInit {
           backoff: { type: "exponential", delay: 3_000 },
           removeOnComplete: 200,
           removeOnFail: 500,
+          // BullMQ: lower value = scheduled earlier. Small/quick jobs (e.g.
+          // negatives and light documents) use priority 1 so they are not
+          // head-of-line blocked behind long parses of large documents.
+          priority,
         },
       );
     } catch (error) {
