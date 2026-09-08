@@ -862,6 +862,40 @@ ul,ol{list-style:none}
   color:var(--evidence);
   margin-left:auto;
 }
+.org-node-actions{
+  display:none;
+  align-items:center;
+  gap:3px;
+  margin-left:auto;
+}
+.org-node-row:hover .org-node-actions,
+.org-node-row.active .org-node-actions{
+  display:inline-flex;
+}
+.org-node-action-btn{
+  padding:2px 5px;
+  border-radius:4px;
+  font-size:11px;
+  line-height:1.2;
+  border:1px solid var(--line-2);
+  background:var(--surface);
+  color:var(--ink-3);
+  cursor:pointer;
+  transition:all .12s ease;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+}
+.org-node-action-btn:hover{
+  background:var(--surface-2);
+  color:var(--ink);
+  border-color:var(--line-1);
+}
+.org-node-action-btn.danger:hover{
+  background:#fef2f2;
+  color:#dc2626;
+  border-color:#fca5a5;
+}
 
 /* Segmented Control */
 .segmented-control{

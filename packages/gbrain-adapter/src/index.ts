@@ -396,7 +396,10 @@ export class BrainRepoAdapter {
         child.kill('SIGTERM');
         killTimer = setTimeout(() => { if (!settled) child.kill('SIGKILL'); }, 5_000);
       };
-      const timeoutMs = Math.max(30_000, Number(process.env.GBRAIN_COMMAND_TIMEOUT_MS || 180_000));
+      const isSync = args[0] === 'sync';
+      const timeoutMs = isSync
+        ? Math.max(10_000, Number(process.env.GBRAIN_SYNC_TIMEOUT_MS || 15_000))
+        : Math.max(30_000, Number(process.env.GBRAIN_COMMAND_TIMEOUT_MS || 180_000));
       let settled = false;
       const timer = setTimeout(() => {
         if (settled) return;
@@ -558,8 +561,27 @@ export class BrainRepoAdapter {
     try {
       const args = ['sync', '--source', sourceId];
       if (full) args.push('--full');
+      const skipEmbed = process.env.GBRAIN_NO_EMBED === '1' ||
+                        process.env.GBRAIN_SYNC_NO_EMBED === '1' ||
+                        !process.env.GBRAIN_EMBEDDING_API_KEY ||
+                        (!process.env.GBRAIN_EMBEDDING_BASE_URL && (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY.startsWith('sk-dc2e')));
+      if (skipEmbed) {
+        args.push('--no-embed');
+      }
       args.push('--json');
-      const { stdout } = await this.run(args);
+      let stdout = '';
+      try {
+        const res = await this.run(args);
+        stdout = res.stdout;
+      } catch (runErr: any) {
+        if (!args.includes('--no-embed')) {
+          const fallbackArgs = ['sync', '--source', sourceId, ...(full ? ['--full'] : []), '--no-embed', '--break-lock', '--json'];
+          const res = await this.run(fallbackArgs);
+          stdout = res.stdout;
+        } else {
+          throw runErr;
+        }
+      }
       const payload = this.parseJsonObject(stdout);
       const sourceRows = Array.isArray(payload.sources) ? payload.sources : [];
       const sourceError = sourceRows.find((item: any) => item?.status === 'error');

@@ -1092,25 +1092,78 @@ export class AdminController {
   }
 
   @Delete("orgs/:id")
-  async archiveOrg(@Req() req: any, @Param("id") id: string) {
+  async archiveOrg(
+    @Req() req: any,
+    @Param("id") id: string,
+    @Query("cascade") cascadeParam?: string,
+  ) {
     const operatorId = await this.authService.userIdFromRequest(req);
     if (!(await this.permissionService.canManageOrganization(operatorId, id)))
       throw new ForbiddenException(
         "You can only archive organizations within your organization scope.",
       );
+
+    const current = await this.prisma.orgNode.findFirst({
+      where: { id, status: "active" },
+    });
+    if (!current) throw new NotFoundException("Organization not found.");
+
+    const isCascade = cascadeParam === "true" || cascadeParam === "1";
     const childCount = await this.prisma.orgNode.count({
       where: { parentId: id, status: "active" },
     });
-    if (childCount)
+
+    if (childCount > 0 && !isCascade) {
       throw new BadRequestException(
-        "Move or archive child organizations first.",
+        "该组织下存在下级部门，请先处理下级部门或选择级联删除。",
       );
-    const org = await this.prisma.orgNode.update({
-      where: { id },
-      data: { status: "archived" },
+    }
+
+    const targetNodes = isCascade
+      ? await this.prisma.orgNode.findMany({
+          where: {
+            status: "active",
+            OR: [{ id }, { path: { startsWith: `${current.path}/` } }],
+          },
+          select: { id: true },
+        })
+      : [{ id }];
+
+    const targetIds = targetNodes.map((n) => n.id);
+
+    // 检查是否有跨管理范围的子部门
+    for (const targetId of targetIds) {
+      if (!(await this.permissionService.canManageOrganization(operatorId, targetId))) {
+        throw new ForbiddenException(
+          "You can only delete organizations within your managed scope.",
+        );
+      }
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      // 1. 停用挂载在该组织及其子组织下的组织知识库
+      await tx.knowledgeBase.updateMany({
+        where: { orgNodeId: { in: targetIds }, status: "active" },
+        data: { status: "archived" },
+      });
+      // 2. 清理相关的组织管理员映射
+      await tx.orgAdmin.deleteMany({
+        where: { orgNodeId: { in: targetIds } },
+      });
+      // 3. 清理相关的人员-组织从属关系
+      await tx.userOrg.deleteMany({
+        where: { orgNodeId: { in: targetIds } },
+      });
+      // 4. 将组织节点状态置为 archived
+      await tx.orgNode.updateMany({
+        where: { id: { in: targetIds } },
+        data: { status: "archived" },
+      });
+      return tx.orgNode.findUnique({ where: { id } });
     });
+
     await this.scheduleAccessReconciliation();
-    return { organization: org };
+    return { ok: true, organization: updated, deletedCount: targetIds.length };
   }
 
   private async canManageOrganization(

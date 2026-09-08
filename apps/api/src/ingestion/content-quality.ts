@@ -53,8 +53,8 @@ export function assessContentQuality(markdown: string, suffix: string, facts: Re
     issues.push('版面解析只返回图片占位符，图片文字尚未完成 OCR');
   }
 
-  // 1. Clause Numbering Continuity Check
-  const articleRegex = /第([一二三四五六七八九十百千万〇零两\d]+)条/g;
+  // 1. Clause Numbering Continuity Check (match section headings / line-initial clauses, avoiding mid-sentence cross-references)
+  const articleRegex = /(?:^|\n)\s*(?:#+\s*)?第([一二三四五六七八九十百千万〇零两\d]+)条(?:\s+|[【（\[]|$)/g;
   const articles: { str: string; num: number }[] = [];
   let match;
   while ((match = articleRegex.exec(markdown)) !== null) {

@@ -4143,6 +4143,7 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
   });
   const [adminModal, setAdminModal] = useState(null); // 设置管理员的节点
   const [addModal, setAddModal] = useState(null);     // 新增子组织的父节点
+  const [renameModal, setRenameModal] = useState(null); // 重命名组织
   const [editModal, setEditModal] = useState(null);   // 编辑组织
   const [deleteModal, setDeleteModal] = useState(null); // 删除组织
   const orgOptions = useMemo(() => flattenOrgTree(orgTree), [orgTree]);
@@ -4248,13 +4249,42 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
       return false;
     }
   };
-  const deleteOrganization = async (node) => {
+  const renameOrganization = async (node: any, newName: string) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/admin/orgs/${node.id}`, { method: 'DELETE', headers: apiHeaders() });
+      const response = await fetch(`${API_BASE_URL}/api/v1/admin/orgs/${node.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...apiHeaders() },
+        body: JSON.stringify({ name: newName }),
+      });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || `API ${response.status}`);
-      setOrgTree((tree) => {
-        const remove = (current) => {
+      const updated = result.organization;
+      if (!updated) throw new Error('接口未返回更新后的组织');
+
+      const rewritePaths = (current: any, oldPath: string, nextPath: string): any => ({
+        ...current,
+        ...(current.id === node.id ? { ...current, ...updated } : {}),
+        path: current.path === oldPath ? nextPath : current.path.startsWith(`${oldPath}/`) ? `${nextPath}${current.path.slice(oldPath.length)}` : current.path,
+        children: (current.children || []).map((child: any) => rewritePaths(child, oldPath, nextPath)),
+      });
+      setOrgTree((tree: any) => (tree ? rewritePaths(tree, node.path, updated.path) : tree));
+      setRenameModal(null);
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: `组织已成功重命名为「${updated.name}」` }));
+      window.dispatchEvent(new CustomEvent('app-data-refresh'));
+      return true;
+    } catch (error: any) {
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: `重命名失败：${error.message || '请稍后重试'}` }));
+      return false;
+    }
+  };
+  const deleteOrganization = async (node: any, cascade: boolean = false) => {
+    try {
+      const url = `${API_BASE_URL}/api/v1/admin/orgs/${node.id}${cascade ? '?cascade=true' : ''}`;
+      const response = await fetch(url, { method: 'DELETE', headers: apiHeaders() });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || `API ${response.status}`);
+      setOrgTree((tree: any) => {
+        const remove = (current: any): any => {
           if (!current) return current;
           if (current.id === node.id) return null;
           return { ...current, children: (current.children || []).map(remove).filter(Boolean) };
@@ -4265,7 +4295,7 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
       window.dispatchEvent(new CustomEvent('app-toast', { detail: `组织「${node.name}」已删除` }));
       window.dispatchEvent(new CustomEvent('app-data-refresh'));
       return true;
-    } catch (error) {
+    } catch (error: any) {
       window.dispatchEvent(new CustomEvent('app-toast', { detail: `组织删除失败：${error.message || '请稍后重试'}` }));
       return false;
     }
@@ -4333,6 +4363,7 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
             setExpandedIds={setExpandedIds}
             onAddChild={(n: any)=>setAddModal(n)}
             onSetAdmin={(n: any)=>setAdminModal(n)}
+            onRename={(n: any)=>setRenameModal(n)}
             onEdit={(n: any)=>setEditModal(n)}
             onDelete={(n: any)=>setDeleteModal(n)}
             onActivateKb={activateKb}
@@ -4380,8 +4411,9 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
 
         {adminModal && <OrgAdminModal node={adminModal} onClose={()=>setAdminModal(null)} onSaved={()=>{setAdminModal(null); window.dispatchEvent(new CustomEvent('app-data-refresh'));}}/>}
         {addModal && <AddOrgModal parent={addModal} orgOptions={orgOptions} canCreateRoot={canCreateRoot} onAdd={async (name, parentId, adminUserIds)=>{if (await addChildOrg(parentId, name, adminUserIds)) setAddModal(null);}} onClose={()=>setAddModal(null)}/>}
+        {renameModal && <RenameOrgModal node={renameModal} onSave={(newName: string)=>renameOrganization(renameModal, newName)} onClose={()=>setRenameModal(null)}/>}
         {editModal && <EditOrgModal node={editModal} orgOptions={orgOptions} canCreateRoot={canCreateRoot} onSave={(name, parentId)=>updateOrganization(editModal, name, parentId)} onClose={()=>setEditModal(null)}/>}
-        {deleteModal && <ConfirmModal title="删除组织" msg={<>确认删除组织 <b style={{color:'var(--ink)'}}>{deleteModal.name}</b>？删除前必须先处理该组织的下属组织；组织库会保留为已停用状态。</>} onConfirm={()=>deleteOrganization(deleteModal)} onClose={()=>setDeleteModal(null)}/>}
+        {deleteModal && <DeleteOrgModal node={deleteModal} onDelete={(node: any, cascade: boolean)=>deleteOrganization(node, cascade)} onClose={()=>setDeleteModal(null)}/>}
       </div>
     </div>
   );
@@ -5092,6 +5124,128 @@ function AddOrgModal({parent, orgOptions = [], canCreateRoot = false, onAdd, onC
   );
 }
 
+function RenameOrgModal({node, onSave, onClose}: any){
+  const [name, setName] = useState(node.name || '');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async (e?: any) => {
+    if (e) e.preventDefault();
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setError('组织名称不能为空');
+      return;
+    }
+    if (/[\\/]/.test(trimmed)) {
+      setError('组织名称不能包含斜杠字符（/ 或 \\）');
+      return;
+    }
+    if (trimmed.length > 120) {
+      setError('组织名称长度不能超过 120 个字符');
+      return;
+    }
+    setError('');
+    setSaving(true);
+    const ok = await onSave(trimmed);
+    setSaving(false);
+    if (ok) onClose();
+  };
+
+  return (
+    <Modal title={`重命名组织 · ${node.name}`} onClose={onClose} foot={
+      <>
+        <button className="btn" onClick={onClose} disabled={saving}>取消</button>
+        <button className="btn primary" disabled={saving || !name.trim() || name.trim() === node.name} onClick={handleSubmit}>
+          {saving ? '保存中…' : '确认重命名'}
+        </button>
+      </>
+    }>
+      <form onSubmit={handleSubmit}>
+        <div className="field">
+          <label>当前完整路径</label>
+          <div style={{fontSize:12,color:'var(--ink-3)',background:'var(--surface-2)',padding:'6px 10px',borderRadius:6}}>
+            {node.path || node.name}
+          </div>
+        </div>
+        <div className="field">
+          <label>新组织名称<span className="req">*</span></label>
+          <input
+            autoFocus
+            value={name}
+            onChange={e => { setName(e.target.value); setError(''); }}
+            placeholder="请输入新组织名称"
+            onKeyDown={e => { if (e.key === 'Enter') handleSubmit(e); }}
+          />
+          {error && <div style={{fontSize:12,color:'var(--red)',marginTop:4}}>{error}</div>}
+        </div>
+        <div style={{padding:12,background:'var(--surface-2)',borderRadius:7,fontSize:12,color:'var(--ink-3)',lineHeight:1.6}}>
+          重命名将自动同步更新该组织以及其所有子组织的物化路径（path），并自动重新对账权限范围。
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function DeleteOrgModal({node, onDelete, onClose}: any){
+  const hasChildren = (node.children || []).length > 0;
+  const childCount = (node.children || []).length;
+  const [cascade, setCascade] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleConfirm = async () => {
+    setDeleting(true);
+    const ok = await onDelete(node, cascade);
+    setDeleting(false);
+    if (ok) onClose();
+  };
+
+  return (
+    <Modal title={`删除组织 · ${node.name}`} onClose={onClose} foot={
+      <>
+        <button className="btn" onClick={onClose} disabled={deleting}>取消</button>
+        <button
+          className="btn danger"
+          disabled={deleting || (hasChildren && !cascade)}
+          onClick={handleConfirm}
+        >
+          {deleting ? '删除中…' : hasChildren ? '级联删除组织及子部门' : '确认删除'}
+        </button>
+      </>
+    }>
+      <div style={{marginBottom:14,lineHeight:1.6,fontSize:13,color:'var(--ink)'}}>
+        确认删除组织 <b style={{color:'var(--ink)',fontWeight:600}}>「{node.name}」</b>？
+      </div>
+      <div style={{fontSize:12,color:'var(--ink-3)',background:'var(--surface-2)',padding:'8px 12px',borderRadius:6,marginBottom:14}}>
+        <div><b>路径：</b>{node.path || node.name}</div>
+        {node.kbs && node.kbs.length > 0 && <div><b>关联：</b>包含挂载的组织知识库（删除后自动置为停用）</div>}
+      </div>
+
+      {hasChildren ? (
+        <div style={{background:'#fef2f2',border:'1px solid #fecaca',borderRadius:8,padding:'12px 14px',marginBottom:14}}>
+          <div style={{color:'#b91c1c',fontWeight:600,fontSize:13,display:'flex',alignItems:'center',gap:6,marginBottom:6}}>
+            <span>⚠️</span> 该组织包含 {childCount} 个直接下属部门
+          </div>
+          <div style={{fontSize:12,color:'#991b1b',marginBottom:10,lineHeight:1.5}}>
+            系统默认阻止直接删除具有下属分支的父级组织。若确认整体移除该部门分支，请勾选下方级联删除选项。
+          </div>
+          <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontSize:12.5,color:'#991b1b',fontWeight:500}}>
+            <input
+              type="checkbox"
+              checked={cascade}
+              onChange={e => setCascade(e.target.checked)}
+            />
+            确认级联删除该组织及其所有下级子部门、解除人员挂载与组织库
+          </label>
+        </div>
+      ) : (
+        <div style={{fontSize:12,color:'var(--ink-3)',lineHeight:1.5}}>
+          删除后，该节点将被归档移除，绑定的人员关联与组织管理员权限将自动解除，所属知识库将停用。
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 function EditOrgModal({node, orgOptions = [], canCreateRoot = false, onSave, onClose}){
   const [name, setName] = useState(node.name || '');
   const [parentId, setParentId] = useState(node.parentId || '');
@@ -5452,13 +5606,14 @@ function OrgPanel({
   setExpandedIds,
   onAddChild,
   onSetAdmin,
+  onRename,
   onEdit,
   onDelete,
   onActivateKb,
   onDeactivateKb,
   onManageKb,
   canCreateRoot = false
-}){
+}: any){
   const [selectedNodeId, setSelectedNodeId] = useState<string>(() => orgTree?.id || '');
   const [nodeSearch, setNodeSearch] = useState('');
 
@@ -5534,6 +5689,7 @@ function OrgPanel({
                 onToggle={onToggle}
                 onAddChild={onAddChild}
                 onSetAdmin={onSetAdmin}
+                onRename={onRename}
                 onEdit={onEdit}
                 onDelete={onDelete}
                 search={nodeSearch}
@@ -5562,7 +5718,7 @@ function OrgPanel({
                   全路径：{selectedNode.path || selectedNode.name}
                 </div>
               </div>
-              <div style={{display:'flex',gap:6}}>
+              <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
                 {selectedNode.canCreateChild && (
                   <button className="btn primary" style={{fontSize:'11.5px',padding:'4px 10px'}} onClick={()=>onAddChild(selectedNode)}>
                     <Icon name="plus" size={12}/> 添加子组织
@@ -5570,8 +5726,15 @@ function OrgPanel({
                 )}
                 {selectedNode.canManage && (
                   <>
-                    <button className="btn" style={{fontSize:'11.5px',padding:'4px 10px'}} onClick={()=>onEdit?.(selectedNode)}>编辑组织</button>
-                    <button className="btn danger" style={{fontSize:'11.5px',padding:'4px 10px'}} disabled={(selectedNode.children || []).length > 0} title={(selectedNode.children || []).length > 0 ? '请先处理下属组织' : '删除组织'} onClick={()=>onDelete?.(selectedNode)}>删除组织</button>
+                    <button className="btn" style={{fontSize:'11.5px',padding:'4px 10px'}} onClick={()=>onRename?.(selectedNode)}>
+                      <Icon name="edit" size={12}/> 重命名组织
+                    </button>
+                    <button className="btn" style={{fontSize:'11.5px',padding:'4px 10px'}} onClick={()=>onEdit?.(selectedNode)}>
+                      调整层级
+                    </button>
+                    <button className="btn danger" style={{fontSize:'11.5px',padding:'4px 10px'}} onClick={()=>onDelete?.(selectedNode)}>
+                      <Icon name="trash" size={12}/> 删除组织
+                    </button>
                   </>
                 )}
               </div>
@@ -5673,7 +5836,7 @@ function OrgPanel({
   );
 }
 
-function OrgTreeItem({node, depth, expandedIds, selectedNodeId, onSelect, onToggle, onAddChild, onSetAdmin, onEdit, onDelete, search}: any){
+function OrgTreeItem({node, depth, expandedIds, selectedNodeId, onSelect, onToggle, onAddChild, onSetAdmin, onRename, onEdit, onDelete, search}: any){
   const open = expandedIds.has(node.id);
   const hasChildren = node.children && node.children.length > 0;
   const isSelected = selectedNodeId === node.id;
@@ -5713,6 +5876,33 @@ function OrgTreeItem({node, depth, expandedIds, selectedNodeId, onSelect, onTogg
         <span style={{fontSize:'11px',color:'var(--ink-4)',fontVariantNumeric:'tabular-nums'}}>
           {node.children?.length ? `${node.children.length}` : ''}
         </span>
+        {node.canManage && (
+          <div className="org-node-actions" onClick={e=>e.stopPropagation()}>
+            {node.canCreateChild && (
+              <button
+                className="org-node-action-btn"
+                title="添加子组织"
+                onClick={(e) => { e.stopPropagation(); onAddChild(node); }}
+              >
+                +
+              </button>
+            )}
+            <button
+              className="org-node-action-btn"
+              title="重命名组织"
+              onClick={(e) => { e.stopPropagation(); if (onRename) onRename(node); else onEdit(node); }}
+            >
+              ✎
+            </button>
+            <button
+              className="org-node-action-btn danger"
+              title="删除组织"
+              onClick={(e) => { e.stopPropagation(); onDelete(node); }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
       </div>
       {open && hasChildren && (
         <div style={{borderLeft:'1px dashed var(--line-2)',marginLeft:`${15 + depth * 14}px`}}>
@@ -5727,6 +5917,7 @@ function OrgTreeItem({node, depth, expandedIds, selectedNodeId, onSelect, onTogg
               onToggle={onToggle}
               onAddChild={onAddChild}
               onSetAdmin={onSetAdmin}
+              onRename={onRename}
               onEdit={onEdit}
               onDelete={onDelete}
               search={search}

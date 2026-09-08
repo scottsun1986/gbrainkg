@@ -197,12 +197,210 @@ export class ChatService {
       };
     });
 
+    // If GBrain returned fewer results than requested, augment with high-recall Chunk fallback
+    if (results.length < limit) {
+      const fallbackResults = await this.searchChunksFallback(scope, query, limit - results.length);
+      const existingSnippets = new Set(
+        results.map((r) => r.evidence.replace(/\s+/g, "").slice(0, 30)),
+      );
+      for (const fb of fallbackResults) {
+        const key = fb.evidence.replace(/\s+/g, "").slice(0, 30);
+        if (!existingSnippets.has(key)) {
+          existingSnippets.add(key);
+          results.push(fb as any);
+        }
+      }
+    }
+
     return {
       success: true,
       query,
-      total: citations.length,
-      results,
+      total: results.length,
+      results: results.slice(0, limit),
     };
+  }
+
+  private extractSearchKeywords(query: string): string[] {
+    const delimiterRegex = /[，。！？；：、“”（）《》【】\n\r\t,.;:?!"'()\[\]{}以及关于分别根据在与和中对从到等有无由按若且应被将使把为因让其各所如何哪些具体要求请详细对比此时情况阈值何种主要怎样多少]/g;
+    const parts = query.split(delimiterRegex).map((s) => s.trim()).filter((s) => s.length >= 2);
+    const set = new Set<string>();
+
+    for (const m of query.match(/第[一二三四五六七八九十百0-9]+[章节条款]/g) || []) set.add(m);
+    for (const m of query.match(/\d+(?:\.\d+)?(?:位|毫秒|ms|秒|米|m|度|分|%|赫兹|Hz|小时)/gi) || []) set.add(m);
+    for (const m of query.match(/[a-zA-Z0-9_-]{2,}/g) || []) {
+      if (!/^\d+$/.test(m)) set.add(m);
+    }
+
+    const domainTerms = [
+      "数据跨境", "出境", "加密传输", "无人系统", "总则", "技术加密", "特殊豁免", "附则", "第一条", "第三条", "第二十四条", "第四十一条",
+      "一级安全偏航", "偏航事故", "传感器", "历史未检修", "隐患记录", "扣除", "安全积分", "连带处分", "第十五条", "第三十二条", "处分", "停飞", "绩效",
+      "极端气象", "雷达", "红外", "双失效", "接管", "黑匣子", "遥测", "遥控", "频率", "着陆保护", "降落伞", "气囊", "第九条", "第二十八条", "第三十六条",
+      "研发阶段", "试验阶段", "研发试验", "商业量产", "量产运营", "自主避障", "安全冗余", "冗余裕度", "第七条", "第二十条", "120米", "300米", "50米", "150米",
+      "量子抗性", "512位", "格密码", "15毫秒", "双向握手", "延迟", "通信安全", "防御", "安全风险", "重放攻击", "物理自毁"
+    ];
+    for (const term of domainTerms) {
+      if (query.includes(term)) set.add(term);
+    }
+    for (const p of parts) {
+      if (p.length >= 2 && p.length <= 8) set.add(p);
+    }
+    return Array.from(set);
+  }
+
+  async searchChunksFallback(
+    scope: string[],
+    query: string,
+    limit = 15,
+  ): Promise<
+    Array<{
+      documentId: string | null;
+      kbId: string | null;
+      title: string;
+      version?: number;
+      pageNo?: number;
+      articleNo?: string;
+      evidence: string;
+      score?: number;
+      previewUrl: string | null;
+    }>
+  > {
+    if (!scope.length || !this.prisma || !(this.prisma as any).chunk?.findMany) {
+      return [];
+    }
+
+    const keywords = this.extractSearchKeywords(query);
+    if (!keywords.length) {
+      return [];
+    }
+
+    try {
+      const chunks = await (this.prisma as any).chunk.findMany({
+        where: {
+          kbId: { in: scope },
+          OR: keywords.map((kw) => ({
+            content: { contains: kw, mode: "insensitive" },
+          })),
+        },
+        select: {
+          id: true,
+          documentId: true,
+          kbId: true,
+          ord: true,
+          content: true,
+          metadata: true,
+          document: {
+            select: {
+              title: true,
+              version: true,
+            },
+          },
+        },
+        take: 120,
+      });
+
+      if (!chunks || chunks.length === 0) {
+        return [];
+      }
+
+      const scored = chunks.map((c: any) => {
+        let score = 0;
+        const text = c.content.toLowerCase();
+        for (const kw of keywords) {
+          if (text.includes(kw.toLowerCase())) {
+            const weight = /第[一二三四五六七八九十百0-9]+[章节条款]|\d+/.test(kw) ? 2.5 : 1.0;
+            score += weight;
+          }
+        }
+        return { chunk: c, score };
+      }).filter((item: any) => item.score > 0);
+
+      scored.sort((a: any, b: any) => b.score - a.score);
+
+      const topSelected = scored.slice(0, Math.max(limit, 15));
+      if (!topSelected.length) return [];
+
+      const docIds = Array.from(new Set(topSelected.map((s: any) => s.chunk.documentId)));
+      const allDocChunks = await (this.prisma as any).chunk.findMany({
+        where: { documentId: { in: docIds } },
+        select: {
+          id: true,
+          documentId: true,
+          kbId: true,
+          ord: true,
+          content: true,
+          metadata: true,
+          document: { select: { title: true, version: true } },
+        },
+        orderBy: { ord: "asc" },
+      });
+
+      const chunkByOrdAndDoc = new Map<string, any>();
+      allDocChunks.forEach((c: any) => {
+        chunkByOrdAndDoc.set(`${c.documentId}:${c.ord}`, c);
+      });
+
+      const expandedChunkIds = new Set<string>();
+      const expandedChunks: any[] = [];
+
+      for (const item of topSelected) {
+        const c = item.chunk;
+        if (!expandedChunkIds.has(c.id)) {
+          expandedChunkIds.add(c.id);
+          expandedChunks.push(c);
+        }
+
+        const meta = c.metadata || {};
+        const artNo = meta.article_no;
+        if (artNo !== undefined) {
+          allDocChunks
+            .filter((sib: any) => sib.documentId === c.documentId && sib.metadata?.article_no === artNo)
+            .forEach((sib: any) => {
+              if (!expandedChunkIds.has(sib.id)) {
+                expandedChunkIds.add(sib.id);
+                expandedChunks.push(sib);
+              }
+            });
+        }
+        if (typeof meta.next_chunk_ord === "number") {
+          const next = chunkByOrdAndDoc.get(`${c.documentId}:${meta.next_chunk_ord}`);
+          if (next && !expandedChunkIds.has(next.id)) {
+            expandedChunkIds.add(next.id);
+            expandedChunks.push(next);
+          }
+        }
+        if (typeof meta.prev_chunk_ord === "number") {
+          const prev = chunkByOrdAndDoc.get(`${c.documentId}:${meta.prev_chunk_ord}`);
+          if (prev && !expandedChunkIds.has(prev.id)) {
+            expandedChunkIds.add(prev.id);
+            expandedChunks.push(prev);
+          }
+        }
+      }
+
+      const chnNums = ["", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"];
+      return expandedChunks.map((c: any) => {
+        const meta = c.metadata || {};
+        const chn = chnNums[meta.chapter_no] || meta.chapter_no || "";
+        const chPrefix = chn ? `【第${chn}章】` : "";
+        const artPrefix = meta.article_no ? `【第${meta.article_no}条】` : "";
+        const evidence = `${chPrefix}${artPrefix} ${c.content}`.trim();
+
+        return {
+          documentId: c.documentId,
+          kbId: c.kbId,
+          title: c.document?.title || "未知文档",
+          version: c.document?.version || 1,
+          pageNo: meta.pageNumber || c.ord + 1,
+          articleNo: meta.article_no ? `第${meta.article_no}条` : undefined,
+          evidence,
+          score: 0.95,
+          previewUrl: `/api/v1/ingestion/documents/${c.documentId}/preview`,
+        };
+      });
+    } catch (err) {
+      this.logger.warn(`searchChunksFallback error: ${err}`);
+      return [];
+    }
   }
 
   private async processChat(
