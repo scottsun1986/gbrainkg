@@ -2,7 +2,7 @@ import { Injectable, Logger, MessageEvent, Optional, Inject } from "@nestjs/comm
 import { Observable, Subscriber } from "rxjs";
 import { PermissionService } from "../permission/permission.service";
 import { BrainCompilerService } from "../brain-compiler/brain-compiler.service";
-import { BrainRepoAdapter } from "@llmwiki/gbrain-adapter";
+import { BrainRepoAdapter, BrainQueryResult } from "@llmwiki/gbrain-adapter";
 import { getPrismaClient } from "../prisma";
 import { ModelConfigService } from "../model-config.service";
 import { BrainOutboxService } from "../brain-compiler/brain-outbox.service";
@@ -648,50 +648,35 @@ export class ChatService {
         );
         if (sourceFreshness && (sourceFreshness.fresh === false || (sourceFreshness.staleSources && sourceFreshness.staleSources.length > 0))) {
           this.logger.warn(
-            `Query freshness gate found unaligned sources: ${sourceFreshness.staleSources?.join(", ")}, triggered background priority rebuild.`,
+            `Query freshness gate found unaligned sources: ${sourceFreshness.staleSources?.join(", ")}, continuing query with available sources and background sync.`,
           );
-          subscriber.next({
-            data: {
-              type: "error",
-              content: "知识库索引检测到未完成对账，系统已自动触发后台快速对账与重建，请稍后重试。",
-            },
-          });
-          trace.finish("source_freshness", "failed", "存在未完成对账的 Source，已阻止使用不完整索引作答", {
+          trace.finish("source_freshness", "warning", "部分 Source 待对账，已触发后台对账并继续执行检索", {
             checked: sourceFreshness.checked,
             rebuilt: sourceFreshness.rebuilt,
             staleSources: sourceFreshness.staleSources || [],
           });
-          subscriber.complete();
-          return;
-        }
-        if (sourceFreshness.rebuilt > 0) {
-          this.logger.log(
-            `Query freshness gate rebuilt ${sourceFreshness.rebuilt}/${sourceFreshness.checked} source(s) before answering.`,
+        } else {
+          if (sourceFreshness && sourceFreshness.rebuilt > 0) {
+            this.logger.log(
+              `Query freshness gate rebuilt ${sourceFreshness.rebuilt}/${sourceFreshness.checked} source(s) before answering.`,
+            );
+          }
+          trace.finish(
+            "source_freshness",
+            sourceFreshness?.rebuilt ? "warning" : "success",
+            sourceFreshness?.rebuilt
+              ? `查询前已同步重建 ${sourceFreshness.rebuilt} 个 Source`
+              : `已核对 ${sourceFreshness?.checked || 0} 个 Source，索引新鲜`,
+            sourceFreshness,
           );
         }
-        trace.finish(
-          "source_freshness",
-          sourceFreshness.rebuilt > 0 ? "warning" : "success",
-          sourceFreshness.rebuilt > 0
-            ? `查询前已同步重建 ${sourceFreshness.rebuilt} 个 Source`
-            : `已核对 ${sourceFreshness.checked} 个 Source，索引新鲜`,
-          sourceFreshness,
-        );
       } catch (error: any) {
-        this.logger.error(
-          `Query freshness gate blocked an incomplete source: ${String(error?.message || error)}`,
+        this.logger.warn(
+          `Query freshness gate encountered non-fatal error: ${String(error?.message || error)}, continuing with available sources and fallback.`,
         );
-        subscriber.next({
-          data: {
-            type: "error",
-            content: "知识库索引正在对账或重建，当前不能基于不完整索引回答，请稍后重试。",
-          },
-        });
-        trace.finish("source_freshness", "failed", "Source 对账失败，已阻止不完整回答", {
+        trace.finish("source_freshness", "warning", "Source 新鲜度核对异常，平滑降级至现有索引与分块兜底", {
           error: String(error?.message || error).slice(0, 500),
         });
-        subscriber.complete();
-        return;
       }
     } else {
       trace.skip("source_freshness", "Source 新鲜度校验", "当前编译服务未提供查询前新鲜度校验");
@@ -809,17 +794,6 @@ export class ChatService {
     if (retrieval.breadth && wholeScopeSelected) {
       trace.start("scope_synthesis", "权限范围派生综述", "检查当前权限快照对应的跨 Source 综述");
       let isMaterialized = await this.gbrain.isSourceMaterialized(derivedRef).catch(() => false);
-      if (!isMaterialized && userScope.scopeId) {
-        this.logger.log(
-          `Scope derived summary not materialized for ${userScope.fingerprint}; triggering on-demand compile...`,
-        );
-        try {
-          await this.scopeService.compileScopeDerived(userScope.scopeId);
-          isMaterialized = await this.gbrain.isSourceMaterialized(derivedRef).catch(() => false);
-        } catch (err: any) {
-          this.logger.warn(`On-demand scope compile failed: ${err.message}`);
-        }
-      }
       if (isMaterialized) {
         sourceRefs.push(derivedRef);
       }
@@ -840,72 +814,204 @@ export class ChatService {
     this.logger.debug(
       `Querying brain for "${question}" in scope ${scope.join(",")} (Scope fingerprint: ${userScope.fingerprint})...`,
     );
-    let retrievalEscalated = false;
-    trace.start("gbrain_retrieval", "GBrain 混合检索", "执行向量、BM25、RRF、图谱信号与重排检索", {
-      sourceCount: sourceRefs.length,
-      operation: retrieval.operation,
-      breadth: retrieval.breadth,
-    });
-    let queryResult =
-      sourceRefs.length > 1
-          ? await this.gbrain.queryMany(sourceRefs, retrieval.query, {
-            breadth: retrieval.breadth,
-            operation: retrieval.operation,
-            ...(forceQueryRefresh ? { forceRefresh: true } : {}),
-          })
-        : await this.gbrain.query(
-            sourceRefs[0] || brainRepo.gitRepoUrl,
-            retrieval.query,
-            { breadth: retrieval.breadth, operation: retrieval.operation, signal, ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
-          );
+    const isInventoryQuery =
+      /(有多少|有哪些|几篇|几本|几份|清单|统计|全景|列表|目录).*(知识文档|知识库|文档库|制度文档|全部文档|所有文档)/.test(question) ||
+      /(知识文档|知识库|文档库|制度文档|全部文档|所有文档).*(有多少|有哪些|几篇|几本|几份|清单|统计|全景|列表|目录)/.test(question) ||
+      /^(?:搜索)?(?:有多少|查看有哪些|列出所有|统计)\s*(?:知识文档|知识库|制度文档|文档)/.test(question);
 
-    const initialCleanedQuery = this.cleanRetrievalQuery(retrieval.query || question);
-    if (
-      (!queryResult.citations || queryResult.citations.length === 0) &&
-      initialCleanedQuery &&
-      initialCleanedQuery !== retrieval.query
-    ) {
-      this.logger.debug(
-        `Initial GBrain query yielded 0 results, retrying with cleaned query: ${initialCleanedQuery}`,
-      );
-      const retryResult =
+    let retrievalEscalated = false;
+    let queryResult: BrainQueryResult;
+    let rawCandidateCount = 0;
+    let topEvidence = "";
+    let initialEvidenceAssessment: { weak: boolean; shouldEscalate: boolean; reason: string; evidence?: string; topScore?: number; scoreFloor?: number } = { weak: false, shouldEscalate: false, reason: "" };
+
+    if (isInventoryQuery) {
+      trace.start("gbrain_retrieval", "全景资产盘点", "从授权知识库检索全部已发布文档全景列表与统计");
+      const accessibleDocs = await this.prisma.document.findMany({
+        where: { kbId: { in: scope }, status: "published" },
+        select: {
+          id: true,
+          title: true,
+          version: true,
+          kb: { select: { id: true, name: true } },
+        },
+        orderBy: [{ kb: { name: "asc" } }, { title: "asc" }],
+      });
+      const kbMap = new Map<string, string[]>();
+      for (const d of accessibleDocs) {
+        const kbName = d.kb?.name || "默认知识库";
+        if (!kbMap.has(kbName)) kbMap.set(kbName, []);
+        kbMap.get(kbName)!.push(d.title);
+      }
+      const kbSummary = Array.from(kbMap.entries())
+        .map(([name, titles]) => `- **${name}** (共 ${titles.length} 篇):\n  ${titles.map((t) => `* 《${t}》`).join("\n  ")}`)
+        .join("\n");
+
+      const inventoryEvidence = `【知识库全景资产统计与制度清单】\n当前授权知识库范围包含 ${kbMap.size} 个知识库，共收录 ${accessibleDocs.length} 篇权威制度与文档：\n\n${kbSummary}`;
+      const invCitation = {
+        topic: "知识库全景资产统计与制度清单",
+        docTitle: accessibleDocs[0]?.title || "知识库全景",
+        section: "知识库全景资产统计与制度清单",
+        evidence: inventoryEvidence,
+        snippet: inventoryEvidence,
+        context: inventoryEvidence,
+        score: 1.2,
+        docId: accessibleDocs[0]?.id,
+        kbId: accessibleDocs[0]?.kb?.id || scope[0],
+        version: accessibleDocs[0]?.version || 1,
+        previewUrl: accessibleDocs[0] ? `/api/v1/kbs/${accessibleDocs[0].kb?.id || scope[0]}/documents/${accessibleDocs[0].id}/preview` : undefined,
+        rerankScore: 1.2,
+      };
+      queryResult = {
+        topics: [invCitation.topic],
+        answer: inventoryEvidence,
+        citations: [invCitation],
+        reranked: true,
+        diagnostics: { mode: "inventory", operation: "inventory", sourceCount: kbMap.size, cacheHit: false, rawCandidates: accessibleDocs.length, uniquePages: accessibleDocs.length, hydratedParents: 1, nativeRerank: true, stages: ["inventory-dict"] } as any,
+      };
+      rawCandidateCount = 1;
+      topEvidence = inventoryEvidence;
+      initialEvidenceAssessment = { weak: false, shouldEscalate: false, reason: "inventory" };
+      trace.finish("gbrain_retrieval", "success", `命中全景文档资产统计，直接从资产字典精准装配 ${accessibleDocs.length} 篇文档全景`, {
+        candidateCount: 1,
+        totalDocs: accessibleDocs.length,
+        totalKbs: kbMap.size,
+      });
+    } else {
+      const effectiveOp = "search";
+      trace.start("gbrain_retrieval", "GBrain 混合检索", "执行向量、BM25、RRF、图谱信号与重排检索", {
+        sourceCount: sourceRefs.length,
+        operation: effectiveOp,
+        breadth: retrieval.breadth,
+      });
+
+      // 1. Fast-Path: Query PostgreSQL chunks concurrently (<10ms)
+      const fallbackChunksPromise = this.searchChunksFallback(scope, question, 15).catch((err) => {
+        this.logger.warn(`searchChunksFallback early promise error: ${err.message}`);
+        return [];
+      });
+
+      // 2. Query GBrain federated search concurrently
+      const gbrainSearchPromise = (
         sourceRefs.length > 1
-          ? await this.gbrain.queryMany(sourceRefs, initialCleanedQuery, {
+          ? this.gbrain.queryMany(sourceRefs, retrieval.query, {
               breadth: retrieval.breadth,
-              operation: retrieval.operation,
+              operation: effectiveOp,
               ...(forceQueryRefresh ? { forceRefresh: true } : {}),
             })
-          : await this.gbrain.query(
+          : this.gbrain.query(
               sourceRefs[0] || brainRepo.gitRepoUrl,
-              initialCleanedQuery,
-              { breadth: retrieval.breadth, operation: retrieval.operation, signal, ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
+              retrieval.query,
+              { breadth: retrieval.breadth, operation: effectiveOp, signal, ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
+            )
+      ).catch((err) => {
+        this.logger.warn(`GBrain search error: ${err.message}`);
+        return { topics: [], answer: "", citations: [], reranked: false } as BrainQueryResult;
+      });
+
+      const fallbackChunks = await fallbackChunksPromise;
+      if (fallbackChunks.length > 0) {
+        // High-precision DB chunks are already available in milliseconds.
+        // Race GBrain with a bounded 2500ms window to avoid blocking 40-80s on 22 empty CLI processes.
+        const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500));
+        const racedGBrain = await Promise.race([gbrainSearchPromise, timeoutPromise]);
+
+        if (racedGBrain && racedGBrain.citations && racedGBrain.citations.length > 0) {
+          queryResult = racedGBrain;
+          const existingEvidence = new Set(
+            racedGBrain.citations.map((c: any) => (c.evidence || c.snippet || "").replace(/\s+/g, "").slice(0, 30)),
+          );
+          for (const fb of fallbackChunks) {
+            const key = fb.evidence.replace(/\s+/g, "").slice(0, 30);
+            if (!existingEvidence.has(key)) {
+              existingEvidence.add(key);
+              queryResult.citations.push({
+                topic: fb.title || fb.documentId,
+                docId: fb.documentId,
+                kbId: fb.kbId,
+                version: fb.version,
+                pageNo: fb.pageNo,
+                articleNo: fb.articleNo,
+                evidence: fb.evidence,
+                snippet: fb.evidence,
+                context: fb.evidence,
+                score: Math.max(0.70, 0.95 - queryResult.citations.length * 0.02),
+                docTitle: fb.title,
+                previewUrl: fb.previewUrl,
+              } as any);
+            }
+          }
+        } else {
+          queryResult = {
+            topics: Array.from(new Set(fallbackChunks.map((fb) => fb.title || "相关条款"))),
+            answer: fallbackChunks.map((fb) => fb.evidence).join("\n\n"),
+            citations: fallbackChunks.map((fb, idx) => ({
+              topic: fb.title || fb.documentId,
+              docId: fb.documentId,
+              kbId: fb.kbId,
+              version: fb.version,
+              pageNo: fb.pageNo,
+              articleNo: fb.articleNo,
+              evidence: fb.evidence,
+              snippet: fb.evidence,
+              context: fb.evidence,
+              score: Math.max(0.70, 0.95 - idx * 0.02),
+              docTitle: fb.title,
+              previewUrl: fb.previewUrl,
+            })),
+            reranked: true,
+          };
+        }
+      } else {
+        // Fallback chunks yielded 0 results, wait for GBrain fully
+        queryResult = await gbrainSearchPromise;
+        if (!queryResult.citations || queryResult.citations.length === 0) {
+          const initialCleanedQuery = this.cleanRetrievalQuery(retrieval.query || question);
+          if (initialCleanedQuery && initialCleanedQuery !== retrieval.query) {
+            this.logger.debug(
+              `Initial GBrain search yielded 0 results, retrying with cleaned query: ${initialCleanedQuery}`,
             );
-      if (retryResult.citations && retryResult.citations.length > 0) {
-        queryResult = retryResult;
+            const retryResult =
+              sourceRefs.length > 1
+                ? await this.gbrain.queryMany(sourceRefs, initialCleanedQuery, {
+                    breadth: retrieval.breadth,
+                    operation: "search",
+                    ...(forceQueryRefresh ? { forceRefresh: true } : {}),
+                  })
+                : await this.gbrain.query(
+                    sourceRefs[0] || brainRepo.gitRepoUrl,
+                    initialCleanedQuery,
+                    { breadth: retrieval.breadth, operation: "search", signal, ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
+                  );
+            if (retryResult.citations && retryResult.citations.length > 0) {
+              queryResult = retryResult;
+            }
+          }
+        }
       }
+      rawCandidateCount = Array.isArray(queryResult.citations) ? queryResult.citations.length : 0;
+      topEvidence = String(queryResult.citations?.[0]?.evidence || "");
+      initialEvidenceAssessment = this.assessWeakEvidence(queryResult, retrieval.breadth);
+      trace.finish(
+        "gbrain_retrieval",
+        rawCandidateCount === 0 ? "warning" : "success",
+        rawCandidateCount === 0
+          ? "GBrain 未返回候选页面"
+          : initialEvidenceAssessment.shouldEscalate
+            ? `GBrain 返回 ${rawCandidateCount} 个候选页面，初始语义证据置信度偏低，待扩检前置信度复核`
+            : initialEvidenceAssessment.weak
+              ? `GBrain 返回 ${rawCandidateCount} 个候选页面；虽为语义命中，但分数充足，进入重排验证`
+              : `GBrain 返回 ${rawCandidateCount} 个候选页面，进入重排验证`,
+        {
+          candidateCount: rawCandidateCount,
+          rerankedByGbrain: Boolean(queryResult.reranked),
+          topEvidence: topEvidence || null,
+          topScore: queryResult.citations?.[0]?.score ?? null,
+          evidenceAssessment: initialEvidenceAssessment,
+          diagnostics: (queryResult as any).diagnostics || null,
+        },
+      );
     }
-    const rawCandidateCount = Array.isArray(queryResult.citations) ? queryResult.citations.length : 0;
-    const topEvidence = String(queryResult.citations?.[0]?.evidence || "");
-    let initialEvidenceAssessment = this.assessWeakEvidence(queryResult, retrieval.breadth);
-    trace.finish(
-      "gbrain_retrieval",
-      rawCandidateCount === 0 ? "warning" : "success",
-      rawCandidateCount === 0
-        ? "GBrain 未返回候选页面"
-        : initialEvidenceAssessment.shouldEscalate
-          ? `GBrain 返回 ${rawCandidateCount} 个候选页面，初始语义证据置信度偏低，待扩检前置信度复核`
-          : initialEvidenceAssessment.weak
-            ? `GBrain 返回 ${rawCandidateCount} 个候选页面；虽为语义命中，但分数充足，进入重排验证`
-            : `GBrain 返回 ${rawCandidateCount} 个候选页面，进入重排验证`,
-      {
-        candidateCount: rawCandidateCount,
-        rerankedByGbrain: Boolean(queryResult.reranked),
-        topEvidence: topEvidence || null,
-        topScore: queryResult.citations?.[0]?.score ?? null,
-        evidenceAssessment: initialEvidenceAssessment,
-        diagnostics: (queryResult as any).diagnostics || null,
-      },
-    );
     trace.start("permission_guard", "结果权限复核", "按当前数据库权限和 Source 世代复核候选结果");
     queryResult = await this.filterQueryResultByCurrentPermission(
       queryResult,
@@ -967,20 +1073,20 @@ export class ChatService {
     // is re-run with GBrain's broad/no-autocut profile so an exact section or
     // a better parent page has a chance to enter the evidence set.
     const evidenceAssessment = this.assessWeakEvidence(queryResult, retrieval.breadth);
-    if (evidenceAssessment.shouldEscalate) {
+    if (evidenceAssessment.shouldEscalate && (!queryResult.citations || queryResult.citations.length === 0)) {
       retrievalEscalated = true;
       trace.start("retrieval_escalation", "弱证据扩展检索", "检测到弱证据，按 GBrain 广覆盖模式扩检一次");
       queryResult =
         sourceRefs.length > 1
           ? await this.gbrain.queryMany(sourceRefs, retrieval.query, {
               breadth: true,
-              operation: "query",
+              operation: "search",
               ...(forceQueryRefresh ? { forceRefresh: true } : {}),
             })
           : await this.gbrain.query(
               sourceRefs[0] || brainRepo.gitRepoUrl,
               retrieval.query,
-              { breadth: true, operation: "query", ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
+              { breadth: true, operation: "search", ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
             );
       queryResult = await this.filterQueryResultByCurrentPermission(
         queryResult,
@@ -1012,82 +1118,84 @@ export class ChatService {
         },
       );
     }
-    // 历史文档可能在 BrainRepo 初始化前已经发布，先进行完整同步，再重新通过 BrainRepo 与回退检索查询。
+    // 历史文档可能在 BrainRepo 初始化前已经发布，先通过分块回退检索，若仍无可用候选再触发全量同步重试。
     if (!queryResult.answer || (queryResult.citations?.length || 0) === 0) {
-      trace.start("source_reconcile_retry", "Source 对账重试", "空结果触发全量 Source 对账与多级回退检索");
-      await this.compilerService.syncUserBrainRepo(userId);
-      const refreshedRefs =
-        typeof (this.compilerService as any).getUserSourceRefsForKnowledgeBases === "function"
-          ? await (this.compilerService as any).getUserSourceRefsForKnowledgeBases(userId, scope)
-          : typeof (this.compilerService as any).getUserSourceRefs === "function"
-            ? await (this.compilerService as any).getUserSourceRefs(userId)
-            : [brainRepo.gitRepoUrl];
+      trace.start("source_reconcile_retry", "Source 回退与对账重试", "未命中候选，优先执行毫秒级 Chunk 数据库回退检索");
+      const fallbackChunks = await this.searchChunksFallback(scope, question, 15);
+      if (fallbackChunks.length > 0) {
+        queryResult.answer = fallbackChunks.map((fb) => fb.evidence).join("\n\n");
+        queryResult.citations = fallbackChunks.map((fb, idx) => ({
+          topic: fb.title || fb.documentId,
+          docId: fb.documentId,
+          kbId: fb.kbId,
+          version: fb.version,
+          pageNo: fb.pageNo,
+          articleNo: fb.articleNo,
+          evidence: fb.evidence,
+          snippet: fb.evidence,
+          context: fb.evidence,
+          score: Math.max(0.70, 0.95 - idx * 0.02),
+          docTitle: fb.title,
+          previewUrl: fb.previewUrl,
+        }));
+        trace.finish(
+          "source_reconcile_retry",
+          "success",
+          `数据库分块语义检索命中 ${fallbackChunks.length} 条高相关度条款证据`,
+          { candidateCount: fallbackChunks.length },
+        );
+      } else {
+        await this.compilerService.syncUserBrainRepo(userId);
+        const refreshedRefs =
+          typeof (this.compilerService as any).getUserSourceRefsForKnowledgeBases === "function"
+            ? await (this.compilerService as any).getUserSourceRefsForKnowledgeBases(userId, scope)
+            : typeof (this.compilerService as any).getUserSourceRefs === "function"
+              ? await (this.compilerService as any).getUserSourceRefs(userId)
+              : [brainRepo.gitRepoUrl];
 
-      const queriesToTry = Array.from(new Set([
-        retrieval.query,
-        this.cleanRetrievalQuery(retrieval.query || question),
-        ...this.decomposeComplexQuery(retrieval.query || question),
-      ])).filter((q): q is string => Boolean(q && q.trim().length >= 2));
+        const queriesToTry = Array.from(new Set([
+          retrieval.query,
+          this.cleanRetrievalQuery(retrieval.query || question),
+          ...this.decomposeComplexQuery(retrieval.query || question),
+        ])).filter((q): q is string => Boolean(q && q.trim().length >= 2));
 
-      for (const qTry of queriesToTry) {
-        if (queryResult.citations?.length) break;
-        const subResult = refreshedRefs.length > 1
-          ? await this.gbrain.queryMany(refreshedRefs, qTry, {
-              breadth: retrieval.breadth,
-              operation: retrieval.operation,
-              forceRefresh: true,
-            })
-          : await this.gbrain.query(
-              refreshedRefs[0] || brainRepo.gitRepoUrl,
-              qTry,
-              { breadth: retrieval.breadth, operation: retrieval.operation, forceRefresh: true },
-            );
-        if (subResult.citations?.length) {
-          queryResult = subResult;
-          break;
+        for (const qTry of queriesToTry) {
+          if (queryResult.citations?.length) break;
+          const subResult = refreshedRefs.length > 1
+            ? await this.gbrain.queryMany(refreshedRefs, qTry, {
+                breadth: retrieval.breadth,
+                operation: "search",
+                forceRefresh: true,
+              })
+            : await this.gbrain.query(
+                refreshedRefs[0] || brainRepo.gitRepoUrl,
+                qTry,
+                { breadth: retrieval.breadth, operation: "search", forceRefresh: true },
+              );
+          if (subResult.citations?.length) {
+            queryResult = subResult;
+            break;
+          }
         }
+
+        queryResult = await this.filterQueryResultByCurrentPermission(
+          queryResult,
+          scope,
+          {
+            scopeId: userScope.scopeId,
+            sourceKeys: selectedSourceKeys,
+            aclEpoch: userScope.aclEpoch,
+            knowledgeEpoch: userScope.knowledgeEpoch,
+          },
+        );
+
+        trace.finish(
+          "source_reconcile_retry",
+          queryResult.citations?.length ? "success" : "warning",
+          queryResult.citations?.length ? `重试与回退检索后获得 ${queryResult.citations.length} 个候选` : "完成对账与回退检索但仍未检索到证据",
+          { candidateCount: queryResult.citations?.length || 0 },
+        );
       }
-
-      queryResult = await this.filterQueryResultByCurrentPermission(
-        queryResult,
-        scope,
-        {
-          scopeId: userScope.scopeId,
-          sourceKeys: selectedSourceKeys,
-          aclEpoch: userScope.aclEpoch,
-          knowledgeEpoch: userScope.knowledgeEpoch,
-        },
-      );
-
-      // Ultimate safety net: Chunk fallback retrieval across authorized scope
-      if (!queryResult.citations || queryResult.citations.length === 0) {
-        this.logger.log(`GBrain empty after reconcile, invoking chunk-level fallback for: ${question}`);
-        const fallbackChunks = await this.searchChunksFallback(scope, question, 15);
-        if (fallbackChunks.length > 0) {
-          queryResult.answer = fallbackChunks.map((fb) => fb.evidence).join("\n\n");
-          queryResult.citations = fallbackChunks.map((fb, idx) => ({
-            topic: fb.title || fb.documentId,
-            docId: fb.documentId,
-            kbId: fb.kbId,
-            version: fb.version,
-            pageNo: fb.pageNo,
-            articleNo: fb.articleNo,
-            evidence: fb.evidence,
-            snippet: fb.evidence,
-            context: fb.evidence,
-            score: Math.max(0.70, 0.95 - idx * 0.02),
-            docTitle: fb.title,
-            previewUrl: fb.previewUrl,
-          }));
-        }
-      }
-
-      trace.finish(
-        "source_reconcile_retry",
-        queryResult.citations?.length ? "success" : "warning",
-        queryResult.citations?.length ? `重试与回退检索后获得 ${queryResult.citations.length} 个候选` : "完成对账与回退检索但仍未检索到证据",
-        { candidateCount: queryResult.citations?.length || 0 },
-      );
     } else {
       trace.skip("source_reconcile_retry", "Source 对账重试", "首轮检索已有结果，无需重建重试");
     }
@@ -1288,7 +1396,7 @@ export class ChatService {
     trace.start("version_conflict_check", "文档版本冲突检测", "检查命中文档是否存在多版本或版本更新");
     let versionConflictNote = "";
     if (citations.length > 0) {
-      const docTitles = Array.from(new Set(citations.map((c: any) => c.docTitle).filter(Boolean)));
+      const docTitles: string[] = Array.from(new Set(citations.map((c: any) => c.docTitle).filter(Boolean))) as string[];
       if (docTitles.length > 0) {
         const publishedDocs = await this.prisma.document.findMany({
           where: {

@@ -103,6 +103,8 @@ services:
     command: ["node", "apps/api/dist/main.js"]
     environment:
       NODE_ENV: production
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
       PORT: 3000
       HOST: 0.0.0.0
       DATABASE_URL: postgresql://${DB_USER}:${DB_PASS}@postgres:5432/${DB_NAME}?schema=public

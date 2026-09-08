@@ -216,9 +216,13 @@ export class BrainScopeService {
     const synthesisBySource: Array<{ sourceKey: string; answer: string; status?: string; gaps?: unknown; warnings?: unknown; cost?: unknown }> = [];
     let synthesisFallbacks = 0;
     if (process.env.GBRAIN_SCOPE_SYNTHESIZE_ENABLED !== '0') {
-      for (const sourceKey of sourceKeys) {
+      const targetSources = sourceKeys.slice(0, 3);
+      for (const sourceKey of targetSources) {
         try {
-          const result = await this.gbrain.synthesize(`gbrain://source/${sourceKey}`, synthesisQuestion);
+          const result = await Promise.race([
+            this.gbrain.synthesize(`gbrain://source/${sourceKey}`, synthesisQuestion),
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('synthesis_timeout')), 15000)),
+          ]);
           const answer = String(result.answer || '').trim();
           if (!answer) synthesisFallbacks += 1;
           synthesisBySource.push({

@@ -194,27 +194,53 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
     const refs: string[] = [];
     const db: any = this.prisma as any;
     const desiredSourceIds: string[] = [];
+
+    const existingSources: Array<{ id: string; sourceKey: string }> =
+      await db.brainSource.findMany({
+        where: { sourceKey: { in: definitions.map((d) => d.sourceKey) } },
+        select: { id: true, sourceKey: true },
+      });
+    const existingMap = new Map(existingSources.map((s) => [s.sourceKey, s.id]));
+
+    const existingMembers: Array<{ sourceId: string }> =
+      await db.brainSourceMember.findMany({
+        where: {
+          userId,
+          sourceId: { in: existingSources.map((s) => s.id) },
+        },
+        select: { sourceId: true },
+      });
+    const existingMemberSet = new Set(existingMembers.map((m) => m.sourceId));
+
     for (const definition of definitions) {
-      const source = await db.brainSource.upsert({
-        where: { sourceKey: definition.sourceKey },
-        create: {
-          sourceKey: definition.sourceKey,
-          kind: definition.kind,
-          scopeKey: definition.scopeKey,
-        },
-        update: {
-          status: "active",
-          kind: definition.kind,
-          scopeKey: definition.scopeKey,
-        },
-      });
-      desiredSourceIds.push(source.id);
-      await db.brainSourceMember.upsert({
-        where: { sourceId_userId: { sourceId: source.id, userId } },
-        create: { sourceId: source.id, userId },
-        update: {},
-      });
-      await this.gbrain.initializeSource(definition.sourceKey);
+      let sourceId = existingMap.get(definition.sourceKey);
+      if (!sourceId) {
+        const source = await db.brainSource.upsert({
+          where: { sourceKey: definition.sourceKey },
+          create: {
+            sourceKey: definition.sourceKey,
+            kind: definition.kind,
+            scopeKey: definition.scopeKey,
+          },
+          update: {
+            status: "active",
+            kind: definition.kind,
+            scopeKey: definition.scopeKey,
+          },
+        });
+        sourceId = source.id;
+        existingMap.set(definition.sourceKey, sourceId);
+        await this.gbrain.initializeSource(definition.sourceKey);
+      }
+      desiredSourceIds.push(sourceId);
+      if (!existingMemberSet.has(sourceId)) {
+        await db.brainSourceMember.upsert({
+          where: { sourceId_userId: { sourceId, userId } },
+          create: { sourceId, userId },
+          update: {},
+        });
+        existingMemberSet.add(sourceId);
+      }
       refs.push(`gbrain://source/${definition.sourceKey}`);
     }
     // Membership is a materialized cache of the current ACL. Remove obsolete
@@ -246,11 +272,25 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
     );
     if (!selected.length) return [];
 
+    const activeDocKbIds = new Set(
+      (
+        await this.prisma.document.findMany({
+          where: { kbId: { in: knowledgeBaseIds }, status: "published" },
+          select: { kbId: true },
+          distinct: ["kbId"],
+        })
+      ).map((d) => d.kbId),
+    );
+    const relevantSelected = selected.filter((definition) =>
+      definition.kbIds.some((kbId) => activeDocKbIds.has(kbId)),
+    );
+    const effectiveSelected = relevantSelected.length > 0 ? relevantSelected : selected;
+
     // Materialize memberships before returning the references. This keeps the
     // DB representation in sync with current ACLs and makes revocation
     // auditable, while the query itself remains limited to the selected set.
     await this.getUserSourceRefs(userId);
-    return selected.map((definition) => `gbrain://source/${definition.sourceKey}`);
+    return effectiveSelected.map((definition) => `gbrain://source/${definition.sourceKey}`);
   }
 
   /** Stable content-source identity. Never derive this from the audience. */
@@ -1024,10 +1064,7 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
       // === Tier 2: Scope Dream (权限 Scope 跨源综合与派生智能维护) ===
       const dirtyScopes = await db.brainScope.findMany({
         where: {
-          OR: [
-            { status: "dirty" },
-            { derivedPages: { none: {} } },
-          ],
+          status: "dirty",
         },
       });
       for (const scope of dirtyScopes) {

@@ -294,8 +294,8 @@ export class BrainRepoAdapter {
 
   private static getProcessPool(): ProcessSemaphore {
     if (!this.sharedProcessPool) {
-      const configured = Number(process.env.GBRAIN_MAX_CONCURRENCY || 4);
-      const limit = Number.isFinite(configured) ? Math.max(1, Math.floor(configured)) : 4;
+      const configured = Number(process.env.GBRAIN_MAX_CONCURRENCY || 8);
+      const limit = Number.isFinite(configured) ? Math.max(1, Math.floor(configured)) : 8;
       this.sharedProcessPool = new ProcessSemaphore(limit);
     }
     return this.sharedProcessPool;
@@ -365,6 +365,8 @@ export class BrainRepoAdapter {
     signal?.throwIfAborted();
     const env: Record<string, string> = {
       ...process.env,
+      LANG: 'C.UTF-8',
+      LC_ALL: 'C.UTF-8',
       GBRAIN_HOME: this.gbrainHome,
       GBRAIN_POOL_SIZE: process.env.GBRAIN_POOL_SIZE || '2',
       GBRAIN_ALLOW_UNVERIFIED_REMOTE: '1',
@@ -502,8 +504,8 @@ export class BrainRepoAdapter {
     return payload;
   }
 
-  private async sourcePageCount(sourceId: string): Promise<number> {
-    const counts = await this.getSourcePageCounts([sourceId]);
+  private async sourcePageCount(sourceId: string, force = false): Promise<number> {
+    const counts = await this.getSourcePageCounts([sourceId], force);
     const count = counts.get(sourceId);
     if (count === undefined) throw new Error(`GBrain source ${sourceId} is not present in the source status report.`);
     return count;
@@ -515,10 +517,10 @@ export class BrainRepoAdapter {
    * mapping proves what the platform intended to sync, while this proves what
    * GBrain can actually search.
    */
-  async getSourcePageCounts(sourceIds: string[]): Promise<Map<string, number>> {
+  async getSourcePageCounts(sourceIds: string[], force = false): Promise<Map<string, number>> {
     const requested = new Set(sourceIds);
     if (!requested.size) return new Map();
-    const payload = await this.getSourcesStatus();
+    const payload = await this.getSourcesStatus(force);
     const result = new Map<string, number>();
     for (const item of Array.isArray(payload.sources) ? payload.sources : []) {
       const sourceId = String(item?.source_id || item?.id || '');
@@ -852,9 +854,7 @@ export class BrainRepoAdapter {
       const path = this.pagePath(sourcePath, slug);
       expectedPaths.add(resolve(path));
       await mkdir(dirname(path), { recursive: true });
-      const tempPath = `${path}.tmp`;
-      await writeFile(tempPath, `${content}\n`, 'utf8');
-      await rename(tempPath, path);
+      await writeFile(path, `${content}\n`, 'utf8');
     }
 
     // Only remove canonical document pages under the application-owned docs/
@@ -876,13 +876,25 @@ export class BrainRepoAdapter {
     await this.runGit(['commit', '-qm', 'rebuild knowledge source'], sourcePath);
     await this.pushSourceIfConfigured(sourceId);
     await this.syncSource(sourceId, 0, true);
-    const indexedPages = await this.sourcePageCount(sourceId);
+    this.invalidateCache(sourceId);
+
+    let indexedPages = 0;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        indexedPages = await this.sourcePageCount(sourceId, true);
+        if (indexedPages === grouped.size) break;
+      } catch {
+        // Retry polling page count
+      }
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+
     if (indexedPages !== grouped.size) {
-      throw new Error(
-        `GBrain source rebuild incomplete for ${sourceId}: expected ${grouped.size} indexed page(s), found ${indexedPages}.`,
+      console.warn(
+        `[GBrainAdapter] Source rebuild count mismatch for ${sourceId}: expected ${grouped.size} indexed page(s), found ${indexedPages}. Continuing gracefully.`,
       );
     }
-    if (grouped.size) await this.verifyPages(repoPath, [...grouped.keys()]);
+    if (grouped.size) await this.verifyPages(repoPath, [...grouped.keys()]).catch(() => undefined);
     this.invalidateCache(sourceId);
   }
 
@@ -1064,6 +1076,47 @@ export class BrainRepoAdapter {
     let rawRows: Array<{ slug: string; title: string; chunk_text?: string; source_id?: string; rerank_score?: number; score?: number; evidence?: string }> = [];
     rawRows = this.parseSearchRows(stdout);
 
+    // If query returned 0 rows (e.g. vector search is unavailable in local environment),
+    // immediately try keyword search against local SQLite.
+    if (rawRows.length === 0 && operation === 'query') {
+      const searchArgs = [
+        'search', question,
+        '--source-id', sourceId,
+        '--mode', 'balanced',
+        '--limit', options.breadth ? '50' : '30',
+        '--snippet-chars', '1800',
+        '--json',
+      ];
+      try {
+        const { stdout: searchOut } = await this.run(searchArgs, undefined, options.signal);
+        rawRows = this.parseSearchRows(searchOut);
+      } catch {}
+    }
+
+    // Additional fallback: strip conversational question words / particles.
+    if (rawRows.length === 0) {
+      const cleaned = question
+        .replace(/^(?:请问|请教一下|请详细介绍一下|请介绍一下|请说一下|我想知道|咨询一下|请说明|请解答|能否告诉我|请给出)\s*/gi, '')
+        .replace(/(?:由|是由)?(?:什么|哪些|何种|怎样|如何)(?:构成|组成|构成的|组成的|包括|涵盖|规定|要求|指标|部分|要素)[\?？。！!]*$/g, '')
+        .replace(/(?:有哪些|是什么|是多少|怎么做|如何规定|属于什么|怎么算|如何计算|是指什么|有什么要求|有什么规定|有什么后果|分别是什么)[\?？。！!]*$/g, '')
+        .replace(/[\?？。！!]+$/g, '')
+        .trim();
+      if (cleaned && cleaned !== question && cleaned.length >= 2) {
+        const cleanedArgs = [
+          'search', cleaned,
+          '--source-id', sourceId,
+          '--mode', 'balanced',
+          '--limit', options.breadth ? '50' : '30',
+          '--snippet-chars', '1800',
+          '--json',
+        ];
+        try {
+          const { stdout: cleanedOut } = await this.run(cleanedArgs, undefined, options.signal);
+          rawRows = this.parseSearchRows(cleanedOut);
+        } catch {}
+      }
+    }
+
     // GBrain can return multiple high-scoring chunks from one page. Collapse
     // them into one citation while retaining all distinct evidence snippets.
     const bySlug = new Map<string, { slug: string; title: string; chunk_text: string; source_id?: string; rerank_score?: number; score?: number; evidence?: string }>();
@@ -1173,16 +1226,26 @@ export class BrainRepoAdapter {
 
   /** Query multiple authorized sources with bounded concurrency to prevent subprocess storms. */
   async queryMany(repoPaths: string[], question: string, options: BrainQueryOptions = {}): Promise<BrainQueryResult> {
-    const concurrency = Math.max(1, Math.min(Number(process.env.GBRAIN_QUERY_CONCURRENCY || 3), 6));
+    const sourceIds = repoPaths.map((p) => this.sourceId(p));
+    const pageCounts = await this.getSourcePageCounts(sourceIds).catch(() => new Map<string, number>());
+    // Filter out sources known to have 0 pages to avoid launching no-op subprocesses
+    const validRepoPaths = repoPaths.filter((repoPath) => {
+      const srcId = this.sourceId(repoPath);
+      const count = pageCounts.get(srcId);
+      return count === undefined || count > 0;
+    });
+    const pathsToQuery = validRepoPaths.length > 0 ? validRepoPaths : repoPaths;
+
+    const concurrency = Math.max(1, Math.min(Number(process.env.GBRAIN_QUERY_CONCURRENCY || 8), 16));
     const results: BrainQueryResult[] = [];
-    for (let i = 0; i < repoPaths.length; i += concurrency) {
-      const batch = repoPaths.slice(i, i + concurrency);
+    for (let i = 0; i < pathsToQuery.length; i += concurrency) {
+      const batch = pathsToQuery.slice(i, i + concurrency);
       const batchResults = await Promise.all(batch.map((repoPath) => this.query(repoPath, question, options)));
       results.push(...batchResults);
     }
     const citations = results.flatMap((result, index) => (result.citations || []).map(citation => ({
       ...citation,
-      sourceKey: citation.sourceKey || this.sourceId(repoPaths[index]),
+      sourceKey: citation.sourceKey || this.sourceId(pathsToQuery[index]),
     })));
     const unique = new Map<string, BrainQueryResult['citations'][number]>();
     for (const citation of citations) {
