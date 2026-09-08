@@ -659,11 +659,21 @@ function UniversalDocumentViewer({ preview, onClose }) {
                       <div style={{ textAlign: 'center', padding: '30px', color: 'var(--ink-3)' }}>Word 文档渲染中…</div>
                     </div>
                   ) : isPdf && rawBlobUrl ? (
-                    <div style={{ width: '100%', height: '100%', minHeight: '72vh', position: 'relative' }}>
+                    <div style={{ width: '100%', height: '100%', minHeight: '72vh', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <div style={{ background: 'var(--surface-2)', border: '1px solid var(--line)', borderRadius: '6px', padding: '7px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '12px', color: 'var(--ink-3)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span>📄</span>
+                          <span><b>PDF 原件内嵌预览</b>（支持缩放、打印与页码定位）</span>
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                          <a href={rawBlobUrl} target="_blank" rel="noreferrer" className="btn" style={{ padding: '3px 8px', fontSize: '11px', height: '24px', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>新窗口打开 ↗</a>
+                          <button type="button" className="btn" onClick={() => setActiveTab('std_md')} style={{ padding: '3px 8px', fontSize: '11px', height: '24px' }}>查看结构化 Markdown</button>
+                        </div>
+                      </div>
                       <iframe
                         src={`${rawBlobUrl}#toolbar=1`}
                         title={filename}
-                        style={{ width: '100%', height: '100%', minHeight: '72vh', border: '1px solid var(--line)', borderRadius: '8px', background: '#fff' }}
+                        style={{ width: '100%', flex: 1, minHeight: '68vh', border: '1px solid var(--line)', borderRadius: '8px', background: '#fff' }}
                       />
                     </div>
                   ) : isExcel && sheetsData.names.length > 0 ? (
