@@ -604,4 +604,34 @@ describe("ChatService", () => {
       delete process.env.DEEPSEEK_API_KEY;
     }
   });
+
+  it("decomposeComplexQuery splits composite questions into focused sub-queries", () => {
+    const q1 = "关于无人系统数据跨境出境与加密传输，本规范在第一章总则原则、第六章技术加密指标以及第十章特殊豁免附则中分别有哪些具体硬性要求？";
+    const sub1 = service.decomposeComplexQuery(q1);
+    expect(sub1.length).toBeGreaterThanOrEqual(2);
+    expect(sub1.some((s) => s.includes("第一章"))).toBe(true);
+    expect(sub1.some((s) => s.includes("第六章"))).toBe(true);
+
+    const q2 = "若设备发生一级安全偏航事故且传感器存在历史未检修隐患记录，根据规范应如何定级、扣除多少安全积分，并执行怎样的责任人连带处分？";
+    const sub2 = service.decomposeComplexQuery(q2);
+    expect(sub2.length).toBeGreaterThanOrEqual(2);
+    expect(sub2.some((s) => s.includes("一级安全偏航事故"))).toBe(true);
+
+    const q3 = "请详细对比本规范中研发试验阶段与商业量产运营阶段在自主避障安全冗余裕度上的具体参数差异与设定原因。";
+    const sub3 = service.decomposeComplexQuery(q3);
+    expect(sub3.length).toBe(2);
+    expect(sub3.some((s) => s.includes("研发试验阶段"))).toBe(true);
+    expect(sub3.some((s) => s.includes("商业量产运营阶段"))).toBe(true);
+  });
+
+  it("resolveTemporalPrecedence detects multi-version documents and generates precedence warning", () => {
+    const citations = [
+      { docTitle: "安全管理规程 (V4.2.0)", version: 4, evidence: "新标准120米" },
+      { docTitle: "安全管理规程 (V3.0.0)", version: 3, evidence: "旧标准50米" },
+    ];
+    const res = service.resolveTemporalPrecedence(citations);
+    expect(res.hasVersionConflict).toBe(true);
+    expect(res.temporalNotice).toContain("最高效力优先规则");
+    expect(res.temporalNotice).toContain("V4");
+  });
 });

@@ -83,4 +83,15 @@ describe('splitMarkdownIntoChunks', () => {
     // Subsequent chunks should have the table header propagated so column semantics are preserved
     expect(chunks[1].content).toContain('| 岗位 | 差旅标准 | 住宿上限 |');
   });
+
+  it('injects structured table row key-value semantics for high-precision retrieval', () => {
+    const table = `# 处罚对照表\n\n| 编号 | 事故级别 | 扣减分值 |\n| :--- | :--- | :--- |\n| T-01 | 一级事故 | 50分 |\n| T-02 | 二级事故 | 30分 |`;
+    const chunks = splitMarkdownIntoChunks(table);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].metadata.has_table).toBe(true);
+    expect(chunks[0].metadata.table_headers).toEqual(['编号', '事故级别', '扣减分值']);
+    expect(chunks[0].metadata.table_rows_count).toBe(2);
+    expect(chunks[0].content).toContain('编号: T-01 | 事故级别: 一级事故 | 扣减分值: 50分');
+    expect(chunks[0].content).toContain('编号: T-02 | 事故级别: 二级事故 | 扣减分值: 30分');
+  });
 });

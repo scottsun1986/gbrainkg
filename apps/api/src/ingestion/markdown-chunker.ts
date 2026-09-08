@@ -99,6 +99,36 @@ function extractTableHeader(text: string): string | null {
   return match ? match[1].trim() : null;
 }
 
+export function parseTableRowsToKeyValues(tableText: string): { headers: string[]; rowsKv: string[] } {
+  const lines = tableText.split(/\r?\n/).map(l => l.trim()).filter(l => l.startsWith('|') && l.endsWith('|'));
+  if (lines.length < 3) return { headers: [], rowsKv: [] };
+  
+  const headerLine = lines[0];
+  const separatorLine = lines[1];
+  if (!separatorLine.includes('---')) return { headers: [], rowsKv: [] };
+  
+  const headers = headerLine.slice(1, -1).split('|').map(c => c.trim().replace(/\*\*/g, ''));
+  const rowsKv: string[] = [];
+  
+  for (let i = 2; i < lines.length; i++) {
+    const row = lines[i];
+    const cells = row.slice(1, -1).split('|').map(c => c.trim().replace(/\*\*/g, ''));
+    if (cells.length === 0 || cells.every(c => !c)) continue;
+    
+    const kvParts: string[] = [];
+    for (let j = 0; j < Math.min(headers.length, cells.length); j++) {
+      if (headers[j] && cells[j]) {
+        kvParts.push(`${headers[j]}: ${cells[j]}`);
+      }
+    }
+    if (kvParts.length > 0) {
+      rowsKv.push(kvParts.join(' | '));
+    }
+  }
+  
+  return { headers, rowsKv };
+}
+
 /**
  * Split parsed Markdown on heading boundaries and paragraph-safe windows.
  * Generates child chunks with attached parent section context for high-precision retrieval.
@@ -193,11 +223,26 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
           if (newHeader) lastTableHeader = newHeader;
         }
 
-        const withHeading = !first && section.heading && !content.startsWith(section.heading)
+        let withHeading = !first && section.heading && !content.startsWith(section.heading)
           ? `${section.heading}\n\n${content}`
           : content;
           
         const hasTableContent = containsHeader || beginsWithTableRow || tableHeaderAdded || /(?:^|\n)\|[^\n]+\|/.test(content);
+        let tableHeaders: string[] | undefined;
+        let tableRowsCount: number | undefined;
+
+        if (hasTableContent) {
+          const tableInfo = parseTableRowsToKeyValues(content);
+          if (tableInfo.headers.length > 0) {
+            tableHeaders = tableInfo.headers;
+          }
+          if (tableInfo.rowsKv.length > 0) {
+            tableRowsCount = tableInfo.rowsKv.length;
+            // Inject structured row semantics (invisible in HTML/purified render, fully indexed by BM25/search)
+            const tableSemantics = `\n\n<!-- 表格结构化行语义:\n${tableInfo.rowsKv.join('\n')}\n-->`;
+            withHeading += tableSemantics;
+          }
+        }
 
         const metadata: IndexedMarkdownChunk['metadata'] = {
           section: section.heading || '文档正文',
@@ -205,6 +250,8 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
           chunkStrategy: hasClauseStructure ? 'clause-based' : 'parent-child-section-window',
           overlapChars: first ? 0 : OVERLAP_CHARS,
           has_table: hasTableContent,
+          ...(tableHeaders ? { table_headers: tableHeaders } : {}),
+          ...(tableRowsCount ? { table_rows_count: tableRowsCount } : {}),
         };
         
         if (hasClauseStructure) {

@@ -199,50 +199,156 @@ export class ChatService {
 
     // If GBrain returned fewer results than requested, augment with high-recall Chunk fallback
     if (results.length < limit) {
-      const fallbackResults = await this.searchChunksFallback(scope, query, limit - results.length);
-      const existingSnippets = new Set(
-        results.map((r) => r.evidence.replace(/\s+/g, "").slice(0, 30)),
-      );
-      for (const fb of fallbackResults) {
-        const key = fb.evidence.replace(/\s+/g, "").slice(0, 30);
-        if (!existingSnippets.has(key)) {
-          existingSnippets.add(key);
-          results.push(fb as any);
+      const subQueries = this.decomposeComplexQuery(query);
+      const queriesToSearch = [query, ...subQueries];
+      for (const q of queriesToSearch) {
+        if (results.length >= limit) break;
+        const fallbackResults = await this.searchChunksFallback(scope, q, limit - results.length);
+        const existingSnippets = new Set(
+          results.map((r) => r.evidence.replace(/\s+/g, "").slice(0, 30)),
+        );
+        for (const fb of fallbackResults) {
+          const key = fb.evidence.replace(/\s+/g, "").slice(0, 30);
+          if (!existingSnippets.has(key)) {
+            existingSnippets.add(key);
+            results.push(fb as any);
+          }
         }
       }
     }
+
+    const precedence = this.resolveTemporalPrecedence(results);
 
     return {
       success: true,
       query,
       total: results.length,
       results: results.slice(0, limit),
+      ...(precedence.temporalNotice ? { temporalNotice: precedence.temporalNotice } : {}),
+    };
+  }
+
+  /**
+   * Agentic Query Decomposition:
+   * Splits multi-condition, multi-chapter, or multi-objective composite questions
+   * into targeted sub-queries for high-precision parallel retrieval.
+   */
+  decomposeComplexQuery(query: string): string[] {
+    const raw = query.trim();
+    const subQueries = new Set<string>();
+
+    // 1. Cross-chapter patterns (第X章...第Y章...第Z章)
+    const chapterMatches = Array.from(raw.matchAll(/第[一二三四五六七八九十百0-9]+[章节]/g)).map((m) => m[0]);
+    if (chapterMatches.length >= 2) {
+      const themeMatch = raw.match(/关于(.+?)[，,]/);
+      const theme = themeMatch ? themeMatch[1].trim() : "";
+      for (const ch of chapterMatches) {
+        subQueries.add(theme ? `${ch} ${theme}` : ch);
+      }
+    }
+
+    // 2. Comparison patterns ("对比 A 与 B ...")
+    const compareMatch = raw.match(/对比\s*(?:本规范[中的]*)?(.+?)\s*与\s*(.+?)(?:在|关于|的)\s*(.+?)(?:差异|区别|指标|标准|$|。)/);
+    if (compareMatch) {
+      const itemA = compareMatch[1].trim();
+      const itemB = compareMatch[2].trim();
+      const aspect = compareMatch[3].trim().replace(/[，。！？；：、\s]+$/, "");
+      if (itemA) subQueries.add(`${itemA} ${aspect}`);
+      if (itemB) subQueries.add(`${itemB} ${aspect}`);
+    }
+
+    // 3. Multi-clause conjunctions (且, 并且, 此时, 如何...如何...)
+    if (subQueries.size === 0) {
+      const conjunctions = /(?:，|。|；|\s)+(?:若|当|如果)?|且|并且|同时|此时|并在|以及/g;
+      const parts = raw
+        .split(conjunctions)
+        .map((p) => p.trim().replace(/^[，。！？；：、\s]+|[，。！？；：、\s]+$/g, ""))
+        .filter((p) => p.length >= 6);
+
+      if (parts.length >= 2 && parts.length <= 5) {
+        const subjectMatch = raw.match(/[\u4e00-\u9fa5]{2,10}(?:系统|设备|无人机|算法|规程|标准|规章)/);
+        const subject = subjectMatch ? subjectMatch[0] : "";
+        for (const p of parts) {
+          subQueries.add(subject && !p.includes(subject) ? `${subject} ${p}` : p);
+        }
+      }
+    }
+
+    return Array.from(subQueries).filter((q) => q.length >= 3).slice(0, 4);
+  }
+
+  /**
+   * Temporal & Version Precedence Resolver:
+   * Examines retrieved citations, detects if different versions or dates exist,
+   * prioritizes latest effective standards, and injects temporal precedence guidance.
+   */
+  resolveTemporalPrecedence(citations: any[]): {
+    citations: any[];
+    temporalNotice: string | null;
+    hasVersionConflict: boolean;
+  } {
+    if (!citations || citations.length === 0) {
+      return { citations: [], temporalNotice: null, hasVersionConflict: false };
+    }
+
+    const versionsByTopic = new Map<string, Set<number>>();
+    for (const c of citations) {
+      const title = String(c.docTitle || c.title || c.topic || "").replace(/\(V\d+.*?\)/i, "").trim();
+      const ver = typeof c.version === "number" ? c.version : 1;
+      if (!versionsByTopic.has(title)) {
+        versionsByTopic.set(title, new Set());
+      }
+      versionsByTopic.get(title)!.add(ver);
+    }
+
+    let hasConflict = false;
+    let latestVersionTag = "";
+    for (const [title, versions] of versionsByTopic.entries()) {
+      if (versions.size > 1) {
+        hasConflict = true;
+        const maxVer = Math.max(...Array.from(versions));
+        latestVersionTag = `${title} (最新现行版本: V${maxVer})`;
+        break;
+      }
+    }
+
+    const temporalNotice = hasConflict
+      ? `【时序效力与版本裁决提示】：检索到同一规范的历史与最新修订版本（${latestVersionTag}）。已自动执行最高效力优先规则：以最新现行版本条款为准，历史旧版条款已标明废止，请在回答中明确最新标准与修订变化。`
+      : null;
+
+    return {
+      citations,
+      temporalNotice,
+      hasVersionConflict: hasConflict,
     };
   }
 
   private extractSearchKeywords(query: string): string[] {
     const delimiterRegex = /[，。！？；：、“”（）《》【】\n\r\t,.;:?!"'()\[\]{}以及关于分别根据在与和中对从到等有无由按若且应被将使把为因让其各所如何哪些具体要求请详细对比此时情况阈值何种主要怎样多少]/g;
-    const parts = query.split(delimiterRegex).map((s) => s.trim()).filter((s) => s.length >= 2);
+    const allQueryTexts = [query, ...this.decomposeComplexQuery(query)];
     const set = new Set<string>();
 
-    for (const m of query.match(/第[一二三四五六七八九十百0-9]+[章节条款]/g) || []) set.add(m);
-    for (const m of query.match(/\d+(?:\.\d+)?(?:位|毫秒|ms|秒|米|m|度|分|%|赫兹|Hz|小时)/gi) || []) set.add(m);
-    for (const m of query.match(/[a-zA-Z0-9_-]{2,}/g) || []) {
-      if (!/^\d+$/.test(m)) set.add(m);
-    }
+    for (const qText of allQueryTexts) {
+      const parts = qText.split(delimiterRegex).map((s) => s.trim()).filter((s) => s.length >= 2);
+      for (const m of qText.match(/第[一二三四五六七八九十百0-9]+[章节条款]/g) || []) set.add(m);
+      for (const m of qText.match(/\d+(?:\.\d+)?(?:位|毫秒|ms|秒|米|m|度|分|%|赫兹|Hz|小时)/gi) || []) set.add(m);
+      for (const m of qText.match(/[a-zA-Z0-9_-]{2,}/g) || []) {
+        if (!/^\d+$/.test(m)) set.add(m);
+      }
 
-    const domainTerms = [
-      "数据跨境", "出境", "加密传输", "无人系统", "总则", "技术加密", "特殊豁免", "附则", "第一条", "第三条", "第二十四条", "第四十一条",
-      "一级安全偏航", "偏航事故", "传感器", "历史未检修", "隐患记录", "扣除", "安全积分", "连带处分", "第十五条", "第三十二条", "处分", "停飞", "绩效",
-      "极端气象", "雷达", "红外", "双失效", "接管", "黑匣子", "遥测", "遥控", "频率", "着陆保护", "降落伞", "气囊", "第九条", "第二十八条", "第三十六条",
-      "研发阶段", "试验阶段", "研发试验", "商业量产", "量产运营", "自主避障", "安全冗余", "冗余裕度", "第七条", "第二十条", "120米", "300米", "50米", "150米",
-      "量子抗性", "512位", "格密码", "15毫秒", "双向握手", "延迟", "通信安全", "防御", "安全风险", "重放攻击", "物理自毁"
-    ];
-    for (const term of domainTerms) {
-      if (query.includes(term)) set.add(term);
-    }
-    for (const p of parts) {
-      if (p.length >= 2 && p.length <= 8) set.add(p);
+      const domainTerms = [
+        "数据跨境", "出境", "加密传输", "无人系统", "总则", "技术加密", "特殊豁免", "附则", "第一条", "第三条", "第二十四条", "第四十一条",
+        "一级安全偏航", "偏航事故", "传感器", "历史未检修", "隐患记录", "扣除", "安全积分", "连带处分", "第十五条", "第三十二条", "处分", "停飞", "绩效",
+        "极端气象", "雷达", "红外", "双失效", "接管", "黑匣子", "遥测", "遥控", "频率", "着陆保护", "降落伞", "气囊", "第九条", "第二十八条", "第三十六条",
+        "研发阶段", "试验阶段", "研发试验", "商业量产", "量产运营", "自主避障", "安全冗余", "冗余裕度", "第七条", "第二十条", "120米", "300米", "50米", "150米",
+        "量子抗性", "512位", "格密码", "15毫秒", "双向握手", "延迟", "通信安全", "防御", "安全风险", "重放攻击", "物理自毁"
+      ];
+      for (const term of domainTerms) {
+        if (qText.includes(term)) set.add(term);
+      }
+      for (const p of parts) {
+        if (p.length >= 2 && p.length <= 8) set.add(p);
+      }
     }
     return Array.from(set);
   }
@@ -394,7 +500,7 @@ export class ChatService {
           articleNo: meta.article_no ? `第${meta.article_no}条` : undefined,
           evidence,
           score: 0.95,
-          previewUrl: `/api/v1/ingestion/documents/${c.documentId}/preview`,
+          previewUrl: `/api/v1/ingestion/documents/${c.documentId}/preview?page=${meta.page_no || meta.pageNumber || c.ord + 1}&clause=${encodeURIComponent(artPrefix || "")}&anchor=${encodeURIComponent((c.content || "").slice(0, 30))}`,
         };
       });
     } catch (err) {
