@@ -280,10 +280,17 @@ export class OpenApiController {
       limit,
     );
 
+    const items = Array.isArray(rawResults?.results)
+      ? rawResults.results
+      : Array.isArray(rawResults)
+        ? rawResults
+        : [];
+    const total = typeof rawResults?.total === 'number' ? rawResults.total : items.length;
+
     return R(200, '操作成功', {
       query,
-      total: Array.isArray(rawResults) ? rawResults.length : 0,
-      results: rawResults,
+      total,
+      results: items,
     });
   }
 
