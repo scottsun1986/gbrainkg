@@ -115,6 +115,9 @@ services:
       PARSER_AUTH_TOKEN: ${PARSER_AUTH_TOKEN}
       AUTH_SECRET: ${AUTH_SECRET}
       MODEL_CONFIG_KEY: ${MODEL_CONFIG_KEY}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-}
       BRAIN_REPO_BASE_PATH: /var/lib/llmwiki
       UPLOAD_ROOT: /var/lib/llmwiki/uploads
       GBRAIN_HOME: /var/lib/llmwiki/gbrain-home

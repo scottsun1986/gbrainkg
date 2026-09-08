@@ -235,6 +235,21 @@ export class ChatService {
   }
 
   /**
+   * Pre-cleans natural language queries by removing polite prefixes and trailing
+   * interrogative particles ("由什么构成", "包含哪些", "是什么", etc.) to recover
+   * the highest-salience core terms for vector and keyword engines.
+   */
+  cleanRetrievalQuery(query: string): string {
+    if (!query) return "";
+    return query
+      .replace(/^(?:请问|请教一下|请详细介绍一下|请介绍一下|请说一下|我想知道|咨询一下|请说明|请解答|能否告诉我|请给出)\s*/gi, "")
+      .replace(/(?:由|是由)?(?:什么|哪些|何种|怎样|如何)(?:构成|组成|构成的|组成的|包括|涵盖|规定|要求|指标|部分|要素)[\?？。！!]*$/g, "")
+      .replace(/(?:有哪些|是什么|是多少|怎么做|如何规定|属于什么|怎么算|如何计算|是指什么|有什么要求|有什么规定|有什么后果|分别是什么)[\?？。！!]*$/g, "")
+      .replace(/[\?？。！!]+$/g, "")
+      .trim();
+  }
+
+  /**
    * Agentic Query Decomposition:
    * Splits multi-condition, multi-chapter, or multi-objective composite questions
    * into targeted sub-queries for high-precision parallel retrieval.
@@ -280,7 +295,26 @@ export class ChatService {
       }
     }
 
-    return Array.from(subQueries).filter((q) => q.length >= 3).slice(0, 4);
+    // 4. Chinese compound noun & interrogative stripping pattern (run when no prior pattern matched)
+    if (subQueries.size === 0) {
+      const cleaned = this.cleanRetrievalQuery(raw);
+      if (cleaned && cleaned !== raw && cleaned.length >= 4) {
+        subQueries.add(cleaned);
+      }
+      const compoundMatch = (cleaned || raw).match(/([\u4e00-\u9fa5]{4,20})/g);
+      if (compoundMatch) {
+        for (const phrase of compoundMatch) {
+          if (phrase.length >= 6) {
+            const subTerms = ["指标体系", "度量指标", "考核指标", "绩效考核", "绩效管理", "研发人员", "研发效能", "考勤制度", "考勤管理"];
+            for (const st of subTerms) {
+              if (phrase.includes(st)) subQueries.add(st);
+            }
+          }
+        }
+      }
+    }
+
+    return Array.from(subQueries).filter((q) => q.length >= 2).slice(0, 5);
   }
 
   /**
@@ -330,8 +364,13 @@ export class ChatService {
   }
 
   private extractSearchKeywords(query: string): string[] {
+    const cleaned = this.cleanRetrievalQuery(query);
     const delimiterRegex = /[，。！？；：、“”（）《》【】\n\r\t,.;:?!"'()\[\]{}以及关于分别根据在与和中对从到等有无由按若且应被将使把为因让其各所如何哪些具体要求请详细对比此时情况阈值何种主要怎样多少]/g;
-    const allQueryTexts = [query, ...this.decomposeComplexQuery(query)];
+    const allQueryTexts = [
+      query,
+      ...(cleaned && cleaned !== query ? [cleaned] : []),
+      ...this.decomposeComplexQuery(query),
+    ];
     const set = new Set<string>();
 
     for (const qText of allQueryTexts) {
@@ -347,13 +386,22 @@ export class ChatService {
         "一级安全偏航", "偏航事故", "传感器", "历史未检修", "隐患记录", "扣除", "安全积分", "连带处分", "第十五条", "第三十二条", "处分", "停飞", "绩效",
         "极端气象", "雷达", "红外", "双失效", "接管", "黑匣子", "遥测", "遥控", "频率", "着陆保护", "降落伞", "气囊", "第九条", "第二十八条", "第三十六条",
         "研发阶段", "试验阶段", "研发试验", "商业量产", "量产运营", "自主避障", "安全冗余", "冗余裕度", "第七条", "第二十条", "120米", "300米", "50米", "150米",
-        "量子抗性", "512位", "格密码", "15毫秒", "双向握手", "延迟", "通信安全", "防御", "安全风险", "重放攻击", "物理自毁"
+        "量子抗性", "512位", "格密码", "15毫秒", "双向握手", "延迟", "通信安全", "防御", "安全风险", "重放攻击", "物理自毁",
+        "指标体系", "度量指标", "考核指标", "绩效考核", "研发人员", "研发效能", "考勤方式", "旷工", "考勤管理"
       ];
       for (const term of domainTerms) {
         if (qText.includes(term)) set.add(term);
       }
       for (const p of parts) {
-        if (p.length >= 2 && p.length <= 8) set.add(p);
+        if (p.length >= 2 && p.length <= 30) set.add(p);
+        if (p.length >= 4) {
+          for (let i = 0; i <= p.length - 4; i += 2) {
+            set.add(p.slice(i, i + 4));
+          }
+          for (let i = 0; i <= p.length - 2; i += 2) {
+            set.add(p.slice(i, i + 2));
+          }
+        }
       }
     }
     return Array.from(set);
@@ -810,6 +858,32 @@ export class ChatService {
             retrieval.query,
             { breadth: retrieval.breadth, operation: retrieval.operation, signal, ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
           );
+
+    const initialCleanedQuery = this.cleanRetrievalQuery(retrieval.query || question);
+    if (
+      (!queryResult.citations || queryResult.citations.length === 0) &&
+      initialCleanedQuery &&
+      initialCleanedQuery !== retrieval.query
+    ) {
+      this.logger.debug(
+        `Initial GBrain query yielded 0 results, retrying with cleaned query: ${initialCleanedQuery}`,
+      );
+      const retryResult =
+        sourceRefs.length > 1
+          ? await this.gbrain.queryMany(sourceRefs, initialCleanedQuery, {
+              breadth: retrieval.breadth,
+              operation: retrieval.operation,
+              ...(forceQueryRefresh ? { forceRefresh: true } : {}),
+            })
+          : await this.gbrain.query(
+              sourceRefs[0] || brainRepo.gitRepoUrl,
+              initialCleanedQuery,
+              { breadth: retrieval.breadth, operation: retrieval.operation, signal, ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
+            );
+      if (retryResult.citations && retryResult.citations.length > 0) {
+        queryResult = retryResult;
+      }
+    }
     const rawCandidateCount = Array.isArray(queryResult.citations) ? queryResult.citations.length : 0;
     const topEvidence = String(queryResult.citations?.[0]?.evidence || "");
     let initialEvidenceAssessment = this.assessWeakEvidence(queryResult, retrieval.breadth);
@@ -938,9 +1012,9 @@ export class ChatService {
         },
       );
     }
-    // 历史文档可能在 BrainRepo 初始化前已经发布，先进行完整同步，再重新通过 BrainRepo 查询。
-    if (!queryResult.answer) {
-      trace.start("source_reconcile_retry", "Source 对账重试", "空结果触发全量 Source 对账后重试");
+    // 历史文档可能在 BrainRepo 初始化前已经发布，先进行完整同步，再重新通过 BrainRepo 与回退检索查询。
+    if (!queryResult.answer || (queryResult.citations?.length || 0) === 0) {
+      trace.start("source_reconcile_retry", "Source 对账重试", "空结果触发全量 Source 对账与多级回退检索");
       await this.compilerService.syncUserBrainRepo(userId);
       const refreshedRefs =
         typeof (this.compilerService as any).getUserSourceRefsForKnowledgeBases === "function"
@@ -948,18 +1022,32 @@ export class ChatService {
           : typeof (this.compilerService as any).getUserSourceRefs === "function"
             ? await (this.compilerService as any).getUserSourceRefs(userId)
             : [brainRepo.gitRepoUrl];
-      queryResult =
-        refreshedRefs.length > 1
-          ? await this.gbrain.queryMany(refreshedRefs, retrieval.query, {
+
+      const queriesToTry = Array.from(new Set([
+        retrieval.query,
+        this.cleanRetrievalQuery(retrieval.query || question),
+        ...this.decomposeComplexQuery(retrieval.query || question),
+      ])).filter((q): q is string => Boolean(q && q.trim().length >= 2));
+
+      for (const qTry of queriesToTry) {
+        if (queryResult.citations?.length) break;
+        const subResult = refreshedRefs.length > 1
+          ? await this.gbrain.queryMany(refreshedRefs, qTry, {
               breadth: retrieval.breadth,
               operation: retrieval.operation,
               forceRefresh: true,
             })
           : await this.gbrain.query(
               refreshedRefs[0] || brainRepo.gitRepoUrl,
-              retrieval.query,
-            { breadth: retrieval.breadth, operation: retrieval.operation, forceRefresh: true },
+              qTry,
+              { breadth: retrieval.breadth, operation: retrieval.operation, forceRefresh: true },
             );
+        if (subResult.citations?.length) {
+          queryResult = subResult;
+          break;
+        }
+      }
+
       queryResult = await this.filterQueryResultByCurrentPermission(
         queryResult,
         scope,
@@ -970,10 +1058,34 @@ export class ChatService {
           knowledgeEpoch: userScope.knowledgeEpoch,
         },
       );
+
+      // Ultimate safety net: Chunk fallback retrieval across authorized scope
+      if (!queryResult.citations || queryResult.citations.length === 0) {
+        this.logger.log(`GBrain empty after reconcile, invoking chunk-level fallback for: ${question}`);
+        const fallbackChunks = await this.searchChunksFallback(scope, question, 15);
+        if (fallbackChunks.length > 0) {
+          queryResult.answer = fallbackChunks.map((fb) => fb.evidence).join("\n\n");
+          queryResult.citations = fallbackChunks.map((fb, idx) => ({
+            topic: fb.title || fb.documentId,
+            docId: fb.documentId,
+            kbId: fb.kbId,
+            version: fb.version,
+            pageNo: fb.pageNo,
+            articleNo: fb.articleNo,
+            evidence: fb.evidence,
+            snippet: fb.evidence,
+            context: fb.evidence,
+            score: Math.max(0.70, 0.95 - idx * 0.02),
+            docTitle: fb.title,
+            previewUrl: fb.previewUrl,
+          }));
+        }
+      }
+
       trace.finish(
         "source_reconcile_retry",
-        queryResult.answer ? "success" : "warning",
-        queryResult.answer ? `重试后获得 ${queryResult.citations?.length || 0} 个候选` : "完成对账但仍未检索到证据",
+        queryResult.citations?.length ? "success" : "warning",
+        queryResult.citations?.length ? `重试与回退检索后获得 ${queryResult.citations.length} 个候选` : "完成对账与回退检索但仍未检索到证据",
         { candidateCount: queryResult.citations?.length || 0 },
       );
     } else {
@@ -1240,7 +1352,7 @@ export class ChatService {
     if (versionConflictNote) {
       compiledTruthContext += `\n\n${versionConflictNote.trim()}`;
     }
-    if (this.graphRagService && scope.length > 0) {
+    if (this.graphRagService && scope.length > 0 && process.env.ENABLE_GRAPHRAG_CONTEXT === "true") {
       try {
         const localGraph = await this.graphRagService.searchLocalGraph(scope, retrieval.query, 6);
         if (localGraph.formattedContext) {
@@ -1268,14 +1380,19 @@ export class ChatService {
         ? await this.modelConfigService.getDefault("llm")
         : null;
 
-      const apiKey =
-        modelConfig?.provider.apiKey || process.env.DEEPSEEK_API_KEY || "";
-      const baseUrl =
-        modelConfig?.provider.baseUrl ||
-        process.env.LLM_BASE_URL ||
-        "https://api.deepseek.com/v1";
-      const modelName =
-        modelConfig?.modelName || process.env.LLM_MODEL || "deepseek-chat";
+      let apiKey = modelConfig?.provider.apiKey;
+      let baseUrl = modelConfig?.provider.baseUrl;
+      let modelName = modelConfig?.modelName;
+
+      // If provider has no API key configured, fall back to environment DeepSeek
+      if (!apiKey && process.env.DEEPSEEK_API_KEY) {
+        apiKey = process.env.DEEPSEEK_API_KEY;
+        baseUrl = process.env.LLM_BASE_URL || "https://api.deepseek.com/v1";
+        modelName = process.env.LLM_MODEL || "deepseek-chat";
+      }
+      baseUrl = (baseUrl || process.env.LLM_BASE_URL || "https://api.deepseek.com/v1").replace(/\/$/, "");
+      modelName = modelName || process.env.LLM_MODEL || "deepseek-chat";
+      apiKey = apiKey || "";
 
       if (!apiKey) {
         // The compiled truth remains useful when the model gateway is not
@@ -1329,14 +1446,19 @@ export class ChatService {
       ${priorConversation ? `历史对话参考（仅供消歧，以当前知识库资料为准）：\n${priorConversation}\n\n` : ""}${personalMemoryBlock}【参考知识库资料】：
 ${compiledTruthContext}`;
 
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      };
+      if (baseUrl.includes("opencode.ai")) {
+        headers["x-opencode-session"] = `llmwiki-${userId}`;
+      }
+
       const llmResponse = await fetch(
-        `${baseUrl.replace(/\/$/, "")}/chat/completions`,
+        `${baseUrl}/chat/completions`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-          },
+          headers,
           body: JSON.stringify({
             model: modelName,
             messages: [
@@ -1495,27 +1617,38 @@ ${compiledTruthContext}`;
     const config = this.modelConfigService
       ? await this.modelConfigService.getDefault("llm")
       : null;
-    const apiKey =
-      config?.provider.apiKey || process.env.DEEPSEEK_API_KEY || "";
+
+    let apiKey = config?.provider.apiKey;
+    let baseUrl = config?.provider.baseUrl;
+    let modelName = config?.modelName;
+
+    // Fall back to environment DeepSeek if provider has no key
+    if (!apiKey && process.env.DEEPSEEK_API_KEY) {
+      apiKey = process.env.DEEPSEEK_API_KEY;
+      baseUrl = process.env.LLM_BASE_URL || "https://api.deepseek.com/v1";
+      modelName = process.env.LLM_MODEL || "deepseek-chat";
+    }
+    baseUrl = (baseUrl || process.env.LLM_BASE_URL || "https://api.deepseek.com/v1").replace(/\/$/, "");
+    modelName = modelName || process.env.LLM_MODEL || "deepseek-chat";
+    apiKey = apiKey || "";
+
     if (!apiKey) {
       return directRequest;
     }
-    const baseUrl = (
-      config?.provider.baseUrl ||
-      process.env.LLM_BASE_URL ||
-      "https://api.deepseek.com/v1"
-    ).replace(/\/$/, "");
-    const modelName =
-      config?.modelName || process.env.LLM_MODEL || "deepseek-chat";
     const historyWindow = prior.slice(-12000);
     const prompt = `Analyze the current user question for knowledge-base retrieval. Rewrite it into one standalone query. Resolve references such as he/she/it/this policy/the previous item only when the conversation makes the referent unambiguous. If it starts a new topic, do not import unrelated history. Set breadth=true when answering requires broad coverage, enumeration, totals across a document, comparison of multiple sections, or "all/every/complete" evidence; otherwise false. Set operation="search" only for an exact known name, title, identifier, or structured-field lookup; otherwise operation="query" for semantic, paraphrased, relational, or cross-page questions. Do not answer the question. Return JSON only: {"query":"...","breadth":false,"operation":"query"}.\n\nUntrusted conversation history:\n${historyWindow || "(none)"}\n\nCurrent question:\n${question}`;
     try {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      };
+      if (baseUrl.includes("opencode.ai")) {
+        headers["x-opencode-session"] = "llmwiki-rewrite";
+      }
+
       const response = await fetch(`${baseUrl}/chat/completions`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
+        headers,
         body: JSON.stringify({
           model: modelName,
           messages: [{ role: "user", content: prompt }],
