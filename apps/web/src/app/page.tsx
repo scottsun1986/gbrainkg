@@ -56,6 +56,7 @@ let FOLLOWUPS: string[] = [];
 let DOCS: any[] = [];
 
 let ORG_TREE: any = null;
+let ORG_TREES: any[] = [];
 let GRANTS: any[] = [];
 let MODELS: any = {llm:[], embedding:[], rerank:[]};
 let AUDIT: any[] = [];
@@ -2589,24 +2590,31 @@ function NewPersonalKBModal({onClose, onSaved}){
 
 /* ============== 管理后台 ============== */
 /* ============== Admin: 人员管理 ============== */
-function flattenOrgTree(node, parentPath = '') {
-  if (!node) return [];
-  const path = parentPath ? `${parentPath} / ${node.name}` : node.name;
+function flattenOrgTree(nodeOrNodes: any, parentPath = ''): any[] {
+  if (!nodeOrNodes) return [];
+  if (Array.isArray(nodeOrNodes)) {
+    return nodeOrNodes.flatMap(child => flattenOrgTree(child, parentPath));
+  }
+  const path = parentPath ? `${parentPath} / ${nodeOrNodes.name}` : nodeOrNodes.name;
   return [
-    { id: node.id, name: node.name, path, canManage: Boolean(node.canManage) },
-    ...(node.children || []).flatMap(child => flattenOrgTree(child, path)),
+    { id: nodeOrNodes.id, name: nodeOrNodes.name, path, canManage: Boolean(nodeOrNodes.canManage) },
+    ...(nodeOrNodes.children || []).flatMap((child: any) => flattenOrgTree(child, path)),
   ];
 }
 
 // 递归收集节点及其所有子节点的 ID 集合
-function getSubtreeOrgIds(node) {
-  const ids = new Set();
-  const walk = (n) => {
+function getSubtreeOrgIds(nodeOrNodes: any) {
+  const ids = new Set<string>();
+  const walk = (n: any) => {
     if (!n) return;
+    if (Array.isArray(n)) {
+      n.forEach(walk);
+      return;
+    }
     if (n.id) ids.add(n.id);
     (n.children || []).forEach(walk);
   };
-  walk(node);
+  walk(nodeOrNodes);
   return ids;
 }
 
@@ -2681,33 +2689,38 @@ function UsersOrgTreeNode({ node, depth = 0, selectedId, onSelect, expandedIds, 
   );
 }
 
-function UsersPanel({ orgTree, orgOptions = [], canManage = false, capabilities = [] }){
+function UsersPanel({ orgTrees = [], orgTree, orgOptions = [], canManage = false, capabilities = [] }: any){
+  const effectiveTrees = useMemo(() => {
+    if (orgTrees && orgTrees.length > 0) return orgTrees;
+    if (orgTree) return [orgTree];
+    return [];
+  }, [orgTrees, orgTree]);
   const [search, setSearch] = useState('');
-  const [selectedOrg, setSelectedOrg] = useState(null);
+  const [selectedOrg, setSelectedOrg] = useState<any>(null);
   const [roleFilter, setRoleFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [permFilter, setPermFilter] = useState('all');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [open, setOpen] = useState(false);
-  const [editTarget, setEditTarget] = useState(null);
-  const [confirmDel, setConfirmDel] = useState(null);
+  const [editTarget, setEditTarget] = useState<any>(null);
+  const [confirmDel, setConfirmDel] = useState<any>(null);
 
   const isSysAdmin = (capabilities || []).includes('*');
   const manageableOrgOptions = useMemo(() => {
     if (isSysAdmin) return orgOptions;
-    return orgOptions.filter((node) => node.canManage);
+    return orgOptions.filter((node: any) => node.canManage);
   }, [orgOptions, isSysAdmin]);
 
   // 组织树展开状态
-  const [treeExpandedIds, setTreeExpandedIds] = useState(() => {
-    const s = new Set();
-    const walk = (n) => {
+  const [treeExpandedIds, setTreeExpandedIds] = useState<Set<string>>(() => {
+    const s = new Set<string>();
+    const walk = (n: any) => {
       if (!n) return;
       s.add(n.id);
       (n.children || []).forEach(walk);
     };
-    if (orgTree) walk(orgTree);
+    effectiveTrees.forEach(walk);
     return s;
   });
 
@@ -2805,9 +2818,9 @@ function UsersPanel({ orgTree, orgOptions = [], canManage = false, capabilities 
               onClick={() => {
                 if (treeExpandedIds.size > 0) setTreeExpandedIds(new Set());
                 else {
-                  const s = new Set();
-                  const walk = (n) => { if (!n) return; s.add(n.id); (n.children || []).forEach(walk); };
-                  if (orgTree) walk(orgTree);
+                  const s = new Set<string>();
+                  const walk = (n: any) => { if (!n) return; s.add(n.id); (n.children || []).forEach(walk); };
+                  effectiveTrees.forEach(walk);
                   setTreeExpandedIds(s);
                 }
               }}
@@ -2830,16 +2843,19 @@ function UsersPanel({ orgTree, orgOptions = [], canManage = false, capabilities 
             </div>
 
             {/* 组织层级树 */}
-            {orgTree ? (
-              <UsersOrgTreeNode
-                node={orgTree}
-                depth={0}
-                selectedId={selectedOrg?.id}
-                onSelect={setSelectedOrg}
-                expandedIds={treeExpandedIds}
-                onToggle={toggleTreeNode}
-                users={USERS}
-              />
+            {effectiveTrees.length > 0 ? (
+              effectiveTrees.map((rootNode: any) => (
+                <UsersOrgTreeNode
+                  key={rootNode.id}
+                  node={rootNode}
+                  depth={0}
+                  selectedId={selectedOrg?.id}
+                  onSelect={setSelectedOrg}
+                  expandedIds={treeExpandedIds}
+                  onToggle={toggleTreeNode}
+                  users={USERS}
+                />
+              ))
             ) : (
               <div style={{ padding: '20px 10px', fontSize: '11.5px', color: 'var(--ink-4)', textAlign: 'center' }}>
                 暂无组织节点
@@ -4096,24 +4112,40 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
     }
   };
   const [grantKb, setGrantKb] = useState(()=>INDUSTRY_KBS[0]?.id || '');
-  // 组织树 state：支持无限层级新增
-  const [orgTree, setOrgTree] = useState(()=>{
-    const init = (n) => ({...n, id: n.id || ('on_' + Math.random().toString(36).slice(2,9)), children: (n.children||[]).map(init)});
-    return ORG_TREE ? init(ORG_TREE) : null;
+  // 组织树 state：支持无限层级新增与多根组织森林
+  const initOrgNode = (n: any): any => ({
+    ...n,
+    id: n.id || ('on_' + Math.random().toString(36).slice(2, 9)),
+    children: (n.children || []).map(initOrgNode),
   });
+  const [orgTrees, setOrgTrees] = useState<any[]>(() => {
+    const raw = (ORG_TREES && ORG_TREES.length > 0) ? ORG_TREES : (ORG_TREE ? [ORG_TREE] : []);
+    return raw.map(initOrgNode);
+  });
+  const orgTree = orgTrees[0] || null;
+
+  useEffect(() => {
+    const handleAdminDataUpdated = (e: any) => {
+      const trees = e.detail?.orgTrees || (ORG_TREES && ORG_TREES.length > 0 ? ORG_TREES : (ORG_TREE ? [ORG_TREE] : []));
+      setOrgTrees(trees.map(initOrgNode));
+    };
+    window.addEventListener('app-admin-data-updated', handleAdminDataUpdated);
+    return () => window.removeEventListener('app-admin-data-updated', handleAdminDataUpdated);
+  }, []);
+
   // 展开状态受控（新增子组织后自动展开父节点）
-  const [expandedIds, setExpandedIds] = useState(()=>{
-    const s = new Set();
-    const walk = (n)=>{ if(n.expanded) s.add(n.id); (n.children||[]).forEach(walk); };
-    if (orgTree) walk(orgTree);   // 注意：walk id 化后的树，保证 id 与渲染一致
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => {
+    const s = new Set<string>();
+    const walk = (n: any) => { if (n?.expanded) s.add(n.id); (n?.children || []).forEach(walk); };
+    (orgTrees || []).forEach(walk);
     return s;
   });
-  const [adminModal, setAdminModal] = useState(null); // 设置管理员的节点
-  const [addModal, setAddModal] = useState(null);     // 新增子组织的父节点
-  const [renameModal, setRenameModal] = useState(null); // 重命名组织
-  const [editModal, setEditModal] = useState(null);   // 编辑组织
-  const [deleteModal, setDeleteModal] = useState(null); // 删除组织
-  const orgOptions = useMemo(() => flattenOrgTree(orgTree), [orgTree]);
+  const [adminModal, setAdminModal] = useState<any>(null); // 设置管理员的节点
+  const [addModal, setAddModal] = useState<any>(null);     // 新增子组织的父节点
+  const [renameModal, setRenameModal] = useState<any>(null); // 重命名组织
+  const [editModal, setEditModal] = useState<any>(null);   // 编辑组织
+  const [deleteModal, setDeleteModal] = useState<any>(null); // 删除组织
+  const orgOptions = useMemo(() => flattenOrgTree(orgTrees), [orgTrees]);
   const canCreateRoot = hasCapability('*', capabilities);
   const tabRules = [
     {k:'org', l:'组织架构', ic:'users', permission:'org.read'},
@@ -4132,9 +4164,9 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
     if (availableTabs.length && !availableTabs.includes(tab)) setTab(availableTabs[0]);
   }, [availableTabs.join(','), tab]);
 
-  const toggleNode = (id) => setExpandedIds(s=>{ const ns = new Set(s); ns.has(id) ? ns.delete(id) : ns.add(id); return ns; });
+  const toggleNode = (id: string) => setExpandedIds(s => { const ns = new Set(s); ns.has(id) ? ns.delete(id) : ns.add(id); return ns; });
 
-  const addChildOrg = async (parentId, name, adminUserIds = []) => {
+  const addChildOrg = async (parentId: any, name: string, adminUserIds: string[] = []) => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/admin/orgs`, {
         method: 'POST',
@@ -4145,27 +4177,37 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
       if (!response.ok) throw new Error(result.message || `API ${response.status}`);
       const created = result.organization;
       if (!created) throw new Error('接口未返回新组织');
-      setExpandedIds(s=>parentId ? new Set(s).add(parentId) : s);   // 确保父节点展开，新节点立即可见
-      setOrgTree(t=>{
-        const rec = (n) => {
-          if(n.id === parentId){
-            return {...n, children: [...(n.children||[]), {...created, admins: adminUserIds.map(id => USERS.find(u=>u.id===id)?.name).filter(Boolean), children: []}]};
-          }
-          return {...n, children: (n.children||[]).map(rec)};
-        };
-        // 当前管理界面以树根为展示入口；新增根组织后保留原根，并将最新数据交给
-        // 全局刷新重新组装，避免把已有组织树误替换掉。
-        return parentId ? rec(t) : t;
-      });
-      window.dispatchEvent(new CustomEvent('app-toast', {detail:`组织「${created.name}」已保存` }));
-      if (!parentId) window.dispatchEvent(new CustomEvent('app-data-refresh'));
+      if (parentId) {
+        setExpandedIds(s => new Set(s).add(parentId));
+        setOrgTrees(trees => {
+          const rec = (n: any): any => {
+            if (n.id === parentId) {
+              return {
+                ...n,
+                children: [
+                  ...(n.children || []),
+                  { ...created, admins: adminUserIds.map(id => USERS.find(u => u.id === id)?.name).filter(Boolean), children: [] }
+                ]
+              };
+            }
+            return { ...n, children: (n.children || []).map(rec) };
+          };
+          return trees.map(rec);
+        });
+      } else {
+        const newRoot = { ...created, admins: adminUserIds.map(id => USERS.find(u => u.id === id)?.name).filter(Boolean), children: [] };
+        setOrgTrees(trees => [...trees, newRoot]);
+        ORG_TREES = [...(ORG_TREES || []), newRoot];
+      }
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: `组织「${created.name}」已保存` }));
+      window.dispatchEvent(new CustomEvent('app-data-refresh'));
       return true;
-    } catch (error) {
-      window.dispatchEvent(new CustomEvent('app-toast', {detail:`组织保存失败：${error.message || '请稍后重试'}` }));
+    } catch (error: any) {
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: `组织保存失败：${error.message || '请稍后重试'}` }));
       return false;
     }
   };
-  const updateOrganization = async (node, name, parentId) => {
+  const updateOrganization = async (node: any, name: string, parentId: any) => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/admin/orgs/${node.id}`, {
         method: 'PATCH',
@@ -4177,41 +4219,11 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
       const updated = result.organization;
       if (!updated) throw new Error('接口未返回更新后的组织');
 
-      const rewritePaths = (current, oldPath, nextPath) => ({
-        ...current,
-        ...(current.id === node.id ? { ...updated } : {}),
-        path: current.path === oldPath ? nextPath : current.path.startsWith(`${oldPath}/`) ? `${nextPath}${current.path.slice(oldPath.length)}` : current.path,
-        children: (current.children || []).map((child) => rewritePaths(child, oldPath, nextPath)),
-      });
-      const detach = (current) => {
-        if (!current) return { tree: current, detached: null };
-        if (current.id === node.id) return { tree: null, detached: current };
-        let detached = null;
-        const children = [];
-        for (const child of current.children || []) {
-          const result = detach(child);
-          if (result.detached) detached = result.detached;
-          if (result.tree) children.push(result.tree);
-        }
-        return { tree: { ...current, children }, detached };
-      };
-      const attach = (current, targetId, child) => {
-        if (!current) return current;
-        if (current.id === targetId) return { ...current, children: [...(current.children || []), child] };
-        return { ...current, children: (current.children || []).map((item) => attach(item, targetId, child)) };
-      };
-      setOrgTree((tree) => {
-        if (node.parentId === (parentId || null)) return rewritePaths(tree, node.path, updated.path);
-        const result = detach(tree);
-        if (!result.detached) return tree;
-        const moved = rewritePaths({ ...result.detached, ...updated }, node.path, updated.path);
-        return parentId ? attach(result.tree, parentId, moved) : moved;
-      });
       setEditModal(null);
       window.dispatchEvent(new CustomEvent('app-toast', { detail: `组织「${updated.name}」已更新` }));
       window.dispatchEvent(new CustomEvent('app-data-refresh'));
       return true;
-    } catch (error) {
+    } catch (error: any) {
       window.dispatchEvent(new CustomEvent('app-toast', { detail: `组织更新失败：${error.message || '请稍后重试'}` }));
       return false;
     }
@@ -4234,7 +4246,7 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
         path: current.path === oldPath ? nextPath : current.path.startsWith(`${oldPath}/`) ? `${nextPath}${current.path.slice(oldPath.length)}` : current.path,
         children: (current.children || []).map((child: any) => rewritePaths(child, oldPath, nextPath)),
       });
-      setOrgTree((tree: any) => (tree ? rewritePaths(tree, node.path, updated.path) : tree));
+      setOrgTrees((trees: any[]) => trees.map((tree: any) => rewritePaths(tree, node.path, updated.path)));
       setRenameModal(null);
       window.dispatchEvent(new CustomEvent('app-toast', { detail: `组织已成功重命名为「${updated.name}」` }));
       window.dispatchEvent(new CustomEvent('app-data-refresh'));
@@ -4250,14 +4262,15 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
       const response = await fetch(url, { method: 'DELETE', headers: apiHeaders() });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || `API ${response.status}`);
-      setOrgTree((tree: any) => {
+      setOrgTrees((trees: any[]) => {
         const remove = (current: any): any => {
-          if (!current) return current;
+          if (!current) return null;
           if (current.id === node.id) return null;
           return { ...current, children: (current.children || []).map(remove).filter(Boolean) };
         };
-        return remove(tree);
+        return trees.map(remove).filter(Boolean);
       });
+      ORG_TREES = (ORG_TREES || []).filter((t: any) => t.id !== node.id);
       setDeleteModal(null);
       window.dispatchEvent(new CustomEvent('app-toast', { detail: `组织「${node.name}」已删除` }));
       window.dispatchEvent(new CustomEvent('app-data-refresh'));
@@ -4267,11 +4280,11 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
       return false;
     }
   };
-  const updateOrg = (id, updater) => setOrgTree(tree => {
-    const walk = (node) => node?.id === id ? updater(node) : ({...node, children:(node.children||[]).map(walk)});
-    return tree ? walk(tree) : tree;
+  const updateOrg = (id: string, updater: any) => setOrgTrees(trees => {
+    const walk = (node: any): any => node?.id === id ? updater(node) : ({...node, children:(node.children||[]).map(walk)});
+    return trees.map(walk);
   });
-  const activateKb = async (node) => {
+  const activateKb = async (node: any) => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/admin/orgs/${node.id}/knowledge-base/activate`, {method:'POST',headers:{'Content-Type':'application/json',...apiHeaders()},body:JSON.stringify({})});
       const result = await response.json().catch(()=>({}));
@@ -4280,9 +4293,9 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
       updateOrg(node.id, current => ({...current, kbs:[kb.id], knowledgeBase:kb}));
       window.dispatchEvent(new CustomEvent('app-toast',{detail:`「${node.name}」组织库已激活`}));
       window.dispatchEvent(new CustomEvent('app-data-refresh'));
-    } catch (error) { window.dispatchEvent(new CustomEvent('app-toast',{detail:error.message || '激活失败'})); }
+    } catch (error: any) { window.dispatchEvent(new CustomEvent('app-toast',{detail:error.message || '激活失败'})); }
   };
-  const deactivateKb = async (node) => {
+  const deactivateKb = async (node: any) => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/admin/orgs/${node.id}/knowledge-base/deactivate`, {method:'POST',headers:apiHeaders()});
       const result = await response.json().catch(()=>({}));
@@ -4290,7 +4303,7 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
       updateOrg(node.id, current => ({...current, kbs:[], knowledgeBase:null}));
       window.dispatchEvent(new CustomEvent('app-toast',{detail:`「${node.name}」组织库已去激活`}));
       window.dispatchEvent(new CustomEvent('app-data-refresh'));
-    } catch (error) { window.dispatchEvent(new CustomEvent('app-toast',{detail:error.message || '去激活失败'})); }
+    } catch (error: any) { window.dispatchEvent(new CustomEvent('app-toast',{detail:error.message || '去激活失败'})); }
   };
   return (
     <div className="admin">
@@ -4324,6 +4337,7 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
       <div className="admin-main">
         {tab==='org' && (
           <OrgPanel
+            orgTrees={orgTrees}
             orgTree={orgTree}
             expandedIds={expandedIds}
             onToggle={toggleNode}
@@ -4339,7 +4353,7 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
             canCreateRoot={canCreateRoot}
           />
         )}
-        {tab==='users' && <UsersPanel orgTree={orgTree} orgOptions={orgOptions} canManage={hasCapability('org.user.manage', capabilities)} capabilities={capabilities}/>}
+        {tab==='users' && <UsersPanel orgTrees={orgTrees} orgTree={orgTree} orgOptions={orgOptions} canManage={hasCapability('org.user.manage', capabilities)} capabilities={capabilities}/>}
         {tab==='roles' && <RolesPanel canManage={hasCapability('role.manage', capabilities)}/>}
         {tab==='industry' && <IndustryKBPanel canCreate={hasCapability('kb.industry.create', capabilities)} onOpenGrant={(k)=>{setGrantKb(k.id); setTab('grant');}}/>}
         {tab==='grant' && <GrantPanel kbId={grantKb} setKbId={setGrantKb}/>}
@@ -5413,7 +5427,7 @@ function GrantPanel({kbId, setKbId}){
                   {r.name} ({r.users || 0} 人)
                 </option>
               ))}
-              {grantTab==='org' && flattenOrgTree(ORG_TREE).map(o=>(
+              {grantTab==='org' && flattenOrgTree(ORG_TREES.length ? ORG_TREES : ORG_TREE).map((o: any)=>(
                 <option key={o.id} value={o.id}>
                   {o.path}
                 </option>
@@ -5567,6 +5581,7 @@ function GrantPanel({kbId, setKbId}){
 
 /* ============== Admin: 组织架构全景 (OrgPanel) ============== */
 function OrgPanel({
+  orgTrees = [],
   orgTree,
   expandedIds,
   onToggle,
@@ -5581,7 +5596,13 @@ function OrgPanel({
   onManageKb,
   canCreateRoot = false
 }: any){
-  const [selectedNodeId, setSelectedNodeId] = useState<string>(() => orgTree?.id || '');
+  const trees = useMemo(() => {
+    if (orgTrees && orgTrees.length > 0) return orgTrees;
+    if (orgTree) return [orgTree];
+    return [];
+  }, [orgTrees, orgTree]);
+
+  const [selectedNodeId, setSelectedNodeId] = useState<string>(() => trees[0]?.id || '');
   const [nodeSearch, setNodeSearch] = useState('');
 
   // 递归查找选中节点
@@ -5595,15 +5616,22 @@ function OrgPanel({
     return null;
   };
 
-  const selectedNode = findNode(orgTree, selectedNodeId) || orgTree;
-  const flatNodes = useMemo(() => flattenOrgTree(orgTree), [orgTree]);
+  const selectedNode = useMemo(() => {
+    for (const root of trees) {
+      const found = findNode(root, selectedNodeId);
+      if (found) return found;
+    }
+    return trees[0] || null;
+  }, [trees, selectedNodeId]);
+
+  const flatNodes = useMemo(() => flattenOrgTree(trees), [trees]);
   const subtreeUserCount = useMemo(() => selectedNode ? countSubtreeUsers(selectedNode, USERS) : 0, [selectedNode]);
   const directUsers = useMemo(() => selectedNode ? USERS.filter((u: any) => (u.orgNodes || []).some((on: any) => on.id === selectedNode.id) || (u.orgIds || []).includes(selectedNode.id)) : [], [selectedNode]);
 
   const expandAll = () => {
     const s = new Set<string>();
-    const walk = (n: any) => { s.add(n.id); (n.children || []).forEach(walk); };
-    if (orgTree) walk(orgTree);
+    const walk = (n: any) => { if (!n) return; s.add(n.id); (n.children || []).forEach(walk); };
+    trees.forEach(walk);
     setExpandedIds(s);
   };
 
@@ -5646,23 +5674,26 @@ function OrgPanel({
           </div>
 
           <div className="org-tree-box">
-            {orgTree ? (
-              <OrgTreeItem
-                node={orgTree}
-                depth={0}
-                expandedIds={expandedIds}
-                selectedNodeId={selectedNodeId}
-                onSelect={(id: string)=>setSelectedNodeId(id)}
-                onToggle={onToggle}
-                onAddChild={onAddChild}
-                onSetAdmin={onSetAdmin}
-                onRename={onRename}
-                onEdit={onEdit}
-                onDelete={onDelete}
-                search={nodeSearch}
-              />
+            {trees.length > 0 ? (
+              trees.map((rootNode: any) => (
+                <OrgTreeItem
+                  key={rootNode.id}
+                  node={rootNode}
+                  depth={0}
+                  expandedIds={expandedIds}
+                  selectedNodeId={selectedNode?.id || selectedNodeId}
+                  onSelect={(id: string)=>setSelectedNodeId(id)}
+                  onToggle={onToggle}
+                  onAddChild={onAddChild}
+                  onSetAdmin={onSetAdmin}
+                  onRename={onRename}
+                  onEdit={onEdit}
+                  onDelete={onDelete}
+                  search={nodeSearch}
+                />
+              ))
             ) : (
-              <div style={{padding:24,color:'var(--ink-4)',textAlign:'center'}}>暂无组织节点</div>
+              <div style={{padding:24,color:'var(--ink-4)',textAlign:'center'}}>暂无组织节点，请点击右上角「新增组织」创建根组织</div>
             )}
           </div>
         </div>
@@ -6012,14 +6043,19 @@ function App(){
           .sort((a: any, b: any) => b.path.length - a.path.length)[0];
         if (parent) parent.children.push(node);
       }
-      const root = nodes.find((node: any) => !nodes.some((candidate: any) => candidate.children.includes(node))) || nodes[0];
-      ORG_TREE = root ? { ...root, expanded: true } : ORG_TREE;
-    } else ORG_TREE = null;
+      const roots = nodes.filter((node: any) => !nodes.some((candidate: any) => candidate.children.includes(node)));
+      ORG_TREES = roots.map((root: any) => ({ ...root, expanded: true }));
+      ORG_TREE = ORG_TREES[0] || null;
+    } else {
+      ORG_TREES = [];
+      ORG_TREE = null;
+    }
     try {
       const conversationsResponse = await fetch(`${API_BASE_URL}/api/v1/conversations`, { headers: { Authorization: `Bearer ${token}` } });
       CONVERSATIONS = conversationsResponse.ok ? await conversationsResponse.json() : [];
     } catch { CONVERSATIONS = []; }
     setDbData(d);
+    window.dispatchEvent(new CustomEvent('app-admin-data-updated', { detail: { orgTrees: ORG_TREES, orgTree: ORG_TREE } }));
   };
 
   useEffect(() => {

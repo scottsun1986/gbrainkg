@@ -1119,17 +1119,28 @@ export class AdminController {
       );
     }
 
-    const targetNodes = isCascade
-      ? await this.prisma.orgNode.findMany({
-          where: {
-            status: "active",
-            OR: [{ id }, { path: { startsWith: `${current.path}/` } }],
-          },
-          select: { id: true },
-        })
-      : [{ id }];
-
-    const targetIds = targetNodes.map((n) => n.id);
+    let targetIds: string[] = [id];
+    if (isCascade) {
+      const allActive = await this.prisma.orgNode.findMany({
+        where: { status: "active" },
+        select: { id: true, parentId: true, path: true },
+      });
+      const descendantSet = new Set<string>([id]);
+      const queue = [id];
+      while (queue.length > 0) {
+        const currId = queue.shift()!;
+        for (const n of allActive) {
+          if (
+            !descendantSet.has(n.id) &&
+            (n.parentId === currId || n.path.startsWith(`${current.path}/`))
+          ) {
+            descendantSet.add(n.id);
+            queue.push(n.id);
+          }
+        }
+      }
+      targetIds = Array.from(descendantSet);
+    }
 
     // 检查是否有跨管理范围的子部门
     for (const targetId of targetIds) {
