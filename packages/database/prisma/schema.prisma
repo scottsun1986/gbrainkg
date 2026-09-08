@@ -29,6 +29,7 @@ model User {
   managedOrgs  OrgAdmin[]
   brainSourceMembers BrainSourceMember[]
   brainScopeMembers  BrainScopeMember[]
+  credentials  UserCredential[]
 }
 
 // 组织节点
@@ -577,4 +578,23 @@ model SemanticCache {
   lastHitAt        DateTime?
   createdAt        DateTime @default(now())
   expiresAt        DateTime?
+}
+
+// 用户对外服务凭证 (OpenAPI AppId & AppSecret)
+model UserCredential {
+  id            String    @id @default(uuid()) @db.Uuid
+  userId        String    @db.Uuid
+  appId         String    @unique
+  appSecretHash String
+  appSecretEnc  String?
+  name          String?
+  status        String    @default("active") // active/disabled
+  lastUsedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([appId])
 }

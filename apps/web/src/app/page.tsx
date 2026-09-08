@@ -2,6 +2,7 @@
 
 import { LoginScreen, PasswordChangeScreen } from "@/components/auth/LoginScreens";
 import { KnowledgeGraphScreen } from "@/components/knowledge-graph/KnowledgeGraphScreen";
+import { PersonalSettingsScreen } from "@/components/settings/PersonalSettingsScreen";
 import { Icon } from "@/components/common/Icon";
 /*
  * This file is the migrated interactive prototype.  The prototype was authored
@@ -115,6 +116,11 @@ function SideNav({active, setActive, user, onLogout, kbCount=0, capabilities=[]}
             {it.badge && <span className="nav-badge">{it.badge}</span>}
           </div>
         ))}
+        <div className="nav-section">个人</div>
+        <div className={`nav-item ${active==='personal_settings'?'active':''}`} onClick={()=>setActive('personal_settings')}>
+          <Icon name="key" size={16} className="nav-ic"/>
+          <span>个人设置</span>
+        </div>
         <div className="nav-section">管理</div>
         {canAdmin && <div className={`nav-item ${active==='admin'?'active':''}`} onClick={()=>setActive('admin')}>
           <Icon name="shield" size={16} className="nav-ic"/>
@@ -126,8 +132,8 @@ function SideNav({active, setActive, user, onLogout, kbCount=0, capabilities=[]}
         </div>}
       </nav>
       <div className="side-foot">
-        <div className="avatar">{String(user?.username || user?.displayName || '用户').slice(0,2).toUpperCase()}</div>
-        <div className="user-info">
+        <div className="avatar" onClick={()=>setActive('personal_settings')} style={{ cursor: 'pointer' }} title="点击打开个人设置">{String(user?.username || user?.displayName || '用户').slice(0,2).toUpperCase()}</div>
+        <div className="user-info" onClick={()=>setActive('personal_settings')} style={{ cursor: 'pointer' }} title="点击打开个人设置">
           <div className="user-name">{user?.displayName || user?.username || '当前用户'}</div>
           <div className="user-role">{user?.orgs?.map((item:any)=>item.orgNode?.name).filter(Boolean).join('、') || '未分配组织'} · {user?.roles?.[0]?.role?.name || '普通用户'}</div>
         </div>
@@ -6200,6 +6206,7 @@ function App(){
     chat: {t:'对话', s:`你的大脑 · ${KNOWLEDGE_BASES.length} 个可见知识库`},
     libs: {t:'知识库', s:`${KNOWLEDGE_BASES.length} 个知识库`},
     graph: {t:'知识图谱', s:'你的知识 · 可见知识关系'},
+    personal_settings: {t:'个人设置', s:'对外开放服务凭证 (AppId / AppSecret) 与安全管理'},
     admin: {t:'管理后台', s:'组织 · 人员 · 角色 · 行业库 · 授权 · 模型 · 审计'},
     settings: {t:'系统设置', s:'模型与供应商配置'},
   };
@@ -6217,8 +6224,8 @@ function App(){
       <SideNav active={visibleScreen} setActive={setScreen} user={currentUser} onLogout={handleLogout} kbCount={KNOWLEDGE_BASES.length} capabilities={CAPABILITIES}/>
       <div className="main">
         <TopBar
-          title={titles[visibleScreen].t}
-          sub={titles[visibleScreen].s}
+          title={titles[visibleScreen]?.t || 'GBrain'}
+          sub={titles[visibleScreen]?.s || ''}
           theme={theme || 'light'}
           onToggleTheme={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')}
           onOpenPalette={() => setPaletteOpen(true)}
@@ -6226,15 +6233,18 @@ function App(){
           onOpenNotifications={() => setNotifOpen(true)}
         />
         <div className="content">
-          {/* 四屏常驻挂载：跨屏切换不丢会话/表单状态（UX 评审修复） */}
+          {/* 多屏常驻挂载：跨屏切换不丢会话/表单状态 */}
           <div style={{display: visibleScreen==='chat'?'flex':'none', flex:1, minWidth:0}}>
-          <ChatScreen/>
+            <ChatScreen/>
           </div>
           <div style={{display: visibleScreen==='libs'?'flex':'none', flex:1, minWidth:0}}>
             <LibrariesScreen initialKbId={libraryKbId} capabilities={CAPABILITIES} onManageGrant={(kb)=>{setAdminTab('grant'); setScreen('admin');}}/>
           </div>
           <div style={{display: visibleScreen==='graph'?'flex':'none', flex:1, minWidth:0}}>
             <KnowledgeGraphScreen onOpenDocument={openGraphDocument} onOpenKb={openGraphKb}/>
+          </div>
+          <div style={{display: visibleScreen==='personal_settings'?'flex':'none', flex:1, minWidth:0, overflowY:'auto'}}>
+            <PersonalSettingsScreen user={currentUser} apiBaseUrl={API_BASE_URL} apiHeaders={apiHeaders} onNotify={(msg) => setToast({ text: msg, undo: null })}/>
           </div>
           <div style={{display: visibleScreen==='admin' || visibleScreen==='settings'?'flex':'none', flex:1, minWidth:0}}>
             <AdminScreen initialTab={visibleScreen==='settings' ? 'model' : visibleScreen==='admin' ? adminTab : undefined} capabilities={CAPABILITIES} onOpenGrant={(k)=>{setAdminTab('grant'); setScreen('admin');}} onManageKb={(kbId)=>{setLibraryKbId(kbId); setScreen('libs');}}/>

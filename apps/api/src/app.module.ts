@@ -14,6 +14,7 @@ import { ModelConfigModule } from './model-config.module';
 import { KnowledgeGraphController } from './knowledge-graph.controller';
 import { AuditModule } from './audit/audit.module';
 import { GraphRagModule } from './graph-rag/graph-rag.module';
+import { OpenApiModule } from './open-api/open-api.module';
 
 
 
@@ -38,6 +39,7 @@ import { GraphRagModule } from './graph-rag/graph-rag.module';
     ModelConfigModule,
     AuditModule,
     GraphRagModule,
+    OpenApiModule,
   ],
   controllers: [AppController, AdminController, KnowledgeGraphController],
   providers: [
