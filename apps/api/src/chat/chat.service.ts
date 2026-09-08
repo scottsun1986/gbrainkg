@@ -157,24 +157,93 @@ export class ChatService {
       return { success: true, query, total: 0, results: [] };
     }
 
+    const isInventoryQuery =
+      /(有多少|有哪些|几篇|几本|几份|清单|统计|全景|列表|目录).*(知识文档|知识库|文档库|制度文档|全部文档|所有文档)/.test(query) ||
+      /(知识文档|知识库|文档库|制度文档|全部文档|所有文档).*(有多少|有哪些|几篇|几本|几份|清单|统计|全景|列表|目录)/.test(query) ||
+      /^(?:搜索)?(?:有多少|查看有哪些|列出所有|统计)\s*(?:知识文档|知识库|制度文档|文档)/.test(query);
+
+    if (isInventoryQuery) {
+      const accessibleDocs = await this.prisma.document.findMany({
+        where: { kbId: { in: scope }, status: "published" },
+        select: {
+          id: true,
+          title: true,
+          version: true,
+          kbId: true,
+          kb: { select: { id: true, name: true } },
+        },
+        orderBy: [{ kb: { name: "asc" } }, { title: "asc" }],
+      });
+      return {
+        success: true,
+        query,
+        total: accessibleDocs.length,
+        results: accessibleDocs.slice(0, limit).map((d) => ({
+          documentId: d.id,
+          kbId: d.kbId,
+          title: d.title,
+          version: d.version,
+          evidence: `【${d.kb?.name || "默认知识库"}】《${d.title}》`,
+          score: 1.0,
+          previewUrl: `/api/v1/ingestion/documents/${d.id}/preview`,
+        })),
+      };
+    }
+
     const brainRepo = await this.compilerService.ensureUserBrainRepo(userId);
     const userScope = await this.scopeService.resolveUserScope(userId);
     const sourceRefs = (
-      await Promise.all(
-        scope.map(async (kbId) => {
-          const sourceKey = sourceKeyForKnowledgeBase(kbId);
-          if (typeof this.gbrain.initializeSource === "function") {
-            await this.gbrain.initializeSource(sourceKey);
-          }
-          return `gbrain://source/${sourceKey}`;
-        }),
-      )
+      typeof (this.compilerService as any).getUserSourceRefsForKnowledgeBases === "function"
+        ? await (this.compilerService as any).getUserSourceRefsForKnowledgeBases(userId, scope)
+        : typeof (this.compilerService as any).getUserSourceRefs === "function"
+          ? await (this.compilerService as any).getUserSourceRefs(userId)
+          : scope.map((kbId) => `gbrain://source/${sourceKeyForKnowledgeBase(kbId)}`)
     ).filter(Boolean);
 
-    let queryResult =
+    // 1. Fast-Path: Query PostgreSQL chunks concurrently (<10ms)
+    const fallbackChunksPromise = this.searchChunksFallback(scope, query, limit).catch(() => []);
+
+    // 2. Query GBrain federated search concurrently
+    const gbrainSearchPromise = (
       sourceRefs.length > 1
-        ? await this.gbrain.queryMany(sourceRefs, query, { breadth: false, operation: "search" })
-        : await this.gbrain.query(sourceRefs[0] || brainRepo.gitRepoUrl, query, { breadth: false, operation: "search" });
+        ? this.gbrain.queryMany(sourceRefs, query, { breadth: false, operation: "search" })
+        : this.gbrain.query(sourceRefs[0] || brainRepo.gitRepoUrl, query, { breadth: false, operation: "search" })
+    ).catch((err) => {
+      this.logger.warn(`GBrain search error: ${err.message}`);
+      return { topics: [], answer: "", citations: [], reranked: false } as BrainQueryResult;
+    });
+
+    const fallbackChunks = await fallbackChunksPromise;
+    let queryResult: BrainQueryResult;
+    if (fallbackChunks.length > 0) {
+      const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000));
+      const racedGBrain = await Promise.race([gbrainSearchPromise, timeoutPromise]);
+      if (racedGBrain && racedGBrain.citations && racedGBrain.citations.length > 0) {
+        queryResult = racedGBrain;
+      } else {
+        queryResult = {
+          topics: Array.from(new Set(fallbackChunks.map((fb) => fb.title || "相关条款"))),
+          answer: fallbackChunks.map((fb) => fb.evidence).join("\n\n"),
+          citations: fallbackChunks.map((fb, idx) => ({
+            topic: fb.title || fb.documentId,
+            docId: fb.documentId,
+            kbId: fb.kbId,
+            version: fb.version,
+            pageNo: fb.pageNo,
+            articleNo: fb.articleNo,
+            evidence: fb.evidence,
+            snippet: fb.evidence,
+            context: fb.evidence,
+            score: Math.max(0.70, 0.95 - idx * 0.02),
+            docTitle: fb.title,
+            previewUrl: fb.previewUrl,
+          })),
+          reranked: true,
+        };
+      }
+    } else {
+      queryResult = await gbrainSearchPromise;
+    }
 
     queryResult = await this.filterQueryResultByCurrentPermission(
       queryResult,
