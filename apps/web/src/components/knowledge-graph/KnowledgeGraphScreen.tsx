@@ -1,6 +1,8 @@
+"use client";
+
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { API_BASE_URL, apiHeaders } from '@/lib/api';
-import { Icon } from '@/app/page';
+import { Icon } from '@/components/common/Icon';
 
 /* ============== 知识图谱（Obsidian 风格力导向布局） ============== */
 

@@ -1,3 +1,5 @@
+"use client";
+
 import React, { useState } from 'react';
 
 export function LoginScreen({ onSubmit, error, loading }: any) {
