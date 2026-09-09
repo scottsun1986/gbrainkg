@@ -34,6 +34,10 @@ __pycache__/
 data/
 logs/
 *.log
+runtime/
+deploy/*.from-prod
+scripts/sync-*.sql
+scripts/sync-secrets-from-prod.sh
 
 # OS
 .DS_Store
