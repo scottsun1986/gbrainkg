@@ -126,7 +126,7 @@ export class KnowledgeGraphController {
     }
 
     // Prefer actual GBrain page links when they exist.
-    const docNodeBySlug = new Map(documents.map((document) => [`docs/${document.id}`, `doc:${document.id}`]));
+    const docNodeBySlug = new Map<string, string>(documents.map((document) => [`docs/${document.id}`, `doc:${document.id}`]));
     let gbrainLinks = 0;
     let gbrainLinkErrors = 0;
     let gbrainLinksFiltered = 0;
@@ -163,7 +163,7 @@ export class KnowledgeGraphController {
     }
 
     // Extract explicit cross-document policy citations
-    const titleToDoc = new Map(documents.map((d) => [cleanLabel(d.title), d]));
+    const titleToDoc = new Map<string, any>(documents.map((d: any) => [cleanLabel(d.title), d]));
     for (const document of documents) {
       const chunksContent = document.chunks.map((c) => c.content).join(' ');
       for (const [targetTitle, targetDoc] of titleToDoc) {

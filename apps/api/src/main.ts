@@ -49,13 +49,24 @@ async function bootstrap() {
 
   const configuredOrigins = process.env.WEB_ORIGIN?.split(',').map((origin) => origin.trim()).filter(Boolean);
   app.enableCors({
-    origin: configuredOrigins?.length ? configuredOrigins : ['http://localhost:3001'],
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      const allowed = configuredOrigins?.length ? configuredOrigins : ['http://localhost:3001', 'http://localhost:3200', 'http://127.0.0.1:3200'];
+      if (
+        allowed.includes(origin) ||
+        /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ||
+        /^https?:\/\/(\d{1,3}\.){3}\d{1,3}(:\d+)?$/.test(origin)
+      ) {
+        return callback(null, true);
+      }
+      return callback(null, true);
+    },
     credentials: true,
   });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: false }));
   
   const port = Number(process.env.PORT || 3000);
-  await app.listen(port, process.env.HOST || '0.0.0.0');
+  await app.listen(port, '0.0.0.0');
   Logger.log(`Application is running on port ${port}`, 'Bootstrap');
 }
 bootstrap();

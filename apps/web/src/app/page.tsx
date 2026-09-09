@@ -29,10 +29,8 @@ const dbData = true;
 // NEXT_PUBLIC_API_URL from .env.local make a production browser call its own
 // localhost:3202.
 const API_BASE_URL = typeof window !== 'undefined'
-  ? (['3000', '3001', '3200'].includes(window.location.port)
-    ? `${window.location.protocol}//${window.location.hostname}:3202`
-    : window.location.origin)
-  : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3202');
+  ? (process.env.NEXT_PUBLIC_API_URL || '')
+  : (process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:3202');
 const apiHeaders = () => {
   const token = typeof window !== 'undefined' ? window.localStorage.getItem('llmwiki_token') : null;
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -6135,12 +6133,23 @@ function App(){
       setAuthState('loggedOut');
       return;
     }
-    fetch(`${API_BASE_URL}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+      window.localStorage.removeItem('llmwiki_token');
+      setAuthState('loggedOut');
+    }, 3500);
+
+    fetch(`${API_BASE_URL}/api/v1/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+    })
       .then(async (response) => {
         if (!response.ok) throw new Error(`API ${response.status}`);
         return response.json();
       })
       .then(async (me) => {
+        clearTimeout(timeoutId);
         if (me.user?.mustChangePassword) {
           setAuthState('mustChangePassword');
           return;
@@ -6149,9 +6158,11 @@ function App(){
         setAuthState('loggedIn');
       })
       .catch(() => {
+        clearTimeout(timeoutId);
         window.localStorage.removeItem('llmwiki_token');
         setAuthState('loggedOut');
       });
+    return () => clearTimeout(timeoutId);
   }, []);
 
   useEffect(() => {

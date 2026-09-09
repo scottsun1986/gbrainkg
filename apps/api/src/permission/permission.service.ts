@@ -287,7 +287,7 @@ export class PermissionService implements OnModuleInit {
           select: { id: true, parentId: true },
         })
       : [];
-    const byId = new Map(nodes.map((node) => [node.id, node]));
+    const byId = new Map<string, any>(nodes.map((node) => [node.id, node]));
     const visibleOrgIds = new Set<string>();
     for (const membership of memberships) {
       let nodeId: string | null = membership.orgNodeId;

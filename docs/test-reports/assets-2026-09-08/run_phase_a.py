@@ -20,7 +20,8 @@ def login(cred=ADMIN):
 
 def ensure_kb(token, name):
     r = requests.get(f"{API}/api/v1/kbs", headers={"Authorization": f"Bearer {token}"}, timeout=15)
-    for kb in r.json().get("knowledgeBases", r.json() if isinstance(r.json(), list) else []):
+    kbs = r.json().get("items") or r.json().get("knowledgeBases") or (r.json() if isinstance(r.json(), list) else [])
+    for kb in kbs:
         if kb.get("name") == name:
             return kb["id"]
     r = requests.post(f"{API}/api/v1/admin/kbs", headers={"Authorization": f"Bearer {token}"},
@@ -40,7 +41,9 @@ def upload(token, kb_id, path: Path, expect_reject=False):
     body = {}
     try: body = r.json()
     except Exception: body = {"raw": r.text[:300]}
-    return body.get("document", {}).get("id") or body.get("documentId"), {"http": r.status_code, **({k: v for k, v in body.items() if k != 'document'} if isinstance(body, dict) else {})}
+    docs = body.get("documents") if isinstance(body.get("documents"), list) else []
+    doc_id = (docs[0].get("id") if docs else None) or body.get("document", {}).get("id") or body.get("documentId")
+    return doc_id, {"http": r.status_code, **({k: v for k, v in body.items() if k != 'document'} if isinstance(body, dict) else {})}
 
 def doc_status(token, kb_id, doc_id):
     r = requests.get(f"{API}/api/v1/kbs/{kb_id}/documents/{doc_id}",

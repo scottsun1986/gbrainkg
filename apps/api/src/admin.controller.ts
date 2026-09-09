@@ -290,7 +290,7 @@ export class AdminController {
     const safeDocuments = documents.filter((doc) =>
       visibleKbs.some((kb) => kb.id === doc.kbId),
     );
-    const userById = new Map(users.map((user) => [user.id, user]));
+    const userById = new Map<string, any>(users.map((user: any) => [user.id, user]));
     const privateDocumentIds = isSystemAdmin
       ? new Set(
           (await this.prisma.document.findMany({
@@ -1797,6 +1797,13 @@ export class AdminController {
     await this.brainOutboxService?.dispatchPending();
     await this.scheduleAccessReconciliation();
     return { ok: true };
+  }
+
+  @Delete("grants")
+  async deleteGrantByBody(@Req() req: any, @Body() body: any) {
+    const id = String(body?.id || "").trim();
+    if (!id) throw new BadRequestException("Grant ID is required.");
+    return this.deleteGrant(req, id);
   }
 
   @Post("providers")

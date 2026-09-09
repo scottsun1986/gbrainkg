@@ -46,7 +46,12 @@ export class AdminGuard implements CanActivate {
       const userId = await this.authService.userIdFromRequest(request);
       if (await this.authService.isPasswordChangeRequired(userId)) return false;
       const capabilities = await this.permissionService.getCapabilities(userId);
-      if (!capabilities.includes('*') && !ADMIN_CAPABILITIES.some((permission) => capabilities.includes(permission))) return false;
+      // Allow regular users to create personal knowledge bases
+      const isPersonalKbCreation =
+        request.method === 'POST' &&
+        (request.path === '/api/v1/admin/kbs' || request.url?.includes('/admin/kbs')) &&
+        request.body?.type === 'personal';
+      if (!isPersonalKbCreation && !capabilities.includes('*') && !ADMIN_CAPABILITIES.some((permission) => capabilities.includes(permission))) return false;
       request.user = { id: userId, isAdmin: capabilities.includes('*') };
       return true;
     } catch {

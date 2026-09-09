@@ -26,6 +26,7 @@ export class SessionController {
       this.permissionService.isSystemAdmin(userId),
     ]);
     const writePermissions = await Promise.all(kbs.map((kb) => this.permissionService.canManageKnowledgeBase(userId, kb.id)));
-    return { user, kbs: kbs.map(({ _count, ...kb }, index) => ({ ...kb, documentCount: _count.documents, canWrite: writePermissions[index], canDelete: systemAdmin || (kb.type === 'personal' && kb.ownerUserId === userId) })), capabilities, managedOrgIds: [...managedOrgIds] };
+    const mappedKbs = kbs.map(({ _count, ...kb }, index) => ({ ...kb, documentCount: _count.documents, canWrite: writePermissions[index], canDelete: systemAdmin || (kb.type === 'personal' && kb.ownerUserId === userId) }));
+    return { user, kbs: mappedKbs, knowledgeBases: mappedKbs, capabilities, managedOrgIds: [...managedOrgIds] };
   }
 }

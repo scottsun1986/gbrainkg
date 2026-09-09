@@ -19,6 +19,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASS:-llmwiki_pass}
       POSTGRES_DB: ${DB_NAME:-llmwiki}
     ports:
+      - "127.0.0.1:5432:5432"
       - "127.0.0.1:5433:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
