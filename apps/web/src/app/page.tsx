@@ -24,13 +24,12 @@ declare global {
 // loading state.  This sentinel keeps their guards safe; App owns the real
 // loading state below.
 const dbData = true;
-// The production reverse proxy serves Web and API from the same origin. Keep
-// the development API fallback only for local dev ports; never let a stale
-// NEXT_PUBLIC_API_URL from .env.local make a production browser call its own
-// localhost:3202.
+// In the browser, always use same-origin relative URLs ('') so all API calls
+// route seamlessly through Nginx (port 20080) or Next.js rewrites (port 3200)
+// without cross-origin CORS or unreachable host:port issues.
 const API_BASE_URL = typeof window !== 'undefined'
-  ? (process.env.NEXT_PUBLIC_API_URL || '')
-  : (process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:3202');
+  ? ''
+  : (process.env.INTERNAL_API_URL || 'http://127.0.0.1:3000');
 const apiHeaders = () => {
   const token = typeof window !== 'undefined' ? window.localStorage.getItem('llmwiki_token') : null;
   return token ? { Authorization: `Bearer ${token}` } : {};

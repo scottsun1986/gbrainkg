@@ -39,9 +39,8 @@ if [[ ! -f "$API_ENV" ]]; then
   echo "Created $API_ENV with generated secrets."
 fi
 
-if [[ ! -f "$WEB_ENV" ]]; then
-  echo "NEXT_PUBLIC_API_URL=http://localhost:3202" > "$WEB_ENV"
-  echo "Created $WEB_ENV."
+if [[ -f "$WEB_ENV" ]]; then
+  rm -f "$WEB_ENV"
 fi
 
 # 2. Admin initial password configuration
