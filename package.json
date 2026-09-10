@@ -7,7 +7,14 @@
     "dev": "turbo run dev",
     "lint": "turbo run lint",
     "test": "turbo run test",
-    "evaluate": "npx --yes tsx tests/evaluation/run-evaluation.ts"
+    "test:api": "pnpm --filter api test",
+    "test:parser": "bash -c 'cd apps/parser-worker && PYTHONPATH=src python3 -m pytest tests/ -q'",
+    "test:adapter": "pnpm --filter @llmwiki/gbrain-adapter build && node --test packages/gbrain-adapter/run-contract.test.cjs",
+    "test:all": "pnpm run test:api && pnpm run test:parser && pnpm run test:adapter",
+    "test:kb": "python3 tests/e2e/sota_knowledge_base_suite.py",
+    "evaluate": "npx --yes tsx@4.23.13 tests/evaluation/run-evaluation.ts",
+    "gate": "bash tests/evaluation/ci-gate.sh",
+    "ci": "bash scripts/ci.sh"
   },
   "devDependencies": {
     "turbo": "^2.0.0",
