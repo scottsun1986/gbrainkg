@@ -47,19 +47,28 @@ async function bootstrap() {
   app.use(express.json({ limit: '250mb' }));
   app.use(express.urlencoded({ limit: '250mb', extended: true }));
 
-  const configuredOrigins = process.env.WEB_ORIGIN?.split(',').map((origin) => origin.trim()).filter(Boolean);
+  const configuredOrigins = [
+    ...(process.env.WEB_ORIGIN || '').split(','),
+    ...(process.env.CORS_ORIGINS || '').split(','),
+  ].map((origin) => origin.trim()).filter(Boolean);
   app.enableCors({
     origin: (origin, callback) => {
+      // Non-browser clients (curl, server-to-server) send no Origin header.
       if (!origin) return callback(null, true);
       const allowed = configuredOrigins?.length ? configuredOrigins : ['http://localhost:3001', 'http://localhost:3200', 'http://127.0.0.1:3200'];
-      if (
-        allowed.includes(origin) ||
+      // Literal IP hosts (LAN/intranet) stay allowed so multi-host deployments
+      // keep working, but arbitrary public domains must be explicitly listed
+      // in WEB_ORIGIN. Previously every origin was unconditionally accepted.
+      const isLocalOrIpHost =
         /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ||
-        /^https?:\/\/(\d{1,3}\.){3}\d{1,3}(:\d+)?$/.test(origin)
-      ) {
+        /^https?:\/\/(?:\d{1,3}\.){3}\d{1,3}(:\d+)?$/.test(origin);
+      if (allowed.includes(origin) || isLocalOrIpHost) {
         return callback(null, true);
       }
-      return callback(null, true);
+      // Reject without throwing: the response simply carries no
+      // Access-Control-Allow-Origin header, so browsers block it while
+      // server-to-server callers are unaffected.
+      return callback(null, false);
     },
     credentials: true,
   });

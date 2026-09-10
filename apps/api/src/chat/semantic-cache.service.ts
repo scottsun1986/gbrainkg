@@ -72,7 +72,7 @@ export class SemanticCacheService implements OnModuleInit, OnModuleDestroy {
           AND "knowledgeEpoch" = ${knowledgeEpoch}
           AND ("expiresAt" IS NULL OR "expiresAt" > NOW())
           AND 1 - ("queryEmbedding" <=> ${embedding}::vector) > ${this.similarityThreshold}
-        ORDER BY similarity DESC
+        ORDER BY similarity DESC, "createdAt" DESC
         LIMIT 1
       `;
 
@@ -117,15 +117,26 @@ export class SemanticCacheService implements OnModuleInit, OnModuleDestroy {
       const expiresAt = new Date();
       expiresAt.setHours(expiresAt.getHours() + this.ttlHours);
 
+      // Dedupe: keep only the newest entry per (scope, question) so a re-run
+      // after retrieval improvements deterministically replaces stale answers
+      // instead of racing them on equal similarity.
+      await this.prisma.$executeRaw`
+        DELETE FROM "SemanticCache"
+        WHERE "scopeFingerprint" = ${scopeFingerprint} AND "queryText" = ${queryText}
+      `;
+      // scopeFingerprint already encodes the exact selected source set plus the
+      // ACL/knowledge epochs (see semanticCacheScopeKey). Mirror it into
+      // cacheFingerprint for the DB-level index and forward compatibility.
       await this.prisma.$executeRaw`
         INSERT INTO "SemanticCache" (
           "queryText", "queryEmbedding", "scopeFingerprint", "knowledgeEpoch", 
-          "responseContent", "citations", "processingTrace", "modelName", "expiresAt"
+          "responseContent", "citations", "processingTrace", "modelName", "expiresAt",
+          "cacheFingerprint"
         ) VALUES (
           ${queryText}, ${embedding}::vector, ${scopeFingerprint}, ${knowledgeEpoch},
           ${responseContent}, ${citations ? JSON.stringify(citations) : null}::jsonb, 
           ${processingTrace ? JSON.stringify(processingTrace) : null}::jsonb, 
-          ${modelName}, ${expiresAt}
+          ${modelName}, ${expiresAt}, ${scopeFingerprint}
         )
       `;
       this.logger.debug(`Stored semantic cache for query: ${queryText.substring(0, 50)}...`);
