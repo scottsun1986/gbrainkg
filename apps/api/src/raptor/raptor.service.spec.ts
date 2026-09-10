@@ -39,7 +39,9 @@ describe('RaptorService', () => {
   });
 
   it('returns no search hits when disabled', async () => {
+    process.env.RAPTOR_ENABLED = 'false';
     await expect(service.search(['kb-1'], '总结全文')).resolves.toEqual([]);
+    delete process.env.RAPTOR_ENABLED;
   });
 
   it('scores and maps summary nodes into citation-like hits when enabled', async () => {

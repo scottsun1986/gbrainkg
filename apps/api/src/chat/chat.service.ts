@@ -299,7 +299,8 @@ export class ChatService {
             context: fb.evidence,
             score: Math.max(0.70, 0.95 - idx * 0.02),
             docTitle: fb.title,
-            bbox: fb.bbox,
+            sectionGroup: (fb as any).sectionGroup,
+          bbox: fb.bbox,
           previewUrl: fb.previewUrl,
           })),
           reranked: true,
@@ -677,6 +678,8 @@ export class ChatService {
       evidence: string;
       score?: number;
       bbox?: { x: number; y: number; w: number; h: number; page?: number };
+      /** Structural section region id (documentId:anchorOrd) for group-preserving truncation. */
+      sectionGroup?: string;
       previewUrl: string | null;
     }>
   > {
@@ -1038,6 +1041,58 @@ export class ChatService {
         }
       }
 
+      // Structural section expansion (query-independent, "small-to-big"):
+      // whatever chunk matched, bring back its WHOLE section region — walk
+      // backward to the nearest heading-like anchor, then forward through the
+      // member chunks until the next same-level heading. Bounded so a
+      // heading-dense document cannot explode the candidate pool. Downstream
+      // truncation stages treat each region as one unit and never split it.
+      // Two heading tiers: CHAPTER-level headings (（四）/ 一、/ 第X章) delimit
+      // section regions; CLAUSE-level numbering (12. / 第X条) stays inside the
+      // region. Treating clauses as headings would shatter the section.
+      const sectionStopRe = /^(?:（[一二三四五六七八九十百]{1,3}）|[一二三四五六七八九十百]{1,3}、|第[一二三四五六七八九十百0-9]+[章节])/;
+      const sectionHeadRe = sectionStopRe;
+      const sectionExpansionMax = Math.max(2, Number(process.env.RETRIEVAL_SECTION_EXPANSION_MAX || 12));
+      let regionBudget = sectionExpansionMax;
+      for (const selected of topSelected.slice(0, 4)) {
+        if (regionBudget <= 0) break;
+        const anchor = selected.chunk;
+        const ordered = allDocChunks.filter((x: any) => x.documentId === anchor.documentId);
+        if (!ordered.length) continue;
+        const anchorIdx = ordered.findIndex((x: any) => x.id === anchor.id);
+        if (anchorIdx < 0) continue;
+        const isHeadingish = (x: any) => {
+          const t = String(x?.content || "").trim();
+          return t.length > 0 && t.length <= 60 && sectionHeadRe.test(t);
+        };
+        // Walk backward to the region anchor (nearest heading-like chunk).
+        let startIdx = anchorIdx;
+        let back = 0;
+        while (startIdx > 0 && back < 6 && !isHeadingish(ordered[startIdx])) {
+          startIdx--; back++;
+        }
+        if (!isHeadingish(ordered[startIdx])) startIdx = anchorIdx;
+        const groupKey = `${anchor.documentId}:${ordered[startIdx].ord}`;
+        // Include the anchor and all member chunks until the next heading.
+        const region: any[] = [ordered[startIdx]];
+        for (let i = startIdx + 1; i < ordered.length && region.length < 10; i++) {
+          const t = String(ordered[i].content || "").trim();
+          if (sectionStopRe.test(t)) break;
+          region.push(ordered[i]);
+        }
+        for (const member of region) {
+          if (regionBudget <= 0) break;
+          if (!expandedChunkIds.has(member.id)) {
+            expandedChunkIds.add(member.id);
+            expandedChunks.push(member);
+            chunkScores.set(member.id, Math.max(1, (selected.score || 1) * 0.6));
+            regionBudget -= 1;
+          }
+          (member as any).sectionGroup = groupKey;
+          (anchor as any).sectionGroup = groupKey;
+        }
+      }
+
       const chnNums = ["", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"];
       const results = expandedChunks.map((c: any) => {
         const meta = c.metadata || {};
@@ -1057,6 +1112,7 @@ export class ChatService {
           articleNo: meta.article_no ? `第${meta.article_no}条` : undefined,
           evidence,
           score: Number(normalizedScore.toFixed(3)),
+          sectionGroup: (c as any).sectionGroup,
           bbox: meta.bbox,
           previewUrl: buildDocumentPreviewUrl(c.kbId, c.documentId, {
             page: meta.page_no || meta.pageNumber || c.ord + 1,
@@ -1084,6 +1140,7 @@ export class ChatService {
               evidence: hit.evidence,
               score: hit.score,
               bbox: undefined,
+              sectionGroup: undefined,
               previewUrl: hit.previewUrl,
             });
           }
@@ -1560,7 +1617,8 @@ export class ChatService {
                 context: fb.evidence,
                 score: typeof fb.score === "number" ? fb.score : 0.95,
                 docTitle: fb.title,
-                bbox: fb.bbox,
+                sectionGroup: (fb as any).sectionGroup,
+          bbox: fb.bbox,
           previewUrl: fb.previewUrl,
               } as any);
             }
@@ -1582,7 +1640,8 @@ export class ChatService {
               context: fb.evidence,
               score: Math.max(0.70, 0.95 - idx * 0.02),
               docTitle: fb.title,
-              bbox: fb.bbox,
+              sectionGroup: (fb as any).sectionGroup,
+          bbox: fb.bbox,
           previewUrl: fb.previewUrl,
             })),
             reranked: true,
@@ -1767,6 +1826,7 @@ export class ChatService {
           context: fb.evidence,
           score: Math.max(0.70, 0.95 - idx * 0.02),
           docTitle: fb.title,
+          sectionGroup: (fb as any).sectionGroup,
           bbox: fb.bbox,
           previewUrl: fb.previewUrl,
         }));
@@ -1939,7 +1999,7 @@ export class ChatService {
     });
     const beforeGate = queryResult.citations?.length || 0;
     trace.start("document_diversity", "证据多样性配额", "限制单一文档可占用的证据席位，防止高体量近重复文档挤占其它文档证据");
-    queryResult = this.applyDocumentDiversity(queryResult, retrieval.breadth);
+    queryResult = this.applyDocumentDiversity(queryResult, retrieval.breadth, retrieval.query || question);
     trace.finish(
       "document_diversity",
       queryResult.documentDiversity ? "warning" : "success",
@@ -1949,7 +2009,7 @@ export class ChatService {
       { ...(queryResult.documentDiversity || {}), after: queryResult.citations?.length || 0 },
     );
     trace.start("evidence_gate", "证据收敛", "仅保留能直接支持当前问题的证据");
-    queryResult = this.applyFocusedEvidenceGate(queryResult, retrieval.breadth);
+    queryResult = this.applyFocusedEvidenceGate(queryResult, retrieval.breadth, retrieval.query || question);
     const afterGate = queryResult.citations?.length || 0;
     trace.finish(
       "evidence_gate",
@@ -2734,21 +2794,32 @@ ${compiledTruthContext}`;
       // Sort strictly by relevance score descending
       scoredItems.sort((a, b) => b.score - a.score);
 
-      const topScore = scoredItems[0].score;
-      // Filter out low relevance citations:
-      const filtered = scoredItems
-        .filter((item, idx) => {
-          if (idx === 0) return true; // Always keep the best hit
-          // A broad query is a coverage request. Reranker score scales differ
-          // across providers (some valid scores are < 0.01), so never turn a
-          // score calibration difference into silent document loss. GBrain's
-          // candidate limit and final model evidence gate remain in effect.
-          if (breadth) return idx < 40;
-          if (/(?:哪些章|所有章|全部章|章名|目录)/.test(question)) return idx < 20;
-          if (topScore > 0.15 && item.score < 0.08) return false;
-          if (topScore > 0.3 && item.score < topScore * 0.25) return false;
-          return idx < 4; // Cap focused queries at top 4
-        })
+      // Group-preserving truncation: structural section groups are kept or
+      // dropped as a unit (never split mid-section); loose citations are
+      // truncated by rank as before. Score scales differ across rerank
+      // providers, so rank caps — not absolute floors — do the trimming here.
+      const cap = breadth ? 40 : /(?:哪些章|所有章|全部章|章名|目录)/.test(question) ? 20 : 8;
+      const hardBound = breadth ? 60 : 24;
+      const groups = new Map<string, { members: typeof scoredItems; best: number }>();
+      scoredItems.forEach((item, idx) => {
+        const g = typeof item.citation?.sectionGroup === "string" && item.citation.sectionGroup
+          ? item.citation.sectionGroup
+          : `__single_${idx}`;
+        const entry = groups.get(g) || { members: [], best: -Infinity };
+        entry.members.push(item);
+        entry.best = Math.max(entry.best, item.score);
+        groups.set(g, entry);
+      });
+      const orderedGroups = [...groups.values()].sort((a, b) => b.best - a.best);
+      const keptItems: typeof scoredItems = [];
+      let total = 0;
+      for (const group of orderedGroups) {
+        if (keptItems.length > 0 && total >= cap) break;
+        if (total >= hardBound) break;
+        keptItems.push(...group.members);
+        total += group.members.length;
+      }
+      const filtered = keptItems
         .map((item) => ({ ...item.citation, rerankScore: item.score }));
 
       const answer = filtered
@@ -2779,22 +2850,24 @@ ${compiledTruthContext}`;
    * corpus actually answers. Score order is preserved; breadth mode allows a
    * higher quota since enumeration benefits from wider per-document coverage.
    */
-  private applyDocumentDiversity(result: any, breadth = false): any {
+  private applyDocumentDiversity(result: any, breadth = false, question = ""): any {
     const citations = Array.isArray(result?.citations) ? result.citations : [];
     if (citations.length <= 1) return result;
     const isChapterQuery = citations.some((c: any) =>
       /(?:第[一二三四五六七八九十百0-9]+章|##\s*附则)/.test(c.evidence || c.snippet || c.context || "")
     );
-    const maxPerDoc = isChapterQuery
+    // Structural section groups count as ONE unit: a section recalled by its
+    // heading is kept whole, so quota can no longer split a section apart.
+    const maxGroups = isChapterQuery
       ? Math.max(15, Number(process.env.RETRIEVAL_MAX_EVIDENCE_PER_DOC || 15))
       : Math.max(1, Number(process.env.RETRIEVAL_MAX_EVIDENCE_PER_DOC || (breadth ? 8 : 4)));
     const perDoc = new Map<string, number>();
     const kept: any[] = [];
     let demoted = 0;
     for (const citation of citations) {
-      const key = String(citation.docId || citation.topic || "unknown");
+      const key = String(citation.sectionGroup || citation.docId || citation.topic || "unknown");
       const count = perDoc.get(key) || 0;
-      if (count >= maxPerDoc) {
+      if (count >= maxGroups) {
         demoted++;
         continue;
       }
@@ -2807,7 +2880,7 @@ ${compiledTruthContext}`;
       citations: kept,
       topics: kept.map((citation: any) => citation.topic),
       answer: kept.map((citation: any) => citation.context || citation.snippet).filter(Boolean).join("\n\n"),
-      documentDiversity: { demoted, maxPerDoc },
+      documentDiversity: { demoted, maxPerDoc: maxGroups },
     };
   }
 
@@ -2817,14 +2890,22 @@ ${compiledTruthContext}`;
    * focused question should not feed unrelated low-score documents to the
    * answer model. The gate is score/evidence based and language agnostic.
    */
-  private applyFocusedEvidenceGate(result: any, breadth = false): any {
+  private applyFocusedEvidenceGate(result: any, breadth = false, question = ""): any {
     if (breadth) return result;
+    // Enumeration questions need the full section as evidence; the score
+    // neighbourhood floor would otherwise strip later clauses of the section.
+    if (/有哪些|哪些条款|哪些规定|哪些措施|哪些内容|列举|列出|包括哪些|都有哪些|包含哪些/.test(question)) return result;
     const citations = Array.isArray(result?.citations) ? result.citations : [];
     if (citations.length < 2) return result;
     const isChapterQuery = citations.some((c: any) =>
       /(?:第[一二三四五六七八九十百0-9]+章|##\s*附则)/.test(c.evidence || c.snippet || c.context || "")
     );
     if (isChapterQuery) return result;
+    // Structural section members are exempt from the score floor: the section
+    // was recalled as a unit, and later clauses of it are part of the answer
+    // even when their individual rerank score trails the anchor.
+    const hasStructuralGroup = citations.some((c: any) => typeof c.sectionGroup === "string" && c.sectionGroup);
+    if (hasStructuralGroup) return result;
     const scored = citations.map((citation: any, index: number) => ({
       citation,
       index,
