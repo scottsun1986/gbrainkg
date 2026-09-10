@@ -17,6 +17,9 @@ import { estimateTokens } from "./context-budget";
 import { GraphRagService } from "../graph-rag/graph-rag.service";
 import { SemanticCacheService } from "./semantic-cache.service";
 import { AgenticRagService } from "./agentic-rag.service";
+import { RaptorService } from "../raptor/raptor.service";
+import { EmbeddingService } from "../embedding/embedding.service";
+import { buildDocumentPreviewUrl } from "../ingestion/preview-url";
 
 type RetrievalRequest = { query: string; breadth: boolean; operation: 'search' | 'query' };
 
@@ -25,6 +28,29 @@ function stripInvalidCitationMarkers(value: string, citationCount: number): stri
     const index = Number(rawIndex);
     return index >= 1 && index <= citationCount ? full : '';
   });
+}
+
+/**
+ * Derive the semantic-cache scope key from the exact source set selected for
+ * this request plus the ACL/knowledge epochs. The previous key used only the
+ * user's full visible-source fingerprint, so a query narrowed to a subset of
+ * knowledge bases could collide with (and be answered from) a cached answer
+ * produced over a different scope. Embedding the selected sources and epochs
+ * makes cache entries scope-exact and revokes them on any permission change.
+ */
+export function semanticCacheScopeKey(
+  sourceKeys: string[],
+  aclEpoch: number,
+  knowledgeEpoch: number,
+): string {
+  // The key version salt is bumped whenever the retrieval/answer pipeline
+  // changes materially, so cached answers produced by older logic are not
+  // replayed after an upgrade. Override with SEMANTIC_CACHE_KEY_VERSION.
+  const version = process.env.SEMANTIC_CACHE_KEY_VERSION || 'v3';
+  return createHash('sha256')
+    .update(`${version}|${[...sourceKeys].sort().join(',')}|acl:${aclEpoch}|kb:${knowledgeEpoch}`)
+    .digest('hex')
+    .slice(0, 32);
 }
 
 @Injectable()
@@ -44,6 +70,8 @@ export class ChatService {
     @Optional() private readonly semanticCacheService?: SemanticCacheService,
     @Optional() private readonly agenticRagService?: AgenticRagService,
     @Optional() private readonly graphRagService?: GraphRagService,
+    @Optional() private readonly raptorService?: RaptorService,
+    @Optional() private readonly embeddingService?: EmbeddingService,
   ) {
     this.gbrain = gbrainAdapter ?? getSharedBrainRepoAdapter();
   }
@@ -210,7 +238,7 @@ export class ChatService {
           version: d.version,
           evidence: `【${d.kb?.name || "默认知识库"}】《${d.title}》`,
           score: 1.0,
-          previewUrl: `/api/v1/ingestion/documents/${d.id}/preview`,
+          previewUrl: buildDocumentPreviewUrl(d.kbId, d.id),
         })),
       };
     }
@@ -229,10 +257,16 @@ export class ChatService {
     const fallbackChunksPromise = this.searchChunksFallback(scope, query, limit).catch(() => []);
 
     // 2. Query GBrain federated search concurrently
+    const agentGbrainAbort = new AbortController();
+    const agentGbrainTimer = setTimeout(
+      () => agentGbrainAbort.abort(),
+      Number(process.env.GBRAIN_QUERY_HARD_TIMEOUT_MS || "20000"),
+    );
+    agentGbrainTimer.unref?.();
     const gbrainSearchPromise = (
       sourceRefs.length > 1
-        ? this.gbrain.queryMany(sourceRefs, query, { breadth: false, operation: "search" })
-        : this.gbrain.query(sourceRefs[0] || brainRepo.gitRepoUrl, query, { breadth: false, operation: "search" })
+        ? this.gbrain.queryMany(sourceRefs, query, { breadth: false, operation: "search", signal: agentGbrainAbort.signal })
+        : this.gbrain.query(sourceRefs[0] || brainRepo.gitRepoUrl, query, { breadth: false, operation: "search", signal: agentGbrainAbort.signal })
     ).catch((err) => {
       this.logger.warn(`GBrain search error: ${err.message}`);
       return { topics: [], answer: "", citations: [], reranked: false } as BrainQueryResult;
@@ -241,8 +275,12 @@ export class ChatService {
     const fallbackChunks = await fallbackChunksPromise;
     let queryResult: BrainQueryResult;
     if (fallbackChunks.length > 0) {
-      const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000));
-      const racedGBrain = await Promise.race([gbrainSearchPromise, timeoutPromise]);
+      const raceTimer = setTimeout(() => agentGbrainAbort.abort(), 2000);
+      const racedGBrain = await Promise.race([
+        gbrainSearchPromise,
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)),
+      ]);
+      clearTimeout(raceTimer);
       if (racedGBrain && racedGBrain.citations && racedGBrain.citations.length > 0) {
         queryResult = racedGBrain;
       } else {
@@ -261,7 +299,8 @@ export class ChatService {
             context: fb.evidence,
             score: Math.max(0.70, 0.95 - idx * 0.02),
             docTitle: fb.title,
-            previewUrl: fb.previewUrl,
+            bbox: fb.bbox,
+          previewUrl: fb.previewUrl,
           })),
           reranked: true,
         };
@@ -293,7 +332,7 @@ export class ChatService {
         articleNo: c.articleNo || undefined,
         evidence: String(c.evidence || ""),
         score: typeof c.score === "number" ? c.score : undefined,
-        previewUrl: docId ? `/api/v1/ingestion/documents/${docId}/preview` : null,
+        previewUrl: buildDocumentPreviewUrl(c.kbId, docId),
       };
     });
 
@@ -566,10 +605,67 @@ export class ChatService {
     }
   }
 
+  /**
+   * Chunk-level semantic retrieval over Chunk.embedding (pgvector). Applies the
+   * knowledge-base ACL and published-document filter in SQL (pre-filtering), so
+   * unauthorized chunks can never enter the candidate set. Returns [] when no
+   * embedding route is configured or on any failure.
+   */
+  private async searchChunksByVector(
+    scope: string[],
+    query: string,
+    limit: number,
+  ): Promise<Array<{
+    id: string;
+    documentId: string;
+    kbId: string;
+    ord: number;
+    content: string;
+    metadata: any;
+    document: { title: string; version: number };
+    score: number;
+  }>> {
+    if (!this.embeddingService?.isEnabled() || !scope.length) return [];
+    const vector = await this.embeddingService.embedOne(query);
+    if (!vector || !vector.length) return [];
+    const literal = `[${vector.join(',')}]`;
+    const minScore = Number(process.env.VECTOR_MIN_SCORE || 0.30);
+    try {
+      const rows = await this.prisma.$queryRaw<any[]>`
+        SELECT c.id, c."documentId", c."kbId", c.ord, c.content, c.metadata,
+               d.title AS "docTitle", d.version AS "docVersion",
+               (1 - (c.embedding <=> ${literal}::vector)) AS similarity
+        FROM "Chunk" c
+        JOIN "Document" d ON d.id = c."documentId"
+        WHERE c."kbId" = ANY(${scope}::uuid[])
+          AND c.embedding IS NOT NULL
+          AND d.status = 'published'
+        ORDER BY c.embedding <=> ${literal}::vector
+        LIMIT ${limit}
+      `;
+      return rows
+        .map((row) => ({
+          id: String(row.id),
+          documentId: String(row.documentId),
+          kbId: String(row.kbId),
+          ord: Number(row.ord),
+          content: String(row.content || ''),
+          metadata: row.metadata,
+          document: { title: String(row.docTitle || ''), version: Number(row.docVersion || 1) },
+          score: Number(row.similarity),
+        }))
+        .filter((row) => Number.isFinite(row.score) && row.score >= minScore);
+    } catch (err) {
+      this.logger.debug(`Vector search unavailable: ${err instanceof Error ? err.message : String(err)}`);
+      return [];
+    }
+  }
+
   async searchChunksFallback(
     scope: string[],
     query: string,
     limit = 15,
+    extraQueries: string[] = [],
   ): Promise<
     Array<{
       documentId: string | null;
@@ -580,6 +676,7 @@ export class ChatService {
       articleNo?: string;
       evidence: string;
       score?: number;
+      bbox?: { x: number; y: number; w: number; h: number; page?: number };
       previewUrl: string | null;
     }>
   > {
@@ -588,24 +685,41 @@ export class ChatService {
     }
 
     const domainTerms = await this.loadScopeDomainTerms(scope);
-    const keywords = this.extractSearchKeywords(query, domainTerms);
+    // Agentic sub-queries and HyDE passages are additional recall arms: union
+    // their keywords with the primary query so complex/compound questions can
+    // hit clauses that a single keyword extraction would miss.
+    const variantQueries = [query, ...extraQueries.filter((q) => typeof q === "string" && q.trim().length >= 2)];
+    const keywords = Array.from(new Set(
+      variantQueries.flatMap((variant) => this.extractSearchKeywords(variant, domainTerms)),
+    )).slice(0, 40);
     if (!keywords.length) {
       return [];
     }
 
+    // Semantic arm: embed the query and retrieve nearest chunks by cosine
+    // distance over Chunk.embedding (pgvector/HNSW). Runs concurrently with the
+    // keyword arms and fails open when embeddings are not configured.
+    const vectorHitsPromise = this.searchChunksByVector(
+      scope,
+      query,
+      Math.max(limit * 3, 40),
+    ).catch(() => []);
+
     try {
       const isChapterListing = /哪些章|所有章|全部章|章名|一共有哪些章/.test(query);
 
-      // Tier 1: High Specificity Tokens (exact identifiers, codes, anchors)
+      // Tier 1: High Specificity Tokens (structural identifiers only). Domain
+      // vocabulary is deployment-specific and comes from KnowledgeBase.domainTerms
+      // (see the scoring boost below) instead of a hardcoded application list.
       const highPriorityTokens = keywords.filter((kw) =>
         /[\u0370-\u03FF]/.test(kw) || // Greek letters like ΨOmega-7
         /^[A-Za-z0-9]+-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(kw) || // EQ-0077, PRD-2026-8899, SUM-2026-5566, BIGDOC-VERIFY, WP-2026-R9
         /^EMP\d+$/i.test(kw) || // EMP00077
-        /第[0-9一二三四五六七八九十百]+[条款章节]/.test(kw) ||
-        /激光陀螺仪|标定周期|禁飞区|违规起降|施行日期|特种设备|主备切换|结业考核|激活码|验证码|总预算|平均响应时间|解除劳动合同|通报批评|汇总表|汇总|产品编号|设备编号|SUM-/.test(kw),
+        /第[0-9一二三四五六七八九十百]+[条款章节]/.test(kw),
       );
 
       const chunkMap = new Map<string, any>();
+      const vectorScoreById = new Map<string, number>();
 
       // 1. Query high-priority tokens first (exact match guarantee, avoids swamping by boilerplate)
       if (highPriorityTokens.length > 0) {
@@ -671,9 +785,10 @@ export class ChatService {
         chChunks.forEach((c: any) => chunkMap.set(c.id, c));
       }
 
+      const stopGeneralTokens = new Set(["记录", "表中", "内容", "部分", "情况", "要求", "相关", "规定", "文档", "系统", "什么", "怎么", "如何"]);
+
       // 3. Query general keywords (fill up to limit * 3)
       if (chunkMap.size < limit * 3) {
-        const stopGeneralTokens = new Set(["记录", "表中", "内容", "部分", "情况", "要求", "相关", "规定", "文档", "系统"]);
         const generalTokens = keywords
           .filter((kw) => !highPriorityTokens.includes(kw) && !stopGeneralTokens.has(kw))
           .slice(0, 25);
@@ -698,6 +813,54 @@ export class ChatService {
           });
           gChunks.forEach((c: any) => chunkMap.set(c.id, c));
         }
+      }
+
+      // 4. Title-affinity recall. Across a wide multi-KB scope a small but
+      // correct document can be crowded out by large or repetitive documents
+      // whose generic wording scores high on almost any semantic query (e.g.
+      // a specific 考勤 clause losing to a long generic planning document).
+      // Pull in published documents whose title contains a distinctive query
+      // term so the named target document always enters the candidate set.
+      const titleTokens = keywords
+        .filter((kw) => kw.length >= 2 && kw.length <= 12 && !stopGeneralTokens.has(kw) && !/^第[一二三四五六七八九十百0-9]+[章节条款]/.test(kw))
+        .slice(0, 6);
+      if (titleTokens.length > 0 && chunkMap.size < limit * 6) {
+        const affinityDocs = await (this.prisma as any).document.findMany({
+          where: {
+            kbId: { in: scope },
+            status: "published",
+            OR: titleTokens.map((kw) => ({ title: { contains: kw, mode: "insensitive" } })),
+          },
+          select: { id: true },
+          take: 20,
+        });
+        const affinityDocIds = affinityDocs.map((d: any) => d.id);
+        if (affinityDocIds.length > 0) {
+          const aChunks = await (this.prisma as any).chunk.findMany({
+            where: { kbId: { in: scope }, documentId: { in: affinityDocIds } },
+            select: {
+              id: true,
+              documentId: true,
+              kbId: true,
+              ord: true,
+              content: true,
+              metadata: true,
+              document: { select: { title: true, version: true } },
+            },
+            orderBy: { ord: "asc" },
+            take: Math.max(limit * 4, 120),
+          });
+          aChunks.forEach((c: any) => {
+            if (!chunkMap.has(c.id)) chunkMap.set(c.id, c);
+          });
+        }
+      }
+
+      // Merge the semantic arm into the candidate pool.
+      const vectorHits = await vectorHitsPromise;
+      for (const hit of vectorHits) {
+        vectorScoreById.set(hit.id, hit.score);
+        if (!chunkMap.has(hit.id)) chunkMap.set(hit.id, hit);
       }
 
       const allFound = Array.from(chunkMap.values());
@@ -728,6 +891,21 @@ export class ChatService {
           if (docTitle.includes(lowKw)) {
             score += 5.0;
           }
+        }
+
+        // Semantic arm contribution: a high cosine similarity can surface a
+        // chunk that shares no literal keyword with the question.
+        const vectorSim = vectorScoreById.get(c.id);
+        if (typeof vectorSim === "number") {
+          score += vectorSim * Number(process.env.VECTOR_SCORE_WEIGHT || 30);
+        }
+
+        // KB-configured domain terms act as high-priority anchors. This
+        // replaces the former hardcoded application-side vocabulary; admins
+        // maintain per-KB terms via knowledgeBase.domainTerms.
+        for (const term of domainTerms) {
+          const normalized = String(term || "").toLowerCase();
+          if (normalized && text.includes(normalized)) score += 25.0;
         }
 
         if (isChapterListing && /(?:##\s*第[一二三四五六七八九十百0-9]+章|##\s*附则)/.test(c.content)) {
@@ -785,7 +963,13 @@ export class ChatService {
 
       if (!topSelected.length) return [];
 
-      const docIds = Array.from(new Set(topSelected.map((s: any) => s.chunk.documentId)));
+      // Bound the neighbor-expansion load. Previously every chunk of every
+      // matched document was fetched with no limit, so a single multi-megabyte
+      // document could exhaust memory and latency. Cap both the number of
+      // expanded documents and the chunks pulled per expansion.
+      const maxExpandDocs = Math.max(1, Number(process.env.RETRIEVAL_MAX_EXPAND_DOCS || 8));
+      const maxDocChunks = Math.max(200, Number(process.env.RETRIEVAL_MAX_DOC_CHUNKS || 3000));
+      const docIds = Array.from(new Set(topSelected.map((s: any) => s.chunk.documentId))).slice(0, maxExpandDocs);
       const allDocChunks = await (this.prisma as any).chunk.findMany({
         where: { documentId: { in: docIds } },
         select: {
@@ -798,6 +982,7 @@ export class ChatService {
           document: { select: { title: true, version: true } },
         },
         orderBy: { ord: "asc" },
+        take: maxDocChunks,
       });
 
       const chunkByOrdAndDoc = new Map<string, any>();
@@ -854,7 +1039,7 @@ export class ChatService {
       }
 
       const chnNums = ["", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"];
-      return expandedChunks.map((c: any) => {
+      const results = expandedChunks.map((c: any) => {
         const meta = c.metadata || {};
         const chn = chnNums[meta.chapter_no] || meta.chapter_no || "";
         const chPrefix = chn ? `【第${chn}章】` : "";
@@ -872,9 +1057,41 @@ export class ChatService {
           articleNo: meta.article_no ? `第${meta.article_no}条` : undefined,
           evidence,
           score: Number(normalizedScore.toFixed(3)),
-          previewUrl: `/api/v1/ingestion/documents/${c.documentId}/preview?page=${meta.page_no || meta.pageNumber || c.ord + 1}&clause=${encodeURIComponent(artPrefix || "")}&anchor=${encodeURIComponent((c.content || "").slice(0, 30))}`,
+          bbox: meta.bbox,
+          previewUrl: buildDocumentPreviewUrl(c.kbId, c.documentId, {
+            page: meta.page_no || meta.pageNumber || c.ord + 1,
+            clause: artPrefix || "",
+            anchor: (c.content || "").slice(0, 30),
+          }),
         };
       });
+
+      // RAPTOR macro arm: add chapter/document-level summaries for global
+      // questions (or to fill an otherwise empty result set). Kept to a small
+      // number so precise clause evidence always dominates focused lookups.
+      const wantsMacro = /总结|概述|综述|全景|总体|架构|框架|目录|有哪些章|主要(?:内容|讲|说)|讲什么|核心(?:内容|思想)/.test(query);
+      if (this.raptorService?.isEnabled() && (wantsMacro || results.length < limit)) {
+        try {
+          const raptorHits = await this.raptorService.search(scope, query, Math.min(3, Math.max(1, limit - results.length + 2)));
+          for (const hit of raptorHits) {
+            results.push({
+              documentId: hit.documentId,
+              kbId: hit.kbId,
+              title: hit.title,
+              version: undefined,
+              pageNo: undefined,
+              articleNo: undefined,
+              evidence: hit.evidence,
+              score: hit.score,
+              bbox: undefined,
+              previewUrl: hit.previewUrl,
+            });
+          }
+        } catch (raptorErr) {
+          this.logger.debug(`RAPTOR arm omitted: ${raptorErr instanceof Error ? raptorErr.message : String(raptorErr)}`);
+        }
+      }
+      return results;
     } catch (err) {
       this.logger.warn(`searchChunksFallback error: ${err}`);
       return [];
@@ -1005,35 +1222,60 @@ export class ChatService {
       selectedSourceKeys.every((key, index) => key === userScopeSourceKeys.slice().sort()[index]);
     const forceQueryRefresh = Boolean(sourceFreshness?.rebuilt);
 
+    const cacheScopeKey = semanticCacheScopeKey(
+      selectedSourceKeys,
+      userScope.aclEpoch,
+      userScope.knowledgeEpoch,
+    );
     if (this.semanticCacheService && !forceQueryRefresh) {
       try {
         const cachedHit = await this.semanticCacheService.lookup(
           question,
-          userScope.fingerprint,
+          cacheScopeKey,
           userScope.knowledgeEpoch,
         );
         if (cachedHit) {
-          trace.start("semantic_cache", "语义缓存命中", `命中相似问题缓存 (相似度: ${Number(cachedHit.similarity || 1).toFixed(3)})`);
-          subscriber.next({
-            data: { type: "delta", content: cachedHit.responseContent, delta: cachedHit.responseContent },
-          });
-          if (Array.isArray(cachedHit.citations)) {
-            cachedHit.citations.forEach((cit, citIndex) => {
+          // Re-validate the cached citations against the live document/KB ACL
+          // before replaying. This closes the window where a document is
+          // unpublished or a grant is revoked without the scope epoch having
+          // been bumped yet. If anything no longer passes, bypass the cache
+          // and fall through to a fresh retrieval.
+          const cachedCitations = Array.isArray(cachedHit.citations) ? cachedHit.citations : [];
+          const revalidated = await this.filterQueryResultByCurrentPermission(
+            { citations: cachedCitations },
+            visibleKbs,
+            {
+              scopeId: userScope.scopeId,
+              sourceKeys: userScope.sourceKeys,
+              aclEpoch: userScope.aclEpoch,
+              knowledgeEpoch: userScope.knowledgeEpoch,
+            },
+          );
+          if (revalidated.citations.length !== cachedCitations.length) {
+            this.logger.warn(
+              "Semantic cache entry failed live ACL re-validation; bypassing cache and re-retrieving.",
+            );
+          } else {
+            trace.start("semantic_cache", "语义缓存命中", `命中相似问题缓存 (相似度: ${Number(cachedHit.similarity || 1).toFixed(3)})`);
+            subscriber.next({
+              data: { type: "delta", content: cachedHit.responseContent, delta: cachedHit.responseContent },
+            });
+            cachedCitations.forEach((cit, citIndex) => {
               subscriber.next({
                 data: { type: "citation", index: citIndex + 1, timeline_entry: this.normalizeTimelineEntry(cit) },
               });
             });
+            trace.finish("semantic_cache", "success", "直接复用经权限校验的缓存回答", {
+              cacheId: cachedHit.id,
+              hitCount: cachedHit.hitCount,
+              similarity: cachedHit.similarity,
+            });
+            subscriber.next({
+              data: { type: "done", total_tokens: 0, latency_ms: Date.now() - retrievalStartedAt },
+            });
+            subscriber.complete();
+            return;
           }
-          trace.finish("semantic_cache", "success", "直接复用经权限校验的缓存回答", {
-            cacheId: cachedHit.id,
-            hitCount: cachedHit.hitCount,
-            similarity: cachedHit.similarity,
-          });
-          subscriber.next({
-            data: { type: "done", total_tokens: 0, latency_ms: Date.now() - retrievalStartedAt },
-          });
-          subscriber.complete();
-          return;
         }
       } catch (cacheErr) {
         this.logger.debug(`Semantic cache lookup error: ${cacheErr instanceof Error ? cacheErr.message : String(cacheErr)}`);
@@ -1062,20 +1304,35 @@ export class ChatService {
       signal,
     );
     let agenticComplexity = 'simple';
+    let agenticSubQueries: string[] = [];
+    let agenticExpansions: string[] = [];
+    let hydePassage: string | null = null;
     if (this.agenticRagService) {
       try {
-        agenticComplexity = await this.agenticRagService.classifyQuery(retrieval.query);
+        const plan = await this.agenticRagService.planQuery(retrieval.query);
+        agenticComplexity = plan.complexity;
+        agenticExpansions = plan.expansions || [];
         if (agenticComplexity !== 'simple') {
           retrieval.breadth = true;
+          agenticSubQueries = plan.subQueries.filter((q) => q.trim() && q.trim() !== retrieval.query.trim());
         }
+        hydePassage = plan.hyde;
       } catch (e) {}
     }
-    trace.finish("query_rewrite", "success", `使用 ${retrieval.operation} / ${retrieval.breadth ? "广覆盖" : "聚焦"} 模式${agenticComplexity !== 'simple' ? ` (多跳路由: ${agenticComplexity})` : ''}`, {
+    trace.finish("query_rewrite", "success", `使用 ${retrieval.operation} / ${retrieval.breadth ? "广覆盖" : "聚焦"} 模式${agenticComplexity !== 'simple' ? ` (多跳路由: ${agenticComplexity})` : ''}${agenticSubQueries.length ? `，分解 ${agenticSubQueries.length} 个子问题` : ''}${agenticExpansions.length ? `，扩展 ${agenticExpansions.length} 个检索词` : ''}${hydePassage ? '，启用 HyDE' : ''}`, {
       rewrittenQuery: retrieval.query,
       operation: retrieval.operation,
       breadth: retrieval.breadth,
       complexity: agenticComplexity,
+      subQueries: agenticSubQueries,
+      expansions: agenticExpansions,
+      hyde: Boolean(hydePassage),
     });
+    // Extra recall arms from the agentic plan: LLM-expanded retrieval terms,
+    // decomposed sub-questions, and the HyDE passage. Fed to the keyword/DB
+    // fallback so vocabulary gaps (e.g. 夏天→夏令时) and compound questions
+    // are recovered without any hardcoded synonym table.
+    const recallVariants = [...agenticExpansions, ...agenticSubQueries, ...(hydePassage ? [hydePassage] : [])];
     // Personal memory is a separate, private GBrain retrieval arm. It never
     // enters a shared Source and is injected with lower precedence than the
     // currently authorized document evidence. On the first turn, use the
@@ -1139,6 +1396,21 @@ export class ChatService {
 
     let retrievalEscalated = false;
     let queryResult: BrainQueryResult;
+    // A per-request abort controller bounds every GBrain subprocess call.
+    // Without it, losing the fallback race left CLI children running until
+    // their 180s command timeout, holding shared process-pool slots and
+    // eventually starving concurrent queries.
+    const gbrainAbort = new AbortController();
+    const linkRequestAbort = () => gbrainAbort.abort();
+    if (signal) {
+      if (signal.aborted) gbrainAbort.abort();
+      else signal.addEventListener("abort", linkRequestAbort, { once: true });
+    }
+    const gbrainHardTimer = setTimeout(
+      () => gbrainAbort.abort(),
+      Number(process.env.GBRAIN_QUERY_HARD_TIMEOUT_MS || "20000"),
+    );
+    gbrainHardTimer.unref?.();
     let rawCandidateCount = 0;
     let topEvidence = "";
     let initialEvidenceAssessment: { weak: boolean; shouldEscalate: boolean; reason: string; evidence?: string; topScore?: number; scoreFloor?: number } = { weak: false, shouldEscalate: false, reason: "" };
@@ -1231,7 +1503,7 @@ export class ChatService {
       });
 
       // 1. Fast-Path: Query PostgreSQL chunks concurrently (<10ms)
-      const fallbackChunksPromise = this.searchChunksFallback(scope, question, 15).catch((err) => {
+      const fallbackChunksPromise = this.searchChunksFallback(scope, question, 15, recallVariants).catch((err) => {
         this.logger.warn(`searchChunksFallback early promise error: ${err.message}`);
         return [];
       });
@@ -1242,12 +1514,13 @@ export class ChatService {
           ? this.gbrain.queryMany(sourceRefs, retrieval.query, {
               breadth: retrieval.breadth,
               operation: effectiveOp,
+              signal: gbrainAbort.signal,
               ...(forceQueryRefresh ? { forceRefresh: true } : {}),
             })
           : this.gbrain.query(
               sourceRefs[0] || brainRepo.gitRepoUrl,
               retrieval.query,
-              { breadth: retrieval.breadth, operation: effectiveOp, signal, ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
+              { breadth: retrieval.breadth, operation: effectiveOp, signal: gbrainAbort.signal, ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
             )
       ).catch((err) => {
         this.logger.warn(`GBrain search error: ${err.message}`);
@@ -1257,9 +1530,14 @@ export class ChatService {
       const fallbackChunks = await fallbackChunksPromise;
       if (fallbackChunks.length > 0) {
         // High-precision DB chunks are already available in milliseconds.
-        // Race GBrain with a bounded 2500ms window to avoid blocking 40-80s on 22 empty CLI processes.
-        const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500));
-        const racedGBrain = await Promise.race([gbrainSearchPromise, timeoutPromise]);
+        // Race GBrain with a bounded 2500ms window and genuinely abort the CLI
+        // subprocess if it loses, so the process-pool slot is released.
+        const raceTimer = setTimeout(() => gbrainAbort.abort(), 2500);
+        const racedGBrain = await Promise.race([
+          gbrainSearchPromise,
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
+        ]);
+        clearTimeout(raceTimer);
 
         if (racedGBrain && racedGBrain.citations && racedGBrain.citations.length > 0) {
           queryResult = racedGBrain;
@@ -1282,7 +1560,8 @@ export class ChatService {
                 context: fb.evidence,
                 score: typeof fb.score === "number" ? fb.score : 0.95,
                 docTitle: fb.title,
-                previewUrl: fb.previewUrl,
+                bbox: fb.bbox,
+          previewUrl: fb.previewUrl,
               } as any);
             }
           }
@@ -1303,7 +1582,8 @@ export class ChatService {
               context: fb.evidence,
               score: Math.max(0.70, 0.95 - idx * 0.02),
               docTitle: fb.title,
-              previewUrl: fb.previewUrl,
+              bbox: fb.bbox,
+          previewUrl: fb.previewUrl,
             })),
             reranked: true,
           };
@@ -1322,12 +1602,13 @@ export class ChatService {
                 ? await this.gbrain.queryMany(sourceRefs, initialCleanedQuery, {
                     breadth: retrieval.breadth,
                     operation: "search",
+                    signal: gbrainAbort.signal,
                     ...(forceQueryRefresh ? { forceRefresh: true } : {}),
                   })
                 : await this.gbrain.query(
                     sourceRefs[0] || brainRepo.gitRepoUrl,
                     initialCleanedQuery,
-                    { breadth: retrieval.breadth, operation: "search", signal, ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
+                    { breadth: retrieval.breadth, operation: "search", signal: gbrainAbort.signal, ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
                   );
             if (retryResult.citations && retryResult.citations.length > 0) {
               queryResult = retryResult;
@@ -1419,20 +1700,24 @@ export class ChatService {
     // is re-run with GBrain's broad/no-autocut profile so an exact section or
     // a better parent page has a chance to enter the evidence set.
     const evidenceAssessment = this.assessWeakEvidence(queryResult, retrieval.breadth);
-    if (evidenceAssessment.shouldEscalate && (!queryResult.citations || queryResult.citations.length === 0)) {
+    // Escalate exactly once when the first pass is weak OR produced no
+    // candidates. The previous guard additionally required zero citations,
+    // which contradicted assessWeakEvidence and made the whole branch dead.
+    if (evidenceAssessment.shouldEscalate) {
       retrievalEscalated = true;
-      trace.start("retrieval_escalation", "弱证据扩展检索", "检测到弱证据，按 GBrain 广覆盖模式扩检一次");
+      trace.start("retrieval_escalation", "弱证据扩展检索", "检测到弱证据或空结果，按 GBrain 广覆盖模式扩检一次");
       queryResult =
         sourceRefs.length > 1
           ? await this.gbrain.queryMany(sourceRefs, retrieval.query, {
               breadth: true,
               operation: "search",
+              signal: gbrainAbort.signal,
               ...(forceQueryRefresh ? { forceRefresh: true } : {}),
             })
           : await this.gbrain.query(
               sourceRefs[0] || brainRepo.gitRepoUrl,
               retrieval.query,
-              { breadth: true, operation: "search", ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
+              { breadth: true, operation: "search", signal: gbrainAbort.signal, ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
             );
       queryResult = await this.filterQueryResultByCurrentPermission(
         queryResult,
@@ -1467,7 +1752,7 @@ export class ChatService {
     // 历史文档可能在 BrainRepo 初始化前已经发布，先通过分块回退检索，若仍无可用候选再触发全量同步重试。
     if (!queryResult.answer || (queryResult.citations?.length || 0) === 0) {
       trace.start("source_reconcile_retry", "Source 回退与对账重试", "未命中候选，优先执行毫秒级 Chunk 数据库回退检索");
-      const fallbackChunks = await this.searchChunksFallback(scope, question, 15);
+      const fallbackChunks = await this.searchChunksFallback(scope, question, 15, recallVariants);
       if (fallbackChunks.length > 0) {
         queryResult.answer = fallbackChunks.map((fb) => fb.evidence).join("\n\n");
         queryResult.citations = fallbackChunks.map((fb, idx) => ({
@@ -1482,6 +1767,7 @@ export class ChatService {
           context: fb.evidence,
           score: Math.max(0.70, 0.95 - idx * 0.02),
           docTitle: fb.title,
+          bbox: fb.bbox,
           previewUrl: fb.previewUrl,
         }));
         trace.finish(
@@ -1511,12 +1797,13 @@ export class ChatService {
             ? await this.gbrain.queryMany(refreshedRefs, qTry, {
                 breadth: retrieval.breadth,
                 operation: "search",
+                signal: gbrainAbort.signal,
                 forceRefresh: true,
               })
             : await this.gbrain.query(
                 refreshedRefs[0] || brainRepo.gitRepoUrl,
                 qTry,
-                { breadth: retrieval.breadth, operation: "search", forceRefresh: true },
+                { breadth: retrieval.breadth, operation: "search", signal: gbrainAbort.signal, forceRefresh: true },
               );
           if (subResult.citations?.length) {
             queryResult = subResult;
@@ -1749,7 +2036,7 @@ export class ChatService {
       ? queryResult.citations
       : [];
 
-    trace.start("version_conflict_check", "文档版本冲突检测", "检查命中文档是否存在多版本或版本更新");
+    trace.start("version_conflict_check", "时序效力与版本裁决", "检测多版本并裁决现行有效标准");
     let versionConflictNote = "";
     if (citations.length > 0) {
       const docTitles: string[] = Array.from(new Set(citations.map((c: any) => c.docTitle).filter(Boolean))) as string[];
@@ -1760,35 +2047,96 @@ export class ChatService {
             title: { in: docTitles },
             status: "published",
           },
-          select: { id: true, title: true, version: true },
+          select: {
+            id: true,
+            title: true,
+            version: true,
+            updatedAt: true,
+            parserMetadata: true,
+            effectiveFrom: true,
+            effectiveTo: true,
+            lifecycleStatus: true,
+            supersedesDocumentId: true,
+          },
           orderBy: { version: "desc" },
         });
-        const versionsByTitle = new Map<string, number[]>();
+        // Group every published version of each title. The effective edition is
+        // chosen by lifecycle status, then effective date, then version number.
+        const versionsByTitle = new Map<string, Array<{
+          version: number;
+          updatedAt: Date;
+          effectiveDate?: string;
+          current: boolean;
+          repealed: boolean;
+        }>>();
         for (const pd of publishedDocs) {
+          const meta = (pd as any).parserMetadata || {};
+          const lifecycle = String((pd as any).lifecycleStatus || "current");
+          const effectiveFrom = (pd as any).effectiveFrom ? new Date((pd as any).effectiveFrom) : null;
+          const effectiveDate = effectiveFrom && !Number.isNaN(effectiveFrom.getTime())
+            ? effectiveFrom.toISOString().slice(0, 10)
+            : typeof meta.effective_date === "string"
+              ? meta.effective_date
+              : typeof meta.effectiveDate === "string"
+                ? meta.effectiveDate
+                : undefined;
           const list = versionsByTitle.get(pd.title) || [];
-          if (pd.version && !list.includes(pd.version)) list.push(pd.version);
-          versionsByTitle.set(pd.title, list.sort((a, b) => b - a));
+          if (!list.some((entry) => entry.version === (pd.version || 1))) {
+            const updatedAt = pd.updatedAt ? new Date(pd.updatedAt) : new Date(0);
+            list.push({
+              version: pd.version || 1,
+              updatedAt: Number.isNaN(updatedAt.getTime()) ? new Date(0) : updatedAt,
+              effectiveDate,
+              current: lifecycle === "current",
+              repealed: lifecycle === "repealed" || Boolean((pd as any).effectiveTo && new Date((pd as any).effectiveTo) < new Date()),
+            });
+          }
+          versionsByTitle.set(pd.title, list);
         }
         const conflictTitles: string[] = [];
         for (const cit of citations as any[]) {
-          const allVers = versionsByTitle.get(cit.docTitle) || [];
-          if (allVers.length > 1) {
-            cit.versionConflict = {
-              hasConflict: true,
-              currentVersion: cit.version ?? 1,
-              allVersions: allVers,
-            };
-            if (!conflictTitles.includes(cit.docTitle)) {
-              conflictTitles.push(cit.docTitle);
-              versionConflictNote += `\n【版本提示】检测到文档《${cit.docTitle}》存在多个版本（当前选用 v${cit.version ?? 1}，库中存在: v${allVers.join(', v')}），请在回答中注明版本及生效范围。`;
+          const allEntries = versionsByTitle.get(cit.docTitle) || [];
+          if (allEntries.length <= 1) continue;
+          const sorted = allEntries.slice().sort((a, b) => {
+            if (a.current !== b.current) return a.current ? -1 : 1;
+            if ((b.effectiveDate || "") !== (a.effectiveDate || "")) {
+              return String(b.effectiveDate || "").localeCompare(String(a.effectiveDate || ""));
             }
+            if (b.version !== a.version) return b.version - a.version;
+            return b.updatedAt.getTime() - a.updatedAt.getTime();
+          });
+          const latest = sorted[0];
+          const latestDateLabel = latest.effectiveDate
+            || (latest.updatedAt.getTime() > 0 ? latest.updatedAt.toISOString().slice(0, 10) : "未知");
+          const matchingEntry = allEntries.find((entry) => entry.version === (cit.version ?? 1));
+          const isSuperseded = (matchingEntry?.repealed ?? false)
+            || (!latest.current ? false : (cit.version ?? 1) < latest.version);
+          cit.versionConflict = {
+            hasConflict: true,
+            currentVersion: cit.version ?? 1,
+            latestVersion: latest.version,
+            allVersions: allEntries.map((entry) => entry.version).sort((a, b) => b - a),
+            latestEffectiveDate: latestDateLabel,
+          };
+          // Demote superseded editions so the effective standard dominates the
+          // evidence ranking while the old clause is still available and
+          // explicitly labelled as repealed/revised.
+          if (isSuperseded) {
+            cit.superseded = true;
+            if (typeof cit.score === "number") cit.score = Number((cit.score * 0.5).toFixed(4));
+            if (typeof cit.rerankScore === "number") cit.rerankScore = Number((cit.rerankScore * 0.5).toFixed(4));
+          }
+          if (!conflictTitles.includes(cit.docTitle)) {
+            conflictTitles.push(cit.docTitle);
+            const effective = latestDateLabel;
+            versionConflictNote += `\n【时序效力裁决】《${cit.docTitle}》存在多版本（库中: v${cit.versionConflict.allVersions.join(', v')}），现行有效版本为 v${latest.version}（生效/更新于 ${effective}）。请以现行有效版本为准，并明确说明旧版已废止或被修订。`;
           }
         }
         trace.finish(
           "version_conflict_check",
           conflictTitles.length > 0 ? "warning" : "success",
           conflictTitles.length > 0
-            ? `检测到 ${conflictTitles.length} 个文档存在多版本冲突: ${conflictTitles.join(", ")}`
+            ? `裁决 ${conflictTitles.length} 个文档的多版本冲突: ${conflictTitles.join(", ")}`
             : "命中文档版本均一致，未检测到多版本冲突",
           { conflictCount: conflictTitles.length, conflictTitles },
         );
@@ -2010,7 +2358,7 @@ ${compiledTruthContext}`;
         fullAnswer,
         trace,
         question,
-        userScope,
+        { fingerprint: cacheScopeKey, knowledgeEpoch: userScope.knowledgeEpoch },
         modelName,
       );
     } catch (error: any) {
@@ -2320,10 +2668,13 @@ ${compiledTruthContext}`;
     result: any,
     breadth = false,
   ): Promise<any> {
-    // GBrain's balanced query already runs its configured cross-encoder. Do
-    // not score the same candidates twice; retain the platform reranker only
-    // as a fail-open fallback for older/partially configured GBrain results.
-    if (result?.reranked === true) return result;
+    // Apply the platform's configured cross-encoder even when GBrain reports a
+    // native rerank. Native per-source scores are not comparable across
+    // federated sources, whereas the platform reranker scores every candidate
+    // on one consistent scale. Set FORCE_PLATFORM_RERANK=false to restore the
+    // old "trust GBrain native rerank" behaviour.
+    const forcePlatformRerank = process.env.FORCE_PLATFORM_RERANK !== "false";
+    if (result?.reranked === true && !forcePlatformRerank) return result;
     const config = this.modelConfigService
       ? await this.modelConfigService.getDefault("rerank")
       : null;
@@ -2525,7 +2876,10 @@ ${compiledTruthContext}`;
       ? rawRerankScore
       : Number(citations[0]?.score);
     const topScore = Number.isFinite(rawScore) ? rawScore : null;
-    const weak = evidence.includes("weak");
+    // "weak" is an explicit upstream semantic label (the CLI marks uncertain
+    // semantic hits), while exact/keyword evidence is trusted regardless of
+    // score. The score only decides whether a weak hit needs one broad pass.
+    const weak = evidence.includes("weak") || Boolean((result as any)?.weak);
     if (breadth) {
       return { shouldEscalate: false, weak, evidence, topScore, scoreFloor, reason: "当前已是广覆盖检索" };
     }
@@ -2558,6 +2912,63 @@ ${compiledTruthContext}`;
   }
 
   /**
+   * NLI-style entailment judge used only when the deterministic overlap
+   * heuristic reports low semantic coverage. Returns the set of statement
+   * indices (0-based, into `statements`) that the evidence directly supports.
+   * Fail-open: returns an empty set on any error/timeout.
+   */
+  private async judgeEntailment(statements: string[], evidence: string): Promise<Set<number>> {
+    const supported = new Set<number>();
+    if (!statements.length || !evidence.trim()) return supported;
+    try {
+      const config = await this.modelConfigService?.getDefault('llm');
+      const baseUrl = (config?.provider.baseUrl || process.env.LLM_BASE_URL || '').replace(/\/$/, '');
+      const apiKey = config?.provider.apiKey || process.env.DEEPSEEK_API_KEY || '';
+      if (!baseUrl || !apiKey) return supported;
+      const model = config?.modelName || process.env.LLM_MODEL || 'deepseek-chat';
+      const userContent = `【证据】\n${evidence}\n\n【陈述】\n${statements
+        .map((s, i) => `${i + 1}. ${s}`)
+        .join('\n')}`;
+      const response = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model,
+          messages: [
+            {
+              role: 'system',
+              content:
+                '你是事实蕴含判定专家。给定【证据】与若干【陈述】，判断每条陈述是否能由证据直接支持（entailment），不得使用外部知识。只输出 JSON：{"supported":[陈述序号数组]}。',
+            },
+            { role: 'user', content: userContent },
+          ],
+          temperature: 0,
+          max_tokens: Number(process.env.SEMANTIC_COVERAGE_MAX_TOKENS || 1200),
+          response_format: { type: 'json_object' },
+        }),
+        signal: AbortSignal.timeout(Number(process.env.SEMANTIC_COVERAGE_TIMEOUT_MS || 15000)),
+      });
+      if (!response.ok) return supported;
+      const payload: any = await response.json();
+      const message = payload?.choices?.[0]?.message || {};
+      let content = String(message.content || '').trim();
+      if (!content) {
+        content = String(message.reasoning_content || '').trim();
+        const match = content.match(/\{[\s\S]*\}/);
+        if (match) content = match[0];
+      }
+      const parsed = JSON.parse(content);
+      for (const raw of Array.isArray(parsed?.supported) ? parsed.supported : []) {
+        const index = Number(raw) - 1;
+        if (Number.isInteger(index) && index >= 0 && index < statements.length) supported.add(index);
+      }
+    } catch (err) {
+      this.logger.debug(`Entailment judge skipped: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return supported;
+  }
+
+  /**
    * Semantic-cache entries store raw citation objects (camelCase), while the
    * SSE replay path must emit the snake_case timeline_entry contract the
    * frontend reads (doc_title / document_id / kb_name / preview_url).
@@ -2578,11 +2989,14 @@ ${compiledTruthContext}`;
       snippet: cit.snippet ?? cit.evidence ?? "",
       preview_url:
         cit.preview_url ??
-        (documentId && sourceKb
-          ? `/api/v1/kbs/${sourceKb}/documents/${documentId}/preview`
-          : undefined),
+        buildDocumentPreviewUrl(sourceKb, documentId, {
+          page: cit.page_no ?? cit.pageNo,
+          clause: cit.section,
+        }) ??
+        undefined,
       version: cit.version,
       page_no: cit.page_no ?? cit.pageNo,
+      bbox: cit.bbox ?? cit.bboxes?.[0] ?? cit.metadata?.bbox,
       version_conflict: cit.version_conflict ?? cit.versionConflict,
     };
   }
@@ -2647,6 +3061,7 @@ ${compiledTruthContext}`;
     const statements = safeAnswer.split(/(?:\n+|[。！？])/).map(s => s.trim()).filter(s => s.length >= 5);
     const totalStatements = statements.length;
     let groundedStatements = 0;
+    const ungroundedStatements: string[] = [];
     for (const stmt of statements) {
       const tags = stmt.match(/\[(\d+)\]/g) || [];
       const hasValidTag = tags.some(tag => citedIndices.has(parseInt(tag.replace(/\D/g, ""), 10)));
@@ -2669,17 +3084,44 @@ ${compiledTruthContext}`;
           }
         }
         if (isGrounded) groundedStatements++;
+        else ungroundedStatements.push(stmt);
       }
     }
-    const coverageRatio = totalStatements > 0 ? Number((groundedStatements / totalStatements).toFixed(2)) : 1.0;
-    const semanticCoverage = { totalStatements, groundedStatements, coverageRatio };
+    // When the deterministic overlap heuristic reports weak coverage, confirm
+    // the ungrounded statements with an LLM entailment judge (NLI-style). This
+    // removes false positives from paraphrase without letting the model
+    // "support" statements that genuinely lack evidence.
+    if (
+      process.env.SEMANTIC_COVERAGE_JUDGE !== 'false' &&
+      finalCitations.length > 0 &&
+      ungroundedStatements.length > 0 &&
+      groundedStatements / Math.max(1, totalStatements) < 0.6
+    ) {
+      const evidenceText = finalCitations
+        .map((item: any) => String(item.citation.context || item.citation.snippet || ""))
+        .join('\n\n')
+        .slice(0, 6000);
+      const entailed = await this.judgeEntailment(ungroundedStatements, evidenceText);
+      groundedStatements += entailed.size;
+    }
+    let coverageRatio = totalStatements > 0 ? Number((groundedStatements / totalStatements).toFixed(2)) : 1.0;
+    // A standard refusal makes no factual claims, so the absence of citation
+    // markers is expected. Do not report it as low grounding (false alarm).
+    const isRefusalAnswer =
+      /(未包含相关信息|无法(?:根据知识库)?回答|不知道|无法提供(?:该信息)?)/.test(fullAnswer) &&
+      fullAnswer.trim().length <= 80;
+    const semanticCoverage = { totalStatements, groundedStatements, coverageRatio, refusalExempt: isRefusalAnswer };
 
     let traceStatus = finalCitations.length > 0 ? "success" : "warning";
     let traceMsg = finalCitations.length > 0
         ? `回答引用 ${finalCitations.length} 个原始证据页面`
         : "本次回答没有可绑定的原始证据";
 
-    if (citations.length > 0 && coverageRatio < 0.5) {
+    if (isRefusalAnswer) {
+      traceMsg = finalCitations.length > 0
+        ? `标准拒答；仍返回 ${finalCitations.length} 个候选证据页面供人工核对`
+        : "标准拒答，未返回可绑定证据";
+    } else if (citations.length > 0 && coverageRatio < 0.5) {
       traceStatus = "warning";
       traceMsg += `，但证据语义覆盖率偏低 (${Math.round(coverageRatio * 100)}%)，部分结论缺少明确引用支撑`;
     }
@@ -2711,9 +3153,10 @@ ${compiledTruthContext}`;
             section: cit.section,
             score: cit.score,
             snippet: cit.snippet || '',
-            preview_url: cit.docId && cit.kbId ? `/api/v1/kbs/${cit.kbId}/documents/${cit.docId}/preview` : undefined,
+            preview_url: buildDocumentPreviewUrl(cit.kbId, cit.docId, { page: cit.pageNo || cit.page_no || cit.metadata?.page_no }) ?? undefined,
             version: cit.version,
             page_no: cit.pageNo || cit.page_no || cit.metadata?.page_no,
+            bbox: cit.bbox || cit.bboxes?.[0] || cit.metadata?.bbox,
             version_conflict: cit.versionConflict,
           },
         },

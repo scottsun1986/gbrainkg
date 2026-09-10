@@ -468,12 +468,13 @@ describe("ChatService", () => {
       
       const timelineEntry = (citationEvents[0].data as any).timeline_entry;
       expect(timelineEntry.version).toBe(2);
-      expect(timelineEntry.version_conflict).toEqual({
+      expect(timelineEntry.version_conflict).toMatchObject({
         hasConflict: true,
         currentVersion: 2,
+        latestVersion: 3,
         allVersions: [3, 2],
       });
-      expect(timelineEntry.preview_url).toBe("/api/v1/kbs/kb-1/documents/doc-1/preview");
+      expect(timelineEntry.preview_url).toBe("/api/v1/kbs/kb-1/documents/doc-1/preview-config");
     } finally {
       (global as any).fetch = originalFetch;
       delete process.env.DEEPSEEK_API_KEY;
@@ -524,6 +525,43 @@ describe("ChatService", () => {
     }
   });
 
+  it("does not flag low coverage for a standard refusal answer", async () => {
+    mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(["kb-1"]);
+    mockCompilerService.ensureUserBrainRepo.mockResolvedValue({
+      id: "repo-1",
+      gitRepoUrl: "/tmp/repo",
+    });
+    mockPrisma.document.findMany.mockResolvedValue([
+      { id: "doc-1", kbId: "kb-1", title: "规则.md", version: 1, kb: { name: "知识库", type: "platform" } },
+    ]);
+
+    process.env.DEEPSEEK_API_KEY = "test-key";
+    const originalFetch = global.fetch;
+    (global as any).fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      body: {
+        getReader: () => ({
+          read: jest.fn()
+            .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode('data: {"choices":[{"delta":{"content":"已知知识库资料中未包含相关信息，无法回答该问题。"}}]}\n\n') })
+            .mockResolvedValueOnce({ done: true, value: undefined }),
+        }),
+      },
+    });
+
+    try {
+      const stream$ = await service.handleChatStream("user-1", "一个知识库不含的问题", ["kb-1"]);
+      const events = await lastValueFrom(stream$.pipe(toArray()));
+      const traceEvents = events.filter((e) => (e.data as any).type === "trace" && (e.data as any).node.id === "citation_validation");
+      const finalTrace = traceEvents[traceEvents.length - 1];
+      expect((finalTrace.data as any).node.summary).not.toContain("证据语义覆盖率偏低");
+      expect((finalTrace.data as any).node.details.semanticCoverage.refusalExempt).toBe(true);
+    } finally {
+      (global as any).fetch = originalFetch;
+      delete process.env.DEEPSEEK_API_KEY;
+      mockPrisma.document.findMany.mockReset();
+    }
+  });
+
   it("searchKnowledgeForAgent returns structured citations for agent/MCP queries", async () => {
     mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(["kb-1"]);
     mockCompilerService.ensureUserBrainRepo.mockResolvedValue({ gitRepoUrl: "/tmp/repo" });
@@ -536,7 +574,7 @@ describe("ChatService", () => {
     expect(result.query).toBe("数据合规");
     expect(result.results.length).toBeGreaterThan(0);
     expect(result.results[0].documentId).toBe("doc-1");
-    expect(result.results[0].previewUrl).toContain("/api/v1/ingestion/documents/doc-1/preview");
+    expect(result.results[0].previewUrl).toContain("/api/v1/kbs/kb-1/documents/doc-1/preview-config");
   });
 
   it("weknora_retrieval runs in shadow mode when WeKnora client is provided", async () => {
