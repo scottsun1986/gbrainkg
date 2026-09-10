@@ -29,6 +29,7 @@ export interface BrainQueryResult {
     snippet: string;
     context?: string;
     score?: number;
+    rrfScore?: number;
     evidence?: string;
   }>;
   reranked?: boolean;
@@ -44,6 +45,7 @@ export interface BrainQueryResult {
     hydratedParents: number;
     nativeRerank: boolean;
     stages: string[];
+    fusion?: string;
   };
 }
 
@@ -1244,21 +1246,38 @@ export class BrainRepoAdapter {
       const batchResults = await Promise.all(batch.map((repoPath) => this.query(repoPath, question, options)));
       results.push(...batchResults);
     }
-    const citations = results.flatMap((result, index) => (result.citations || []).map(citation => ({
-      ...citation,
-      sourceKey: citation.sourceKey || this.sourceId(pathsToQuery[index]),
-    })));
-    const unique = new Map<string, BrainQueryResult['citations'][number]>();
-    for (const citation of citations) {
-      const key = JSON.stringify([citation.sourceKey, citation.kbId || '', citation.docId || citation.slug || citation.topic]);
-      const previous = unique.get(key);
-      if (!previous || (citation.score ?? -Infinity) > (previous.score ?? -Infinity)) unique.set(key, citation);
-    }
-    // Every source is reranked with the same configured cross-encoder. Preserve
-    // those comparable scores when federating instead of biasing toward the
-    // source that happened to be queried first.
-    const merged = [...unique.values()]
-      .sort((a, b) => (typeof b.score === 'number' ? b.score : -Infinity) - (typeof a.score === 'number' ? a.score : -Infinity))
+    // Reciprocal Rank Fusion (Cormack et al., 2009) across federated sources.
+    // Per-source scores are not comparable (different native rerank scales or
+    // absent scores), so fusing by rank is more robust than sorting by raw
+    // score and biasing toward whichever source returned larger numbers.
+    const rrfK = Math.max(1, Number(process.env.GBRAIN_RRF_K || 60));
+    const fused = new Map<string, { citation: any; rrf: number }>();
+    results.forEach((result, index) => {
+      const srcKey = this.sourceId(pathsToQuery[index]);
+      (result.citations || []).forEach((citation, rank) => {
+        const key = JSON.stringify([srcKey, citation.kbId || '', citation.docId || citation.slug || citation.topic]);
+        const incremental = 1 / (rrfK + rank + 1);
+        const existing = fused.get(key);
+        if (existing) {
+          existing.rrf += incremental;
+          // Preserve the richer citation (keep any native score present).
+          if (existing.citation.score === undefined && citation.score !== undefined) {
+            existing.citation = { ...citation, sourceKey: existing.citation.sourceKey || citation.sourceKey || srcKey };
+          }
+        } else {
+          fused.set(key, {
+            citation: { ...citation, sourceKey: citation.sourceKey || srcKey },
+            rrf: incremental,
+          });
+        }
+      });
+    });
+    const merged = [...fused.values()]
+      .map(({ citation, rrf }) => ({ ...citation, rrfScore: Number(rrf.toFixed(6)) }))
+      .sort((a, b) =>
+        (b.rrfScore ?? 0) - (a.rrfScore ?? 0) ||
+        ((typeof b.score === 'number' ? b.score : -Infinity) - (typeof a.score === 'number' ? a.score : -Infinity))
+      )
       .slice(0, options.breadth ? 40 : 8);
     return {
       topics: merged.map((citation) => citation.topic),
@@ -1282,8 +1301,9 @@ export class BrainRepoAdapter {
           'graph-signals',
           'rerank',
           ...(options.operation === 'search' ? [] : [options.breadth ? 'autocut-disabled' : 'adaptive-return']),
-          'cross-source-merge',
+          'cross-source-rrf',
         ],
+        fusion: 'rrf',
       },
     };
   }
