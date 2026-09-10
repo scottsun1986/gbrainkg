@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
+import { Injectable, Logger, OnModuleInit, Optional, Inject } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
 import { getPrismaClient } from "../prisma";
@@ -11,6 +11,9 @@ import { assessContentQuality } from "./content-quality";
 import { parserPollBudget } from "./parser-budget";
 import { ANYDOC_UPLOAD_EXTENSIONS } from './parser-capabilities';
 import { enrichChunksWithContext } from './contextual-retrieval';
+import { GraphRagService } from "../graph-rag/graph-rag.service";
+import { RaptorService } from "../raptor/raptor.service";
+import { ChunkEmbeddingService } from "../embedding/chunk-embedding.service";
 
 @Injectable()
 export class IngestionService implements OnModuleInit {
@@ -26,6 +29,10 @@ export class IngestionService implements OnModuleInit {
     @InjectQueue("ingestion-queue") private readonly ingestionQueue: Queue,
     private readonly compilerService: BrainCompilerService,
     private readonly modelConfigService: ModelConfigService,
+    @Optional() private readonly graphRagService?: GraphRagService,
+    @Optional() private readonly raptorService?: RaptorService,
+    @Optional() private readonly chunkEmbeddingService?: ChunkEmbeddingService,
+    @Optional() @InjectQueue("enrichment-queue") private readonly enrichmentQueue?: Queue,
   ) {}
 
   async onModuleInit() {
@@ -360,6 +367,36 @@ export class IngestionService implements OnModuleInit {
         where: { id: documentId },
         data: { status: "published" },
       });
+    // Post-publish enrichment runs through a durable queue with retries and
+    // maintains the Document.indexReadiness state machine. When the queue is
+    // not assembled (unit tests), fall back to fire-and-forget behaviour.
+    if (this.enrichmentQueue) {
+      await this.prisma.document
+        .update({ where: { id: documentId }, data: { indexReadiness: "pending" } })
+        .catch(() => undefined);
+      await this.enrichmentQueue
+        .add(
+          "enrich",
+          { documentId, kbId: document.kbId },
+          {
+            attempts: Number(process.env.ENRICHMENT_ATTEMPTS || 3),
+            backoff: { type: "exponential", delay: Number(process.env.ENRICHMENT_BACKOFF_MS || 30_000) },
+            removeOnComplete: 500,
+            removeOnFail: 1000,
+          },
+        )
+        .catch((err) => {
+          this.logger.warn(
+            `Failed to enqueue enrichment for ${documentId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+    } else if (this.chunkEmbeddingService?.isEnabled()) {
+      void this.chunkEmbeddingService.embedDocumentChunks(documentId).catch((err) => {
+        this.logger.warn(
+          `Chunk embedding failed for ${documentId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+    }
     return {
       documentId,
       status: queuedJobs ? "indexing" : "published",

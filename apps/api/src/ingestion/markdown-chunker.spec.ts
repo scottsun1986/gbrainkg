@@ -84,6 +84,54 @@ describe('splitMarkdownIntoChunks', () => {
     expect(chunks[1].content).toContain('| 岗位 | 差旅标准 | 住宿上限 |');
   });
 
+  it('stitches a table across a page break by carrying the header forward', () => {
+    const doc = [
+      '# 安全违规对照表',
+      '',
+      '| 编号 | 违规类型 | 扣分 |',
+      '| --- | --- | --- |',
+      '| S-01 | 偏航 | 10 |',
+      '',
+      '## 第 2 页',
+      '',
+      '| S-02 | 越界 | 20 |',
+      '| S-03 | 失联 | 30 |',
+    ].join('\n');
+    const chunks = splitMarkdownIntoChunks(doc);
+    const continuation = chunks.find((c) => c.content.includes('S-02'));
+    expect(continuation).toBeDefined();
+    expect(continuation!.content).toContain('| 编号 | 违规类型 | 扣分 |');
+    expect(continuation!.metadata.table_header_injected).toBe(true);
+    expect(continuation!.metadata.has_table).toBe(true);
+  });
+
+  it('does not leak a table header onto an unrelated later section', () => {
+    const doc = [
+      '# 表格页',
+      '',
+      '| A | B |',
+      '| --- | --- |',
+      '| 1 | 2 |',
+      '',
+      '# 纯文字章节',
+      '',
+      '这是与表格无关的正文内容。',
+    ].join('\n');
+    const chunks = splitMarkdownIntoChunks(doc);
+    const textChunk = chunks.find((c) => c.content.includes('与表格无关'));
+    expect(textChunk!.content).not.toContain('| A | B |');
+  });
+
+  it('captures OCR bounding boxes and strips them from indexed content', () => {
+    const markdown = '## 第 1 页\n\n激光陀螺仪标定周期为45天 <!-- bbox:100,200,300,24 -->\n\n校准误差不超过0.5 <!-- bbox:100,232,280,22 -->';
+    const chunks = splitMarkdownIntoChunks(markdown);
+    const chunk = chunks[0];
+    expect(chunk.content).not.toContain('<!-- bbox');
+    expect(chunk.content).toContain('激光陀螺仪标定周期为45天');
+    expect(chunk.metadata.bbox).toEqual({ x: 100, y: 200, w: 300, h: 24, page: 1 });
+    expect(chunk.metadata.bboxes).toHaveLength(2);
+  });
+
   it('injects structured table row key-value semantics for high-precision retrieval', () => {
     const table = `# 处罚对照表\n\n| 编号 | 事故级别 | 扣减分值 |\n| :--- | :--- | :--- |\n| T-01 | 一级事故 | 50分 |\n| T-02 | 二级事故 | 30分 |`;
     const chunks = splitMarkdownIntoChunks(table);

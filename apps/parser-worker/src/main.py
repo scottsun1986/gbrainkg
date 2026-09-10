@@ -693,11 +693,28 @@ async def convert_image_with_baidu_ocr(
         words_result = payload.get("words_result") or []
         lines: list[str] = []
         probabilities: list[float] = []
+        bbox_count = 0
         for item in words_result:
             words = str(item.get("words") or "").strip() if isinstance(item, dict) else str(item).strip()
             if not words:
                 continue
-            lines.append(words)
+            # Preserve per-line bounding boxes for visual grounding. Emitted as
+            # an HTML comment so it is invisible when rendered and stripped by
+            # the chunker before indexing, but available to the citation layer.
+            bbox_comment = ""
+            if isinstance(item, dict):
+                location = item.get("location")
+                if isinstance(location, dict):
+                    try:
+                        left = int(location.get("left", 0))
+                        top = int(location.get("top", 0))
+                        width = int(location.get("width", 0))
+                        height = int(location.get("height", 0))
+                        bbox_comment = f" <!-- bbox:{left},{top},{width},{height} -->"
+                        bbox_count += 1
+                    except (TypeError, ValueError):
+                        bbox_comment = ""
+            lines.append(f"{words}{bbox_comment}")
             if isinstance(item, dict):
                 probability = item.get("probability")
                 if isinstance(probability, dict):
@@ -720,6 +737,8 @@ async def convert_image_with_baidu_ocr(
         }
         if probabilities:
             metadata["ocr_average_confidence"] = round(sum(probabilities) / len(probabilities), 4)
+        if bbox_count:
+            metadata["ocr_bbox_count"] = bbox_count
         return "\n".join(lines), metadata
 
 
@@ -1094,8 +1113,10 @@ async def process_file(
                 task["vlm_error"] = str(vlm_err)
 
         task.update(assess_content_quality(task["markdown"], suffix, task))
-        if task["quality_status"] == "rejected":
-            raise RuntimeError("Quality gate rejected the document: " + "; ".join(task["quality_issues"]))
+        # Unification with the API publication gate: a quality rejection is a
+        # "hold for review" signal, never a hard parser failure. Only a truly
+        # empty extraction (handled above) fails. The API re-assesses quality
+        # and persists non-passing documents as needs_review.
         task["status"] = "completed"
         logger.info(
             "Task %s completed successfully via engine=%s classification=%s "

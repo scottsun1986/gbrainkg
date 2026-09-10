@@ -175,9 +175,15 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
   let currentChapter: number | undefined;
   let currentSection: number | undefined;
   let currentArticle: number | undefined;
+  // Cross-page table stitching: when a wide table is split by a page break,
+  // the continuation section must inherit the header from the previous page.
+  // The header is carried only across page-boundary sections (not arbitrary
+  // headings) so it never leaks onto unrelated content.
+  let carriedTableHeader: string | null = null;
   
   for (const section of findSections(cleanMarkdown)) {
     const sectionBody = cleanMarkdown.slice(section.start, section.end).trim();
+    const isPageSection = !section.heading || /^#{1,6}\s*第\s*\d+\s*页/.test(section.heading);
     
     if (hasClauseStructure && section.heading) {
       const chapterMatch = section.heading.match(/第([\d一二三四五六七八九十百千万〇零两]+)章/);
@@ -195,7 +201,8 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
       }
     }
 
-    let lastTableHeader: string | null = extractTableHeader(sectionBody);
+    const ownTableHeader = extractTableHeader(sectionBody);
+    let lastTableHeader: string | null = ownTableHeader ?? (isPageSection ? carriedTableHeader : null);
 
     let start = section.start;
     let first = true;
@@ -207,10 +214,21 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
       
       const raw = cleanMarkdown.slice(start, end);
       let content = raw.trim();
+      // Extract OCR bounding boxes (emitted by the parser as hidden HTML
+      // comments) and strip them from the indexed text so visual grounding
+      // metadata never pollutes keyword/BM25 matching.
+      const bboxes: Array<{ x: number; y: number; w: number; h: number; page?: number }> = [];
+      content = content.replace(/<!--\s*bbox:(\d+),(\d+),(\d+),(\d+)\s*-->/g, (_full, x, y, w, h) => {
+        bboxes.push({ x: Number(x), y: Number(y), w: Number(w), h: Number(h), page: getPageNo(start) });
+        return '';
+      }).replace(/[ \t]+\n/g, '\n').trim();
       if (content) {
         // Table header propagation (inspired by WeKnora table processing):
         // If chunk begins with table rows but lacks header delimiter, prepend preceding header
-        const beginsWithTableRow = /^\s*\|[^\n]+\|/.test(content);
+        // A page break may be represented as a heading line ("## 第 N 页")
+        // followed by the continuation rows, so allow an optional leading
+        // heading before the first table row.
+        const beginsWithTableRow = /^(?:#{1,6}[^\n]*\n+)?\s*\|[^\n]+\|/.test(content);
         const containsHeader = /(?:^|\n)\|[^\n]+\|\r?\n\s*\|[-\s:|]+\|/.test(content);
         let tableHeaderAdded = false;
 
@@ -252,6 +270,8 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
           has_table: hasTableContent,
           ...(tableHeaders ? { table_headers: tableHeaders } : {}),
           ...(tableRowsCount ? { table_rows_count: tableRowsCount } : {}),
+          ...(tableHeaderAdded ? { table_header_injected: true } : {}),
+          ...(bboxes.length ? { bboxes: bboxes.slice(0, 50), bbox: bboxes[0] } : {}),
         };
         
         if (hasClauseStructure) {
@@ -279,6 +299,7 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
       start = nextStart;
       first = false;
     }
+    carriedTableHeader = lastTableHeader;
   }
 
   // Link neighbor chunks (inspired by WeKnora chunk neighbor graph)
