@@ -26,6 +26,7 @@ import {
 } from "./model-credential";
 
 import { BrainOutboxService } from "./brain-compiler/brain-outbox.service";
+import { ChunkEmbeddingService } from "./embedding/chunk-embedding.service";
 import { execSync } from "node:child_process";
 
 function normalizeServiceBaseUrl(value: unknown): string {
@@ -74,7 +75,30 @@ export class AdminController {
     private readonly brainCompilerService: BrainCompilerService,
     private readonly modelConfigService: ModelConfigService,
     private readonly brainOutboxService?: BrainOutboxService,
+    private readonly chunkEmbeddingService?: ChunkEmbeddingService,
   ) {}
+
+  @Get("embeddings/coverage")
+  async getEmbeddingCoverage() {
+    if (!this.chunkEmbeddingService) throw new ForbiddenException("Embedding service unavailable.");
+    return this.chunkEmbeddingService.coverage();
+  }
+
+  @Post("embeddings/backfill")
+  async backfillEmbeddings(
+    @Body("kbId") kbId?: string,
+    @Body("limit") limit?: number,
+  ) {
+    if (!this.chunkEmbeddingService) throw new ForbiddenException("Embedding service unavailable.");
+    if (!this.chunkEmbeddingService.isEnabled()) {
+      throw new BadRequestException("Chunk embeddings are disabled (CHUNK_EMBEDDINGS_ENABLED=false).");
+    }
+    const boundedLimit = limit === undefined ? 500 : boundedInteger(limit, "limit", 1, 5000);
+    return this.chunkEmbeddingService.backfill({
+      kbIds: kbId ? [kbId] : undefined,
+      limit: boundedLimit,
+    });
+  }
 
   private async scheduleAccessReconciliation() {
     await this.brainCompilerService

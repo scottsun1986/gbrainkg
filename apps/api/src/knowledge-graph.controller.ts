@@ -1,4 +1,5 @@
 import { Body, Controller, ForbiddenException, Get, Optional, Post, Query, Req, UseGuards, Inject } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { getPrismaClient } from './prisma';
 import { AuthService } from './auth/auth.service';
 import { PermissionService } from './permission/permission.service';
@@ -56,6 +57,9 @@ function extractTerms(title: string, chunks: Array<{ content: string; metadata: 
 export class KnowledgeGraphController {
   private readonly prisma = getPrismaClient();
   private readonly gbrain: BrainRepoAdapter;
+  /** Content-aware response cache: rebuilding the graph is far too expensive
+   * to run on every page view (it scans the corpus and calls GBrain per doc). */
+  private readonly graphCache = new Map<string, { expiresAt: number; payload: any }>();
 
   constructor(
     private readonly authService: AuthService,
@@ -72,10 +76,35 @@ export class KnowledgeGraphController {
     const userId = await this.authService.userIdFromRequest(req);
     const visibleKbIds = await this.permissionService.getVisibleKnowledgeBases(userId);
     const limit = Math.min(Math.max(Number(rawLimit || 1000) || 1000, 1), 1000);
+    const maxChunksPerDoc = Math.max(5, Number(process.env.KG_MAX_CHUNKS_PER_DOC || 40));
+
+    // Content-aware cache key: any publish/unpublish/reindex bumps the corpus
+    // fingerprint, while repeat views within the TTL are served instantly.
+    const corpus = await this.prisma.document.aggregate({
+      where: { kbId: { in: visibleKbIds }, status: 'published' },
+      _count: true,
+      _max: { updatedAt: true },
+    });
+    const fingerprint = createHash('sha256')
+      .update([
+        [...visibleKbIds].sort().join(','),
+        limit,
+        maxChunksPerDoc,
+        corpus._count,
+        corpus._max.updatedAt ? new Date(corpus._max.updatedAt).toISOString() : 'empty',
+      ].join('|'))
+      .digest('hex');
+    const cached = this.graphCache.get(fingerprint);
+    const cacheTtlMs = Math.max(0, Number(process.env.KG_CACHE_TTL_MS || 300_000));
+    if (cached && cached.expiresAt > Date.now()) {
+      return { ...cached.payload, cached: true };
+    }
+    if (this.graphCache.size > 32) this.graphCache.clear();
 
     // Persistent heuristic rows do not carry a validated source-version
     // contract. Build discovery from currently published documents instead.
 
+    const buildStartedAt = Date.now();
     const documents = await this.prisma.document.findMany({
       where: { kbId: { in: visibleKbIds }, status: 'published' },
       orderBy: { updatedAt: 'desc' },
@@ -86,7 +115,7 @@ export class KnowledgeGraphController {
         kbId: true,
         updatedAt: true,
         kb: { select: { id: true, name: true, type: true } },
-        chunks: { orderBy: { ord: 'asc' }, take: 500, select: { id: true, content: true, metadata: true } },
+        chunks: { orderBy: { ord: 'asc' }, take: maxChunksPerDoc, select: { id: true, content: true, metadata: true } },
       },
     });
 
@@ -125,42 +154,60 @@ export class KnowledgeGraphController {
       }
     }
 
-    // Prefer actual GBrain page links when they exist.
+    // Prefer actual GBrain page links when they exist. Discovery is a GBrain
+    // subprocess call per document, so it runs with bounded concurrency under
+    // a hard time budget instead of serially over 120 docs (which took minutes).
     const docNodeBySlug = new Map<string, string>(documents.map((document) => [`docs/${document.id}`, `doc:${document.id}`]));
     let gbrainLinks = 0;
     let gbrainLinkErrors = 0;
     let gbrainLinksFiltered = 0;
-    for (const document of documents.slice(0, 120)) {
-      try {
-        const sourceRef = `gbrain://source/${sourceKeyForKnowledgeBase(document.kbId)}`;
-        const payload: any = await this.gbrain.getLinks(sourceRef, `docs/${document.id}`);
-        const links = Array.isArray(payload?.links)
-          ? payload.links
-          : Array.isArray(payload?.results)
-            ? payload.results
-            : Array.isArray(payload)
-              ? payload
-              : [];
-        for (const link of links) {
-          const targetSlug = String(link?.to || link?.to_slug || link?.target || link?.target_slug || '').trim();
-          if (!targetSlug) continue;
-          const source = `doc:${document.id}`;
-          const target = docNodeBySlug.get(targetSlug);
-          // The upstream projection may outlive a removed/unpublished page.
-          // Resolve both ends against this request's published ACL-filtered set;
-          // do not expose unknown titles or unversioned link-context snippets.
-          if (!target) { gbrainLinksFiltered++; continue; }
-          addEdge(source, target, 'related_to', [{
-            documentId: document.id,
-            snippet: 'GBrain 文档关联（发现线索，不作为原文证据）',
-            provenance: 'gbrain_discovery',
-          }]);
-          gbrainLinks += 1;
+    let gbrainLinksSkipped = 0;
+    const linkBudgetMs = Math.max(1000, Number(process.env.KG_LINK_BUDGET_MS || 8000));
+    const linkConcurrency = Math.max(1, Number(process.env.KG_LINK_CONCURRENCY || 4));
+    const linkMaxDocs = Math.max(1, Number(process.env.KG_LINK_MAX_DOCS || 40));
+    const linkQueue = documents.slice(0, linkMaxDocs);
+    const linkStartedAt = Date.now();
+    const linkWorker = async () => {
+      while (linkQueue.length) {
+        if (Date.now() - linkStartedAt > linkBudgetMs) {
+          gbrainLinksSkipped += linkQueue.length;
+          linkQueue.length = 0;
+          return;
         }
-      } catch {
-        gbrainLinkErrors += 1;
+        const document = linkQueue.shift();
+        if (!document) return;
+        try {
+          const sourceRef = `gbrain://source/${sourceKeyForKnowledgeBase(document.kbId)}`;
+          const payload: any = await this.gbrain.getLinks(sourceRef, `docs/${document.id}`);
+          const links = Array.isArray(payload?.links)
+            ? payload.links
+            : Array.isArray(payload?.results)
+              ? payload.results
+              : Array.isArray(payload)
+                ? payload
+                : [];
+          for (const link of links) {
+            const targetSlug = String(link?.to || link?.to_slug || link?.target || link?.target_slug || '').trim();
+            if (!targetSlug) continue;
+            const source = `doc:${document.id}`;
+            const target = docNodeBySlug.get(targetSlug);
+            // The upstream projection may outlive a removed/unpublished page.
+            // Resolve both ends against this request's published ACL-filtered set;
+            // do not expose unknown titles or unversioned link-context snippets.
+            if (!target) { gbrainLinksFiltered++; continue; }
+            addEdge(source, target, 'related_to', [{
+              documentId: document.id,
+              snippet: 'GBrain 文档关联（发现线索，不作为原文证据）',
+              provenance: 'gbrain_discovery',
+            }]);
+            gbrainLinks += 1;
+          }
+        } catch {
+          gbrainLinkErrors += 1;
+        }
       }
-    }
+    };
+    await Promise.all(Array.from({ length: Math.min(linkConcurrency, linkQueue.length) }, () => linkWorker()));
 
     // Extract explicit cross-document policy citations
     const titleToDoc = new Map<string, any>(documents.map((d: any) => [cleanLabel(d.title), d]));
@@ -193,7 +240,7 @@ export class KnowledgeGraphController {
       addEdge(`doc:${left}`, `doc:${right}`, 'related_to', [...terms].slice(0, 5).map((term) => ({ snippet: `共同主题：${term}` })));
     }
 
-    return {
+    const payload = {
       nodes: [...nodes.values()],
       edges: [...edges.values()],
       stats: {
@@ -204,10 +251,16 @@ export class KnowledgeGraphController {
         gbrainLinks,
         gbrainLinkErrors,
         gbrainLinksFiltered,
+        gbrainLinksSkipped,
         graphMode: 'gbrain-links-plus-discovery',
+        buildMs: Date.now() - buildStartedAt,
       },
       scope: { userId, visibleKnowledgeBases: visibleKbIds.length, onlyPublished: true },
     };
+    if (cacheTtlMs > 0) {
+      this.graphCache.set(fingerprint, { expiresAt: Date.now() + cacheTtlMs, payload });
+    }
+    return payload;
   }
 
   @Post('reindex')

@@ -2,8 +2,9 @@ import { KnowledgeGraphController } from './knowledge-graph.controller';
 import { ForbiddenException } from '@nestjs/common';
 
 const mockFindMany = jest.fn().mockResolvedValue([]);
+const mockAggregate = jest.fn().mockResolvedValue({ _count: 0, _max: { updatedAt: null } });
 const mockGetLinks = jest.fn();
-jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => ({ document: { findMany: mockFindMany } })) }));
+jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => ({ document: { findMany: mockFindMany, aggregate: mockAggregate } })) }));
 jest.mock('@llmwiki/gbrain-adapter', () => ({ BrainRepoAdapter: jest.fn(() => ({ getLinks: mockGetLinks })) }));
 
 describe('graph rebuild authorization', () => {
@@ -40,5 +41,15 @@ describe('graph rebuild authorization', () => {
     expect(mockFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { kbId: { in: ['managed'] }, status: 'published' } }));
     expect(graph.buildCommunitiesForKb).toHaveBeenCalledTimes(1);
     expect(graph.buildCommunitiesForKb).toHaveBeenCalledWith('managed');
+  });
+
+  it('serves repeat views from the content-aware cache without rescanning', async () => {
+    const controller = new KnowledgeGraphController(auth as any, permission as any, graph as any);
+    const first = await controller.getGraph({});
+    const scansAfterFirst = mockFindMany.mock.calls.length;
+    expect(first.cached).toBeUndefined();
+    const second = await controller.getGraph({});
+    expect(second.cached).toBe(true);
+    expect(mockFindMany.mock.calls.length).toBe(scansAfterFirst);
   });
 });

@@ -14,6 +14,8 @@ import { ModelConfigModule } from './model-config.module';
 import { KnowledgeGraphController } from './knowledge-graph.controller';
 import { AuditModule } from './audit/audit.module';
 import { GraphRagModule } from './graph-rag/graph-rag.module';
+import { RaptorModule } from './raptor/raptor.module';
+import { EmbeddingModule } from './embedding/embedding.module';
 import { OpenApiModule } from './open-api/open-api.module';
 
 
@@ -39,6 +41,8 @@ import { OpenApiModule } from './open-api/open-api.module';
     ModelConfigModule,
     AuditModule,
     GraphRagModule,
+    RaptorModule,
+    EmbeddingModule,
     OpenApiModule,
   ],
   controllers: [AppController, AdminController, KnowledgeGraphController],
