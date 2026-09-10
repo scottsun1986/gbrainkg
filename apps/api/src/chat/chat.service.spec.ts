@@ -260,30 +260,35 @@ describe("ChatService", () => {
     }
   });
 
-  it("should remove low-score distractors from focused retrieval", () => {
-    const result = (service as any).applyFocusedEvidenceGate({
+  it("selectEvidence drops low-relevance singleton distractors on focused retrieval", () => {
+    const result = (service as any).selectEvidence({
       citations: [
-        { topic: "目标制度", score: 0.33, context: "目标内容" },
-        { topic: "无关制度", score: 0.08, context: "无关内容" },
+        { topic: "目标制度", relevanceScore: 0.9, context: "目标内容" },
+        { topic: "无关制度", relevanceScore: 0.05, context: "无关内容" },
       ],
       topics: ["目标制度", "无关制度"],
       answer: "目标内容\n\n无关内容",
       reranked: true,
-    }, false);
+    }, { breadth: false, tokenBudget: 12000 });
 
     expect(result.citations).toHaveLength(1);
     expect(result.citations[0].topic).toBe("目标制度");
-    expect(result.retrievalGate.removed).toBe(1);
+    expect(result.evidenceSelection.removed).toBe(1);
   });
 
-  it("should retain the wider candidate set for breadth retrieval", () => {
-    const input = {
+  it("selectEvidence keeps structural section groups whole even when members score lower", () => {
+    const result = (service as any).selectEvidence({
       citations: [
-        { topic: "制度一", score: 0.33 },
-        { topic: "制度二", score: 0.08 },
+        { topic: "章节标题", relevanceScore: 0.95, sectionGroup: "doc:1", context: "（四）完善创业服务保障" },
+        { topic: "条款13", relevanceScore: 0.4, sectionGroup: "doc:1", context: "强化融资服务保障" },
+        { topic: "条款15", relevanceScore: 0.2, sectionGroup: "doc:1", context: "深化国际交流合作" },
       ],
-    };
-    expect((service as any).applyFocusedEvidenceGate(input, true)).toBe(input);
+      reranked: true,
+    }, { breadth: false, tokenBudget: 12000 });
+
+    // The whole section survives as one atomic unit (3 members, one group).
+    expect(result.citations).toHaveLength(3);
+    expect(result.evidenceSelection.groups).toBe(1);
   });
 
   it("should not escalate a high-score weak-semantic hit", () => {

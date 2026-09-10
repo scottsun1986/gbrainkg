@@ -30,11 +30,17 @@ export interface BrainQueryResult {
     context?: string;
     score?: number;
     rrfScore?: number;
+    rerankScore?: number;
+    relevanceScore?: number;
+    sectionGroup?: string;
     evidence?: string;
   }>;
   reranked?: boolean;
-  retrievalGate?: { removed: number; scoreFloor: number; topScore: number };
+  platformRerankApplied?: boolean;
+  fallbackMerged?: boolean;
+  evidenceSelection?: Record<string, unknown>;
   documentDiversity?: { demoted: number; maxPerDoc: number };
+  retrievalGate?: { removed: number; scoreFloor: number; topScore: number };
   diagnostics?: {
     mode: string;
     operation: string;
@@ -1272,13 +1278,18 @@ export class BrainRepoAdapter {
         }
       });
     });
+    // Candidate cap before the platform cross-encoder. Kept deliberately
+    // generous so a correct-but-low-ranked document is not dropped before it
+    // can be scored; final truncation happens after reranking (token budget).
+    const mergeCapFocused = Math.max(8, Number(process.env.GBRAIN_MERGE_CAP_FOCUSED || 30));
+    const mergeCapBreadth = Math.max(mergeCapFocused, Number(process.env.GBRAIN_MERGE_CAP_BREADTH || 60));
     const merged = [...fused.values()]
       .map(({ citation, rrf }) => ({ ...citation, rrfScore: Number(rrf.toFixed(6)) }))
       .sort((a, b) =>
         (b.rrfScore ?? 0) - (a.rrfScore ?? 0) ||
         ((typeof b.score === 'number' ? b.score : -Infinity) - (typeof a.score === 'number' ? a.score : -Infinity))
       )
-      .slice(0, options.breadth ? 40 : 8);
+      .slice(0, options.breadth ? mergeCapBreadth : mergeCapFocused);
     return {
       topics: merged.map((citation) => citation.topic),
       answer: merged.map((citation) => citation.context || citation.snippet).filter(Boolean).join('\n\n'),

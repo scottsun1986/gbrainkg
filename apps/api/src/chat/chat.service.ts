@@ -1624,9 +1624,11 @@ export class ChatService {
             }
           }
           queryResult.citations.sort((a: any, b: any) => (b.score || 0) - (a.score || 0));
+          (queryResult as any).fallbackMerged = true;
         } else {
           queryResult = {
             topics: Array.from(new Set(fallbackChunks.map((fb) => fb.title || "相关条款"))),
+            fallbackMerged: true,
             answer: fallbackChunks.map((fb) => fb.evidence).join("\n\n"),
             citations: fallbackChunks.map((fb, idx) => ({
               topic: fb.title || fb.documentId,
@@ -1814,6 +1816,7 @@ export class ChatService {
       const fallbackChunks = await this.searchChunksFallback(scope, question, 15, recallVariants);
       if (fallbackChunks.length > 0) {
         queryResult.answer = fallbackChunks.map((fb) => fb.evidence).join("\n\n");
+        (queryResult as any).fallbackMerged = true;
         queryResult.citations = fallbackChunks.map((fb, idx) => ({
           topic: fb.title || fb.documentId,
           docId: fb.documentId,
@@ -1983,50 +1986,44 @@ export class ChatService {
     // Always apply cross-encoder rerank & relevance filtering across candidate sources
     const beforeRerank = queryResult.citations?.length || 0;
     const platformRerankRequired = !queryResult.reranked;
-    trace.start("rerank", "候选重排", "统一比较跨 Source 候选并执行相关性过滤");
+    trace.start("rerank", "候选重排", "统一比较跨 Source 候选并执行相关性打分");
     queryResult = await this.applyRerank(
       retrieval.query || question,
       queryResult,
       retrieval.breadth,
     );
     trace.finish("rerank", queryResult.reranked ? "success" : "warning", queryResult.reranked
-      ? platformRerankRequired ? "GBrain 原生重排未返回分数，平台重排已补偿完成" : "沿用 GBrain 原生语义重排结果"
+      ? (queryResult as any).platformRerankApplied
+        ? "平台交叉编码重排完成（跨源统一分数尺度）"
+        : "沿用 GBrain 原生语义重排结果（单源且无兜底合并）"
       : "重排服务不可用，沿用 GBrain 候选顺序", {
       before: beforeRerank,
       after: queryResult.citations?.length || 0,
       reranked: Boolean(queryResult.reranked),
-      platformFallback: platformRerankRequired,
+      platformApplied: Boolean((queryResult as any).platformRerankApplied),
     });
-    const beforeGate = queryResult.citations?.length || 0;
-    trace.start("document_diversity", "证据多样性配额", "限制单一文档可占用的证据席位，防止高体量近重复文档挤占其它文档证据");
-    queryResult = this.applyDocumentDiversity(queryResult, retrieval.breadth, retrieval.query || question);
+
+    // Single evidence-selection stage: relevance floor + group-aware MMR
+    // diversity + token budget. Replaces the former separate
+    // document_diversity and evidence_gate passes.
+    const beforeSelect = queryResult.citations?.length || 0;
+    trace.start("evidence_selection", "证据统一选择", "相关性阈值、组级去重与 token 预算的联合选择");
+    queryResult = this.selectEvidence(queryResult, {
+      breadth: retrieval.breadth,
+      tokenBudget: Number(process.env.RETRIEVAL_CONTEXT_TOKEN_BUDGET || 12000),
+    });
+    const afterSelect = queryResult.citations?.length || 0;
     trace.finish(
-      "document_diversity",
-      queryResult.documentDiversity ? "warning" : "success",
-      queryResult.documentDiversity
-        ? `已将 ${(queryResult.documentDiversity as any).demoted} 条同文档超额证据降权出上下文（每文档上限 ${(queryResult.documentDiversity as any).maxPerDoc} 条）`
-        : "各文档证据分布均衡，无需配额干预",
-      { ...(queryResult.documentDiversity || {}), after: queryResult.citations?.length || 0 },
-    );
-    trace.start("evidence_gate", "证据收敛", "仅保留能直接支持当前问题的证据");
-    queryResult = this.applyFocusedEvidenceGate(queryResult, retrieval.breadth, retrieval.query || question);
-    const afterGate = queryResult.citations?.length || 0;
-    trace.finish(
-      "evidence_gate",
-      afterGate > 0 ? (afterGate < beforeGate ? "warning" : "success") : "warning",
-      afterGate > 0 ? `最终进入回答上下文 ${afterGate} 条证据` : "没有证据通过相关性门控",
+      "evidence_selection",
+      afterSelect > 0 ? (afterSelect < beforeSelect ? "warning" : "success") : "warning",
+      afterSelect > 0
+        ? `已选择 ${afterSelect}/${beforeSelect} 条证据（组级去重 + token 预算）`
+        : "没有证据通过相关性选择",
       {
-        before: beforeGate,
-        after: afterGate,
-        removed: beforeGate - afterGate,
-        retrievalGate: queryResult.retrievalGate || null,
-        evidence: (queryResult.citations || []).slice(0, 20).map((citation: any) => ({
-          documentId: citation.docId,
-          title: citation.docTitle || citation.topic,
-          section: citation.section,
-          score: citation.score,
-          evidence: citation.evidence,
-        })),
+        before: beforeSelect,
+        after: afterSelect,
+        removed: beforeSelect - afterSelect,
+        selection: queryResult.evidenceSelection || null,
       },
     );
     const personalMemory = await personalMemoryPromise;
@@ -2723,213 +2720,210 @@ ${compiledTruthContext}`;
     };
   }
 
+  private readonly rerankCache = new Map<string, { expiresAt: number; order: number[]; scores: number[] }>();
+
   private async applyRerank(
     question: string,
     result: any,
     breadth = false,
   ): Promise<any> {
-    // Apply the platform's configured cross-encoder even when GBrain reports a
-    // native rerank. Native per-source scores are not comparable across
-    // federated sources, whereas the platform reranker scores every candidate
-    // on one consistent scale. Set FORCE_PLATFORM_RERANK=false to restore the
-    // old "trust GBrain native rerank" behaviour.
-    const forcePlatformRerank = process.env.FORCE_PLATFORM_RERANK !== "false";
-    if (result?.reranked === true && !forcePlatformRerank) return result;
+    const citations = Array.isArray(result?.citations) ? result.citations : [];
+    const singleSourceNative =
+      result?.reranked === true &&
+      (result?.diagnostics?.sourceCount ?? 1) <= 1 &&
+      !result?.fallbackMerged;
+    // A single-source result already cross-encoded by GBrain is the same list
+    // on the same scale — re-scoring it is pure duplicate work. Any merged
+    // fallback arm or multiple federated sources requires one platform pass so
+    // every candidate lands on a single comparable score scale.
+    if (singleSourceNative && process.env.FORCE_PLATFORM_RERANK !== 'true') {
+      result.platformRerankApplied = false;
+      return result;
+    }
     const config = this.modelConfigService
       ? await this.modelConfigService.getDefault("rerank")
       : null;
-    const citations = Array.isArray(result?.citations) ? result.citations : [];
     if (!config || citations.length < 2) return result;
+
+    // Memoize by (question, candidate-set) — section expansion makes candidate
+    // sets stable, so repeated questions reuse the same ranking.
+    const candidateHash = createHash("sha256")
+      .update(`${question}||${citations.map((c: any) => c.evidence || c.snippet || c.docId || c.topic || "").join("\u0001")}`)
+      .digest("hex")
+      .slice(0, 24);
+    const cacheKey = `${config.modelName}:${candidateHash}`;
+    const cached = this.rerankCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now() && cached.order.length === citations.length) {
+      const reranked = cached.order.map((idx, rank) => ({ ...citations[idx], rerankScore: cached.scores[rank], relevanceScore: cached.scores[rank] }));
+      return { ...result, citations: reranked, topics: reranked.map((c: any) => c.topic), answer: reranked.map((c: any) => c.context || c.snippet).filter(Boolean).join("\n\n"), reranked: true, platformRerankApplied: true };
+    }
+
     const documents = citations
       .map((citation: any) =>
-        String(
-          citation.snippet || citation.context || citation.docTitle || citation.topic || "",
-        ).slice(0, 1000).trim(),
+        String(citation.snippet || citation.context || citation.docTitle || citation.topic || "").slice(0, 1000).trim(),
       )
       .filter(Boolean);
     if (documents.length < 2) return result;
     try {
-      const response = await fetch(
-        `${config.provider.baseUrl.replace(/\/$/, "")}/rerank`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(config.provider.apiKey
-              ? { Authorization: `Bearer ${config.provider.apiKey}` }
-              : {}),
-          },
-          body: JSON.stringify({
-            model: config.modelName,
-            query: question,
-            documents,
-            top_n: documents.length,
-            return_documents: false,
-          }),
+      const response = await fetch(`${config.provider.baseUrl.replace(/\/$/, "")}/rerank`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(config.provider.apiKey ? { Authorization: `Bearer ${config.provider.apiKey}` } : {}),
         },
-      );
+        body: JSON.stringify({ model: config.modelName, query: question, documents, top_n: documents.length, return_documents: false }),
+        signal: AbortSignal.timeout(Number(process.env.RERANK_TIMEOUT_MS || 15000)),
+      });
       if (!response.ok) throw new Error(`Rerank API ${response.status}`);
       const payload: any = await response.json();
       const ranked: Array<{ index: number; relevance_score?: number; score?: number }> =
         Array.isArray(payload?.results) ? payload.results : [];
       if (!ranked.length) return result;
 
-      // Extract scored items
       const scoredItems = ranked
         .map((item) => {
           const idx = Number(item.index);
           const cit = citations[idx];
-          const score =
-            typeof item.relevance_score === "number"
-              ? item.relevance_score
-              : typeof item.score === "number"
-              ? item.score
-              : 0;
-          return { citation: cit, score };
+          const score = typeof item.relevance_score === "number" ? item.relevance_score
+            : typeof item.score === "number" ? item.score : 0;
+          return { idx, citation: cit, score };
         })
-        .filter((item) => Boolean(item.citation));
-
+        .filter((item) => Boolean(item.citation) && Number.isInteger(item.idx));
       if (!scoredItems.length) return result;
-
-      // Sort strictly by relevance score descending
       scoredItems.sort((a, b) => b.score - a.score);
 
-      // Group-preserving truncation: structural section groups are kept or
-      // dropped as a unit (never split mid-section); loose citations are
-      // truncated by rank as before. Score scales differ across rerank
-      // providers, so rank caps — not absolute floors — do the trimming here.
-      const cap = breadth ? 40 : /(?:哪些章|所有章|全部章|章名|目录)/.test(question) ? 20 : 8;
-      const hardBound = breadth ? 60 : 24;
-      const groups = new Map<string, { members: typeof scoredItems; best: number }>();
-      scoredItems.forEach((item, idx) => {
-        const g = typeof item.citation?.sectionGroup === "string" && item.citation.sectionGroup
-          ? item.citation.sectionGroup
-          : `__single_${idx}`;
-        const entry = groups.get(g) || { members: [], best: -Infinity };
-        entry.members.push(item);
-        entry.best = Math.max(entry.best, item.score);
-        groups.set(g, entry);
-      });
-      const orderedGroups = [...groups.values()].sort((a, b) => b.best - a.best);
-      const keptItems: typeof scoredItems = [];
-      let total = 0;
-      for (const group of orderedGroups) {
-        if (keptItems.length > 0 && total >= cap) break;
-        if (total >= hardBound) break;
-        keptItems.push(...group.members);
-        total += group.members.length;
+      const order = scoredItems.map((item) => item.idx);
+      const scores = scoredItems.map((item) => item.score);
+      this.rerankCache.set(cacheKey, { expiresAt: Date.now() + Number(process.env.RERANK_CACHE_TTL_MS || 300000), order, scores });
+      if (this.rerankCache.size > 200) {
+        const oldest = this.rerankCache.keys().next().value;
+        if (oldest) this.rerankCache.delete(oldest);
       }
-      const filtered = keptItems
-        .map((item) => ({ ...item.citation, rerankScore: item.score }));
 
-      const answer = filtered
-        .map((citation: any) => citation.context || citation.snippet)
-        .filter(Boolean)
-        .join("\n\n");
-
+      // No truncation here: the single evidence-selection stage decides what
+      // enters the answer context, using these comparable scores.
+      const reranked = scoredItems.map((item) => ({ ...item.citation, rerankScore: item.score, relevanceScore: item.score }));
       return {
         ...result,
-        citations: filtered,
-        topics: filtered.map((citation: any) => citation.topic),
-        answer: answer || result.answer,
+        citations: reranked,
+        topics: reranked.map((c: any) => c.topic),
+        answer: reranked.map((c: any) => c.context || c.snippet).filter(Boolean).join("\n\n"),
         reranked: true,
+        platformRerankApplied: true,
       };
     } catch (error) {
-      this.logger.warn(
-        `Rerank unavailable; retaining GBrain ranking: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      this.logger.warn(`Rerank unavailable; retaining GBrain ranking: ${error instanceof Error ? error.message : String(error)}`);
       return result;
     }
   }
 
   /**
-   * Cap how many evidence slots a single document may occupy. Bulk
-   * near-duplicate documents (e.g. thousands of template records) can
-   * otherwise flood the reranked candidate list and crowd out the true
-   * evidence from smaller documents, producing refusals on questions the
-   * corpus actually answers. Score order is preserved; breadth mode allows a
-   * higher quota since enumeration benefits from wider per-document coverage.
+   * Single evidence-selection stage (replaces the former document_diversity and
+   * focused evidence_gate passes).
+   *
+   * Policy, all provider/scale independent:
+   *  1. Score truth = normalized cross-encoder relevance (min-max over the
+   *     batch). Falls back to rerankScore/score only when reranking was skipped.
+   *  2. Structural section groups (from section expansion) are ATOMIC units —
+   *     kept or dropped whole, never split.
+   *  3. Relative relevance floor (default 35% of the best group) removes
+   *     distractors without depending on any provider's absolute score scale.
+   *  4. Maximal-Marginal-Relevance greedy selection over groups balances
+   *     relevance against redundancy, then a token budget bounds the context.
    */
-  private applyDocumentDiversity(result: any, breadth = false, question = ""): any {
+  private selectEvidence(
+    result: any,
+    opts: { breadth: boolean; tokenBudget: number },
+  ): any {
     const citations = Array.isArray(result?.citations) ? result.citations : [];
     if (citations.length <= 1) return result;
-    const isChapterQuery = citations.some((c: any) =>
-      /(?:第[一二三四五六七八九十百0-9]+章|##\s*附则)/.test(c.evidence || c.snippet || c.context || "")
-    );
-    // Structural section groups count as ONE unit: a section recalled by its
-    // heading is kept whole, so quota can no longer split a section apart.
-    const maxGroups = isChapterQuery
-      ? Math.max(15, Number(process.env.RETRIEVAL_MAX_EVIDENCE_PER_DOC || 15))
-      : Math.max(1, Number(process.env.RETRIEVAL_MAX_EVIDENCE_PER_DOC || (breadth ? 8 : 4)));
-    const perDoc = new Map<string, number>();
-    const kept: any[] = [];
-    let demoted = 0;
-    for (const citation of citations) {
-      const key = String(citation.sectionGroup || citation.docId || citation.topic || "unknown");
-      const count = perDoc.get(key) || 0;
-      if (count >= maxGroups) {
-        demoted++;
-        continue;
-      }
-      perDoc.set(key, count + 1);
-      kept.push(citation);
-    }
-    if (!demoted || kept.length === citations.length) return result;
-    return {
-      ...result,
-      citations: kept,
-      topics: kept.map((citation: any) => citation.topic),
-      answer: kept.map((citation: any) => citation.context || citation.snippet).filter(Boolean).join("\n\n"),
-      documentDiversity: { demoted, maxPerDoc: maxGroups },
-    };
-  }
 
-  /**
-   * Keep a focused answer grounded in the score neighborhood of its best
-   * evidence. GBrain's broad mode intentionally returns a wider set, while a
-   * focused question should not feed unrelated low-score documents to the
-   * answer model. The gate is score/evidence based and language agnostic.
-   */
-  private applyFocusedEvidenceGate(result: any, breadth = false, question = ""): any {
-    if (breadth) return result;
-    // Enumeration questions need the full section as evidence; the score
-    // neighbourhood floor would otherwise strip later clauses of the section.
-    if (/有哪些|哪些条款|哪些规定|哪些措施|哪些内容|列举|列出|包括哪些|都有哪些|包含哪些/.test(question)) return result;
-    const citations = Array.isArray(result?.citations) ? result.citations : [];
-    if (citations.length < 2) return result;
-    const isChapterQuery = citations.some((c: any) =>
-      /(?:第[一二三四五六七八九十百0-9]+章|##\s*附则)/.test(c.evidence || c.snippet || c.context || "")
-    );
-    if (isChapterQuery) return result;
-    // Structural section members are exempt from the score floor: the section
-    // was recalled as a unit, and later clauses of it are part of the answer
-    // even when their individual rerank score trails the anchor.
-    const hasStructuralGroup = citations.some((c: any) => typeof c.sectionGroup === "string" && c.sectionGroup);
-    if (hasStructuralGroup) return result;
-    const scored = citations.map((citation: any, index: number) => ({
-      citation,
-      index,
-      score: typeof citation.rerankScore === "number"
-        ? citation.rerankScore
-        : Number.isFinite(Number(citation.rerankScore))
-          ? Number(citation.rerankScore)
-          : typeof citation.score === "number" ? citation.score : Number(citation.score),
-    }));
-    const numeric = scored.filter((item) => Number.isFinite(item.score));
-    if (!numeric.length) return result;
-    const topItem = numeric.reduce((best, item) => item.score > best.score ? item : best);
-    const topScore = topItem.score;
-    const floor = Math.max(0.02, topScore * 0.35);
-    const filtered = scored
-      .filter((item) => item.index === topItem.index || (Number.isFinite(item.score) && item.score >= floor))
-      .map((item) => item.citation);
-    if (!filtered.length || filtered.length === citations.length) return result;
+    const rawScore = (c: any): number => {
+      const v = c?.relevanceScore ?? c?.rerankScore ?? c?.score;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : 0;
+    };
+    const raw = citations.map(rawScore);
+    const max = Math.max(...raw);
+    const min = Math.min(...raw);
+    const range = max - min;
+    const norm = (v: number) => (range > 1e-6 ? (v - min) / range : 1);
+
+    const groupKeyOf = (c: any, index: number) =>
+      typeof c?.sectionGroup === "string" && c.sectionGroup ? c.sectionGroup : `__single_${index}`;
+    const groups = new Map<string, { members: any[]; best: number; repText: string }>();
+    citations.forEach((c, index) => {
+      const key = groupKeyOf(c, index);
+      const entry = groups.get(key) || { members: [], best: -Infinity, repText: "" };
+      entry.members.push(c);
+      entry.best = Math.max(entry.best, norm(rawScore(c)));
+      if (!entry.repText) entry.repText = String(c.context || c.snippet || c.docTitle || c.topic || "").slice(0, 400);
+      groups.set(key, entry);
+    });
+
+    const topBest = Math.max(...[...groups.values()].map((g) => g.best));
+    const relFloor = Math.max(0, Number(process.env.RETRIEVAL_RELEVANCE_FLOOR_RATIO || 0.35));
+    const maxGroups = opts.breadth
+      ? Math.max(8, Number(process.env.RETRIEVAL_MAX_GROUPS_BREADTH || 16))
+      : Math.max(2, Number(process.env.RETRIEVAL_MAX_GROUPS || 8));
+
+    const entries = [...groups.entries()]
+      .map(([key, g]) => ({ key, ...g }))
+      .filter((g) => g.best >= topBest * relFloor)
+      .sort((a, b) => b.best - a.best);
+
+    const tokenize = (text: string): Set<string> =>
+      new Set((String(text).toLowerCase().match(/[\p{L}\p{N}]{1,4}/gu) || []).slice(0, 400));
+    const jaccard = (a: Set<string>, b: Set<string>) => {
+      if (!a.size || !b.size) return 0;
+      let inter = 0;
+      for (const t of a) if (b.has(t)) inter++;
+      return inter / (a.size + b.size - inter);
+    };
+    const costOf = (c: any) => estimateTokens(String(c.context || c.snippet || ""));
+
+    const lambda = Math.min(1, Math.max(0, Number(process.env.RETRIEVAL_MMR_LAMBDA || 0.72)));
+    const selected: any[] = [];
+    const selectedSets: Array<Set<string>> = [];
+    let usedTokens = 0;
+    const pool = entries.slice();
+    while (pool.length && selectedSets.length < maxGroups) {
+      let pickIdx = -1;
+      let pickVal = -Infinity;
+      for (let i = 0; i < pool.length; i++) {
+        const g = pool[i];
+        const redundancy = selectedSets.length
+          ? Math.max(...selectedSets.map((s) => jaccard(tokenize(g.repText), s)))
+          : 0;
+        const value = lambda * g.best - (1 - lambda) * redundancy;
+        if (value > pickVal) { pickVal = value; pickIdx = i; }
+      }
+      if (pickIdx < 0) break;
+      const group = pool.splice(pickIdx, 1)[0];
+      const groupTokens = group.members.reduce((sum, m) => sum + costOf(m), 0);
+      // Token budget: the first (best) group always fits; later groups must fit.
+      if (selected.length > 0 && usedTokens + groupTokens > opts.tokenBudget) break;
+      for (const m of group.members) selected.push(m);
+      selectedSets.push(tokenize(group.repText));
+      usedTokens += groupTokens;
+    }
+
+    if (!selected.length) return result;
+    const removed = citations.length - selected.length;
     return {
       ...result,
-      citations: filtered,
-      topics: filtered.map((citation: any) => citation.topic),
-      answer: filtered.map((citation: any) => citation.context || citation.snippet).filter(Boolean).join("\n\n"),
-      retrievalGate: { removed: citations.length - filtered.length, scoreFloor: floor, topScore },
+      citations: selected,
+      topics: selected.map((c: any) => c.topic),
+      answer: selected.map((c: any) => c.context || c.snippet).filter(Boolean).join("\n\n"),
+      evidenceSelection: {
+        before: citations.length,
+        after: selected.length,
+        removed,
+        groups: selectedSets.length,
+        usedTokens,
+        relevanceFloorRatio: relFloor,
+        mmrLambda: lambda,
+      },
     };
   }
 

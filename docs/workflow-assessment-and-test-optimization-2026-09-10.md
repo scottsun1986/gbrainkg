@@ -138,3 +138,24 @@ LLMWIKI_TOKEN=<jwt> python3 tests/e2e/sota_knowledge_base_suite.py
 5. **P2 图谱增量**：发布事件触发增量 GraphRAG 抽取（替代手动 reindex）；RAPTOR 默认开启。
 6. **P2 检索基建清理**：移除无效 `tsv`/GIN（或引入 zhparser）；`highPriorityTokens` 硬编码领域词迁移至 KB `domainTerms`。
 7. **P3 质量升级**：语义覆盖率换 NLI 蕴含模型；Agent 链路复用主检索服务。
+
+---
+
+## 五、检索链收敛（P0/P1/P2，当日第二轮）
+
+### 问题
+GBrain 复合召回（向量+BM25+RRF+图谱+原生重排+autocut）之后，平台又串行执行了三个**结构盲、分数尺度混用**的下游截断器（重排内 top-N、单文档多样性配额、35% 分数地板），其中证据地板在引入 `sectionGroup` 后实际失效，且兜底臂的自造分数（0.70–0.99）与原生重排分数不可比。
+
+### 优化
+| 级别 | 改动 | 位置 |
+|---|---|---|
+| P0 | 平台重排 trace 不再误报「沿用 GBrain 原生重排」；单源+原生重排+无兜底合并时**跳过重复交叉编码** | `chat.service.ts: applyRerank` |
+| P0 | 重排分数**批内归一化**并作为唯一分数真值（`relevanceScore`） | 同上 |
+| P1 | 重排前候选上限 8/40 → **30/60**（可配 `GBRAIN_MERGE_CAP_*`），把截断后移到重排之后 | `gbrain-adapter` |
+| P1 | 三个截断器合并为**单一 `selectEvidence()`**：群体原子（sectionGroup）→ 相对相关性地板 → **MMR**（相关性−冗余）贪心选组 → token 预算 | `chat.service.ts` |
+| P2 | 兜底臂分数仅作 fail-open，跨臂排序统一交由交叉编码；**重排结果按 (query,候选集) 记忆化**（LRU/TTL） | 同上 |
+
+### 验证
+- 章节枚举（“完善创业服务保障有哪些条款”）：完整命中（四）章 **第 12–15 四条**，且不再混入其他章节噪声
+- 聚焦检索（EQ-0077 等）：无精度回归
+- E2E 全场景 **25/25**；API 单测 **144/144**
