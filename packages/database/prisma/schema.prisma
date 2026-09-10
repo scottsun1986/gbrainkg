@@ -30,6 +30,7 @@ model User {
   brainSourceMembers BrainSourceMember[]
   brainScopeMembers  BrainScopeMember[]
   credentials  UserCredential[]
+  feedbackCases FeedbackCase[]
 }
 
 // 组织节点
@@ -111,6 +112,7 @@ model KnowledgeBase {
   grants             IndustryGrant[]
   documents          Document[]
   modelOverrides     KbModelOverride[]
+  raptorNodes        RaptorNode[]
 
   @@index([ownerUserId])
   @@index([orgNodeId])
@@ -159,6 +161,12 @@ model Document {
   qualityStatus String @default("unknown") // unknown/passed/needs_review/rejected
   qualityScore Float?
   qualityIssues Json?
+  effectiveFrom DateTime?
+  effectiveTo   DateTime?
+  lifecycleStatus String @default("current") // current/superseded/repealed
+  supersedesDocumentId String? @db.Uuid
+  // 富化索引就绪状态机: legacy(历史数据) / pending(已发布待富化) / enriching / ready / degraded
+  indexReadiness String @default("legacy")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -166,8 +174,11 @@ model Document {
   chunks       Chunk[]
   citations    Citation[]
   brainSourceDocuments BrainSourceDocument[]
+  raptorNodes  RaptorNode[]
 
   @@index([kbId, status])
+  @@index([kbId, lifecycleStatus, effectiveFrom])
+  @@index([indexReadiness])
 }
 
 model Chunk {
@@ -220,10 +231,33 @@ model Message {
   feedback         String?
   createdAt        DateTime @default(now())
 
-  conversation     Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  citations        Citation[]
+  conversation    Conversation   @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  citations       Citation[]
+  feedbackCases   FeedbackCase[]
 
   @@index([conversationId, createdAt])
+}
+
+// Bad-case 反馈飞轮：用户点踩/纠错 → 结构化回归用例
+model FeedbackCase {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  messageId  String   @db.Uuid
+  question   String
+  answer     String
+  evidence   Json?
+  trace      Json?
+  correction String?
+  status     String   @default("new") // new/triaging/converted/dismissed
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@index([status, createdAt])
+  @@index([userId, createdAt])
 }
 
 model Citation {
@@ -559,10 +593,17 @@ model GraphCommunity {
   summary   String
   entityIds Json     @default("[]")
   findings  Json     @default("[]")
+  fingerprint String?
+  parentCommunityId String? @db.Uuid
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
 
+  parentCommunity GraphCommunity?  @relation("CommunityHierarchy", fields: [parentCommunityId], references: [id], onDelete: SetNull)
+  childCommunities GraphCommunity[] @relation("CommunityHierarchy")
+
   @@index([kbId, level])
+  @@index([kbId, fingerprint])
+  @@index([parentCommunityId])
 }
 
 model SemanticCache {
@@ -571,6 +612,7 @@ model SemanticCache {
   // queryEmbedding is managed via raw SQL (vector type not natively supported by Prisma)
   scopeFingerprint String
   knowledgeEpoch   Int      @default(0)
+  cacheFingerprint String?
   responseContent  String
   citations        Json?
   processingTrace  Json?
@@ -598,4 +640,27 @@ model UserCredential {
 
   @@index([userId])
   @@index([appId])
+}
+
+// RAPTOR 递归摘要树节点：为长文档提供章节级与文档级宏观摘要检索
+model RaptorNode {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kbId           String   @db.Uuid
+  documentId     String   @db.Uuid
+  parentNodeId   String?  @db.Uuid
+  level          Int      @default(0) // 0=章节聚类, 1=文档全景, 2=知识库全局
+  title          String
+  content        String
+  sourceChunkIds Json     @default("[]")
+  metadata       Json     @default("{}")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @default(now()) @updatedAt
+
+  kb           KnowledgeBase @relation(fields: [kbId], references: [id], onDelete: Cascade)
+  document     Document      @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([kbId, level])
+  @@index([documentId])
+  @@index([documentId, level])
+  @@index([parentNodeId])
 }
