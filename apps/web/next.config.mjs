@@ -10,7 +10,7 @@ const configuredApiOrigin = (() => {
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'standalone',
+  ...(process.env.OUTPUT_STANDALONE === 'true' ? { output: 'standalone' } : {}),
   allowedDevOrigins: ['127.0.0.1', 'localhost', '10.0.185.143', '45.42.214.20', '0.0.0.0'],
   async rewrites() {
     const apiTarget = process.env.INTERNAL_API_URL || 'http://127.0.0.1:3000';
