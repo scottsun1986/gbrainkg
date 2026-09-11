@@ -90,7 +90,7 @@ function PaginationBar({ pagination, onChange, label = '记录' }) {
   );
 }
 
-function SideNav({active, setActive, user, onLogout, kbCount=0, capabilities=[]}){
+function SideNav({active, setActive, user, onLogout, kbCount=0, capabilities=[], open=false, onClose=()=>{}}){
   const items = [
     {key:'chat', label:'对话', icon:'chat', badge:null},
     {key:'libs', label:'知识库', icon:'book', badge:kbCount ? String(kbCount) : null},
@@ -98,49 +98,59 @@ function SideNav({active, setActive, user, onLogout, kbCount=0, capabilities=[]}
   ].filter(item => hasCapability(item.key === 'chat' ? 'chat.use' : 'kb.read', capabilities));
   const canAdmin = capabilities.includes('*') || ['org.read','org.user.read','role.read','kb.industry.read','kb.industry.create','kb.industry.grant','audit.read'].some(permission => capabilities.includes(permission));
   const canSettings = hasCapability('system.settings.read', capabilities) || hasCapability('system.settings.manage', capabilities);
+  const handleNav = (key: string) => {
+    setActive(key);
+    onClose();
+  };
   return (
-    <aside className="side">
-      <div className="brand">
-        <span className="brand-mark">G</span>
-        <span className="brand-name">GBrain</span>
-        <span className="brand-sub">企业级知识库</span>
-      </div>
-      <nav className="nav">
-        <div className="nav-section">工作</div>
-        {items.map(it => (
-          <div key={it.key} className={`nav-item ${active===it.key?'active':''}`} onClick={()=>setActive(it.key)}>
-            <Icon name={it.icon} size={16} className="nav-ic"/>
-            <span>{it.label}</span>
-            {it.badge && <span className="nav-badge">{it.badge}</span>}
+    <>
+      {open && <div className="side-backdrop" onClick={onClose} />}
+      <aside className={`side ${open ? 'open' : ''}`}>
+        <div className="brand">
+          <span className="brand-mark">G</span>
+          <span className="brand-name">GBrain</span>
+          <span className="brand-sub">企业级知识库</span>
+          <button type="button" className="side-close-btn" onClick={onClose} title="关闭菜单" aria-label="关闭菜单">
+            <Icon name="x" size={16}/>
+          </button>
+        </div>
+        <nav className="nav">
+          <div className="nav-section">工作</div>
+          {items.map(it => (
+            <div key={it.key} className={`nav-item ${active===it.key?'active':''}`} onClick={()=>handleNav(it.key)}>
+              <Icon name={it.icon} size={16} className="nav-ic"/>
+              <span>{it.label}</span>
+              {it.badge && <span className="nav-badge">{it.badge}</span>}
+            </div>
+          ))}
+          <div className="nav-section">个人</div>
+          <div className={`nav-item ${active==='personal_settings'?'active':''}`} onClick={()=>handleNav('personal_settings')}>
+            <Icon name="key" size={16} className="nav-ic"/>
+            <span>个人设置</span>
           </div>
-        ))}
-        <div className="nav-section">个人</div>
-        <div className={`nav-item ${active==='personal_settings'?'active':''}`} onClick={()=>setActive('personal_settings')}>
-          <Icon name="key" size={16} className="nav-ic"/>
-          <span>个人设置</span>
+          <div className="nav-section">管理</div>
+          {canAdmin && <div className={`nav-item ${active==='admin'?'active':''}`} onClick={()=>handleNav('admin')}>
+            <Icon name="shield" size={16} className="nav-ic"/>
+            <span>管理后台</span>
+          </div>}
+          {canSettings && <div className={`nav-item ${active==='settings'?'active':''}`} onClick={()=>handleNav('settings')} title="模型、供应商与系统级配置">
+            <Icon name="setting" size={16} className="nav-ic"/>
+            <span>系统设置</span>
+          </div>}
+        </nav>
+        <div className="side-foot">
+          <div className="avatar" onClick={()=>handleNav('personal_settings')} style={{ cursor: 'pointer' }} title="点击打开个人设置">{String(user?.username || user?.displayName || '用户').slice(0,2).toUpperCase()}</div>
+          <div className="user-info" onClick={()=>handleNav('personal_settings')} style={{ cursor: 'pointer' }} title="点击打开个人设置">
+            <div className="user-name">{user?.displayName || user?.username || '当前用户'}</div>
+            <div className="user-role">{user?.orgs?.map((item:any)=>item.orgNode?.name).filter(Boolean).join('、') || '未分配组织'} · {user?.roles?.[0]?.role?.name || '普通用户'}</div>
+          </div>
+          <button className="logout-btn" onClick={onLogout} title="退出登录" aria-label="退出登录">
+            <Icon name="logout" size={14} color="var(--ink-3)"/>
+            <span>退出</span>
+          </button>
         </div>
-        <div className="nav-section">管理</div>
-        {canAdmin && <div className={`nav-item ${active==='admin'?'active':''}`} onClick={()=>setActive('admin')}>
-          <Icon name="shield" size={16} className="nav-ic"/>
-          <span>管理后台</span>
-        </div>}
-        {canSettings && <div className={`nav-item ${active==='settings'?'active':''}`} onClick={()=>setActive('settings')} title="模型、供应商与系统级配置">
-          <Icon name="setting" size={16} className="nav-ic"/>
-          <span>系统设置</span>
-        </div>}
-      </nav>
-      <div className="side-foot">
-        <div className="avatar" onClick={()=>setActive('personal_settings')} style={{ cursor: 'pointer' }} title="点击打开个人设置">{String(user?.username || user?.displayName || '用户').slice(0,2).toUpperCase()}</div>
-        <div className="user-info" onClick={()=>setActive('personal_settings')} style={{ cursor: 'pointer' }} title="点击打开个人设置">
-          <div className="user-name">{user?.displayName || user?.username || '当前用户'}</div>
-          <div className="user-role">{user?.orgs?.map((item:any)=>item.orgNode?.name).filter(Boolean).join('、') || '未分配组织'} · {user?.roles?.[0]?.role?.name || '普通用户'}</div>
-        </div>
-        <button className="logout-btn" onClick={onLogout} title="退出登录" aria-label="退出登录">
-          <Icon name="logout" size={14} color="var(--ink-3)"/>
-          <span>退出</span>
-        </button>
-      </div>
-    </aside>
+      </aside>
+    </>
   );
 }
 
@@ -1065,9 +1075,12 @@ function ConfirmModal({title, msg, onConfirm, onClose}){
   );
 }
 
-function TopBar({title, sub, theme, onToggleTheme, onOpenPalette, onOpenHelp, onOpenNotifications}){
+function TopBar({title, sub, theme, onToggleTheme, onOpenPalette, onOpenHelp, onOpenNotifications, onToggleSidebar}){
   return (
     <div className="topbar">
+      <button type="button" className="icon-btn sidebar-toggle-btn" onClick={onToggleSidebar} title="打开主菜单" aria-label="打开主菜单">
+        <Icon name="menu" size={18}/>
+      </button>
       <div className="crumb"><b>{title}</b>{sub && <> · <span style={{color:'var(--ink-3)'}}>{sub}</span></>}</div>
       <div className="topbar-spacer"/>
       <button className="topbar-search-trigger" onClick={onOpenPalette} title="搜索 / 命令面板 (⌘K)">
@@ -1472,6 +1485,7 @@ function ChatScreen(){
   const [activeCite, setActiveCite] = useState(null);
   const [activeConv, setActiveConv] = useState(null);
   const [conversationList, setConversationList] = useState(CONVERSATIONS);
+  const [convOpen, setConvOpen] = useState(false);
   const [convSearch, setConvSearch] = useState('');
   const [collapsedGroups, setCollapsedGroups] = useState(() => ({
     '近 7 天': true,
@@ -1791,14 +1805,18 @@ function ChatScreen(){
 
   return (
     <div className="chat">
-      <div className="conv-side">
+      {convOpen && <div className="conv-backdrop" onClick={() => setConvOpen(false)} />}
+      <div className={`conv-side ${convOpen ? 'open' : ''}`}>
         <div className="scope">
           <div className="scope-label">查询范围</div>
           <ScopePicker visibleKbs={visibleKbs} selected={selected} setSelected={setSelected} open={open} setOpen={setOpen}/>
         </div>
         <div className="conv-head">
           <h4>最近会话</h4>
-          <button className="icon-btn" title="新建会话 (⌘N)" onClick={newChat}><Icon name="plus" size={14}/></button>
+          <div style={{display:'flex',alignItems:'center',gap:4}}>
+            <button className="icon-btn" title="新建会话 (⌘N)" onClick={()=>{ newChat(); setConvOpen(false); }}><Icon name="plus" size={14}/></button>
+            <button type="button" className="icon-btn conv-close-btn" title="关闭会话列表" aria-label="关闭会话列表" onClick={() => setConvOpen(false)}><Icon name="x" size={14}/></button>
+          </div>
         </div>
         <div className="conv-search">
           <Icon name="search" size={12}/>
@@ -1840,7 +1858,7 @@ function ChatScreen(){
                   {!isCollapsed && (
                     <div className="conv-group-items">
                       {g.items.map((c) => (
-                        <div key={c.id} className={`conv-item ${activeConv===c.id?'active':''}`} onClick={()=>openConversation(c.id)} onContextMenu={(e) => showConvMenu(e, c)}>
+                        <div key={c.id} className={`conv-item ${activeConv===c.id?'active':''}`} onClick={()=>{ openConversation(c.id); setConvOpen(false); }} onContextMenu={(e) => showConvMenu(e, c)}>
                           <span className="conv-title">{c.title || '未命名会话'}</span>
                           <span className="conv-time">{c.createdAt ? new Date(c.createdAt).toLocaleDateString('zh-CN') : ''}</span>
                         </div>
@@ -1852,12 +1870,18 @@ function ChatScreen(){
             });
           })()}
         </div>
-        <div className="new-chat" onClick={newChat} title="开始一段新对话 (⌘N)">
+        <div className="new-chat" onClick={()=>{ newChat(); setConvOpen(false); }} title="开始一段新对话 (⌘N)">
           <Icon name="plus" size={12}/> 新建会话
         </div>
       </div>
 
       <div className="chat-main">
+        <div className="conv-mobile-bar">
+          <button type="button" className="chat-mobile-conv-btn" onClick={() => setConvOpen(true)}>
+            <Icon name="chat" size={13}/>
+            <span>会话列表 ({conversationList.length})</span>
+          </button>
+        </div>
         <div className="chat-scroll" ref={scrollRef}>
           {!autoStick && messages.length > 0 && (
             <button type="button" className="scroll-to-bottom" onClick={scrollToBottom} title="回到底部">
@@ -2063,6 +2087,7 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
   const [filter, setFilter] = useState('all');
   const filtered = filter==='all' ? KNOWLEDGE_BASES : KNOWLEDGE_BASES.filter(k=>k.type===filter);
   const [sel, setSel] = useState(null);
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
   const [tab, setTab] = useState('docs');
   const [docs, setDocs] = useState([]);
   const [previewDoc, setPreviewDoc] = useState(null);
@@ -2251,7 +2276,7 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
   };
 
   return (
-    <div className="lib">
+    <div className={`lib ${mobileDetailOpen ? 'detail-active' : ''}`}>
       <div className="lib-list">
         <div className="lib-head" style={{display:'flex',alignItems:'center',gap:12}}>
           <div style={{flex:1}}><h3>知识库</h3><p>共 {KNOWLEDGE_BASES.length} 个 · 你可见 {KNOWLEDGE_BASES.length} 个</p></div>
@@ -2271,7 +2296,7 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
         </div>
         <div className="lib-body">
           {filtered.length ? filtered.map(k=>(
-            <div key={k.id} className={`kb-card ${current.id===k.id?'active':''}`} onClick={()=>setSel(k)}>
+            <div key={k.id} className={`kb-card ${current?.id===k.id?'active':''}`} onClick={()=>{ setSel(k); setMobileDetailOpen(true); }}>
               <div className="row1">
                 <span className="nm">{k.name}</span>
                 {TYPE_BADGE(k.type)}
@@ -2298,6 +2323,10 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
       {current ? <div className="lib-detail">
         <div className="detail-head">
           <div>
+            <button type="button" className="lib-back-btn" onClick={() => setMobileDetailOpen(false)}>
+              <Icon name="arrowleft" size={13}/>
+              <span>返回知识库列表</span>
+            </button>
             <div className="ttl">{current.name}</div>
             <div className="sub">
               {TYPE_BADGE(current.type)}
@@ -6151,6 +6180,7 @@ function App(){
 
 
   const [screen, setScreen] = useState('chat');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [adminTab, setAdminTab] = useState('org');
   const [libraryKbId, setLibraryKbId] = useState(null);
   const [toast, setToast] = useState(null);
@@ -6250,7 +6280,16 @@ function App(){
   const visibleScreen = (screen === 'admin' && !canAdmin) || (screen === 'settings' && !canSettings) ? 'chat' : screen;
   return (
     <div className="app">
-      <SideNav active={visibleScreen} setActive={setScreen} user={currentUser} onLogout={handleLogout} kbCount={KNOWLEDGE_BASES.length} capabilities={CAPABILITIES}/>
+      <SideNav
+        active={visibleScreen}
+        setActive={setScreen}
+        user={currentUser}
+        onLogout={handleLogout}
+        kbCount={KNOWLEDGE_BASES.length}
+        capabilities={CAPABILITIES}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+      />
       <div className="main">
         <TopBar
           title={titles[visibleScreen]?.t || 'GBrain'}
@@ -6260,6 +6299,7 @@ function App(){
           onOpenPalette={() => setPaletteOpen(true)}
           onOpenHelp={() => { window.location.assign('/help'); }}
           onOpenNotifications={() => setNotifOpen(true)}
+          onToggleSidebar={() => setSidebarOpen(v => !v)}
         />
         <div className="content">
           {/* 多屏常驻挂载：跨屏切换不丢会话/表单状态 */}

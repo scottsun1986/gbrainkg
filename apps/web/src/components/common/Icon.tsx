@@ -41,6 +41,8 @@ export const Icon = ({name, size=16, stroke=1.6, color='currentColor', ...svgPro
     database: <><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></>,
     key: <><path d="m21 2-2 2m-1.5 1.5L12 11l-4 4-2-2-4 4 3 3 7-7 1.5-1.5M19 4l2 2-1 1-2-2 1-1Z"/><circle cx="7.5" cy="16.5" r="3.5"/></>,
     trash: <><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></>,
+    menu: <><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></>,
+    x: <><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>,
   };
   return (
     <svg {...svgProps} width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" style={{flex:'0 0 auto',display:'inline-block', ...(svgProps.style || {})}}>
