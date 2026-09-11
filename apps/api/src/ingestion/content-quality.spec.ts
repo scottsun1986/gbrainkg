@@ -57,4 +57,16 @@ describe('authoritative publication quality gate', () => {
     expect(res.quality_issues).toContain('页面文字覆盖率偏低 (3/10)，可能存在未识别的扫描页面');
     expect(res.quality_status).toBe('needs_review');
   });
+
+  it('credits OCR recognized pages towards page coverage ratio', () => {
+    const res = assessContentQuality('有效文字'.repeat(50), '.pdf', {
+      page_count: 20,
+      text_pages: 0,
+      ocr_cost_pages: 20,
+      ocr_provider: 'baidu',
+    });
+    expect(res.quality_issues).not.toContain('页面文字覆盖率偏低 (0/20)，可能存在未识别的扫描页面');
+    expect(res.quality_status).toBe('passed');
+  });
 });
+

@@ -657,6 +657,8 @@ function UniversalDocumentViewer({ preview, onClose }) {
               <span className="banner-badge">🎯 问答引用溯源</span>
               <span className="banner-text" title={snippet}>
                 已为您高亮匹配原文与切片：“{snippet.replace(/\s+/g, ' ').slice(0, 48)}...”
+                {preview?.pageNo ? ` · 命中第 ${preview.pageNo} 页` : ''}
+                {preview?.bbox ? ` · 视口坐标 [X:${preview.bbox.x} Y:${preview.bbox.y}]` : ''}
               </span>
             </div>
             <div className="banner-actions">
@@ -717,22 +719,43 @@ function UniversalDocumentViewer({ preview, onClose }) {
                       <div style={{ textAlign: 'center', padding: '30px', color: 'var(--ink-3)' }}>Word 文档渲染中…</div>
                     </div>
                   ) : isPdf && rawBlobUrl ? (
-                    <div style={{ width: '100%', height: '100%', minHeight: '72vh', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ width: '100%', height: '100%', minHeight: '72vh', display: 'flex', flexDirection: 'column', gap: '8px', position: 'relative' }}>
                       <div style={{ background: 'var(--surface-2)', border: '1px solid var(--line)', borderRadius: '6px', padding: '7px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '12px', color: 'var(--ink-3)' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <span>📄</span>
-                          <span><b>PDF 原件内嵌预览</b>（支持缩放、打印与页码定位）</span>
+                          <span><b>PDF 原件内嵌预览</b>{preview?.pageNo ? `（已自动定位至第 ${preview.pageNo} 页）` : '（支持缩放、打印与页码定位）'}</span>
                         </div>
                         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                          <a href={rawBlobUrl} target="_blank" rel="noreferrer" className="btn" style={{ padding: '3px 8px', fontSize: '11px', height: '24px', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>新窗口打开 ↗</a>
+                          <a href={preview?.pageNo ? `${rawBlobUrl}#page=${preview.pageNo}` : rawBlobUrl} target="_blank" rel="noreferrer" className="btn" style={{ padding: '3px 8px', fontSize: '11px', height: '24px', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>新窗口打开 ↗</a>
                           <button type="button" className="btn" onClick={() => setActiveTab('std_md')} style={{ padding: '3px 8px', fontSize: '11px', height: '24px' }}>查看结构化 Markdown</button>
                         </div>
                       </div>
                       <iframe
-                        src={`${rawBlobUrl}#toolbar=1`}
+                        src={preview?.pageNo ? `${rawBlobUrl}#page=${preview.pageNo}&toolbar=1` : `${rawBlobUrl}#toolbar=1`}
                         title={filename}
                         style={{ width: '100%', flex: 1, minHeight: '68vh', border: '1px solid var(--line)', borderRadius: '8px', background: '#fff' }}
                       />
+                      {preview?.bbox && (
+                        <div style={{
+                          position: 'absolute',
+                          bottom: '16px',
+                          right: '20px',
+                          background: 'rgba(234, 88, 12, 0.95)',
+                          color: '#fff',
+                          padding: '6px 14px',
+                          borderRadius: '6px',
+                          fontSize: '11.5px',
+                          fontWeight: 600,
+                          boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          zIndex: 10,
+                          pointerEvents: 'none',
+                        }}>
+                          <span>🎯 像素级视觉锚点: 第 {preview.pageNo || 1} 页 [X:{preview.bbox.x} Y:{preview.bbox.y} 宽:{preview.bbox.w} 高:{preview.bbox.h}]</span>
+                        </div>
+                      )}
                     </div>
                   ) : isExcel && sheetsData.names.length > 0 ? (
                     <div className="sheet-container">
@@ -1628,7 +1651,7 @@ function ChatScreen(){
             setActiveConv(data.conversation_id);
             setConversationList(list => [{ id: data.conversation_id, title: userMsg.slice(0, 120), createdAt: new Date().toISOString() }, ...list.filter(item => item.id !== data.conversation_id)]);
           } else if (data.type === 'citation') {
-            const citation = { id: `${data.index}-${data.topic_slug}`, citationIndex: Number(data.index), title: data.timeline_entry?.doc_title || data.topic_slug || '知识主题', kb: data.timeline_entry?.source_kb, documentId: data.timeline_entry?.document_id, kbName: data.timeline_entry?.kb_name || data.timeline_entry?.source_kb || '知识库', truth: '—', evidences: 1, lastUpdate: '刚刚', snippet: data.timeline_entry?.snippet || '', path: data.topic_slug };
+            const citation = { id: `${data.index}-${data.topic_slug}`, citationIndex: Number(data.index), title: data.timeline_entry?.doc_title || data.topic_slug || '知识主题', kb: data.timeline_entry?.source_kb, documentId: data.timeline_entry?.document_id, kbName: data.timeline_entry?.kb_name || data.timeline_entry?.source_kb || '知识库', truth: '—', evidences: 1, lastUpdate: '刚刚', snippet: data.timeline_entry?.snippet || '', path: data.topic_slug, pageNo: data.timeline_entry?.page_no, bbox: data.timeline_entry?.bbox };
             setCitations(items => [...items, citation]);
             setMessages(items => {
               const next = [...items];
@@ -1744,6 +1767,8 @@ function ChatScreen(){
       title: citation.title || '原始文档',
       snippet: citation.snippet,
       topic: citation.path || citation.title,
+      pageNo: citation.pageNo || citation.page_no,
+      bbox: citation.bbox,
     });
   };
   const uploadAttachment = async (file) => {
@@ -1787,9 +1812,9 @@ function ChatScreen(){
         text: message.content,
         done: true,
         trace: message.role === 'assistant' && Array.isArray(message.processingTrace) ? message.processingTrace : [],
-        sources: message.role === 'assistant' && Array.isArray(message.citationsSummary) ? message.citationsSummary.map((cite, index) => ({ id: `${message.id}-${index}`, citationIndex: Number(cite.index || index + 1), title: cite.timeline_entry?.doc_title || cite.topic_slug || '知识主题', kb: cite.timeline_entry?.source_kb, documentId: cite.timeline_entry?.document_id, kbName: cite.timeline_entry?.kb_name || cite.timeline_entry?.source_kb || '知识库', truth: '—', evidences: 1, lastUpdate: new Date(message.createdAt).toLocaleString('zh-CN'), snippet: cite.timeline_entry?.snippet || '', path: cite.topic_slug })) : [],
+        sources: message.role === 'assistant' && Array.isArray(message.citationsSummary) ? message.citationsSummary.map((cite, index) => ({ id: `${message.id}-${index}`, citationIndex: Number(cite.index || index + 1), title: cite.timeline_entry?.doc_title || cite.topic_slug || '知识主题', kb: cite.timeline_entry?.source_kb, documentId: cite.timeline_entry?.document_id, kbName: cite.timeline_entry?.kb_name || cite.timeline_entry?.source_kb || '知识库', truth: '—', evidences: 1, lastUpdate: new Date(message.createdAt).toLocaleString('zh-CN'), snippet: cite.timeline_entry?.snippet || '', path: cite.topic_slug, pageNo: cite.timeline_entry?.page_no, bbox: cite.timeline_entry?.bbox })) : [],
       })));
-      setCitations((conversation.messages || []).flatMap(message => Array.isArray(message.citationsSummary) ? message.citationsSummary.map((cite, index) => ({ id: `${message.id}-${index}`, citationIndex: Number(cite.index || index + 1), title: cite.timeline_entry?.doc_title || cite.topic_slug || '知识主题', kb: cite.timeline_entry?.source_kb, documentId: cite.timeline_entry?.document_id, kbName: cite.timeline_entry?.kb_name || cite.timeline_entry?.source_kb || '知识库', truth: '—', evidences: 1, lastUpdate: new Date(message.createdAt).toLocaleString('zh-CN'), snippet: cite.timeline_entry?.snippet || '' })) : []));
+      setCitations((conversation.messages || []).flatMap(message => Array.isArray(message.citationsSummary) ? message.citationsSummary.map((cite, index) => ({ id: `${message.id}-${index}`, citationIndex: Number(cite.index || index + 1), title: cite.timeline_entry?.doc_title || cite.topic_slug || '知识主题', kb: cite.timeline_entry?.source_kb, documentId: cite.timeline_entry?.document_id, kbName: cite.timeline_entry?.kb_name || cite.timeline_entry?.source_kb || '知识库', truth: '—', evidences: 1, lastUpdate: new Date(message.createdAt).toLocaleString('zh-CN'), snippet: cite.timeline_entry?.snippet || '', pageNo: cite.timeline_entry?.page_no, bbox: cite.timeline_entry?.bbox })) : []));
     } catch (error) { window.dispatchEvent(new CustomEvent('app-toast', {detail: error.message || '会话加载失败'})); }
   };
 

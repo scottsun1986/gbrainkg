@@ -97,6 +97,14 @@ describe('GraphRagService', () => {
       ]);
       expect(entities.some((e) => ['目录', '文档正文', '附件'].includes(e.name))).toBe(false);
     });
+
+    it('extracts temporal supersedes and amends relations from policy text', () => {
+      const { relations } = service.extractGraphElements('安全运营规范V4.md', 'doc-v4', [
+        { content: '本规范自发布之日起施行，废止《旧版飞行管理规定》，并修订《数据中心运维守则》。' },
+      ], 4);
+      expect(relations.some((r) => r.relationType === 'supersedes' && r.targetName === '旧版飞行管理规定')).toBe(true);
+      expect(relations.some((r) => r.relationType === 'amends' && r.targetName === '数据中心运维守则')).toBe(true);
+    });
   });
 
   describe('persistGraphElements', () => {

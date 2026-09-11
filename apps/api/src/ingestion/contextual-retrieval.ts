@@ -46,15 +46,12 @@ export async function enrichChunksWithContext(
   const maxAttempts = 1 + Math.max(0, options?.retries ?? 1);
   const safeMarkdown = fullMarkdown.substring(0, MAX_DOCUMENT_LENGTH);
   
-  const systemPrompt = `你是一个专业的文档分析助手。你的任务是为一个长文档中的指定文本块提供上下文描述。
+  const systemPrompt = `你是一个专业的文档分析助手。你的任务是为一个长文档中的指定文本块提供上下文描述。请为用户提供的文本块生成一段简短的上下文描述（50-100字），说明该文本块在原文档中的位置、涵盖的核心实体（组织、人名、法规）、时间范围以及与上下文的关系。${options?.documentTitle ? `文档标题是：${options.documentTitle}。\n` : ''}只输出上下文描述，不要重复原文本，信息必须来自文档本身。
+
 整个文档的内容如下：
 <document>
 ${safeMarkdown}
-</document>
-
-请为用户提供的文本块生成一段简短的上下文描述（50-100字），说明该文本块在原文档中的位置、涵盖的核心实体（组织、人名、法规）、时间范围以及与上下文的关系。
-如果你知道文档的标题，请尽量在上下文中提及。${options?.documentTitle ? `文档标题是：${options.documentTitle}` : ''}
-只输出上下文描述，不要重复原文本，信息必须来自文档本身。`;
+</document>`;
 
   console.log(`[ContextualRetrieval] Starting enrichment for ${chunks.length} chunks. Concurrency: ${concurrency}`);
 
@@ -62,6 +59,7 @@ ${safeMarkdown}
   let successCount = 0;
   let skipCount = 0;
   let failCount = 0;
+  let totalCacheHitTokens = 0;
 
   for (let i = 0; i < enrichedChunks.length; i += concurrency) {
     const batch = enrichedChunks.slice(i, i + concurrency);
@@ -99,6 +97,9 @@ ${safeMarkdown}
         }
 
         const data = await response.json();
+        if (typeof data?.usage?.prompt_cache_hit_tokens === 'number' && data.usage.prompt_cache_hit_tokens > 0) {
+          totalCacheHitTokens += data.usage.prompt_cache_hit_tokens;
+        }
         return data.choices?.[0]?.message?.content?.trim() || null;
       };
 
@@ -140,7 +141,7 @@ ${safeMarkdown}
     await Promise.allSettled(promises);
   }
 
-  console.log(`[ContextualRetrieval] Finished enrichment. Success: ${successCount}, Skipped: ${skipCount}, Failed: ${failCount}`);
+  console.log(`[ContextualRetrieval] Finished enrichment. Success: ${successCount}, Skipped: ${skipCount}, Failed: ${failCount}, Prompt Cache Hit Tokens: ${totalCacheHitTokens}`);
 
   return enrichedChunks;
 }

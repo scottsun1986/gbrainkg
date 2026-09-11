@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { getPrismaClient } from '../prisma';
 
 export type EntityType = 'concept' | 'organization' | 'system' | 'policy' | 'document';
-export type RelationType = 'contains' | 'references' | 'regulates' | 'depends_on' | 'relates_to' | 'mentions';
+export type RelationType = 'contains' | 'references' | 'regulates' | 'depends_on' | 'relates_to' | 'mentions' | 'supersedes' | 'amends';
 
 export interface ExtractedEntity {
   name: string;
@@ -182,6 +182,39 @@ export class GraphRagService {
           });
         }
       }
+
+      // 5. Temporal precedence & amendment extraction (supersedes / amends)
+      for (const match of content.matchAll(/(?:废止|替代|取代|废除|修订单号|替代原|原规程|原标准)[：:\s]*[《「“]([^》」”]{2,60})[》」”]/gu)) {
+        const supersededName = registerEntity(match[1], 'policy');
+        if (supersededName && supersededName !== docCleanTitle) {
+          relations.push({
+            sourceName: docCleanTitle,
+            targetName: supersededName,
+            relationType: 'supersedes',
+            snippet: match[0],
+            provenanceDocId: docId,
+            chunkId,
+            weight: 3.0,
+            documentVersion: version,
+          });
+        }
+      }
+
+      for (const match of content.matchAll(/(?:修订|修正|补充)[：:\s]*[《「“]([^》」”]{2,60})[》」”]/gu)) {
+        const amendedName = registerEntity(match[1], 'policy');
+        if (amendedName && amendedName !== docCleanTitle) {
+          relations.push({
+            sourceName: docCleanTitle,
+            targetName: amendedName,
+            relationType: 'amends',
+            snippet: match[0],
+            provenanceDocId: docId,
+            chunkId,
+            weight: 2.5,
+            documentVersion: version,
+          });
+        }
+      }
     }
 
     return {
@@ -217,14 +250,14 @@ ${chunkContent.slice(0, 4000)}
     {"name": "实体名", "type": "concept|organization|system|policy|person|document", "description": "简短描述"}
   ],
   "relations": [
-    {"source": "源实体名", "target": "目标实体名", "type": "contains|references|regulates|depends_on|relates_to|mentions", "evidence": "原文证据"}
+    {"source": "源实体名", "target": "目标实体名", "type": "contains|references|regulates|depends_on|relates_to|mentions|supersedes|amends", "evidence": "原文证据"}
   ]
 }
 
 要求：
 1. 实体名必须是文本中明确出现的名词或专有名词
 2. 每条关系必须附带 evidence（原文中的依据）
-3. type 必须是指定的枚举值之一
+3. type 必须是指定的枚举值之一（包含 supersedes 替代废止、amends 修订补充）
 4. 过滤掉过于泛化的词（如"内容"、"文档"、"目录"等）
 5. 只输出 JSON，不要其他内容`;
 
@@ -268,7 +301,7 @@ ${chunkContent.slice(0, 4000)}
       const entities: ExtractedEntity[] = [];
       const relations: ExtractedRelation[] = [];
       const validTypes: EntityType[] = ['concept', 'organization', 'system', 'policy', 'document'];
-      const validRelTypes: RelationType[] = ['contains', 'references', 'regulates', 'depends_on', 'relates_to', 'mentions'];
+      const validRelTypes: RelationType[] = ['contains', 'references', 'regulates', 'depends_on', 'relates_to', 'mentions', 'supersedes', 'amends'];
 
       if (Array.isArray(parsed.entities)) {
         for (const e of parsed.entities) {
@@ -671,28 +704,59 @@ ${chunkContent.slice(0, 4000)}
       }
     }
 
+    const supersededEntityNames = new Set<string>();
+    const temporalWarnings: string[] = [];
+
+    // First pass: identify any temporal superseding / repeal relations
     for (const entity of entities) {
       for (const rel of entity.outgoingRelations || []) {
+        if (rel.relationType === 'supersedes' && rel.target?.name) {
+          supersededEntityNames.add(rel.target.name);
+          temporalWarnings.push(`- ⚠️【时序效力裁决】: [${rel.target.name}] 已被现行规范 [${entity.name}] 替代废止，相关历史条款已失效，请以现行规范为准。`);
+        }
+      }
+      for (const rel of entity.incomingRelations || []) {
+        if (rel.relationType === 'supersedes' && rel.source?.name) {
+          supersededEntityNames.add(entity.name);
+          temporalWarnings.push(`- ⚠️【时序效力裁决】: [${entity.name}] 已被现行规范 [${rel.source.name}] 替代废止，相关历史条款已失效，请以现行规范为准。`);
+        }
+      }
+    }
+
+    if (temporalWarnings.length) {
+      contextLines.push('【时序版本效力状态】:');
+      contextLines.push(...new Set(temporalWarnings));
+    }
+
+    for (const entity of entities) {
+      const isSuperseded = supersededEntityNames.has(entity.name);
+      for (const rel of entity.outgoingRelations || []) {
+        // Demote or skip relations originating from a superseded entity unless it's a supersedes relation itself
+        if (isSuperseded && rel.relationType !== 'supersedes') continue;
         relationsList.push({
           source: entity.name,
           target: rel.target.name,
           relationType: rel.relationType,
-          weight: rel.weight,
+          weight: isSuperseded ? rel.weight * 0.3 : rel.weight,
           snippet: (rel.provenance as any)?.[0]?.snippet,
         });
         const snippetInfo = (rel.provenance as any)?.[0]?.snippet ? ` (依据: "${(rel.provenance as any)[0].snippet}")` : '';
-        contextLines.push(`- [${entity.name}] (${entity.type}) --[${rel.relationType}]--> [${rel.target.name}] (${rel.target.type})${snippetInfo}`);
+        const statusTag = isSuperseded ? ' [已废止]' : '';
+        contextLines.push(`- [${entity.name}${statusTag}] (${entity.type}) --[${rel.relationType}]--> [${rel.target.name}] (${rel.target.type})${snippetInfo}`);
       }
       for (const rel of entity.incomingRelations || []) {
+        const sourceSuperseded = supersededEntityNames.has(rel.source.name);
+        if (sourceSuperseded && rel.relationType !== 'supersedes') continue;
         relationsList.push({
           source: rel.source.name,
           target: entity.name,
           relationType: rel.relationType,
-          weight: rel.weight,
+          weight: sourceSuperseded ? rel.weight * 0.3 : rel.weight,
           snippet: (rel.provenance as any)?.[0]?.snippet,
         });
         const snippetInfo = (rel.provenance as any)?.[0]?.snippet ? ` (依据: "${(rel.provenance as any)[0].snippet}")` : '';
-        contextLines.push(`- [${rel.source.name}] (${rel.source.type}) --[${rel.relationType}]--> [${entity.name}] (${entity.type})${snippetInfo}`);
+        const statusTag = sourceSuperseded ? ' [已废止]' : '';
+        contextLines.push(`- [${rel.source.name}${statusTag}] (${rel.source.type}) --[${rel.relationType}]--> [${entity.name}] (${entity.type})${snippetInfo}`);
       }
     }
 

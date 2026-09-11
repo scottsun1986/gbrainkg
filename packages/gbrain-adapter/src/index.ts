@@ -1,7 +1,7 @@
 declare const require: any;
 declare const process: any;
 
-const { mkdir, writeFile, access, rename, unlink, readdir } = require('node:fs').promises;
+const { mkdir, writeFile, access, rename, unlink, readdir, readFile } = require('node:fs').promises;
 const { join, dirname, resolve } = require('node:path');
 const { spawn } = require('node:child_process');
 
@@ -1054,36 +1054,65 @@ export class BrainRepoAdapter {
           : undefined,
       };
     }
-    // Use GBrain's official balanced retrieval stack as designed: query
-    // expansion + vector/BM25/RRF + graph signals + reranker + autocut.
-    // No application-side keyword rules or language-specific retries.
-    const args = operation === 'search'
-      ? [
-        'search', question,
-        '--source-id', sourceId,
-        '--mode', 'balanced',
-        '--limit', options.breadth ? '50' : '30',
-        '--snippet-chars', '1800',
-        '--json',
-      ]
-      : [
-        'query', question,
-        '--source-id', sourceId,
-        '--mode', 'balanced',
-        '--limit', options.breadth ? '50' : '30',
-        '--detail', 'high',
-        '--snippet-chars', '1800',
-        '--json',
-      ];
-    // GBrain recommends disabling autocut for broad enumeration and landscape
-    // questions so the caller can judge a wider candidate set.
-    if (operation === 'query') {
-      if (options.breadth) args.splice(args.length - 1, 0, '--autocut', 'false');
-      else args.splice(args.length - 1, 0, '--adaptive-return', 'true');
-    }
-    const { stdout } = await this.run(args, undefined, options.signal);
     let rawRows: Array<{ slug: string; title: string; chunk_text?: string; source_id?: string; rerank_score?: number; score?: number; evidence?: string }> = [];
-    rawRows = this.parseSearchRows(stdout);
+    const httpDaemonUrl = process.env.GBRAIN_HTTP_URL?.replace(/\/$/, '');
+    if (httpDaemonUrl) {
+      try {
+        const timeoutMs = Math.min(10000, Number(process.env.GBRAIN_HTTP_TIMEOUT_MS || 4000));
+        const endpoint = `${httpDaemonUrl}/api/v1/${operation === 'search' ? 'search' : 'query'}`;
+        const timeoutSignal = AbortSignal.timeout(timeoutMs);
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            source_id: sourceId,
+            question,
+            mode: 'balanced',
+            limit: options.breadth ? 50 : 30,
+            snippet_chars: 1800,
+          }),
+          signal: options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal,
+        });
+        if (res.ok) {
+          const bodyText = await res.text();
+          rawRows = this.parseSearchRows(bodyText);
+        }
+      } catch {
+        // Fall back to CLI process execution on daemon error/timeout
+      }
+    }
+
+    if (rawRows.length === 0) {
+      // Use GBrain's official balanced retrieval stack as designed: query
+      // expansion + vector/BM25/RRF + graph signals + reranker + autocut.
+      // No application-side keyword rules or language-specific retries.
+      const args = operation === 'search'
+        ? [
+          'search', question,
+          '--source-id', sourceId,
+          '--mode', 'balanced',
+          '--limit', options.breadth ? '50' : '30',
+          '--snippet-chars', '1800',
+          '--json',
+        ]
+        : [
+          'query', question,
+          '--source-id', sourceId,
+          '--mode', 'balanced',
+          '--limit', options.breadth ? '50' : '30',
+          '--detail', 'high',
+          '--snippet-chars', '1800',
+          '--json',
+        ];
+      // GBrain recommends disabling autocut for broad enumeration and landscape
+      // questions so the caller can judge a wider candidate set.
+      if (operation === 'query') {
+        if (options.breadth) args.splice(args.length - 1, 0, '--autocut', 'false');
+        else args.splice(args.length - 1, 0, '--adaptive-return', 'true');
+      }
+      const { stdout } = await this.run(args, undefined, options.signal);
+      rawRows = this.parseSearchRows(stdout);
+    }
 
     // If query returned 0 rows (e.g. vector search is unavailable in local environment),
     // immediately try keyword search against local SQLite.
@@ -1224,6 +1253,18 @@ export class BrainRepoAdapter {
 
   private async getPage(repoPath: string, slug: string, signal?: AbortSignal): Promise<string> {
     const sourceId = this.sourceId(repoPath);
+    // Fast-path: read page directly from disk repository when available (0.1ms vs 100ms spawn)
+    try {
+      const sourcePath = join(this.sourceRoot, sourceId);
+      const filePath = this.pagePath(sourcePath, slug);
+      const fileContent = await readFile(filePath, 'utf8');
+      if (typeof fileContent === 'string' && fileContent.trim()) {
+        const stripped = fileContent.replace(/^---[\s\S]*?---\s*/, '').trim();
+        return stripped || fileContent.trim();
+      }
+    } catch {
+      // Fall through to CLI get
+    }
     const { stdout } = await this.run(['get', slug, '--include-content', '--source-id', sourceId, '--json'], undefined, signal);
     try {
       const payload = JSON.parse(stdout || '{}');

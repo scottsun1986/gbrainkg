@@ -64,4 +64,27 @@ describe('EmbeddingService', () => {
     const isolated = new EmbeddingService({ getDefault: jest.fn().mockResolvedValue(null) } as any);
     await expect(isolated.embedOne('x')).resolves.toBeNull();
   });
+
+  it('serves repeated embeddings from client memory cache without network call', async () => {
+    const originalFetch = global.fetch;
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [{ index: 0, embedding: [1, 2, 3, 4] }],
+      }),
+    });
+    (global as any).fetch = fetchMock;
+    try {
+      const res1 = await service.embedOne('repeated query');
+      expect(res1).toEqual([1, 2, 3, 4]);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      // Second call must hit client memory cache
+      const res2 = await service.embedOne('repeated query');
+      expect(res2).toEqual([1, 2, 3, 4]);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      (global as any).fetch = originalFetch;
+    }
+  });
 });

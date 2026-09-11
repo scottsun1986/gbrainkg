@@ -1039,6 +1039,10 @@ async def process_file(
             task["markdown"] = md
             task["engine"] = engine
             task.update(parser_metadata)
+            if parser_metadata.get("ocr_cost_pages"):
+                task["text_pages"] = min(int(task.get("page_count") or 0), int(task.get("text_pages") or 0) + int(parser_metadata["ocr_cost_pages"]))
+            elif str(engine).startswith("ocr-") and not parser_metadata.get("ocr_error"):
+                task["text_pages"] = int(task.get("page_count") or 0)
         else:
             # Standalone images use local Docling in the test profile and the
             # cloud OCR route in production. No image is silently accepted

@@ -1,5 +1,6 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ModelConfigService } from '../model-config.service';
+import { createHash } from 'node:crypto';
 
 export interface EmbeddingProviderConfig {
   baseUrl: string;
@@ -19,6 +20,9 @@ export class EmbeddingService {
   private readonly batchSize = Math.max(1, Number(process.env.EMBEDDING_BATCH_SIZE || 32));
   private readonly maxChars = Math.max(200, Number(process.env.EMBEDDING_MAX_CHARS || 6000));
   private readonly timeoutMs = Math.max(1000, Number(process.env.EMBEDDING_TIMEOUT_MS || 20000));
+  private readonly cache = new Map<string, { vector: number[]; expiresAt: number }>();
+  private readonly maxCacheEntries = Math.max(100, Number(process.env.EMBEDDING_CACHE_MAX_ENTRIES || 5000));
+  private readonly cacheTtlMs = Math.max(60000, Number(process.env.EMBEDDING_CACHE_TTL_MS || 3600000));
 
   constructor(@Optional() private readonly modelConfigService?: ModelConfigService) {}
 
@@ -51,8 +55,8 @@ export class EmbeddingService {
   }
 
   /**
-   * Embed a list of texts in bounded batches. Always returns an array aligned
-   * to the input; entries that fail are null. Never throws.
+   * Embed a list of texts in bounded batches with client-side caching.
+   * Always returns an array aligned to the input; entries that fail are null. Never throws.
    */
   async embed(texts: string[]): Promise<Array<number[] | null>> {
     if (!texts.length) return [];
@@ -60,11 +64,41 @@ export class EmbeddingService {
     if (!config) return texts.map(() => null);
 
     const results: Array<number[] | null> = new Array(texts.length).fill(null);
-    for (let start = 0; start < texts.length; start += this.batchSize) {
-      const batch = texts.slice(start, start + this.batchSize);
-      const batchResult = await this.embedBatch(batch, config);
+    const missingIndices: number[] = [];
+    const missingTexts: string[] = [];
+
+    const now = Date.now();
+    for (let i = 0; i < texts.length; i++) {
+      const text = texts[i];
+      const cacheKey = `${config.modelName}:${createHash('sha256').update(String(text || '')).digest('hex').slice(0, 32)}`;
+      const cached = this.cache.get(cacheKey);
+      if (cached && cached.expiresAt > now) {
+        results[i] = cached.vector;
+      } else {
+        missingIndices.push(i);
+        missingTexts.push(text);
+      }
+    }
+
+    if (missingTexts.length === 0) {
+      return results;
+    }
+
+    for (let start = 0; start < missingTexts.length; start += this.batchSize) {
+      const batchTexts = missingTexts.slice(start, start + this.batchSize);
+      const batchIndices = missingIndices.slice(start, start + this.batchSize);
+      const batchResult = await this.embedBatch(batchTexts, config);
       for (let i = 0; i < batchResult.length; i++) {
-        results[start + i] = batchResult[i];
+        const vec = batchResult[i];
+        results[batchIndices[i]] = vec;
+        if (vec) {
+          const cacheKey = `${config.modelName}:${createHash('sha256').update(String(batchTexts[i] || '')).digest('hex').slice(0, 32)}`;
+          this.cache.set(cacheKey, { vector: vec, expiresAt: now + this.cacheTtlMs });
+          if (this.cache.size > this.maxCacheEntries) {
+            const oldest = this.cache.keys().next().value;
+            if (oldest) this.cache.delete(oldest);
+          }
+        }
       }
     }
     return results;

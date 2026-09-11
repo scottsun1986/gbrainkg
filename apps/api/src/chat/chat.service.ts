@@ -12,7 +12,7 @@ import { sourceKeyForKnowledgeBase } from "../brain-compiler/brain-source";
 import { BrainScopeService } from "../brain-compiler/brain-scope.service";
 import { ChatTraceRecorder } from "./chat-trace";
 import { getSharedBrainRepoAdapter } from "../brain-compiler/brain-adapter.provider";
-import { WeKnoraClient, WeKnoraBinding } from "../retrieval/weknora-client";
+import { WeKnoraClient, WeKnoraBinding, RetrievedEvidence } from "../retrieval/weknora-client";
 import { estimateTokens } from "./context-budget";
 import { GraphRagService } from "../graph-rag/graph-rag.service";
 import { SemanticCacheService } from "./semantic-cache.service";
@@ -2092,29 +2092,21 @@ export class ChatService {
           const isHybrid = process.env.WEKNORA_HYBRID_MODE === "true" || process.env.WEKNORA_HYBRID_MODE === "1";
 
           if (isHybrid && weknoraEvidences.length > 0) {
-            queryResult.citations = queryResult.citations || [];
-            for (const we of weknoraEvidences) {
-              if (!gbrainDocIds.has(we.documentId)) {
-                (queryResult.citations as any[]).push({
-                  topic: we.documentId,
-                  docId: we.documentId,
-                  kbId: we.kbId,
-                  version: we.documentVersion,
-                  evidence: we.content,
-                  score: we.score,
-                  externalProvider: "weknora",
-                });
-              }
-            }
+            queryResult.citations = this.fuseWithWeKnoraRRF(queryResult.citations || [], weknoraEvidences);
+            queryResult.answer = (queryResult.citations as any[])
+              .map((c: any) => c.context || c.evidence || c.snippet)
+              .filter(Boolean)
+              .join("\n\n");
             trace.finish(
               "weknora_retrieval",
               "success",
-              `WeKnora 混合检索完成：已召回 ${weknoraEvidences.length} 条外部证据（重合 ${overlapCount} 条，补充 ${novelCount} 条）`,
+              `WeKnora RRF 联邦融合完成：已融合 ${weknoraEvidences.length} 条外部证据（双路验证 ${overlapCount} 条，补充发现 ${novelCount} 条）`,
               {
                 weknoraCount: weknoraEvidences.length,
                 overlapCount,
                 novelCount,
                 hybrid: true,
+                fusedCount: queryResult.citations.length,
               },
             );
           } else {
@@ -2462,7 +2454,7 @@ export class ChatService {
         ? `个人长期记忆（仅当前用户可见，优先级低于当前知识库原文；不能把它冒充为公共制度证据）：\n${personalMemory.text}\n\n`
         : "";
 
-      const contextMessage = `你是一个专业的企业级知识库智能助手。请严格基于下方给出的【参考知识库资料】回答用户的问题。
+      const staticSystemRules = `你是一个专业的企业级知识库智能助手。请严格基于下方给出的【参考知识库资料】回答用户的问题。
 
 【重要回答规范】：
 1. 【必须标注引用角标】：在回答正文中，每一处陈述具体事实、业务范围、规章制度、技术指标、数据或核心结论时，必须在对应陈述的末尾标注对应的引用角标，格式为 [1]、[2] 等（严格与提供的【来源 1】、【来源 2】编号对应）。例如：“中通服节能的核心业务包括数据中心绿色化与液冷技术应用[1]。”
@@ -2470,10 +2462,12 @@ export class ChatService {
 3. 【章节目录全景列举】：当用户询问有哪些章、全部章名或结构目录时，请务必完整列出参考资料中出现的各章名称（第一章 总则、第二章 飞行运行管理、第三章 检测与维护、第四章 罚则、附则），直接给出明确清单，严禁使用“无法提供”、“未提供完整章名”等推脱或拒答词汇。
 4. 【表格行记录与关键锚点事实并存处理】：若参考资料中同时存在表格行记录与关键锚点事实说明（例如表格行中某员工绩效记录为B或设备周期为7天，而关键事实/锚点事实注明该员工绩效为A或设备周期为30天），必须在回答中完整陈述这两种事实（例如明确指出：花名册表格行记录显示绩效为B，但关键锚点事实说明其绩效为A），严禁漏提任一事实。
 5. 【多源对比与完整呈现】：只有当多份资料都直接涉及当前问题时，才分别列出各份文件的规定，并说明版本差异、适用条件或生效背景。
-6. 【多源合并】：若多个来源共同支持某一相同结论，可合并标注如 [1][2]。严禁捏造未在参考资料中提供的引用编号；可用编号严格限制在 [1] 到 [${citations.length}]。
-7. 【客观真实与合规拒答】：如果参考资料不足以回答用户的问题，请统一且直接回复：“已知知识库资料中未包含相关信息，无法回答该问题。”严禁在拒答或未找到信息时复述、回显用户问题中的代号、机密编号或专有名词（例如切勿提及关于“某某代号”未包含等）。
-${queryResult?.diagnostics?.mode === "inventory" ? `8. 【全景统计规范】：本次是知识库/文档盘点类问题，参考资料按知识库逐一给出文档清单。请分知识库逐项呈现统计结果，并在每个知识库的统计陈述末尾标注它对应的引用角标（如 [1]、[2]），让用户可逐库核对。\n` : ""}
-      ${priorConversation ? `历史对话参考（仅供消歧，以当前知识库资料为准）：\n${priorConversation}\n\n` : ""}${personalMemoryBlock}【参考知识库资料】：
+6. 【多源合并】：若多个来源共同支持某一相同结论，可合并标注如 [1][2]。严禁捏造未在参考资料中提供的引用编号；可用编号严格限制在参考资料实际提供的来源序号范围内。
+7. 【客观真实与合规拒答】：如果参考资料不足以回答用户的问题，请统一且直接回复：“已知知识库资料中未包含相关信息，无法回答该问题。”严禁在拒答或未找到信息时复述、回显用户问题中的代号、机密编号或专有名词（例如切勿提及关于“某某代号”未包含等）。${queryResult?.diagnostics?.mode === "inventory" ? `\n8. 【全景统计规范】：本次是知识库/文档盘点类问题，参考资料按知识库逐一给出文档清单。请分知识库逐项呈现统计结果，并在每个知识库的统计陈述末尾标注它对应的引用角标（如 [1]、[2]），让用户可逐库核对。` : ""}`;
+
+      const contextMessage = `${staticSystemRules}
+
+${priorConversation ? `历史对话参考（仅供消歧，以当前知识库资料为准）：\n${priorConversation}\n\n` : ""}${personalMemoryBlock}【参考知识库资料】：
 ${compiledTruthContext}`;
 
       const headers: Record<string, string> = llmRequest?.headers || {
@@ -2507,6 +2501,8 @@ ${compiledTruthContext}`;
       let buffer = "";
       let fullAnswer = "";
       let totalTokens = 0;
+      let promptCacheHitTokens = 0;
+      let promptCacheMissTokens = 0;
       let citationTail = "";
       const emitModelContent = (rawContent: string) => {
         const merged = citationTail + rawContent;
@@ -2537,8 +2533,16 @@ ${compiledTruthContext}`;
             if (line.startsWith("data: ") && line !== "data: [DONE]") {
               try {
                 const data = JSON.parse(line.slice(6));
-                const content = data.choices[0]?.delta?.content;
+                const content = data.choices?.[0]?.delta?.content;
                 if (content) emitModelContent(String(content));
+                if (data.usage) {
+                  if (typeof data.usage.prompt_cache_hit_tokens === "number") {
+                    promptCacheHitTokens = data.usage.prompt_cache_hit_tokens;
+                  }
+                  if (typeof data.usage.prompt_cache_miss_tokens === "number") {
+                    promptCacheMissTokens = data.usage.prompt_cache_miss_tokens;
+                  }
+                }
               } catch (e) {}
             }
           }
@@ -2549,16 +2553,35 @@ ${compiledTruthContext}`;
       if (finalLine.startsWith("data: ") && finalLine !== "data: [DONE]") {
         try {
           const data = JSON.parse(finalLine.slice(6));
-          const content = data.choices[0]?.delta?.content;
+          const content = data.choices?.[0]?.delta?.content;
           if (content) emitModelContent(String(content));
+          if (data.usage) {
+            if (typeof data.usage.prompt_cache_hit_tokens === "number") {
+              promptCacheHitTokens = data.usage.prompt_cache_hit_tokens;
+            }
+            if (typeof data.usage.prompt_cache_miss_tokens === "number") {
+              promptCacheMissTokens = data.usage.prompt_cache_miss_tokens;
+            }
+          }
         } catch (e) {}
       }
 
       trace.finish(
         "llm_generation",
         fullAnswer ? "success" : "warning",
-        fullAnswer ? "大模型回答生成完成" : "大模型连接正常但未返回正文",
-        { model: modelName, outputChars: fullAnswer.length, streamedChunks: totalTokens },
+        fullAnswer
+          ? `大模型回答生成完成${promptCacheHitTokens > 0 ? ` (Prompt Cache 命中 ${promptCacheHitTokens} tokens)` : ""}`
+          : "大模型连接正常但未返回正文",
+        {
+          model: modelName,
+          tokenEstimate: totalTokens,
+          outputChars: fullAnswer.length,
+          promptCacheHitTokens,
+          promptCacheMissTokens,
+          cacheHitRate: promptCacheHitTokens + promptCacheMissTokens > 0
+            ? `${((promptCacheHitTokens / (promptCacheHitTokens + promptCacheMissTokens)) * 100).toFixed(1)}%`
+            : "0%",
+        },
       );
 
       await this.emitCitationsAndComplete(
@@ -2861,6 +2884,87 @@ ${compiledTruthContext}`;
         .join("\n\n"),
       citations: filtered,
     };
+  }
+
+  /**
+   * Reciprocal Rank Fusion (RRF, Cormack et al., 2009) to federate candidates from
+   * the local/GBrain stack and external WeKnora cluster engine. Overlapping hits
+   * receive an additive rank boost, reflecting dual independent verification.
+   */
+  private fuseWithWeKnoraRRF(
+    baseCitations: any[],
+    weknoraEvidences: RetrievedEvidence[],
+    rrfK = 60,
+  ): any[] {
+    if (!weknoraEvidences.length) return baseCitations;
+    if (!baseCitations.length) {
+      return weknoraEvidences.map((we, rank) => ({
+        topic: we.documentId,
+        docId: we.documentId,
+        kbId: we.kbId,
+        version: we.documentVersion,
+        evidence: we.content,
+        snippet: we.content,
+        context: we.content,
+        score: we.score,
+        rrfScore: 1 / (rrfK + rank + 1),
+        externalProvider: "weknora",
+      }));
+    }
+
+    const fused = new Map<string, { citation: any; rrf: number; sources: Set<string> }>();
+
+    // 1. Ingest base citations (GBrain / local hybrid)
+    baseCitations.forEach((cit, rank) => {
+      const docKey = cit.docId || cit.documentId || cit.topic;
+      const rrf = 1 / (rrfK + rank + 1);
+      fused.set(docKey, {
+        citation: { ...cit },
+        rrf,
+        sources: new Set([cit.externalProvider || 'local_gbrain']),
+      });
+    });
+
+    // 2. Ingest WeKnora evidences with RRF weight
+    const weknoraWeight = Number(process.env.WEKNORA_RRF_WEIGHT || 1.0);
+    weknoraEvidences.forEach((we, rank) => {
+      const docKey = we.documentId;
+      const rrfIncrement = (1 / (rrfK + rank + 1)) * weknoraWeight;
+      const existing = fused.get(docKey);
+      if (existing) {
+        existing.rrf += rrfIncrement;
+        existing.sources.add('weknora');
+        if (we.content && !existing.citation.evidence?.includes(we.content.slice(0, 80))) {
+          existing.citation.evidence = `${existing.citation.evidence}\n\n${we.content}`.trim();
+        }
+        existing.citation.dualVerified = true;
+      } else {
+        fused.set(docKey, {
+          citation: {
+            topic: we.documentId,
+            docId: we.documentId,
+            kbId: we.kbId,
+            version: we.documentVersion,
+            evidence: we.content,
+            snippet: we.content,
+            context: we.content,
+            score: we.score,
+            externalProvider: "weknora",
+          },
+          rrf: rrfIncrement,
+          sources: new Set(['weknora']),
+        });
+      }
+    });
+
+    // 3. Sort by combined RRF score descending
+    return Array.from(fused.values())
+      .sort((a, b) => b.rrf - a.rrf)
+      .map(({ citation, rrf, sources }) => ({
+        ...citation,
+        rrfScore: rrf,
+        providers: Array.from(sources),
+      }));
   }
 
   private readonly rerankCache = new Map<string, { expiresAt: number; order: number[]; scores: number[] }>();

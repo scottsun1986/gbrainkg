@@ -714,4 +714,23 @@ describe("ChatService", () => {
     expect(res.temporalNotice).toContain("最高效力优先规则");
     expect(res.temporalNotice).toContain("V4");
   });
+
+  it('boosts rank of overlapping citations via WeKnora RRF fusion', () => {
+    const baseCitations = [
+      { docId: 'doc-A', topic: 'Doc A', evidence: 'base A', score: 0.9 },
+      { docId: 'doc-B', topic: 'Doc B', evidence: 'base B', score: 0.8 },
+    ];
+    const weknoraEvidences = [
+      { provider: 'weknora' as const, externalChunkId: 'c1', documentId: 'doc-B', kbId: 'kb1', documentVersion: 1, content: 'weknora B', score: 0.95 },
+      { provider: 'weknora' as const, externalChunkId: 'c2', documentId: 'doc-C', kbId: 'kb1', documentVersion: 1, content: 'weknora C', score: 0.85 },
+    ];
+    const fused = (service as any).fuseWithWeKnoraRRF(baseCitations, weknoraEvidences, 60);
+    expect(fused.length).toBe(3);
+    // doc-B is recalled by BOTH base and WeKnora, so its RRF score is additive and should rank 1st
+    expect(fused[0].docId).toBe('doc-B');
+    expect(fused[0].dualVerified).toBe(true);
+    expect(fused[0].providers).toContain('weknora');
+    // doc-C was discovered only by WeKnora, should be present
+    expect(fused.some((f: any) => f.docId === 'doc-C')).toBe(true);
+  });
 });

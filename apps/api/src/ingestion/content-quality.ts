@@ -134,7 +134,12 @@ export function assessContentQuality(markdown: string, suffix: string, facts: Re
   if (facts.page_count !== undefined) {
     const pageCount = Number(facts.page_count);
     if (pageCount > 1 && facts.text_pages !== undefined) {
-      const textPages = Number(facts.text_pages);
+      let textPages = Number(facts.text_pages);
+      if (facts.ocr_cost_pages !== undefined && facts.ocr_cost_pages !== null) {
+        textPages = Math.min(pageCount, textPages + Number(facts.ocr_cost_pages));
+      } else if (facts.ocr_provider && !facts.ocr_error && (facts.ocr_words_result_num || String(facts.engine || '').startsWith('ocr-'))) {
+        textPages = pageCount;
+      }
       if (textPages / pageCount < 0.4) {
         issues.push(`页面文字覆盖率偏低 (${textPages}/${pageCount})，可能存在未识别的扫描页面`);
       }
