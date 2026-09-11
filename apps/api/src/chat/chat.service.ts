@@ -638,6 +638,163 @@ export class ChatService {
     return { ...queryResult, citations: [...citations, ...additions] };
   }
 
+  private async augmentWithRaptorGlobalTree(
+    queryResult: any,
+    scope: string[],
+    question: string,
+    complexity: string,
+    trace?: any,
+  ): Promise<any> {
+    if (!this.raptorService?.isEnabled() || !scope.length) return queryResult;
+    const isMacro =
+      complexity === "global_synthesis" ||
+      /总结|概述|全景|历程|演进|架构|体系|全库|全局|所有.*有哪些|主要.*有哪些/u.test(question);
+    if (!isMacro) return queryResult;
+
+    try {
+      trace?.start?.(
+        "raptor_macro_retrieval",
+        "RAPTOR 全库宏观树召回",
+        "检测到全库宏观概括问题，自适应召回 Level 2 全局演进树与 Level 1 文档树摘要",
+      );
+      const hits = await this.raptorService.searchGlobal(scope, question, 4);
+      if (!hits.length) {
+        trace?.skip?.("raptor_macro_retrieval", "RAPTOR 全库宏观树召回", "知识库内尚未生成可用的全局宏观摘要节点");
+        return queryResult;
+      }
+
+      const citations = Array.isArray(queryResult?.citations) ? [...queryResult.citations] : [];
+      const existingEvidence = new Set(
+        citations.map((c: any) => String(c.evidence || c.snippet || "").replace(/\s+/g, "").slice(0, 30)),
+      );
+
+      let added = 0;
+      for (const h of hits) {
+        const key = String(h.evidence || "").replace(/\s+/g, "").slice(0, 30);
+        if (!key || existingEvidence.has(key)) continue;
+        existingEvidence.add(key);
+        citations.unshift({
+          topic: h.title,
+          docId: h.documentId,
+          kbId: h.kbId,
+          version: 1,
+          evidence: h.evidence,
+          snippet: h.evidence,
+          context: h.evidence,
+          score: h.score,
+          docTitle: h.title,
+          previewUrl: h.previewUrl,
+          section: h.section || (h.level === 2 ? "raptor-level2-global" : "raptor-level1"),
+          raptor: true,
+          level: h.level,
+        });
+        added++;
+      }
+
+      trace?.finish?.(
+        "raptor_macro_retrieval",
+        "success",
+        `成功召回 ${added} 条全局宏观演进树摘要 (Level 2/1)，置于优先候选集`,
+        { hits: added, totalGlobal: hits.length },
+      );
+
+      return { ...queryResult, citations };
+    } catch (err) {
+      trace?.finish?.(
+        "raptor_macro_retrieval",
+        "warning",
+        `RAPTOR 宏观召回降级: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return queryResult;
+    }
+  }
+
+  private async retrieveHopProbes(
+    scope: string[],
+    sourceRefs: string[],
+    fallbackGitRepoUrl: string | undefined,
+    probes: string[],
+    signal?: AbortSignal,
+    userScope?: any,
+    selectedSourceKeys?: string[],
+    hopNumber = 2,
+  ): Promise<any[]> {
+    const hopCitations: any[] = [];
+    const probePromises = probes.map(async (probe) => {
+      // 1. Parallel search in fallback chunks (pgvector + BM25 keyword matching)
+      const fallbackHits = await this.searchChunksFallback(scope, probe, 10).catch(() => []);
+      const gbrainHits: any[] = [];
+
+      // 2. Query GBrain CLI if available
+      try {
+        const gbrainRes =
+          sourceRefs.length > 1
+            ? await this.gbrain.queryMany(sourceRefs, probe, { breadth: true, operation: "search", signal })
+            : await this.gbrain.query(sourceRefs[0] || fallbackGitRepoUrl || "", probe, {
+                breadth: true,
+                operation: "search",
+                signal,
+              });
+        if (gbrainRes?.citations?.length) {
+          gbrainHits.push(...gbrainRes.citations);
+        }
+      } catch {
+        // fail-open
+      }
+
+      // Format fallback hits
+      const mappedFallbacks = fallbackHits.map((fb, idx) => ({
+        topic: fb.title || fb.documentId,
+        docId: fb.documentId,
+        kbId: fb.kbId,
+        version: fb.version,
+        pageNo: fb.pageNo,
+        articleNo: fb.articleNo,
+        evidence: fb.evidence,
+        snippet: fb.evidence,
+        context: fb.evidence,
+        score: Math.max(0.72, 0.93 - idx * 0.02),
+        docTitle: fb.title,
+        sectionGroup: (fb as any).sectionGroup,
+        subQueryOrigin: probe,
+        hop: hopNumber,
+        bbox: fb.bbox,
+        previewUrl: fb.previewUrl,
+      }));
+
+      for (const cit of gbrainHits) {
+        (cit as any).subQueryOrigin = probe;
+        (cit as any).hop = hopNumber;
+      }
+
+      return [...mappedFallbacks, ...gbrainHits];
+    });
+
+    const settled = await Promise.allSettled(probePromises);
+    for (const res of settled) {
+      if (res.status === "fulfilled") {
+        hopCitations.push(...res.value);
+      }
+    }
+
+    // Permission filter
+    if (userScope && selectedSourceKeys) {
+      const filtered = await this.filterQueryResultByCurrentPermission(
+        { citations: hopCitations } as any,
+        scope,
+        {
+          scopeId: userScope.scopeId,
+          sourceKeys: selectedSourceKeys,
+          aclEpoch: userScope.aclEpoch,
+          knowledgeEpoch: userScope.knowledgeEpoch,
+        },
+      );
+      return filtered.citations || [];
+    }
+
+    return hopCitations;
+  }
+
   /**
    * Chunk-level semantic retrieval over Chunk.embedding (pgvector). Applies the
    * knowledge-base ACL and published-document filter in SQL (pre-filtering), so
@@ -1835,6 +1992,13 @@ export class ChatService {
     // selection stage (cross-encoder + relevance floor) keeps it for macro
     // questions and drops it for focused ones — no query-pattern heuristics.
     queryResult = await this.augmentWithDocumentSummaries(queryResult, scope);
+    queryResult = await this.augmentWithRaptorGlobalTree(
+      queryResult,
+      scope,
+      retrieval.query || question,
+      agenticComplexity,
+      trace,
+    );
 
     trace.start("permission_guard", "结果权限复核", "按当前数据库权限和 Source 世代复核候选结果");
     queryResult = await this.filterQueryResultByCurrentPermission(
@@ -2160,6 +2324,130 @@ export class ChatService {
       reranked: Boolean(queryResult.reranked),
       platformApplied: Boolean((queryResult as any).platformRerankApplied),
     });
+
+    // Agentic Multi-Hop ReAct Loop:
+    // Evaluate retrieval sufficiency for comparative and multi-hop queries.
+    // Automatically executes 2-Hop / 3-Hop sub-query iterations when entity coverage or reasoning steps are missing.
+    if (this.agenticRagService && (agenticComplexity === 'multi_hop' || agenticComplexity === 'comparative' || agenticSubQueries.length > 0)) {
+      const executedProbes = new Set<string>([
+        (retrieval.query || question).trim().toLowerCase(),
+        ...agenticSubQueries.map((q) => q.trim().toLowerCase()),
+        ...agenticExpansions.map((q) => q.trim().toLowerCase()),
+      ]);
+      const maxHops = Number(process.env.AGENTIC_RAG_MAX_HOPS || 3);
+      let currentHop = 1;
+
+      while (currentHop < maxHops) {
+        const currentContext = (queryResult.citations || [])
+          .slice(0, 10)
+          .map((c: any) => `${c.topic || c.docTitle || ''}: ${c.evidence || c.snippet || ''}`)
+          .join('\n\n');
+
+        trace.start(
+          `agentic_sufficiency_eval_${currentHop}`,
+          `Hop ${currentHop} 信息充分性裁决`,
+          '评估当前证据链是否足以严谨完整回答复杂问题',
+        );
+
+        const judgment = await this.agenticRagService.judgeRetrievalSufficiency(
+          retrieval.query || question,
+          currentContext,
+          currentHop,
+          {
+            complexity: agenticComplexity as any,
+            subQueries: agenticSubQueries,
+            executedProbes: Array.from(executedProbes),
+          },
+        );
+
+        trace.finish(
+          `agentic_sufficiency_eval_${currentHop}`,
+          judgment.status === 'sufficient' ? 'success' : 'warning',
+          judgment.status === 'sufficient'
+            ? `证据充分性裁决通过 (置信度 ${(judgment.confidence * 100).toFixed(0)}%)${judgment.reasoning ? `：${judgment.reasoning}` : ''}`
+            : `证据不充分 (缺失: ${judgment.missingAspects.join('、') || '部分关键信息'})，启动 Hop ${currentHop + 1} 定向补充检索`,
+          {
+            hop: currentHop,
+            status: judgment.status,
+            confidence: judgment.confidence,
+            reasoning: judgment.reasoning,
+            missingAspects: judgment.missingAspects,
+            suggestedFollowUp: judgment.suggestedFollowUp,
+          },
+        );
+
+        if (judgment.status === 'sufficient' || judgment.status === 'irrelevant') {
+          break;
+        }
+
+        const nextProbes = (judgment.suggestedFollowUp || [])
+          .map((p) => p.trim())
+          .filter((p) => p.length >= 2 && !executedProbes.has(p.toLowerCase()))
+          .slice(0, 2);
+
+        if (nextProbes.length === 0) {
+          break;
+        }
+
+        for (const p of nextProbes) executedProbes.add(p.toLowerCase());
+        currentHop++;
+
+        trace.start(
+          `agentic_hop_${currentHop}`,
+          `多跳检索 Hop ${currentHop}`,
+          `依据上一跳缺失维度 [${judgment.missingAspects.join(', ')}] 定向追问: ${nextProbes.join(' | ')}`,
+        );
+
+        const hopHits = await this.retrieveHopProbes(
+          scope,
+          sourceRefs,
+          brainRepo?.gitRepoUrl,
+          nextProbes,
+          gbrainAbort.signal,
+          userScope,
+          selectedSourceKeys,
+          currentHop,
+        );
+
+        const existingEvidence = new Set(
+          (queryResult.citations || []).map((c: any) =>
+            String(c.evidence || c.snippet || '').replace(/\s+/g, '').slice(0, 30),
+          ),
+        );
+        let mergedHopCount = 0;
+        for (const hit of hopHits) {
+          const key = String(hit.evidence || hit.snippet || '').replace(/\s+/g, '').slice(0, 30);
+          if (!key || existingEvidence.has(key)) continue;
+          existingEvidence.add(key);
+          (queryResult.citations as any[]).push(hit);
+          mergedHopCount++;
+        }
+
+        trace.finish(
+          `agentic_hop_${currentHop}`,
+          mergedHopCount > 0 ? 'success' : 'warning',
+          mergedHopCount > 0
+            ? `Hop ${currentHop} 定向追问补充召回 ${mergedHopCount} 条有效证据`
+            : `Hop ${currentHop} 未发现额外增量证据`,
+          {
+            hop: currentHop,
+            probes: nextProbes,
+            mergedCitations: mergedHopCount,
+          },
+        );
+
+        if (mergedHopCount === 0) {
+          break;
+        }
+
+        // Re-rerank across the enriched candidate pool
+        queryResult = await this.applyRerank(
+          retrieval.query || question,
+          queryResult,
+          retrieval.breadth,
+        );
+      }
+    }
 
     // Single evidence-selection stage: relevance floor + group-aware MMR
     // diversity + token budget. Replaces the former separate

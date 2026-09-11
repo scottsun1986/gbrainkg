@@ -149,4 +149,71 @@ describe('AgenticRagService', () => {
       }
     });
   });
+
+  describe('judgeRetrievalSufficiency', () => {
+    it('returns sufficient when max hops reached', async () => {
+      const res = await service.judgeRetrievalSufficiency('对比研发与量产区别', '上下文内容', 3);
+      expect(res.status).toBe('sufficient');
+      expect(res.hopNumber).toBe(3);
+    });
+
+    it('returns irrelevant when context is empty', async () => {
+      const res = await service.judgeRetrievalSufficiency('对比研发与量产区别', '   ', 1);
+      expect(res.status).toBe('irrelevant');
+      expect(res.suggestedFollowUp).toContain('对比研发与量产区别');
+    });
+
+    it('detects missing entity in comparative question via heuristic coverage fallback', async () => {
+      const originalFetch = global.fetch;
+      // Simulate LLM failure or timeout
+      (global as any).fetch = jest.fn().mockRejectedValue(new Error('timeout'));
+      try {
+        const res = await service.judgeRetrievalSufficiency(
+          '研发与量产阶段的参数差异对比',
+          '研发阶段需要进行原型机验证，各项参数测试充分。',
+          1,
+          { complexity: 'comparative', executedProbes: ['研发与量产阶段的参数差异对比'] },
+        );
+        expect(res.status).toBe('insufficient');
+        expect(res.missingAspects[0]).toContain('量产');
+        expect(res.suggestedFollowUp[0]).toContain('量产');
+      } finally {
+        (global as any).fetch = originalFetch;
+      }
+    });
+
+    it('uses model evaluation to output reasoning and non-repeating follow-up queries', async () => {
+      const originalFetch = global.fetch;
+      (global as any).fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          choices: [{
+            message: {
+              content: JSON.stringify({
+                status: 'insufficient',
+                confidence: 0.85,
+                reasoning: '缺少量产阶段参数与公差要求',
+                missingAspects: ['量产公差'],
+                suggestedFollowUp: ['量产阶段参数标准', '已执行过的查询'],
+              }),
+            },
+          }],
+        }),
+      });
+      try {
+        const res = await service.judgeRetrievalSufficiency(
+          '对比研发与量产阶段的公差与测试要求',
+          '研发阶段公差要求为0.05mm。',
+          1,
+          { executedProbes: ['已执行过的查询'] },
+        );
+        expect(res.status).toBe('insufficient');
+        expect(res.reasoning).toBe('缺少量产阶段参数与公差要求');
+        expect(res.suggestedFollowUp).toContain('量产阶段参数标准');
+        expect(res.suggestedFollowUp).not.toContain('已执行过的查询');
+      } finally {
+        (global as any).fetch = originalFetch;
+      }
+    });
+  });
 });

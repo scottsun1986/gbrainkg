@@ -15,6 +15,14 @@ export interface RetrievalJudgment {
   missingAspects: string[];
   suggestedFollowUp: string[];
   confidence: number;
+  reasoning?: string;
+  hopNumber?: number;
+}
+
+export interface JudgeSufficiencyOptions {
+  complexity?: QueryComplexity;
+  subQueries?: string[];
+  executedProbes?: string[];
 }
 
 @Injectable()
@@ -307,31 +315,85 @@ export class AgenticRagService {
     query: string,
     retrievedContext: string,
     iterationCount: number,
+    options?: JudgeSufficiencyOptions,
   ): Promise<RetrievalJudgment> {
     if (!this.enabled || iterationCount >= this.maxHops) {
-      return { status: 'sufficient', missingAspects: [], suggestedFollowUp: [], confidence: 0.5 };
-    }
-
-    // Quick heuristic: if context is substantial, likely sufficient
-    if (retrievedContext.length > 2000 && iterationCount > 0) {
-      return { status: 'sufficient', missingAspects: [], suggestedFollowUp: [], confidence: 0.8 };
-    }
-
-    // If no context at all, definitely insufficient
-    if (!retrievedContext.trim()) {
       return {
-        status: 'irrelevant',
-        missingAspects: ['No relevant context found'],
+        status: 'sufficient',
+        missingAspects: [],
         suggestedFollowUp: [],
-        confidence: 0.1,
+        confidence: 0.85,
+        reasoning: iterationCount >= this.maxHops ? `已达到最大跳数限制 (${this.maxHops})，强制闭环生成` : 'Agentic RAG 已禁用',
+        hopNumber: iterationCount,
       };
     }
+
+    // If no context at all, definitely irrelevant/insufficient
+    if (!retrievedContext || !retrievedContext.trim()) {
+      return {
+        status: 'irrelevant',
+        missingAspects: ['知识库中未检索到与问题相关的直接证据'],
+        suggestedFollowUp: [query],
+        confidence: 0.1,
+        reasoning: '首轮未检索到任何候选内容',
+        hopNumber: iterationCount,
+      };
+    }
+
+    const executedSet = new Set(
+      (options?.executedProbes || [query]).map((p) => p.trim().toLowerCase()),
+    );
+
+    // Heuristic entity coverage & subquery gap detection
+    const heuristicGaps = this.analyzeHeuristicCoverage(query, retrievedContext, options);
 
     try {
       const config = await this.getLlmConfig();
       if (!config) {
-        return { status: 'sufficient', missingAspects: [], suggestedFollowUp: [], confidence: 0.5 };
+        // Fallback to deterministic heuristic judgment
+        if (heuristicGaps.missingAspects.length > 0) {
+          const freshFollowUps = heuristicGaps.suggestedFollowUp.filter(
+            (p) => !executedSet.has(p.trim().toLowerCase()),
+          );
+          if (freshFollowUps.length > 0) {
+            return {
+              status: 'insufficient',
+              missingAspects: heuristicGaps.missingAspects,
+              suggestedFollowUp: freshFollowUps.slice(0, 2),
+              confidence: 0.7,
+              reasoning: '启发式分析检测到对比实体或关键维度证据缺失',
+              hopNumber: iterationCount,
+            };
+          }
+        }
+        return {
+          status: 'sufficient',
+          missingAspects: [],
+          suggestedFollowUp: [],
+          confidence: 0.7,
+          reasoning: '启发式判定当前证据充分',
+          hopNumber: iterationCount,
+        };
       }
+
+      const executedListStr = Array.from(executedSet).slice(0, 8).join(' | ');
+      const systemPrompt = `你是一个企业知识库检索充分性裁决专家（Sufficiency Evaluator）。
+请严谨判断当前检索到的上下文证据（Context）是否足以完整回答用户问题（Query）。
+
+裁决规则：
+1. 【对比类问题 (Comparative)】：必须确保被对比的全部实体/阶段/方案均有对应证据。如果仅有A而缺乏B的证据，必须判定为 insufficient，并在 missingAspects 中明确指出缺少B，suggestedFollowUp 给出针对B的定向检索词。
+2. 【多跳因果/实体关联问题 (Multi-Hop)】：必须覆盖多步推理依赖的上下文。若缺少推理链的前置条件或后置依据，判定为 insufficient，并给出下一跳检索词。
+3. 【禁止重复检索】：已执行过的检索词列表为：[${executedListStr}]。suggestedFollowUp 中严禁出现或微调这些已执行过的词，必须给出更具体或不同维度的检索词（最多2个）。
+4. 【无幻觉准则】：若证据完全不相关，输出 irrelevant；若已有充分证据可得出完整结论，输出 sufficient。
+
+输出严格 JSON 格式：
+{
+  "status": "sufficient" | "insufficient" | "irrelevant",
+  "confidence": 0.0 - 1.0,
+  "reasoning": "简要裁决理由（50字以内）",
+  "missingAspects": ["缺失的维度/实体/条款"],
+  "suggestedFollowUp": ["下一跳建议查询词"]
+}`;
 
       const response = await fetch(`${config.baseUrl}/chat/completions`, {
         method: 'POST',
@@ -339,18 +401,14 @@ export class AgenticRagService {
         body: JSON.stringify({
           model: config.modelName,
           messages: [
-            {
-              role: 'system',
-              content: `你是一个检索质量评估专家。判断给定的检索结果是否足以回答用户的问题。
-输出 JSON: {"status": "sufficient|insufficient|irrelevant", "confidence": 0.0-1.0, "missingAspects": ["缺失的方面"], "suggestedFollowUp": ["建议的补充查询"]}`,
-            },
+            { role: 'system', content: systemPrompt },
             {
               role: 'user',
-              content: `问题: ${query}\n\n检索到的内容 (前2000字):\n${retrievedContext.slice(0, 2000)}\n\n请判断这些内容是否足以回答问题。`,
+              content: `用户问题: ${query}\n问题类型: ${options?.complexity || 'auto'}\n\n已检索到的候选证据 (前 3000 字):\n${retrievedContext.slice(0, 3000)}\n\n请严格评估证据充分性：`,
             },
           ],
           temperature: 0,
-          max_tokens: 400,
+          max_tokens: 600,
           response_format: { type: 'json_object' },
         }),
         signal: AbortSignal.timeout(8000),
@@ -359,26 +417,125 @@ export class AgenticRagService {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
       const payload: any = await response.json();
-      let content = String(payload?.choices?.[0]?.message?.content || '').trim();
-      const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (jsonMatch) content = jsonMatch[1].trim();
-      
-      const parsed = JSON.parse(content);
+      let content = this.assistantText(payload);
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) content = jsonMatch[0];
 
-      const status = ['sufficient', 'insufficient', 'irrelevant'].includes(parsed.status)
+      const parsed = JSON.parse(content);
+      const rawStatus = ['sufficient', 'insufficient', 'irrelevant'].includes(parsed.status)
         ? parsed.status
         : 'sufficient';
 
+      // Deduplicate follow-up queries against already executed probes
+      const rawFollowUps: string[] = Array.isArray(parsed.suggestedFollowUp)
+        ? parsed.suggestedFollowUp
+            .map((s: any) => String(s || '').trim())
+            .filter((s: string) => s.length >= 2 && !executedSet.has(s.toLowerCase()))
+        : [];
+
+      // Combine with heuristic gaps if LLM missed an obvious entity disparity
+      const mergedFollowUps = Array.from(
+        new Set([
+          ...rawFollowUps,
+          ...heuristicGaps.suggestedFollowUp.filter((s) => !executedSet.has(s.toLowerCase())),
+        ]),
+      ).slice(0, 2);
+
+      const status = rawStatus === 'insufficient' && mergedFollowUps.length === 0
+        ? 'sufficient'
+        : rawStatus;
+
+      const missingAspects = Array.isArray(parsed.missingAspects) && parsed.missingAspects.length
+        ? parsed.missingAspects.slice(0, 3)
+        : heuristicGaps.missingAspects.slice(0, 3);
+
       return {
         status,
-        missingAspects: Array.isArray(parsed.missingAspects) ? parsed.missingAspects.slice(0, 3) : [],
-        suggestedFollowUp: Array.isArray(parsed.suggestedFollowUp) ? parsed.suggestedFollowUp.slice(0, 3) : [],
-        confidence: typeof parsed.confidence === 'number' ? Math.max(0, Math.min(1, parsed.confidence)) : 0.5,
+        missingAspects,
+        suggestedFollowUp: status === 'insufficient' ? mergedFollowUps : [],
+        confidence: typeof parsed.confidence === 'number' ? Math.max(0, Math.min(1, parsed.confidence)) : 0.8,
+        reasoning: parsed.reasoning || (status === 'sufficient' ? '当前检索证据已充分覆盖问题要点' : '存在未覆盖的关键实体或信息维度'),
+        hopNumber: iterationCount,
       };
     } catch (err) {
       this.logger.warn(`Retrieval judgment failed: ${err instanceof Error ? err.message : String(err)}`);
-      return { status: 'sufficient', missingAspects: [], suggestedFollowUp: [], confidence: 0.5 };
+      // Fail-safe deterministic fallback
+      if (heuristicGaps.missingAspects.length > 0) {
+        const freshFollowUps = heuristicGaps.suggestedFollowUp.filter(
+          (p) => !executedSet.has(p.trim().toLowerCase()),
+        );
+        if (freshFollowUps.length > 0) {
+          return {
+            status: 'insufficient',
+            missingAspects: heuristicGaps.missingAspects,
+            suggestedFollowUp: freshFollowUps.slice(0, 2),
+            confidence: 0.7,
+            reasoning: '启发式分析检测到未覆盖的对比实体或子查询',
+            hopNumber: iterationCount,
+          };
+        }
+      }
+      return {
+        status: 'sufficient',
+        missingAspects: [],
+        suggestedFollowUp: [],
+        confidence: 0.6,
+        reasoning: '判别模型响应超时或异常，安全放行至生成阶段',
+        hopNumber: iterationCount,
+      };
     }
+  }
+
+  /**
+   * Deterministic entity and subquery coverage analyzer.
+   * Detects if one side of a comparison or one decomposed branch has 0 hits.
+   */
+  private analyzeHeuristicCoverage(
+    query: string,
+    context: string,
+    options?: JudgeSufficiencyOptions,
+  ): { missingAspects: string[]; suggestedFollowUp: string[] } {
+    const missingAspects: string[] = [];
+    const suggestedFollowUp: string[] = [];
+    const ctxLower = context.toLowerCase();
+
+    // 1. Comparative entity detection: "A与B的区别", "比较A和B", "A相比B有什么不同"
+    const compMatch = query.match(
+      /(?:比较|对比)?\s*([^\s与和跟同相比以及及差异区别]+?)\s*(?:与|和|跟|同|相比|及)\s*([^\s与和跟同相比以及及差异区别]+?)(?:的)?(?:区别|差异|不同|对比|比较|优缺点)/u,
+    );
+    if (compMatch) {
+      const entityA = compMatch[1].trim();
+      const entityB = compMatch[2].trim();
+      if (entityA.length >= 2 && entityB.length >= 2) {
+        const hasA = ctxLower.includes(entityA.toLowerCase());
+        const hasB = ctxLower.includes(entityB.toLowerCase());
+        if (hasA && !hasB) {
+          missingAspects.push(`缺少对比实体“${entityB}”的相关信息`);
+          suggestedFollowUp.push(`${entityB} 相关规范与要求`);
+        } else if (!hasA && hasB) {
+          missingAspects.push(`缺少对比实体“${entityA}”的相关信息`);
+          suggestedFollowUp.push(`${entityA} 相关规范与要求`);
+        }
+      }
+    }
+
+    // 2. SubQueries coverage
+    if (options?.subQueries && options.subQueries.length > 1) {
+      for (const sub of options.subQueries) {
+        const cleanedSub = sub.replace(/[？?。！!,，\s]+/g, '').trim();
+        if (cleanedSub.length >= 4 && !ctxLower.includes(cleanedSub.toLowerCase())) {
+          const grams = [];
+          for (let i = 0; i < cleanedSub.length - 1; i += 2) grams.push(cleanedSub.slice(i, i + 2));
+          const hitCount = grams.filter((g) => ctxLower.includes(g.toLowerCase())).length;
+          if (hitCount === 0) {
+            missingAspects.push(`未覆盖子问题：“${sub}”`);
+            suggestedFollowUp.push(sub);
+          }
+        }
+      }
+    }
+
+    return { missingAspects, suggestedFollowUp };
   }
 
   /**

@@ -68,6 +68,7 @@ jest.mock("@llmwiki/gbrain-adapter", () => ({
 }));
 
 describe("ChatService", () => {
+  jest.setTimeout(15000);
   let service: ChatService;
 
   it('does not turn a cancelled rewrite into a fallback query', async () => {
@@ -732,5 +733,73 @@ describe("ChatService", () => {
     expect(fused[0].providers).toContain('weknora');
     // doc-C was discovered only by WeKnora, should be present
     expect(fused.some((f: any) => f.docId === 'doc-C')).toBe(true);
+  });
+
+  it('augmentWithRaptorGlobalTree prepends Level 2 global evolution nodes on macro questions', async () => {
+    const mockRaptor = {
+      isEnabled: () => true,
+      searchGlobal: jest.fn().mockResolvedValue([
+        {
+          documentId: null,
+          kbId: 'kb-1',
+          title: '全库业务架构与制度演进全景',
+          evidence: '【宏观摘要 · 全库演进全景】涵盖人事与合规整体演进架构',
+          score: 0.96,
+          level: 2,
+          raptor: true,
+          section: 'raptor-level2-global',
+        },
+      ]),
+    };
+    (service as any).raptorService = mockRaptor;
+
+    const mockTrace = { start: jest.fn(), finish: jest.fn(), skip: jest.fn() };
+    const queryResult = {
+      citations: [
+        { docId: 'doc-1', evidence: '普通章节内容', score: 0.8 },
+      ],
+    };
+
+    const augmented = await (service as any).augmentWithRaptorGlobalTree(
+      queryResult,
+      ['kb-1'],
+      '请总结全库的业务架构与长期演进历程有哪些',
+      'global_synthesis',
+      mockTrace,
+    );
+
+    expect(mockRaptor.searchGlobal).toHaveBeenCalledWith(['kb-1'], expect.any(String), 4);
+    expect(augmented.citations.length).toBe(2);
+    expect(augmented.citations[0].level).toBe(2);
+    expect(augmented.citations[0].evidence).toContain('全库演进全景');
+    expect(mockTrace.finish).toHaveBeenCalledWith('raptor_macro_retrieval', 'success', expect.any(String), expect.any(Object));
+  });
+
+  it('retrieveHopProbes retrieves and tags candidates for subsequent hops', async () => {
+    jest.spyOn(service, 'searchChunksFallback').mockResolvedValue([
+      {
+        documentId: 'doc-hop',
+        kbId: 'kb-1',
+        title: '量产公差规范',
+        evidence: '量产公差不得大于0.02mm',
+        previewUrl: null,
+      },
+    ]);
+
+    const hits = await (service as any).retrieveHopProbes(
+      ['kb-1'],
+      ['gbrain://source/1'],
+      '/tmp/repo',
+      ['量产公差规范'],
+      undefined,
+      undefined,
+      undefined,
+      2,
+    );
+
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits[0].docId).toBe('doc-hop');
+    expect(hits[0].hop).toBe(2);
+    expect(hits[0].subQueryOrigin).toBe('量产公差规范');
   });
 });

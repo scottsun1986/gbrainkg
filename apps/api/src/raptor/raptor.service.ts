@@ -1,6 +1,7 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { getPrismaClient } from '../prisma';
 import { ModelConfigService } from '../model-config.service';
+import { EmbeddingService } from '../embedding/embedding.service';
 import { estimateTokens } from '../chat/context-budget';
 import { buildDocumentPreviewUrl } from '../ingestion/preview-url';
 
@@ -20,9 +21,9 @@ interface RaptorSearchHit {
  * RAPTOR (Recursive Abstractive Processing for Tree-Organized Retrieval,
  * Sarthi et al., 2024) builds a hierarchy of summaries on top of the precise
  * clause-level chunks:
- *   level 0 -> per-section/chapter summary
+ *   level 0 -> per-section/chapter/cluster summary
  *   level 1 -> whole-document summary
- *   level 2 -> (optional) knowledge-base global summary
+ *   level 2 -> knowledge-base global evolution summary
  *
  * The tree gives macro-level recall (e.g. "what is this standard about?")
  * without sacrificing the micro-level exact-clause index. Summaries are
@@ -35,7 +36,10 @@ export class RaptorService {
   private readonly prisma = getPrismaClient();
   private readonly maxSourceChars = Number(process.env.RAPTOR_MAX_SOURCE_CHARS || 6000);
 
-  constructor(@Optional() private readonly modelConfigService?: ModelConfigService) {}
+  constructor(
+    @Optional() private readonly modelConfigService?: ModelConfigService,
+    @Optional() private readonly embeddingService?: EmbeddingService,
+  ) {}
 
   isEnabled(): boolean {
     // On by default (macro-level recall); set RAPTOR_ENABLED=false to disable.
@@ -63,7 +67,7 @@ export class RaptorService {
     // Bound the number of summary groups: a 2600-paragraph document would
     // otherwise trigger thousands of sequential LLM calls and stall the queue.
     const maxGroups = Math.max(1, Number(process.env.RAPTOR_MAX_GROUPS || 12));
-    const groups = this.groupChunks(document.chunks).slice(0, maxGroups);
+    const groups = (await this.clusterChunks(document.chunks)).slice(0, maxGroups);
     const modelVersion = llm ? llm.modelName : 'extractive-v1';
     const sectionNodes: Array<{ title: string; content: string; chunkIds: string[]; clusterKey: string }> = [];
 
@@ -108,6 +112,12 @@ export class RaptorService {
 
     const nodes = sectionNodes.length + 1;
     this.logger.log(`RAPTOR indexed ${nodes} summary nodes for document ${documentId}.`);
+
+    // Refresh Level 2 Knowledge Base Global Tree
+    await this.buildKbGlobalTree(kbId).catch((err) => {
+      this.logger.warn(`RAPTOR buildKbGlobalTree failed after document ${documentId}: ${err instanceof Error ? err.message : String(err)}`);
+    });
+
     return { nodes };
   }
 
@@ -202,6 +212,7 @@ export class RaptorService {
   }
 
   /** Keyword search over summary nodes, scoped to the caller's visible KBs. */
+  /** Keyword & macro search over summary nodes, scoped to visible KBs. */
   async search(kbIds: string[], query: string, limit = 5): Promise<RaptorSearchHit[]> {
     if (!this.isEnabled() || !kbIds.length) return [];
     const keywords = this.keywords(query);
@@ -232,16 +243,394 @@ export class RaptorService {
         documentId: item.node.documentId,
         kbId: item.node.kbId,
         title: item.node.title,
-        evidence: `【宏观摘要 · ${item.node.level === 1 ? '全文' : '章节'}】${item.node.title}\n${item.node.content}`,
+        evidence: `【宏观摘要 · ${item.node.level === 2 ? '全库演进全景' : item.node.level === 1 ? '全文' : '章节'}】${item.node.title}\n${item.node.content}`,
         score: Math.max(0.75, 0.9 - index * 0.02),
         previewUrl: item.node.documentId ? buildDocumentPreviewUrl(item.node.kbId, item.node.documentId) : null,
         level: item.node.level,
         raptor: true,
+        section: item.node.level === 2 ? 'raptor-level2-global' : item.node.level === 1 ? 'raptor-level1' : 'raptor-level0',
       }));
     } catch (err) {
       this.logger.warn(`RAPTOR search failed: ${err instanceof Error ? err.message : String(err)}`);
       return [];
     }
+  }
+
+  /**
+   * Search specifically for macro/global questions, giving top priority to
+   * Level 2 (KB global evolution) and Level 1 (Document panorama) nodes.
+   */
+  async searchGlobal(kbIds: string[], query: string, limit = 5): Promise<RaptorSearchHit[]> {
+    if (!this.isEnabled() || !kbIds.length) return [];
+    const keywords = this.keywords(query);
+    try {
+      const nodes = await (this.prisma as any).raptorNode.findMany({
+        where: {
+          kbId: { in: kbIds },
+          level: { in: [1, 2] },
+        },
+        orderBy: [{ level: 'desc' }],
+        take: limit * 4,
+      });
+
+      if (!nodes.length) return [];
+
+      const scored = nodes.map((node: any) => {
+        let score = 0.82;
+        // Level 2 priority boost for macro queries
+        if (node.level === 2) score += 0.12;
+        else if (node.level === 1) score += 0.05;
+
+        // Keyword hits
+        const text = `${node.title}\n${node.content}`.toLowerCase();
+        const hits = keywords.filter((kw) => text.includes(kw.toLowerCase())).length;
+        score += Math.min(0.1, hits * 0.02);
+
+        return { node, score };
+      });
+
+      scored.sort((a: any, b: any) => b.score - a.score || b.node.level - a.node.level);
+      const topHits = scored.slice(0, limit);
+
+      return topHits.map((item: any, index: number) => ({
+        documentId: item.node.documentId,
+        kbId: item.node.kbId,
+        title: item.node.title,
+        evidence: `【宏观摘要 · ${item.node.level === 2 ? '全库演进全景' : '全文'}】${item.node.title}\n${item.node.content}`,
+        score: Math.max(0.78, Math.min(0.98, item.score - index * 0.02)),
+        previewUrl: item.node.documentId ? buildDocumentPreviewUrl(item.node.kbId, item.node.documentId) : null,
+        level: item.node.level,
+        raptor: true,
+        section: item.node.level === 2 ? 'raptor-level2-global' : 'raptor-level1',
+      }));
+    } catch (err) {
+      this.logger.warn(`RAPTOR searchGlobal failed: ${err instanceof Error ? err.message : String(err)}`);
+      return [];
+    }
+  }
+
+  /**
+   * Build/refresh the Level 2 Knowledge-Base Global Evolution Tree.
+   * Aggregates all Level 1 document summaries in the KB into a cohesive,
+   * macro-level architecture and evolution overview node.
+   */
+  async buildKbGlobalTree(kbId: string): Promise<{ nodes: number }> {
+    if (!this.isEnabled()) return { nodes: 0 };
+    try {
+      const docNodes = await (this.prisma as any).raptorNode.findMany({
+        where: { kbId, level: 1 },
+        select: { id: true, title: true, content: true, documentId: true },
+      });
+
+      if (!docNodes.length) return { nodes: 0 };
+
+      const llm = await this.llmConfig();
+      const modelVersion = llm ? llm.modelName : 'extractive-v1';
+
+      const aggregatedText = docNodes
+        .map((n: any) => `【${n.title}】\n${n.content}`)
+        .join('\n\n')
+        .slice(0, this.maxSourceChars * 2);
+
+      let summary = '';
+      if (llm) {
+        try {
+          const response = await fetch(`${llm.baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: llm.headers,
+            body: JSON.stringify({
+              model: llm.modelName,
+              messages: [
+                {
+                  role: 'system',
+                  content: `你是企业知识体系战略架构专家。请对当前知识库中包含的 ${docNodes.length} 篇核心文档全景进行跨文档全局宏观全景与演进总结。
+涵盖：
+1. 【全库核心业务全貌】：涵盖的主要业务域、职能分工与规范目标；
+2. 【制度与规范体系架构】：跨文档间的逻辑依赖、业务流程承接与管理闭环；
+3. 【演进历程与核心准则】：知识库反映的业务/技术演进脉络与关键执行底线。
+输出结构化全局综述，提纲挈领，面向全局宏观提问。`,
+                },
+                { role: 'user', content: aggregatedText },
+              ],
+              temperature: 0.1,
+              max_tokens: Number(process.env.RAPTOR_GLOBAL_MAX_TOKENS || 2500),
+            }),
+            signal: AbortSignal.timeout(20000),
+          });
+          if (response.ok) {
+            const payload: any = await response.json();
+            summary = this.assistantText(payload);
+          }
+        } catch (err) {
+          this.logger.warn(`RAPTOR global tree LLM call failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
+      if (!summary) {
+        summary = this.extractiveSummary(aggregatedText);
+      }
+
+      const title = '全库业务架构与制度演进全景';
+      await (this.prisma as any).$transaction([
+        (this.prisma as any).raptorNode.deleteMany({ where: { kbId, level: 2 } }),
+        (this.prisma as any).raptorNode.create({
+          data: {
+            kbId,
+            documentId: null,
+            level: 2,
+            title,
+            content: summary,
+            sourceChunkIds: docNodes.map((n: any) => n.id),
+            metadata: {
+              clusterKey: 'kb-global-evolution',
+              docCount: docNodes.length,
+              modelVersion,
+              tokenCount: estimateTokens(summary),
+            },
+          },
+        }),
+      ]);
+
+      this.logger.log(`RAPTOR built Level 2 KB global tree for KB ${kbId} (covered ${docNodes.length} docs).`);
+      return { nodes: 1 };
+    } catch (err) {
+      this.logger.warn(`RAPTOR buildKbGlobalTree failed: ${err instanceof Error ? err.message : String(err)}`);
+      return { nodes: 0 };
+    }
+  }
+
+  /**
+   * RAPTOR Hierarchical Clustering: uses K-Means++ and Soft Assignment
+   * over chunk embeddings to discover semantic topic clusters.
+   * Falls back to deterministic chapter/section grouping when embeddings are unavailable.
+   */
+  async clusterChunks(
+    chunks: Array<{ id: string; ord: number; content: string; metadata?: any }>,
+  ): Promise<Array<{ clusterKey: string; title: string; chunkIds: string[]; text: string }>> {
+    if (!chunks.length) return [];
+    if (chunks.length <= 2 || !this.embeddingService?.isEnabled()) {
+      return this.groupChunks(chunks);
+    }
+
+    try {
+      // 1. Generate chunk embeddings
+      const textsToEmbed = chunks.map((c) => (c.content || '').slice(0, 400));
+      const embeddings = await this.embeddingService.embed(textsToEmbed);
+      const validPairs: Array<{ chunk: (typeof chunks)[0]; vector: number[] }> = [];
+      for (let i = 0; i < chunks.length; i++) {
+        const vec = embeddings[i];
+        if (vec && Array.isArray(vec) && vec.length > 0) {
+          validPairs.push({ chunk: chunks[i], vector: vec });
+        }
+      }
+
+      if (validPairs.length < 3) {
+        return this.groupChunks(chunks);
+      }
+
+      // 2. Determine k dynamically: k = min(8, max(2, ceil(sqrt(N))))
+      const k = Math.min(8, Math.max(2, Math.ceil(Math.sqrt(validPairs.length))));
+      const vectors = validPairs.map((p) => p.vector);
+      const { assignments } = this.runKMeansPlusPlus(vectors, k);
+
+      // 3. Build clusters from assignments (supporting soft clustering)
+      const clusterMap = new Map<number, Array<(typeof chunks)[0]>>();
+      for (let clusterIdx = 0; clusterIdx < k; clusterIdx++) {
+        clusterMap.set(clusterIdx, []);
+      }
+      for (let i = 0; i < assignments.length; i++) {
+        const assignedClusters = assignments[i];
+        for (const cIdx of assignedClusters) {
+          clusterMap.get(cIdx)?.push(validPairs[i].chunk);
+        }
+      }
+
+      const results: Array<{ clusterKey: string; title: string; chunkIds: string[]; text: string }> = [];
+      let clusterSeq = 1;
+      for (const [cIdx, clusterChunks] of clusterMap.entries()) {
+        if (!clusterChunks.length) continue;
+        // Keep chunks ordered by ord for reading fluency
+        clusterChunks.sort((a, b) => a.ord - b.ord);
+        const uniqueChunks: Array<(typeof chunks)[0]> = [];
+        const seenIds = new Set<string>();
+        for (const ch of clusterChunks) {
+          if (!seenIds.has(ch.id)) {
+            seenIds.add(ch.id);
+            uniqueChunks.push(ch);
+          }
+        }
+
+        const title = this.deriveClusterTitle(uniqueChunks, clusterSeq);
+        results.push({
+          clusterKey: `cluster-${clusterSeq}`,
+          title,
+          chunkIds: uniqueChunks.map((c) => c.id),
+          text: uniqueChunks.map((c) => c.content).join('\n\n').slice(0, this.maxSourceChars),
+        });
+        clusterSeq++;
+      }
+
+      return results.length > 0 ? results : this.groupChunks(chunks);
+    } catch (err) {
+      this.logger.warn(`RAPTOR vector clustering failed, falling back to heuristic groups: ${err instanceof Error ? err.message : String(err)}`);
+      return this.groupChunks(chunks);
+    }
+  }
+
+  /**
+   * K-Means++ with Cosine Distance and Soft Clustering (RAPTOR Gaussian/distance proximity).
+   */
+  private runKMeansPlusPlus(
+    vectors: number[][],
+    k: number,
+    maxIters = 20,
+  ): { assignments: number[][]; centers: number[][] } {
+    const dim = vectors[0].length;
+    const n = vectors.length;
+
+    // Cosine distance helper
+    const dist = (a: number[], b: number[]): number => {
+      let dot = 0, normA = 0, normB = 0;
+      for (let i = 0; i < dim; i++) {
+        dot += a[i] * b[i];
+        normA += a[i] * a[i];
+        normB += b[i] * b[i];
+      }
+      const denom = Math.sqrt(normA) * Math.sqrt(normB);
+      return denom > 1e-9 ? Math.max(0, 1 - dot / denom) : 1;
+    };
+
+    // Vector normalization
+    const normalize = (v: number[]): number[] => {
+      let norm = 0;
+      for (let i = 0; i < dim; i++) norm += v[i] * v[i];
+      const s = Math.sqrt(norm);
+      return s > 1e-9 ? v.map((x) => x / s) : v;
+    };
+
+    // 1. K-Means++ Initialization
+    const centers: number[][] = [];
+    const meanVec = new Array(dim).fill(0);
+    for (const v of vectors) {
+      for (let d = 0; d < dim; d++) meanVec[d] += v[d] / n;
+    }
+    let bestDist = Infinity;
+    let firstIdx = 0;
+    for (let i = 0; i < n; i++) {
+      const d = dist(vectors[i], meanVec);
+      if (d < bestDist) {
+        bestDist = d;
+        firstIdx = i;
+      }
+    }
+    centers.push([...vectors[firstIdx]]);
+
+    // Subsequent centers: D(x)^2 weighted selection
+    while (centers.length < k) {
+      const d2List: number[] = [];
+      let sumD2 = 0;
+      for (let i = 0; i < n; i++) {
+        let minD = Infinity;
+        for (const c of centers) {
+          const d = dist(vectors[i], c);
+          if (d < minD) minD = d;
+        }
+        const d2 = minD * minD;
+        d2List.push(d2);
+        sumD2 += d2;
+      }
+      let r = sumD2 * 0.73;
+      let nextCenterIdx = 0;
+      for (let i = 0; i < n; i++) {
+        r -= d2List[i];
+        if (r <= 0) {
+          nextCenterIdx = i;
+          break;
+        }
+      }
+      centers.push([...vectors[nextCenterIdx]]);
+    }
+
+    // 2. Lloyd iterations
+    const primaryAssignments: number[] = new Array(n).fill(0);
+    for (let iter = 0; iter < maxIters; iter++) {
+      let changed = false;
+      for (let i = 0; i < n; i++) {
+        let minD = Infinity;
+        let bestC = 0;
+        for (let j = 0; j < centers.length; j++) {
+          const d = dist(vectors[i], centers[j]);
+          if (d < minD) {
+            minD = d;
+            bestC = j;
+          }
+        }
+        if (primaryAssignments[i] !== bestC) {
+          primaryAssignments[i] = bestC;
+          changed = true;
+        }
+      }
+
+      const newCenters: number[][] = Array.from({ length: k }, () => new Array(dim).fill(0));
+      const counts: number[] = new Array(k).fill(0);
+      for (let i = 0; i < n; i++) {
+        const c = primaryAssignments[i];
+        counts[c]++;
+        for (let d = 0; d < dim; d++) newCenters[c][d] += vectors[i][d];
+      }
+
+      let maxShift = 0;
+      for (let j = 0; j < k; j++) {
+        if (counts[j] > 0) {
+          const updated = normalize(newCenters[j].map((x) => x / counts[j]));
+          const shift = dist(centers[j], updated);
+          if (shift > maxShift) maxShift = shift;
+          centers[j] = updated;
+        }
+      }
+
+      if (!changed || maxShift < 1e-4) break;
+    }
+
+    // 3. Soft Clustering (assign point to secondary clusters if close enough)
+    const assignments: number[][] = [];
+    for (let i = 0; i < n; i++) {
+      const distances: Array<{ cluster: number; d: number }> = [];
+      for (let j = 0; j < centers.length; j++) {
+        distances.push({ cluster: j, d: dist(vectors[i], centers[j]) });
+      }
+      distances.sort((a, b) => a.d - b.d);
+      const minD = distances[0].d;
+      const pointClusters = [distances[0].cluster];
+
+      // Soft threshold: within 1.25x of min distance and distance < 0.65
+      for (let idx = 1; idx < distances.length; idx++) {
+        if (distances[idx].d <= minD * 1.25 && distances[idx].d < 0.65) {
+          pointClusters.push(distances[idx].cluster);
+        }
+      }
+      assignments.push(pointClusters);
+    }
+
+    return { assignments, centers };
+  }
+
+  private deriveClusterTitle(chunks: Array<{ metadata?: any; content: string }>, seq: number): string {
+    for (const ch of chunks) {
+      const meta = ch.metadata || {};
+      if (typeof meta.chapter_no === 'number') return `第${meta.chapter_no}章 聚类主题`;
+      if (meta.section && String(meta.section).trim()) {
+        const s = String(meta.section).trim().replace(/^#+\s*/, '').slice(0, 40);
+        if (s.length >= 2) return `主题：${s}`;
+      }
+    }
+    for (const ch of chunks) {
+      const firstLine = (ch.content || '').split('\n')[0].trim().replace(/^#+\s*/, '');
+      if (firstLine.length >= 2 && firstLine.length <= 30 && !/^\d+$/.test(firstLine)) {
+        return `主题：${firstLine}`;
+      }
+    }
+    return `主题聚类 ${seq}`;
   }
 
   private groupChunks(chunks: Array<{ id: string; ord: number; content: string; metadata?: any }>) {

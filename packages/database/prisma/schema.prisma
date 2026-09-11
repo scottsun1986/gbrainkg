@@ -646,7 +646,7 @@ model UserCredential {
 model RaptorNode {
   id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   kbId           String   @db.Uuid
-  documentId     String   @db.Uuid
+  documentId     String?  @db.Uuid
   parentNodeId   String?  @db.Uuid
   level          Int      @default(0) // 0=章节聚类, 1=文档全景, 2=知识库全局
   title          String
@@ -657,7 +657,7 @@ model RaptorNode {
   updatedAt      DateTime @default(now()) @updatedAt
 
   kb           KnowledgeBase @relation(fields: [kbId], references: [id], onDelete: Cascade)
-  document     Document      @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  document     Document?     @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   @@index([kbId, level])
   @@index([documentId])
