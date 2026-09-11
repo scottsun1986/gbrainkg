@@ -294,6 +294,25 @@ describe("ChatService", () => {
     expect(result.evidenceSelection.removed).toBe(1);
   });
 
+  it("selectEvidence enforces per-sub-question coverage for compound questions", () => {
+    // Hop 1 evidence dominates on relevance; hop 2 (夏天/夏令时) would be
+    // dropped by the global floor — the coverage quota must inject it.
+    const result = (service as any).selectEvidence({
+      citations: [
+        { id: "c1", topic: "设备表格", relevanceScore: 0.95, context: "EQ-0077 智能巡检机器人 巡检周期 30天 班组C 指标权重" },
+        { id: "c2", topic: "考勤作息", relevanceScore: 0.10, subQueryOrigin: "员工夏天几点上班", context: "夏令时作息时间安排 上午 08:30 上班 考勤管理规定" },
+        { id: "c3", topic: "无关", relevanceScore: 0.02, context: "无关内容占位文本" },
+      ],
+      reranked: true,
+    }, { breadth: false, tokenBudget: 12000, subQueries: ["EQ-0077 的巡检周期是多少天", "员工夏天几点上班"] });
+
+    const ids = result.citations.map((c: any) => c.id);
+    expect(ids).toContain("c1");
+    expect(ids).toContain("c2"); // hop-2 group injected despite low global relevance
+    expect(ids).not.toContain("c3");
+    expect(result.evidenceSelection.subQueryInjected).toBeGreaterThanOrEqual(1);
+  });
+
   it("selectEvidence keeps structural section groups whole even when members score lower", () => {
     const result = (service as any).selectEvidence({
       citations: [

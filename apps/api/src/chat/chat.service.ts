@@ -300,6 +300,7 @@ export class ChatService {
             score: Math.max(0.70, 0.95 - idx * 0.02),
             docTitle: fb.title,
             sectionGroup: (fb as any).sectionGroup,
+          subQueryOrigin: (fb as any).subQueryOrigin,
           bbox: fb.bbox,
           previewUrl: fb.previewUrl,
           })),
@@ -752,17 +753,18 @@ export class ChatService {
     // the sub-query wording, not the combined sentence embedding.
     const subQueryVectorPromise = (async () => {
       const subs = extraQueries.filter((q) => typeof q === "string" && q.length >= 4 && q.length <= 80).slice(0, 3);
-      const perSub = Math.max(3, Math.floor(limit / 2));
+      const perSub = Math.max(8, Number(process.env.RETRIEVAL_SUBQUERY_VECTOR_TAKE || 15));
       const results = await Promise.all(
         subs.map((sub) => this.searchChunksByVector(scope, sub, perSub).catch(() => [] as any[])),
       );
       const byId = new Map<string, any>();
-      for (const hits of results) {
+      results.forEach((hits, i) => {
         for (const hit of hits || []) {
+          if (hit && !(hit as any).subQueryOrigin) (hit as any).subQueryOrigin = subs[i];
           const prev = byId.get(hit.id);
           if (!prev || hit.score > prev.score) byId.set(hit.id, hit);
         }
-      }
+      });
       return [...byId.values()];
     })().catch(() => []);
 
@@ -1186,6 +1188,7 @@ export class ChatService {
           evidence,
           score: Number(normalizedScore.toFixed(3)),
           sectionGroup: (c as any).sectionGroup,
+          subQueryOrigin: (c as any).subQueryOrigin,
           bbox: meta.bbox,
           previewUrl: buildDocumentPreviewUrl(c.kbId, c.documentId, {
             page: meta.page_no || meta.pageNumber || c.ord + 1,
@@ -1216,6 +1219,7 @@ export class ChatService {
               score: hit.score,
               bbox: undefined,
               sectionGroup: undefined,
+              subQueryOrigin: undefined,
               previewUrl: hit.previewUrl,
             });
           }
@@ -1464,7 +1468,7 @@ export class ChatService {
     // decomposed sub-questions, and the HyDE passage. Fed to the keyword/DB
     // fallback so vocabulary gaps (e.g. 夏天→夏令时) and compound questions
     // are recovered without any hardcoded synonym table.
-    const recallVariants = [...agenticExpansions, ...agenticSubQueries, ...(hydePassage ? [hydePassage] : [])];
+    const recallVariants = [...agenticSubQueries, ...agenticExpansions, ...(hydePassage ? [hydePassage] : [])];
     // Personal memory is a separate, private GBrain retrieval arm. It never
     // enters a shared Source and is injected with lower precedence than the
     // currently authorized document evidence. On the first turn, use the
@@ -1662,12 +1666,45 @@ export class ChatService {
       // same time as the main query (they overlap the race window, so waiting
       // for them afterwards adds little latency). Each hop of a compound
       // question gets an independent recall chance.
+      // Sub-query probes use their OWN abort controller: the main-query race
+      // aborts gbrainAbort at 2500ms which would also kill these probes before
+      // they return; they stay bounded by their own hard timeout instead.
+      const subProbeAbort = new AbortController();
+      const subProbeAbortLink = () => subProbeAbort.abort();
+      if (gbrainAbort.signal.aborted) subProbeAbort.abort();
+      else gbrainAbort.signal.addEventListener("abort", subProbeAbortLink, { once: true });
+      const subProbeTimer = setTimeout(
+        () => subProbeAbort.abort(),
+        Number(process.env.GBRAIN_SUBPROBE_TIMEOUT_MS || 12000),
+      );
+      subProbeTimer.unref?.();
+      const gbrainSubQueryOnce = (q: string) =>
+        sourceRefs.length > 1
+          ? this.gbrain.queryMany(sourceRefs, q, {
+              breadth: retrieval.breadth,
+              operation: effectiveOp,
+              signal: subProbeAbort.signal,
+              ...(forceQueryRefresh ? { forceRefresh: true } : {}),
+            })
+          : this.gbrain.query(
+              sourceRefs[0] || brainRepo.gitRepoUrl,
+              q,
+              { breadth: retrieval.breadth, operation: effectiveOp, signal: subProbeAbort.signal, ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
+            );
       const gbrainSubPromises = agenticSubQueries.length > 0
         ? agenticSubQueries.slice(0, 3).map((sub) =>
-            gbrainQueryOnce(sub).catch(() => ({ topics: [], answer: "", citations: [], reranked: false } as BrainQueryResult)),
+            gbrainSubQueryOnce(sub)
+              .then((r: any) => {
+                for (const cit of r?.citations || []) (cit as any).subQueryOrigin = (cit as any).subQueryOrigin || sub;
+                return r;
+              })
+              .catch(() => ({ topics: [], answer: "", citations: [], reranked: false } as BrainQueryResult)),
           )
         : [];
-      const gbrainSubsAll = Promise.allSettled(gbrainSubPromises);
+      const gbrainSubsAll = Promise.allSettled(gbrainSubPromises).finally(() => {
+        clearTimeout(subProbeTimer);
+        gbrainAbort.signal.removeEventListener("abort", subProbeAbortLink);
+      });
 
       const fallbackChunks = await fallbackChunksPromise;
       if (fallbackChunks.length > 0) {
@@ -1703,6 +1740,7 @@ export class ChatService {
                 score: typeof fb.score === "number" ? fb.score : 0.95,
                 docTitle: fb.title,
                 sectionGroup: (fb as any).sectionGroup,
+          subQueryOrigin: (fb as any).subQueryOrigin,
           bbox: fb.bbox,
           previewUrl: fb.previewUrl,
               } as any);
@@ -1728,6 +1766,7 @@ export class ChatService {
               score: Math.max(0.70, 0.95 - idx * 0.02),
               docTitle: fb.title,
               sectionGroup: (fb as any).sectionGroup,
+          subQueryOrigin: (fb as any).subQueryOrigin,
           bbox: fb.bbox,
           previewUrl: fb.previewUrl,
             })),
@@ -1782,6 +1821,7 @@ export class ChatService {
             mergedFromSubs += 1;
           }
         }
+        this.logger.warn(`[D1DBG] gbrainSubPromises=${gbrainSubPromises.length} mergedFromSubs=${mergedFromSubs} poolCitations=${(queryResult.citations||[]).length} tagged=${(queryResult.citations||[]).filter((c:any)=>c.subQueryOrigin).length}`);
         if (mergedFromSubs > 0) {
           this.logger.debug(`Merged ${mergedFromSubs} citations from decomposed sub-query probes.`);
         }
@@ -1901,7 +1941,12 @@ export class ChatService {
       // evidence prefix (same dedupe rule as the fallback merge).
       if (agenticSubQueries.length > 0) {
         const subResults = await Promise.allSettled(
-          agenticSubQueries.slice(0, 3).map((sub) => gbrainQueryOnce(sub)),
+          agenticSubQueries.slice(0, 3).map((sub) =>
+            gbrainQueryOnce(sub).then((r: any) => {
+              for (const cit of r?.citations || []) (cit as any).subQueryOrigin = (cit as any).subQueryOrigin || sub;
+              return r;
+            }),
+          ),
         );
         const seen = new Set(
           (queryResult.citations || []).map((c: any) =>
@@ -1969,6 +2014,7 @@ export class ChatService {
           score: Math.max(0.70, 0.95 - idx * 0.02),
           docTitle: fb.title,
           sectionGroup: (fb as any).sectionGroup,
+          subQueryOrigin: (fb as any).subQueryOrigin,
           bbox: fb.bbox,
           previewUrl: fb.previewUrl,
         }));
@@ -2150,6 +2196,7 @@ export class ChatService {
     queryResult = this.selectEvidence(queryResult, {
       breadth: retrieval.breadth,
       tokenBudget: Number(process.env.RETRIEVAL_CONTEXT_TOKEN_BUDGET || 12000),
+      subQueries: agenticSubQueries,
     });
     const afterSelect = queryResult.citations?.length || 0;
     trace.finish(
@@ -2948,7 +2995,7 @@ ${compiledTruthContext}`;
    */
   private selectEvidence(
     result: any,
-    opts: { breadth: boolean; tokenBudget: number },
+    opts: { breadth: boolean; tokenBudget: number; subQueries?: string[] },
   ): any {
     const citations = Array.isArray(result?.citations) ? result.citations : [];
     if (citations.length <= 1) return result;
@@ -2985,8 +3032,8 @@ ${compiledTruthContext}`;
       ? Math.max(8, Number(process.env.RETRIEVAL_MAX_GROUPS_BREADTH || 16))
       : Math.max(2, Number(process.env.RETRIEVAL_MAX_GROUPS || 8));
 
-    const entries = [...groups.entries()]
-      .map(([key, g]) => ({ key, ...g }))
+    const allEntries = [...groups.entries()].map(([key, g]) => ({ key, ...g }));
+    const entries = allEntries
       .filter((g) => g.best >= rawBest * relFloor)
       .sort((a, b) => b.best - a.best);
 
@@ -3026,6 +3073,70 @@ ${compiledTruthContext}`;
       usedTokens += groupTokens;
     }
 
+    // Sub-question coverage quota (compound questions): with a single global
+    // relevance ranking, the second hop of "A怎么样，另外B如何" loses to the
+    // dominant first-hop group and never reaches the answer context. For each
+    // decomposed sub-query, if no already-selected group covers it, inject its
+    // best-overlapping group (floor-eligible pool, budget permitting, immune
+    // to the MMR redundancy penalty).
+    // Sub-question affinity uses character 2-grams: greedy 4-char word chunks
+    // rarely align between a colloquial sub-question and formal policy text.
+    const bigrams = (text: string): Set<string> => {
+      const chars = String(text).toLowerCase().match(/[\p{L}\p{N}]/gu) || [];
+      const set = new Set<string>();
+      for (let i = 0; i < chars.length - 1; i++) set.add(chars[i] + chars[i + 1]);
+      return set;
+    };
+    const subQueries = (opts.subQueries || []).filter((q) => typeof q === "string" && q.trim().length >= 4).slice(0, 3);
+    let subQueryCovered = 0;
+    let subQueryInjected = 0;
+    if (subQueries.length && selected.length) {
+      const selectedIds = new Set(selected.map((c: any) => c.id || `${c.docId}:${c.ord}`));
+      for (const sq of subQueries) {
+        const sqTokens = bigrams(sq);
+        // Primary signal — provenance: candidates recalled BY this sub-query's
+        // own probes carry subQueryOrigin. If such a group survived selection,
+        // the hop is covered.
+        const originMatches = (origin: unknown) => {
+          if (typeof origin !== "string" || !origin.trim()) return false;
+          if (origin.trim() === sq.trim()) return true;
+          return jaccard(bigrams(origin), sqTokens) >= 0.25;
+        };
+        const originCovered = selected.some((c: any) => originMatches(c.subQueryOrigin));
+        if (originCovered) { subQueryCovered += 1; continue; }
+        // Secondary signal — lexical affinity (2-gram), for untagged candidates
+        const lexicallyCovered = sqTokens.size > 0 && selectedSets.some((s) => {
+          const sBigrams = new Set<string>();
+          for (const tok of s) for (let i = 0; i < tok.length - 1; i++) sBigrams.add(tok[i] + tok[i + 1]);
+          return jaccard(sBigrams, sqTokens) >= 0.08;
+        });
+        if (lexicallyCovered) { subQueryCovered += 1; continue; }
+        // Inject the best group for this hop: prefer provenance-tagged groups,
+        // then the highest-overlap group.
+        let bestGroup: (typeof allEntries)[number] | null = null;
+        let bestScore = 0;
+        for (const g of allEntries) {
+          const fullySelected = g.members.every((m: any) => selectedIds.has(m.id || `${m.docId}:${m.ord}`));
+          if (fullySelected) continue;
+          const tagged = g.members.some((m: any) => originMatches(m.subQueryOrigin));
+          const overlap = sqTokens.size ? jaccard(bigrams(g.repText), sqTokens) : 0;
+          const score = tagged ? 1 + g.best : overlap; // tagged always wins
+          if (score > bestScore) { bestScore = score; bestGroup = g; }
+        }
+        const taggedPick = Boolean(bestGroup && bestScore >= 1);
+        if (!bestGroup || (!taggedPick && bestScore < Number(process.env.RETRIEVAL_SUBQUERY_MIN_OVERLAP || 0.10))) continue;
+        const groupTokens = bestGroup.members.reduce((sum, m) => sum + costOf(m), 0);
+        if (usedTokens + groupTokens > opts.tokenBudget * 1.2) continue; // small overshoot allowance
+        for (const m of bestGroup.members) {
+          if (!selectedIds.has(m.id || `${m.docId}:${m.ord}`)) selected.push(m);
+        }
+        selectedSets.push(tokenize(bestGroup.repText));
+        usedTokens += groupTokens;
+        subQueryInjected += 1;
+        subQueryCovered += 1;
+      }
+    }
+
     if (!selected.length) return result;
     const removed = citations.length - selected.length;
     return {
@@ -3041,6 +3152,7 @@ ${compiledTruthContext}`;
         usedTokens,
         relevanceFloorRatio: relFloor,
         mmrLambda: lambda,
+        ...(subQueries.length ? { subQueries: subQueries.length, subQueryCovered, subQueryInjected } : {}),
       },
     };
   }

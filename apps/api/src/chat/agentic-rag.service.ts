@@ -43,8 +43,16 @@ export class AgenticRagService {
     if (/(.*的.*的|.*中.*关于|根据.*那么|如果.*则.*怎么)/u.test(q) && q.length > 20) return 'multi_hop';
     // Multiple question marks or conjunctions
     if ((q.match(/？|\?/g) || []).length > 1) return 'multi_hop';
-    if (/并且|同时|以及|而且/u.test(q) && q.length > 20) return 'multi_hop';
-    
+    if (/并且|同时|以及|而且|另外|还有|再加上/u.test(q) && q.length > 20) return 'multi_hop';
+    // Structural compound detection: the question splits into multiple
+    // self-contained clauses ("A怎么样，另外B如何"), regardless of which
+    // conjunction happens to be used.
+    const clauseParts = q
+      .split(/[,，?？;；]|并且|另外|以及|同时|还有|再加上/)
+      .map((part) => part.trim())
+      .filter((part) => part.length >= 4);
+    if (clauseParts.length >= 2) return 'multi_hop';
+
     return 'simple';
   }
 
@@ -269,10 +277,24 @@ export class AgenticRagService {
       this.generateHypotheticalDocument(query),
       this.expandQuery(query),
     ]);
+    // Keep only real sub-questions (drop pass-through of the original).
+    const llmSubs = (decomposed.subQueries || [])
+      .map((q) => String(q || '').trim())
+      .filter((q) => q.length >= 4 && q !== query.trim());
+    // Deterministic fallback: reasoning models sometimes echo the original
+    // question instead of decomposing it. Split on compound conjunctions so
+    // every hop of a compound question still gets its own recall probes.
+    const deterministicSubs = llmSubs.length > 0
+      ? llmSubs
+      : query
+          .split(/[,，?？;；。]|并且|另外|以及|同时|还有|再加上/)
+          .map((part) => part.trim())
+          .filter((part) => part.length >= 4 && part !== query.trim())
+          .slice(0, 3);
     return {
       complexity,
       expansions,
-      subQueries: decomposed.subQueries.length ? decomposed.subQueries : [query],
+      subQueries: deterministicSubs.length ? deterministicSubs : [query],
       hyde,
     };
   }
