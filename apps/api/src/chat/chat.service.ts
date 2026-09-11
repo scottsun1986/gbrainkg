@@ -747,6 +747,24 @@ export class ChatService {
       query,
       Math.max(limit * 3, 40),
     ).catch(() => []);
+    // Decomposed sub-queries get their own vector probes: a compound question
+    // ("compare X and Y, and also Z") often only matches the Y/Z chunks under
+    // the sub-query wording, not the combined sentence embedding.
+    const subQueryVectorPromise = (async () => {
+      const subs = extraQueries.filter((q) => typeof q === "string" && q.length >= 4 && q.length <= 80).slice(0, 3);
+      const perSub = Math.max(3, Math.floor(limit / 2));
+      const results = await Promise.all(
+        subs.map((sub) => this.searchChunksByVector(scope, sub, perSub).catch(() => [] as any[])),
+      );
+      const byId = new Map<string, any>();
+      for (const hits of results) {
+        for (const hit of hits || []) {
+          const prev = byId.get(hit.id);
+          if (!prev || hit.score > prev.score) byId.set(hit.id, hit);
+        }
+      }
+      return [...byId.values()];
+    })().catch(() => []);
 
     try {
       const isChapterListing = /哪些章|所有章|全部章|章名|一共有哪些章/.test(query);
@@ -906,9 +924,10 @@ export class ChatService {
       }
 
       // Merge the semantic arm into the candidate pool.
-      const vectorHits = await vectorHitsPromise;
-      for (const hit of vectorHits) {
-        vectorScoreById.set(hit.id, hit.score);
+      const [vectorHits, subVectorHits] = await Promise.all([vectorHitsPromise, subQueryVectorPromise]);
+      for (const hit of [...(vectorHits || []), ...(subVectorHits || [])]) {
+        const prevScore = vectorScoreById.get(hit.id);
+        if (prevScore === undefined || hit.score > prevScore) vectorScoreById.set(hit.id, hit.score);
         if (!chunkMap.has(hit.id)) chunkMap.set(hit.id, hit);
       }
 
@@ -1622,9 +1641,9 @@ export class ChatService {
       });
 
       // 2. Query GBrain federated search concurrently
-      const gbrainSearchPromise = (
+      const gbrainQueryOnce = (q: string) =>
         sourceRefs.length > 1
-          ? this.gbrain.queryMany(sourceRefs, retrieval.query, {
+          ? this.gbrain.queryMany(sourceRefs, q, {
               breadth: retrieval.breadth,
               operation: effectiveOp,
               signal: gbrainAbort.signal,
@@ -1632,13 +1651,23 @@ export class ChatService {
             })
           : this.gbrain.query(
               sourceRefs[0] || brainRepo.gitRepoUrl,
-              retrieval.query,
+              q,
               { breadth: retrieval.breadth, operation: effectiveOp, signal: gbrainAbort.signal, ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
-            )
-      ).catch((err) => {
+            );
+      const gbrainSearchPromise = gbrainQueryOnce(retrieval.query).catch((err) => {
         this.logger.warn(`GBrain search error: ${err.message}`);
         return { topics: [], answer: "", citations: [], reranked: false } as BrainQueryResult;
       });
+      // Decomposed sub-queries get their own GBrain probes, launched at the
+      // same time as the main query (they overlap the race window, so waiting
+      // for them afterwards adds little latency). Each hop of a compound
+      // question gets an independent recall chance.
+      const gbrainSubPromises = agenticSubQueries.length > 0
+        ? agenticSubQueries.slice(0, 3).map((sub) =>
+            gbrainQueryOnce(sub).catch(() => ({ topics: [], answer: "", citations: [], reranked: false } as BrainQueryResult)),
+          )
+        : [];
+      const gbrainSubsAll = Promise.allSettled(gbrainSubPromises);
 
       const fallbackChunks = await fallbackChunksPromise;
       if (fallbackChunks.length > 0) {
@@ -1731,6 +1760,30 @@ export class ChatService {
               queryResult = retryResult;
             }
           }
+        }
+      }
+      // Merge sub-query probe citations into the candidate pool (evidence-
+      // prefix dedupe, same rule as the fallback merge).
+      if (gbrainSubPromises.length > 0) {
+        const subSettled = await gbrainSubsAll;
+        const seen = new Set(
+          (queryResult.citations || []).map((c: any) =>
+            String(c.evidence || c.snippet || "").replace(/\s+/g, "").slice(0, 30),
+          ),
+        );
+        let mergedFromSubs = 0;
+        for (const settled of subSettled) {
+          if (settled.status !== "fulfilled") continue;
+          for (const cit of ((settled.value as any)?.citations || []) as any[]) {
+            const key = String(cit.evidence || cit.snippet || "").replace(/\s+/g, "").slice(0, 30);
+            if (!key || seen.has(key)) continue;
+            seen.add(key);
+            (queryResult.citations as any[]).push(cit);
+            mergedFromSubs += 1;
+          }
+        }
+        if (mergedFromSubs > 0) {
+          this.logger.debug(`Merged ${mergedFromSubs} citations from decomposed sub-query probes.`);
         }
       }
       rawCandidateCount = Array.isArray(queryResult.citations) ? queryResult.citations.length : 0;
@@ -1829,19 +1882,43 @@ export class ChatService {
     if (evidenceAssessment.shouldEscalate) {
       retrievalEscalated = true;
       trace.start("retrieval_escalation", "弱证据扩展检索", "检测到弱证据或空结果，按 GBrain 广覆盖模式扩检一次");
-      queryResult =
+      const gbrainQueryOnce = async (q: string) =>
         sourceRefs.length > 1
-          ? await this.gbrain.queryMany(sourceRefs, retrieval.query, {
+          ? this.gbrain.queryMany(sourceRefs, q, {
               breadth: true,
               operation: "search",
               signal: gbrainAbort.signal,
               ...(forceQueryRefresh ? { forceRefresh: true } : {}),
             })
-          : await this.gbrain.query(
+          : this.gbrain.query(
               sourceRefs[0] || brainRepo.gitRepoUrl,
-              retrieval.query,
+              q,
               { breadth: true, operation: "search", signal: gbrainAbort.signal, ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
             );
+      queryResult = await gbrainQueryOnce(retrieval.query);
+      // Decomposed sub-queries run as PARALLEL GBrain probes so each hop of a
+      // compound question gets its own recall chance; citations merge by
+      // evidence prefix (same dedupe rule as the fallback merge).
+      if (agenticSubQueries.length > 0) {
+        const subResults = await Promise.allSettled(
+          agenticSubQueries.slice(0, 3).map((sub) => gbrainQueryOnce(sub)),
+        );
+        const seen = new Set(
+          (queryResult.citations || []).map((c: any) =>
+            String(c.evidence || c.snippet || "").replace(/\s+/g, "").slice(0, 30),
+          ),
+        );
+        for (const settled of subResults) {
+          if (settled.status !== "fulfilled") continue;
+          const subCitations = (settled.value as any)?.citations || [];
+          for (const cit of subCitations) {
+            const key = String(cit.evidence || cit.snippet || "").replace(/\s+/g, "").slice(0, 30);
+            if (!key || seen.has(key)) continue;
+            seen.add(key);
+            (queryResult.citations as any[]).push(cit);
+          }
+        }
+      }
       queryResult = await this.filterQueryResultByCurrentPermission(
         queryResult,
         scope,
