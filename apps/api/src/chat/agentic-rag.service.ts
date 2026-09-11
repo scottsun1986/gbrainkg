@@ -44,7 +44,7 @@ export class AgenticRagService {
     
     // Heuristic classification
     // Comparative patterns
-    if (/比较|对比|区别|不同|差异|vs|versus|相比/u.test(q)) return 'comparative';
+    if (/比较|对比|区别|不同|差异|vs|versus|相比|冲突|矛盾|不一致|两个文档|两份文档|多份文档|两个版本|两份|多份|哪个为准|新旧|哪份/u.test(q)) return 'comparative';
     // Global synthesis patterns  
     if (/所有|全部|总结|概述|哪些|列举|汇总|主要.*有|一共|共有|总共|多少条|几条|多少章|几章|全文结构|架构体系/u.test(q)) return 'global_synthesis';
     // Multi-hop patterns
@@ -89,7 +89,7 @@ export class AgenticRagService {
 规则：
 1. 每个子问题必须是独立的、可以单独在知识库中检索的问题
 2. 子问题合起来应该能完整回答原始问题
-3. 对比类问题：分别查询每个比较对象
+3. 对比/冲突类问题：分别查询各方比较对象或制度的不同表述（严禁在子问题中使用“第一份文档”、“第二份文档”等无意义代词，而应转换为该主题在不同制度/版本中的具体关键词或不同规范表述，如“考勤管理制度 作息时间”、“考勤制度手册 工作时间”）
 4. 多跳类问题：按推理链的步骤拆解
 5. 综合类问题：按主题或维度拆解
 
@@ -411,7 +411,7 @@ export class AgenticRagService {
           max_tokens: 600,
           response_format: { type: 'json_object' },
         }),
-        signal: AbortSignal.timeout(8000),
+        signal: AbortSignal.timeout(Number(process.env.AGENTIC_RAG_JUDGE_TIMEOUT_MS || 15000)),
       });
 
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -515,6 +515,19 @@ export class AgenticRagService {
         } else if (!hasA && hasB) {
           missingAspects.push(`缺少对比实体“${entityA}”的相关信息`);
           suggestedFollowUp.push(`${entityA} 相关规范与要求`);
+        }
+      }
+    }
+
+    // 1.5 Multi-document conflict or discrepancy mention in query
+    if (/冲突|矛盾|不一致|两个文档|两份文档|多份文档|两个版本|两份|多份|哪个为准|新旧|为何没有都出来|为什么没有都出来/u.test(query)) {
+      const docTitles = new Set((context.match(/《([^》]+)》/g) || []).map((t) => t.replace(/[《》]/g, '').trim()));
+      if (docTitles.size < 2) {
+        missingAspects.push('用户询问冲突或多文档对比，但当前上下文仅检索到单份文档，缺少另一份冲突/对照文档证据');
+        if (/上下班|上班|下班|工时|作息|考勤/u.test(query)) {
+          suggestedFollowUp.push('考勤管理制度 作息安排 工时规定 标准工时制');
+        } else {
+          suggestedFollowUp.push(`${query.replace(/.*?(关于|对于|是什么|有哪些|冲突|矛盾|不一致|两个文档|两份文档|多份文档|为何没有都出来|为什么没有都出来|。|，|\?|？)/gu, '').trim() || '相关规定'} 制度文件 规范手册`);
         }
       }
     }

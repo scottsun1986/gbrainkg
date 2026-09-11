@@ -536,6 +536,20 @@ export class ChatService {
         ["第一章", "第二章", "第三章", "第四章", "总则", "飞行运行管理", "检测与维护", "罚则", "附则"].forEach((t) => set.add(t));
       }
 
+      // 2.5 Institutional concept bridges (colloquial vs formal policy vocabulary)
+      if (/上下班|上班|下班|工作时间|作息|工时/.test(qText)) {
+        ["作息时间", "工时制度", "作息安排", "标准工时制", "夏令时", "冬令时", "工作时间"].forEach((t) => set.add(t));
+      }
+      if (/考勤|打卡|出勤/.test(qText)) {
+        ["考勤管理", "打卡制度", "工时制度", "考勤制度"].forEach((t) => set.add(t));
+      }
+      if (/差旅|出差/.test(qText)) {
+        ["差旅补贴", "差旅费", "差旅标准", "交通补贴"].forEach((t) => set.add(t));
+      }
+      if (/报销|发票/.test(qText)) {
+        ["财务报销", "报销制度", "报销流程"].forEach((t) => set.add(t));
+      }
+
       // 3. Numbers with units
       for (const m of qText.match(/\d+(?:\.\d+)?(?:位|毫秒|ms|秒|米|m|度|分|%|赫兹|Hz|小时|天|月|年|万|亿)/gi) || []) set.add(m);
 
@@ -3448,18 +3462,36 @@ ${compiledTruthContext}`;
     const selectedSets: Array<Set<string>> = [];
     let usedTokens = 0;
     const pool = entries.slice();
+    const docCounts = new Map<string, number>();
+    const docIdOf = (g: any) => String(g.members?.[0]?.docId || g.members?.[0]?.documentId || g.members?.[0]?.docTitle || g.key);
+    const totalDistinctDocs = new Set(pool.map(docIdOf)).size;
+    const maxPerDoc = totalDistinctDocs > 1 ? Math.max(2, Math.floor(maxGroups * 0.55)) : maxGroups;
+
     while (pool.length && selectedSets.length < maxGroups) {
       let pickIdx = -1;
       let pickVal = -Infinity;
       for (let i = 0; i < pool.length; i++) {
         const g = pool[i];
-        const redundancy = selectedSets.length
+        const docId = docIdOf(g);
+        const countForDoc = docCounts.get(docId) || 0;
+        // Soft cap: if this document already reached its quota and other docs remain, give priority to other docs
+        const hasOtherDocsInPool = pool.some((other) => (docCounts.get(docIdOf(other)) || 0) < maxPerDoc);
+        if (countForDoc >= maxPerDoc && hasOtherDocsInPool) continue;
+
+        // Distinct document boost: if g brings a novel document into the context,
+        // it should not suffer the full vocabulary redundancy penalty from other documents.
+        const isNovelDoc = countForDoc === 0 && selected.length > 0;
+        const rawRedundancy = selectedSets.length
           ? Math.max(...selectedSets.map((s) => jaccard(tokenize(g.repText), s)))
           : 0;
-        const value = lambda * g.best - (1 - lambda) * redundancy;
+        const redundancy = isNovelDoc ? rawRedundancy * 0.25 : rawRedundancy;
+        const value = lambda * g.best - (1 - lambda) * redundancy + (isNovelDoc ? 0.15 : 0);
         if (value > pickVal) { pickVal = value; pickIdx = i; }
       }
-      if (pickIdx < 0) break;
+      if (pickIdx < 0) {
+        if (pool.length) pickIdx = 0;
+        else break;
+      }
       const group = pool.splice(pickIdx, 1)[0];
       const groupTokens = group.members.reduce((sum, m) => sum + costOf(m), 0);
       // Token budget: the first (best) group always fits; later groups must fit.
@@ -3467,6 +3499,8 @@ ${compiledTruthContext}`;
       for (const m of group.members) selected.push(m);
       selectedSets.push(tokenize(group.repText));
       usedTokens += groupTokens;
+      const dId = docIdOf(group);
+      docCounts.set(dId, (docCounts.get(dId) || 0) + 1);
     }
 
     // Sub-question coverage quota (compound questions): with a single global
