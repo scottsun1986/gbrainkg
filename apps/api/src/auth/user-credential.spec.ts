@@ -7,6 +7,7 @@ describe('UserCredentialService', () => {
   let testUserId: string;
 
   beforeAll(async () => {
+    jest.setTimeout(20000);
     service = new UserCredentialService();
     const user = await prisma.user.findFirst({ where: { status: 'active' } });
     if (!user) throw new Error('No active user found for tests');

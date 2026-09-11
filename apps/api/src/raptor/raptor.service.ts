@@ -35,11 +35,40 @@ export class RaptorService {
   private readonly logger = new Logger(RaptorService.name);
   private readonly prisma = getPrismaClient();
   private readonly maxSourceChars = Number(process.env.RAPTOR_MAX_SOURCE_CHARS || 6000);
+  private readonly globalTreePendingKbs = new Map<string, NodeJS.Timeout>();
+  private readonly globalTreeRunningKbs = new Set<string>();
 
   constructor(
     @Optional() private readonly modelConfigService?: ModelConfigService,
     @Optional() private readonly embeddingService?: EmbeddingService,
   ) {}
+
+  /**
+   * Debounced schedule for building KB Level 2 global tree.
+   * Prevents batch ingestion of multiple documents from triggering sequential redundant LLM calls.
+   */
+  scheduleBuildKbGlobalTree(kbId: string, debounceMs = Number(process.env.RAPTOR_GLOBAL_TREE_DEBOUNCE_MS || 15000)): void {
+    const existing = this.globalTreePendingKbs.get(kbId);
+    if (existing) clearTimeout(existing);
+
+    const timer = setTimeout(async () => {
+      this.globalTreePendingKbs.delete(kbId);
+      if (this.globalTreeRunningKbs.has(kbId)) {
+        this.scheduleBuildKbGlobalTree(kbId, 10000);
+        return;
+      }
+      this.globalTreeRunningKbs.add(kbId);
+      try {
+        await this.buildKbGlobalTree(kbId);
+      } catch (err) {
+        this.logger.warn(`Debounced buildKbGlobalTree failed for KB ${kbId}: ${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        this.globalTreeRunningKbs.delete(kbId);
+      }
+    }, debounceMs);
+    timer.unref?.();
+    this.globalTreePendingKbs.set(kbId, timer);
+  }
 
   isEnabled(): boolean {
     // On by default (macro-level recall); set RAPTOR_ENABLED=false to disable.
@@ -113,10 +142,8 @@ export class RaptorService {
     const nodes = sectionNodes.length + 1;
     this.logger.log(`RAPTOR indexed ${nodes} summary nodes for document ${documentId}.`);
 
-    // Refresh Level 2 Knowledge Base Global Tree
-    await this.buildKbGlobalTree(kbId).catch((err) => {
-      this.logger.warn(`RAPTOR buildKbGlobalTree failed after document ${documentId}: ${err instanceof Error ? err.message : String(err)}`);
-    });
+    // Refresh Level 2 Knowledge Base Global Tree with debouncing to avoid LLM storm on batch uploads
+    this.scheduleBuildKbGlobalTree(kbId);
 
     return { nodes };
   }

@@ -880,27 +880,33 @@ export class ChatService {
     // Agentic sub-queries and HyDE passages are additional recall arms: union
     // their keywords with the primary query so complex/compound questions can
     // hit clauses that a single keyword extraction would miss.
-    const variantQueries = [query, ...extraQueries.filter((q) => typeof q === "string" && q.trim().length >= 2)];
-    const keywords = Array.from(new Set(
-      variantQueries.flatMap((variant) => this.extractSearchKeywords(variant, domainTerms)),
-    )).slice(0, 40);
+    const primaryKeywords = new Set(this.extractSearchKeywords(query, domainTerms));
+    const extraVariants = extraQueries.filter((q) => typeof q === "string" && q.trim().length >= 2);
+    const variantQueries = [query, ...extraVariants];
+    const keywords = Array.from(new Set([
+      ...primaryKeywords,
+      ...extraVariants.flatMap((variant) => this.extractSearchKeywords(variant, domainTerms)),
+    ])).slice(0, 40);
     if (!keywords.length) {
       return [];
     }
 
+    // Optimization 6: Prime embedding cache in a single batch for primary query + subqueries
+    const subs = extraQueries.filter((q) => typeof q === "string" && q.length >= 4 && q.length <= 80).slice(0, 3);
+    const embeddingTextsToPrime = [query, ...subs].filter((t) => typeof t === "string" && t.trim().length >= 2);
+    if (this.embeddingService?.isEnabled() && embeddingTextsToPrime.length > 0) {
+      await this.embeddingService.embed(embeddingTextsToPrime).catch(() => []);
+    }
+
     // Semantic arm: embed the query and retrieve nearest chunks by cosine
-    // distance over Chunk.embedding (pgvector/HNSW). Runs concurrently with the
-    // keyword arms and fails open when embeddings are not configured.
+    // distance over Chunk.embedding (pgvector/HNSW). Already in memory cache from batch above!
     const vectorHitsPromise = this.searchChunksByVector(
       scope,
       query,
       Math.max(limit * 3, 40),
     ).catch(() => []);
-    // Decomposed sub-queries get their own vector probes: a compound question
-    // ("compare X and Y, and also Z") often only matches the Y/Z chunks under
-    // the sub-query wording, not the combined sentence embedding.
+    // Decomposed sub-queries get their own vector probes (also hitting memory cache!)
     const subQueryVectorPromise = (async () => {
-      const subs = extraQueries.filter((q) => typeof q === "string" && q.length >= 4 && q.length <= 80).slice(0, 3);
       const perSub = Math.max(8, Number(process.env.RETRIEVAL_SUBQUERY_VECTOR_TAKE || 15));
       const results = await Promise.all(
         subs.map((sub) => this.searchChunksByVector(scope, sub, perSub).catch(() => [] as any[])),
@@ -1014,26 +1020,36 @@ export class ChatService {
         .slice(0, 15);
       const perTokenTake = Math.max(20, Number(process.env.RETRIEVAL_TOKEN_QUERY_TAKE || 25));
       const maxCandidatePool = Math.max(120, limit * 8);
-      for (const kw of generalTokens) {
+      const tokenBatchSize = 4;
+      for (let i = 0; i < generalTokens.length; i += tokenBatchSize) {
         if (chunkMap.size >= maxCandidatePool) break;
-        const tChunks = await (this.prisma as any).chunk.findMany({
-          where: {
-            kbId: { in: scope },
-            content: { contains: kw, mode: "insensitive" },
-          },
-          select: {
-            id: true,
-            documentId: true,
-            kbId: true,
-            ord: true,
-            content: true,
-            metadata: true,
-            document: { select: { title: true, version: true } },
-          },
-          orderBy: [{ documentId: "asc" }, { ord: "asc" }],
-          take: perTokenTake,
-        });
-        tChunks.forEach((c: any) => chunkMap.set(c.id, c));
+        const tokenBatch = generalTokens.slice(i, i + tokenBatchSize);
+        const batchResults = await Promise.all(
+          tokenBatch.map((kw) =>
+            (this.prisma as any).chunk.findMany({
+              where: {
+                kbId: { in: scope },
+                content: { contains: kw, mode: "insensitive" },
+              },
+              select: {
+                id: true,
+                documentId: true,
+                kbId: true,
+                ord: true,
+                content: true,
+                metadata: true,
+                document: { select: { title: true, version: true } },
+              },
+              orderBy: [{ documentId: "asc" }, { ord: "asc" }],
+              take: perTokenTake,
+            }).catch(() => []),
+          ),
+        );
+        for (const tChunks of batchResults) {
+          for (const c of tChunks || []) {
+            chunkMap.set(c.id, c);
+          }
+        }
       }
 
       // 4. Title-affinity recall. Across a wide multi-KB scope a small but
@@ -1120,16 +1136,19 @@ export class ChatService {
           score += 30.0;
         }
 
-        // Keywords scoring
+        // Keywords scoring: differentiated weighting between primary user query keywords and expanded recall terms
         for (const kw of keywords) {
           const lowKw = kw.toLowerCase();
+          const isPrimary = primaryKeywords.has(kw);
+          const weightMultiplier = isPrimary ? 1.5 : 0.7;
+
           if (/第[一二三四五六七八九十百0-9]+[章节条款]/.test(kw) && text.includes(lowKw)) {
-            score += 12.0;
+            score += 12.0 * weightMultiplier;
           } else if (text.includes(lowKw)) {
-            score += kw.length >= 4 ? 3.0 : 1.5;
+            score += (kw.length >= 4 ? 3.0 : 1.5) * weightMultiplier;
           }
           if (docTitle.includes(lowKw)) {
-            score += 5.0;
+            score += 5.0 * weightMultiplier;
           }
         }
 
@@ -2711,11 +2730,17 @@ export class ChatService {
     if (versionConflictNote) {
       compiledTruthContext += `\n\n${versionConflictNote.trim()}`;
     }
-    if (this.graphRagService && scope.length > 0 && process.env.ENABLE_GRAPHRAG_CONTEXT === "true") {
+    const isRelationshipQuery =
+      process.env.ENABLE_GRAPHRAG_CONTEXT === "true" ||
+      /(?:替代|废止|取代|作废|失效|继承|属于哪个|归哪个|哪个部门|主管|依赖|修订|修正|关系|架构|层级|下级|上级|包含)/u.test(question) ||
+      agenticComplexity === "comparative" ||
+      agenticComplexity === "multi_hop";
+    if (this.graphRagService && scope.length > 0 && isRelationshipQuery) {
       try {
-        const localGraph = await this.graphRagService.searchLocalGraph(scope, retrieval.query, 6);
+        const localGraph = await this.graphRagService.searchLocalGraph(scope, retrieval.query || question, 4);
         if (localGraph.formattedContext) {
-          compiledTruthContext += `\n\n${localGraph.formattedContext}`;
+          const boundedGraph = localGraph.formattedContext.slice(0, 800);
+          compiledTruthContext += `\n\n${boundedGraph}`;
         }
       } catch (err) {
         this.logger.debug(`GraphRAG search omitted: ${err instanceof Error ? err.message : String(err)}`);
@@ -2818,6 +2843,7 @@ ${compiledTruthContext}`;
               { role: "user", content: question },
             ],
             stream: true,
+            stream_options: { include_usage: true },
             temperature: Number(process.env.LLM_TEMPERATURE || 0.2),
           }),
         },
