@@ -619,12 +619,16 @@ export class ChatService {
       new Set(citations.map((c: any) => c.docId || c.documentId).filter(Boolean)),
     ).slice(0, 3) as string[];
     if (!docIds.length) return queryResult;
-    const summaries = await this.raptorService.getDocumentSummaries(docIds, 3);
-    if (!summaries.length) return queryResult;
+    const [summaries, outlines] = await Promise.all([
+      this.raptorService.getDocumentSummaries(docIds, 3),
+      this.raptorService.getDocumentOutlines(docIds, 3),
+    ]);
+    const combined = [...summaries, ...outlines];
+    if (!combined.length) return queryResult;
     const existing = new Set(citations.map((c: any) => c.docId || c.documentId));
-    const additions = summaries
+    const additions = combined
       .filter((s) => s.documentId && existing.has(s.documentId))
-      .filter((s) => !citations.some((c: any) => (c.docId || c.documentId) === s.documentId && c.section === "raptor-level1"))
+      .filter((s) => !citations.some((c: any) => (c.docId || c.documentId) === s.documentId && c.section === s.section))
       .map((s) => ({
         topic: s.title,
         docId: s.documentId,
@@ -636,7 +640,7 @@ export class ChatService {
         score: s.score,
         docTitle: s.title,
         previewUrl: s.previewUrl,
-        section: "raptor-level1",
+        section: s.section || "raptor-level1",
       }));
     if (!additions.length) return queryResult;
     return { ...queryResult, citations: [...citations, ...additions] };

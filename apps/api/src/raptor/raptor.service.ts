@@ -13,6 +13,7 @@ interface RaptorSearchHit {
   previewUrl: string | null;
   level: number;
   raptor: true;
+  section?: string;
 }
 
 /**
@@ -131,9 +132,71 @@ export class RaptorService {
         previewUrl: node.documentId ? buildDocumentPreviewUrl(node.kbId, node.documentId) : null,
         level: 1,
         raptor: true,
+        section: 'raptor-level1',
       }));
     } catch (err) {
       this.logger.warn(`Document summary fetch failed: ${err instanceof Error ? err.message : String(err)}`);
+      return [];
+    }
+  }
+
+  /**
+   * Deterministic document structure outline: the ordered list of the
+   * document's own headings (一、/（一）/第X章/clause numbering), extracted
+   * from chunk boundaries. Model-independent, so "which major parts / what is
+   * the structure" questions are answered completely even when the configured
+   * summarisation model produces weak narrative summaries.
+   */
+  async getDocumentOutlines(documentIds: string[], limit = 3): Promise<RaptorSearchHit[]> {
+    const ids = documentIds.filter(Boolean).slice(0, Math.max(1, limit));
+    if (!ids.length) return [];
+    try {
+      const docs = await (this.prisma as any).document.findMany({
+        where: { id: { in: ids } },
+        select: {
+          id: true,
+          kbId: true,
+          title: true,
+          chunks: {
+            orderBy: { ord: 'asc' },
+            take: Number(process.env.RAPTOR_OUTLINE_MAX_CHUNKS || 400),
+            select: { content: true },
+          },
+        },
+      });
+      const headingRe = /^(?:#{1,6}\s*)?(?:[一二三四五六七八九十百]+、|（[一二三四五六七八九十百]+）|第[一二三四五六七八九十百0-9]+[章节]|[0-9]{1,3}[.．])/;
+      const hits: RaptorSearchHit[] = [];
+      for (const doc of docs) {
+        const lines: string[] = [];
+        for (const chunk of doc.chunks || []) {
+          const firstLine = String(chunk.content || '')
+            .replace(/\r/g, '')
+            .split(/\n+/)
+            .map((l) => l.trim())
+            .find(Boolean) || '';
+          if (!headingRe.test(firstLine)) continue;
+          const label = firstLine.replace(/^#{1,6}\s*/, '').slice(0, 50).trim();
+          if (!label || /第\s*\d+\s*页/.test(label)) continue;
+          if (lines[lines.length - 1] === label) continue;
+          lines.push(label);
+          if (lines.length >= Number(process.env.RAPTOR_OUTLINE_MAX_LINES || 60)) break;
+        }
+        if (!lines.length) continue;
+        hits.push({
+          documentId: doc.id,
+          kbId: doc.kbId,
+          title: `${doc.title} · 结构大纲`,
+          evidence: `【文档结构大纲 · ${doc.title}】\n${lines.join('\n')}`,
+          score: 0.93,
+          previewUrl: buildDocumentPreviewUrl(doc.kbId, doc.id),
+          level: 1,
+          raptor: true,
+          section: 'doc-outline',
+        });
+      }
+      return hits;
+    } catch (err) {
+      this.logger.warn(`Document outline failed: ${err instanceof Error ? err.message : String(err)}`);
       return [];
     }
   }
