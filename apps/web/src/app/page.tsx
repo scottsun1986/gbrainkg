@@ -1427,78 +1427,6 @@ function ScopePicker({visibleKbs, selected, setSelected, open, setOpen}){
   );
 }
 
-/* ============== 个人长期记忆 ============== */
-function PersonalMemoryPanel({ open, onClose }) {
-  const [query, setQuery] = useState('');
-  const [facts, setFacts] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [reloadKey, setReloadKey] = useState(0);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    let cancelled = false;
-    setLoading(true);
-    fetch(`${API_BASE_URL}/api/v1/chat/memory?limit=100${query.trim() ? `&query=${encodeURIComponent(query.trim())}` : ''}`, { headers: apiHeaders() })
-      .then(async (response) => {
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(result.message || '个人记忆加载失败');
-        if (!cancelled) setFacts(Array.isArray(result.facts) ? result.facts : []);
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setFacts([]);
-          window.dispatchEvent(new CustomEvent('app-toast', { detail: error.message || '个人记忆加载失败' }));
-        }
-      })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [open, query, reloadKey]);
-
-  const forget = async (fact) => {
-    const id = fact?.id || fact?.fact_id;
-    if (!id) return;
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/chat/memory/${encodeURIComponent(id)}`, { method: 'DELETE', headers: apiHeaders() });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.message || '个人记忆删除失败');
-      window.dispatchEvent(new CustomEvent('app-toast', { detail: '个人记忆已删除' }));
-      setReloadKey((value) => value + 1);
-    } catch (error) {
-      window.dispatchEvent(new CustomEvent('app-toast', { detail: error.message || '个人记忆删除失败' }));
-    }
-  };
-
-  if (!open) return null;
-  return (
-    <Modal
-      title="个人长期记忆"
-      onClose={onClose}
-      foot={<button className="btn" onClick={onClose}>关闭</button>}
-    >
-      <div style={{ color: 'var(--ink-3)', fontSize: 12, lineHeight: 1.7, marginBottom: 12 }}>
-        这里的内容只属于当前账号，存放在个人 GBrain source 中，不会进入组织库或行业库。问答时仅作为低优先级的个人背景参与消歧，不能替代知识库原文证据。
-      </div>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-        <input className="search-input" style={{ flex: 1 }} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索个人记忆…" />
-        <button className="btn" onClick={() => setReloadKey((value) => value + 1)}>刷新</button>
-      </div>
-      {loading ? <div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-3)' }}>正在加载个人记忆…</div> : facts.length ? (
-        <div style={{ maxHeight: '48vh', overflowY: 'auto', display: 'grid', gap: 8 }}>
-          {facts.map((fact, index) => (
-            <div key={fact.id || fact.fact_id || index} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, padding: '10px 12px', border: '1px solid var(--line)', borderRadius: 8, background: 'var(--surface-2)' }}>
-              <div>
-                <div style={{ lineHeight: 1.6 }}>{fact.fact || fact.content || fact.text || '（无内容）'}</div>
-                {(fact.entity_slug || fact.created_at || fact.createdAt) && <div style={{ color: 'var(--ink-4)', fontSize: 11, marginTop: 4 }}>{fact.entity_slug ? `实体：${fact.entity_slug} · ` : ''}{fact.created_at || fact.createdAt ? new Date(fact.created_at || fact.createdAt).toLocaleString('zh-CN') : ''}</div>}
-              </div>
-              <button className="icon-btn danger" title="删除个人记忆" aria-label="删除个人记忆" onClick={() => void forget(fact)}>×</button>
-            </div>
-          ))}
-        </div>
-      ) : <div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-3)' }}>暂无个人记忆。可在输入框中填写内容后点击“记住”。</div>}
-    </Modal>
-  );
-}
-
 /* ============== 右键菜单 ============== */
 function ContextMenu({x, y, items, onClose}){
   const ref = useRef(null);
@@ -1538,7 +1466,6 @@ function ChatScreen(){
   const visibleKbs = KNOWLEDGE_BASES;
   const [selected, setSelected] = useState([]);
   const [open, setOpen] = useState(false);
-  const [memoryOpen, setMemoryOpen] = useState(false);
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState([]);   // {role:'user'|'ai', text, done}
   const [streaming, setStreaming] = useState(false);
@@ -1769,22 +1696,6 @@ function ChatScreen(){
       pageNo: citation.pageNo || citation.page_no,
       bbox: citation.bbox,
     });
-  };
-  const rememberPersonalFact = async () => {
-    const fact = input.trim() || window.prompt('输入要保存到个人记忆的内容：', '')?.trim();
-    if (!fact) return;
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/chat/memory`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...apiHeaders() },
-        body: JSON.stringify({ fact }),
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.message || '个人记忆保存失败');
-      window.dispatchEvent(new CustomEvent('app-toast', { detail: '已保存至个人记忆；不会写入组织或行业知识库' }));
-    } catch (error) {
-      window.dispatchEvent(new CustomEvent('app-toast', { detail: error.message || '个人记忆保存失败' }));
-    }
   };
 
   const openConversation = async (id) => {
@@ -2074,12 +1985,6 @@ function ChatScreen(){
                   范围 · {scopeLabel}
                   <span className="kbd">⌘K</span>
                 </div>
-                <button type="button" className="comp-chip" onClick={rememberPersonalFact} title="显式保存到仅自己可见的 GBrain 个人记忆">
-                  <Icon name="book" size={11}/> 记住
-                </button>
-                <button type="button" className="comp-chip" onClick={() => setMemoryOpen(true)} title="管理仅自己可见的个人记忆">
-                  <Icon name="search" size={11}/> 记忆管理
-                </button>
                 {streaming ? (
                   <button type="button" className="send-btn stop" onClick={stopStream} title="停止生成 (Esc)" aria-label="停止生成">
                     <span className="stop-icon" aria-hidden="true" />
@@ -2148,7 +2053,6 @@ return (
         </div>
       )}
       <OnlinePreviewModal preview={onlinePreview} onClose={()=>setOnlinePreview(null)}/>
-      <PersonalMemoryPanel open={memoryOpen} onClose={() => setMemoryOpen(false)}/>
       {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={() => setCtxMenu(null)}/>}
     </div>
   );
