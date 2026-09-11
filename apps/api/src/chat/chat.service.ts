@@ -533,21 +533,7 @@ export class ChatService {
       if (/总则/.test(qText)) set.add("总则");
       if (/罚则/.test(qText)) set.add("罚则");
       if (/哪些章|所有章|全部章|章名/.test(qText)) {
-        ["第一章", "第二章", "第三章", "第四章", "总则", "飞行运行管理", "检测与维护", "罚则", "附则"].forEach((t) => set.add(t));
-      }
-
-      // 2.5 Institutional concept bridges (colloquial vs formal policy vocabulary)
-      if (/上下班|上班|下班|工作时间|作息|工时/.test(qText)) {
-        ["作息时间", "工时制度", "作息安排", "标准工时制", "夏令时", "冬令时", "工作时间"].forEach((t) => set.add(t));
-      }
-      if (/考勤|打卡|出勤/.test(qText)) {
-        ["考勤管理", "打卡制度", "工时制度", "考勤制度"].forEach((t) => set.add(t));
-      }
-      if (/差旅|出差/.test(qText)) {
-        ["差旅补贴", "差旅费", "差旅标准", "交通补贴"].forEach((t) => set.add(t));
-      }
-      if (/报销|发票/.test(qText)) {
-        ["财务报销", "报销制度", "报销流程"].forEach((t) => set.add(t));
+        ["第一章", "第二章", "第三章", "第四章", "第五章", "总则", "罚则", "附则"].forEach((t) => set.add(t));
       }
 
       // 3. Numbers with units
@@ -972,12 +958,19 @@ export class ChatService {
       // 2. Query chapter headings if chapter listing query
       if (isChapterListing) {
         let targetDocIds: string[] = [];
-        if (/无人机/.test(query)) {
+        const cleanQuery = query.replace(/[？?。！!,，\s]+|一共有哪些章|有哪些章|所有章|全部章|章名|一共有几章|目录|结构/g, "").trim();
+        if (cleanQuery.length >= 2) {
           const docRows = await (this.prisma as any).document.findMany({
-            where: { kbId: { in: scope }, OR: [{ title: { contains: "无人机" } }, { title: { contains: "02b" } }, { title: { contains: "02c" } }] },
+            where: {
+              kbId: { in: scope },
+              status: "published",
+              title: { contains: cleanQuery },
+            },
             select: { id: true },
           });
-          targetDocIds = docRows.map((d: any) => d.id);
+          if (docRows.length > 0) {
+            targetDocIds = docRows.map((d: any) => d.id);
+          }
         }
 
         const chChunks = await (this.prisma as any).chunk.findMany({
@@ -1012,38 +1005,35 @@ export class ChatService {
 
       const stopGeneralTokens = new Set(["记录", "表中", "内容", "部分", "情况", "要求", "相关", "规定", "文档", "系统", "什么", "怎么", "如何"]);
 
-      // 3. General keywords — queried PER TOKEN. A single unordered OR-query
-      // with `take: N` returns an arbitrary row subset that varies between
-      // runs (observed: it silently dropped the matching document across a
-      // 61-KB scope, producing a refusal that then got cached). Per-token
-      // queries give every keyword deterministic representation.
-      if (chunkMap.size < limit * 3) {
-        const generalTokens = keywords
-          .filter((kw) => !highPriorityTokens.includes(kw) && !stopGeneralTokens.has(kw))
-          .sort((a, b) => b.length - a.length)
-          .slice(0, 10);
-        const perTokenTake = Math.max(40, Number(process.env.RETRIEVAL_TOKEN_QUERY_TAKE || 80));
-        for (const kw of generalTokens) {
-          if (chunkMap.size >= limit * 3) break;
-          const tChunks = await (this.prisma as any).chunk.findMany({
-            where: {
-              kbId: { in: scope },
-              content: { contains: kw, mode: "insensitive" },
-            },
-            select: {
-              id: true,
-              documentId: true,
-              kbId: true,
-              ord: true,
-              content: true,
-              metadata: true,
-              document: { select: { title: true, version: true } },
-            },
-            orderBy: [{ documentId: "asc" }, { ord: "asc" }],
-            take: perTokenTake,
-          });
-          tChunks.forEach((c: any) => chunkMap.set(c.id, c));
-        }
+      // 3. General keywords — queried PER TOKEN.
+      // Every distinctive keyword gets a bounded candidate quota so different
+      // aspects/synonyms of the query are represented without token starvation.
+      const generalTokens = keywords
+        .filter((kw) => !highPriorityTokens.includes(kw) && !stopGeneralTokens.has(kw))
+        .sort((a, b) => b.length - a.length)
+        .slice(0, 15);
+      const perTokenTake = Math.max(20, Number(process.env.RETRIEVAL_TOKEN_QUERY_TAKE || 25));
+      const maxCandidatePool = Math.max(120, limit * 8);
+      for (const kw of generalTokens) {
+        if (chunkMap.size >= maxCandidatePool) break;
+        const tChunks = await (this.prisma as any).chunk.findMany({
+          where: {
+            kbId: { in: scope },
+            content: { contains: kw, mode: "insensitive" },
+          },
+          select: {
+            id: true,
+            documentId: true,
+            kbId: true,
+            ord: true,
+            content: true,
+            metadata: true,
+            document: { select: { title: true, version: true } },
+          },
+          orderBy: [{ documentId: "asc" }, { ord: "asc" }],
+          take: perTokenTake,
+        });
+        tChunks.forEach((c: any) => chunkMap.set(c.id, c));
       }
 
       // 4. Title-affinity recall. Across a wide multi-KB scope a small but
@@ -2117,6 +2107,7 @@ export class ChatService {
               q,
               { breadth: true, operation: "search", signal: gbrainAbort.signal, ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
             );
+      const priorCitations = [...(queryResult.citations || [])];
       queryResult = await gbrainQueryOnce(retrieval.query);
       // Decomposed sub-queries run as PARALLEL GBrain probes so each hop of a
       // compound question gets its own recall chance; citations merge by
@@ -2144,6 +2135,19 @@ export class ChatService {
             seen.add(key);
             (queryResult.citations as any[]).push(cit);
           }
+        }
+      }
+      // Preserve prior citations from the first-pass/fallback so valid evidence is never lost
+      const currentSeen = new Set(
+        (queryResult.citations || []).map((c: any) =>
+          String(c.evidence || c.snippet || "").replace(/\s+/g, "").slice(0, 30),
+        ),
+      );
+      for (const p of priorCitations) {
+        const key = String(p.evidence || p.snippet || "").replace(/\s+/g, "").slice(0, 30);
+        if (key && !currentSeen.has(key)) {
+          currentSeen.add(key);
+          (queryResult.citations as any[]).push(p);
         }
       }
       queryResult = await this.filterQueryResultByCurrentPermission(
@@ -2784,7 +2788,7 @@ export class ChatService {
 【重要回答规范】：
 1. 【必须标注引用角标】：在回答正文中，每一处陈述具体事实、业务范围、规章制度、技术指标、数据或核心结论时，必须在对应陈述的末尾标注对应的引用角标，格式为 [1]、[2] 等（严格与提供的【来源 1】、【来源 2】编号对应）。例如：“中通服节能的核心业务包括数据中心绿色化与液冷技术应用[1]。”
 2. 【证据收敛与指标完整性】：参考资料是候选证据，只使用直接支持当前问题的来源。在回答技术指标、响应时间、性能参数、数值或处罚标准时，若资料在同一规定或句子中说明了多项关联指标或条件（例如伴随的可用性百分比、阈值、连带责任等），必须完整列出全部关联指标和要求（如“响应时间800毫秒，可用性不低于99.95%”），严禁遗漏任何并列参数。
-3. 【章节目录全景列举】：当用户询问有哪些章、全部章名或结构目录时，请务必完整列出参考资料中出现的各章名称（第一章 总则、第二章 飞行运行管理、第三章 检测与维护、第四章 罚则、附则），直接给出明确清单，严禁使用“无法提供”、“未提供完整章名”等推脱或拒答词汇。
+3. 【章节目录全景列举】：当用户询问有哪些章、全部章名或结构目录时，请务必根据参考资料中出现的各章标题，完整列出全部章节序号与名称，直接给出明确清单，严禁使用“无法提供”、“未提供完整章名”等推脱或拒答词汇。
 4. 【表格行记录与关键锚点事实并存处理】：若参考资料中同时存在表格行记录与关键锚点事实说明（例如表格行中某员工绩效记录为B或设备周期为7天，而关键事实/锚点事实注明该员工绩效为A或设备周期为30天），必须在回答中完整陈述这两种事实（例如明确指出：花名册表格行记录显示绩效为B，但关键锚点事实说明其绩效为A），严禁漏提任一事实。
 5. 【多源对比与完整呈现】：只有当多份资料都直接涉及当前问题时，才分别列出各份文件的规定，并说明版本差异、适用条件或生效背景。
 6. 【多源合并】：若多个来源共同支持某一相同结论，可合并标注如 [1][2]。严禁捏造未在参考资料中提供的引用编号；可用编号严格限制在参考资料实际提供的来源序号范围内。
@@ -3418,8 +3422,7 @@ ${compiledTruthContext}`;
     const raw = citations.map(rawScore);
     const max = Math.max(...raw);
     const min = Math.min(...raw);
-    const range = max - min;
-    const norm = (v: number) => (range > 1e-6 ? (v - min) / range : 1);
+    const norm = (v: number) => (max > 0 ? Math.max(0, v) / max : 1);
 
     const groupKeyOf = (c: any, index: number) =>
       typeof c?.sectionGroup === "string" && c.sectionGroup ? c.sectionGroup : `__single_${index}`;

@@ -93,8 +93,8 @@ export class AgenticRagService {
 4. 多跳类问题：按推理链的步骤拆解
 5. 综合类问题：按主题或维度拆解
 
-输出 json 格式：
-{"subQueries": ["子问题1", "子问题2", ...], "reasoning": "拆解理由"}`;
+输出 json 格式（合法的 JSON，严禁出现省略号）：
+{"subQueries": ["子问题1", "子问题2"], "reasoning": "拆解理由"}`;
 
       const response = await fetch(`${config.baseUrl}/chat/completions`, {
         method: 'POST',
@@ -106,9 +106,6 @@ export class AgenticRagService {
             { role: 'user', content: `请拆解以下问题：${query}` },
           ],
           temperature: 0,
-          // Reasoning-capable models may spend tokens on hidden reasoning, so a
-          // too-small budget yields empty `content`. Keep enough headroom for
-          // the JSON answer.
           max_tokens: Number(process.env.AGENTIC_DECOMPOSE_MAX_TOKENS || 2000),
           response_format: { type: 'json_object' },
         }),
@@ -120,12 +117,25 @@ export class AgenticRagService {
       const payload: any = await response.json();
       let content = this.assistantText(payload);
       if (!content) throw new Error('empty completion content (token budget or reasoning model)');
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) content = jsonMatch[0];
-      
-      const parsed = JSON.parse(content);
-      const subQueries = Array.isArray(parsed.subQueries) 
-        ? parsed.subQueries.filter((q: any) => typeof q === 'string' && q.trim().length > 0).slice(0, 4)
+      let parsed: any = null;
+      try {
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        const jsonStr = jsonMatch ? jsonMatch[0] : content;
+        const cleanedStr = jsonStr.replace(/,\s*\.\.\./g, '').replace(/\.\.\./g, '');
+        parsed = JSON.parse(cleanedStr);
+      } catch (e) {
+        const arrMatch = content.match(/\[([\s\S]*?)\]/);
+        if (arrMatch) {
+          const items = (arrMatch[1].match(/"([^"]+)"|'([^']+)'/g) || [])
+            .map((s) => s.replace(/^["']|["']$/g, '').trim())
+            .filter((s) => s.length >= 2 && !s.includes('子问题') && !s.includes('...'));
+          if (items.length > 0) {
+            parsed = { subQueries: items, reasoning: '' };
+          }
+        }
+      }
+      const subQueries = Array.isArray(parsed?.subQueries) 
+        ? parsed.subQueries.filter((q: any) => typeof q === 'string' && q.trim().length > 0 && !q.includes('...')).slice(0, 4)
         : [query];
 
       this.logger.log(`Decomposed query into ${subQueries.length} sub-queries: ${subQueries.join(' | ')}`);
@@ -239,11 +249,23 @@ export class AgenticRagService {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const payload: any = await response.json();
       let content = this.assistantText(payload);
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) content = jsonMatch[0];
-      const parsed = JSON.parse(content);
-      const terms = Array.isArray(parsed.expansions)
-        ? parsed.expansions
+      let parsed: any = null;
+      try {
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+        else parsed = JSON.parse(content);
+      } catch (e) {
+        const arrMatch = content.match(/\[([\s\S]*?)\]/);
+        if (arrMatch) {
+          try {
+            const arr = JSON.parse(`[${arrMatch[1]}]`);
+            parsed = { expansions: arr };
+          } catch (e2) {}
+        }
+      }
+      const rawExpansions = parsed?.expansions || (Array.isArray(parsed) ? parsed : []);
+      const terms = Array.isArray(rawExpansions)
+        ? rawExpansions
             .filter((t: any) => typeof t === 'string' && t.trim().length > 0 && t.trim().length <= 30)
             .map((t: string) => t.trim())
             .slice(0, 6)
@@ -418,11 +440,22 @@ export class AgenticRagService {
 
       const payload: any = await response.json();
       let content = this.assistantText(payload);
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) content = jsonMatch[0];
-
-      const parsed = JSON.parse(content);
-      const rawStatus = ['sufficient', 'insufficient', 'irrelevant'].includes(parsed.status)
+      let parsed: any = null;
+      try {
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+        else parsed = JSON.parse(content);
+      } catch (e) {
+        const statusMatch = content.match(/"status"\s*:\s*"([^"]+)"/);
+        const reasoningMatch = content.match(/"reasoning"\s*:\s*"([^"]+)"/);
+        parsed = {
+          status: statusMatch ? statusMatch[1] : 'sufficient',
+          reasoning: reasoningMatch ? reasoningMatch[1] : '',
+          suggestedFollowUp: [],
+          missingAspects: [],
+        };
+      }
+      const rawStatus = ['sufficient', 'insufficient', 'irrelevant'].includes(parsed?.status)
         ? parsed.status
         : 'sufficient';
 
@@ -524,11 +557,8 @@ export class AgenticRagService {
       const docTitles = new Set((context.match(/《([^》]+)》/g) || []).map((t) => t.replace(/[《》]/g, '').trim()));
       if (docTitles.size < 2) {
         missingAspects.push('用户询问冲突或多文档对比，但当前上下文仅检索到单份文档，缺少另一份冲突/对照文档证据');
-        if (/上下班|上班|下班|工时|作息|考勤/u.test(query)) {
-          suggestedFollowUp.push('考勤管理制度 作息安排 工时规定 标准工时制');
-        } else {
-          suggestedFollowUp.push(`${query.replace(/.*?(关于|对于|是什么|有哪些|冲突|矛盾|不一致|两个文档|两份文档|多份文档|为何没有都出来|为什么没有都出来|。|，|\?|？)/gu, '').trim() || '相关规定'} 制度文件 规范手册`);
-        }
+        const coreTopic = query.replace(/.*?(关于|对于|是什么|有哪些|冲突|矛盾|不一致|两个文档|两份文档|多份文档|为何没有都出来|为什么没有都出来|。|，|\?|？)/gu, '').trim() || '相关规定';
+        suggestedFollowUp.push(`${coreTopic} 制度 规定 办法 手册`);
       }
     }
 
@@ -563,6 +593,10 @@ export class AgenticRagService {
     if (content) return content;
     const reasoning = String(message.reasoning_content || message.reasoning || '').trim();
     if (!reasoning) return '';
+    const jsonBlock = reasoning.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+    if (jsonBlock) return jsonBlock[1];
+    const rawJson = reasoning.match(/\{[\s\r\n]*"(?:expansions|status|subQueries|complexity|plan)"[\s\S]*?\}/);
+    if (rawJson) return rawJson[0];
     return this.extractDraftFromReasoning(reasoning);
   }
 
