@@ -55,7 +55,29 @@ describe('AgenticRagService', () => {
       }
     });
 
-    it('decomposes complex questions, expands terms and generates a HyDE passage', async () => {
+    it('plans complex questions in unified mode with subQueries and expansions in one call', async () => {
+      const originalFetch = global.fetch;
+      (global as any).fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          choices: [{
+            message: { content: '{"subQueries":["子问题A","子问题B"],"expansions":["安全距离","冗余裕度"],"reasoning":"统一拆解与术语扩展"}' },
+          }],
+        }),
+      });
+      try {
+        const plan = await service.planQuery('对比研发与量产阶段的参数差异');
+        expect(plan.complexity).toBe('comparative');
+        expect(plan.subQueries).toEqual(['子问题A', '子问题B']);
+        expect(plan.expansions).toEqual(['安全距离', '冗余裕度']);
+      } finally {
+        (global as any).fetch = originalFetch;
+      }
+    });
+
+    it('supports separate planning mode when AGENTIC_UNIFIED_PLAN is false', async () => {
+      process.env.AGENTIC_UNIFIED_PLAN = 'false';
+      process.env.HYDE_ENABLED = 'true';
       const originalFetch = global.fetch;
       (global as any).fetch = jest.fn()
         .mockResolvedValueOnce({
@@ -83,6 +105,8 @@ describe('AgenticRagService', () => {
         expect(plan.hyde).toContain('120米');
         expect(plan.expansions).toEqual(['安全距离', '冗余裕度']);
       } finally {
+        delete process.env.AGENTIC_UNIFIED_PLAN;
+        delete process.env.HYDE_ENABLED;
         (global as any).fetch = originalFetch;
       }
     });
@@ -211,6 +235,25 @@ describe('AgenticRagService', () => {
         expect(res.reasoning).toBe('缺少量产阶段参数与公差要求');
         expect(res.suggestedFollowUp).toContain('量产阶段参数标准');
         expect(res.suggestedFollowUp).not.toContain('已执行过的查询');
+      } finally {
+        (global as any).fetch = originalFetch;
+      }
+    });
+
+    it('fast-passes comparative query with zero LLM calls when both documents and entities are fully covered', async () => {
+      const originalFetch = global.fetch;
+      const fetchMock = jest.fn();
+      (global as any).fetch = fetchMock;
+      try {
+        const res = await service.judgeRetrievalSufficiency(
+          '研发与量产阶段的参数差异对比',
+          '《研发管理规范》研发阶段需经过严谨验证。《量产制造手册》量产阶段参数须符合公差要求。',
+          1,
+          { complexity: 'comparative' },
+        );
+        expect(res.status).toBe('sufficient');
+        expect(res.confidence).toBeGreaterThanOrEqual(0.9);
+        expect(fetchMock).not.toHaveBeenCalled();
       } finally {
         (global as any).fetch = originalFetch;
       }

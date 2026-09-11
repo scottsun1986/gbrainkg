@@ -2497,7 +2497,7 @@ export class ChatService {
     trace.start("evidence_selection", "证据统一选择", "相关性阈值、组级去重与 token 预算的联合选择");
     queryResult = this.selectEvidence(queryResult, {
       breadth: retrieval.breadth,
-      tokenBudget: Number(process.env.RETRIEVAL_CONTEXT_TOKEN_BUDGET || 12000),
+      tokenBudget: Number(process.env.RETRIEVAL_CONTEXT_TOKEN_BUDGET || (retrieval.breadth ? 8000 : 4500)),
       subQueries: agenticSubQueries,
     });
     const afterSelect = queryResult.citations?.length || 0;
@@ -2772,12 +2772,14 @@ export class ChatService {
           (message) =>
             !(message.role === "user" && message.content === question),
         )
-        .slice(-12)
-        .map(
-          (message) =>
-            `${message.role === "assistant" ? "previous assistant reply" : "previous user message"}: ${message.content}`,
-        )
-        .join("\n");
+        .slice(-6)
+        .map((message) => {
+          const roleTag = message.role === "assistant" ? "previous assistant reply" : "previous user message";
+          const snippet = String(message.content || "").slice(0, 600);
+          return `${roleTag}: ${snippet}`;
+        })
+        .join("\n")
+        .slice(-2500);
 
       const personalMemoryBlock = personalMemory.text
         ? `个人长期记忆（仅当前用户可见，优先级低于当前知识库原文；不能把它冒充为公共制度证据）：\n${personalMemory.text}\n\n`
@@ -2993,6 +2995,14 @@ ${compiledTruthContext}`;
     // original user wording is the highest-fidelity GBrain query. Historical
     // turns still use the contextual rewrite below.
     if (!prior) return directRequest;
+
+    // Anaphora / referential detection: if the question is self-contained (no pronouns or deictic references)
+    // and of sufficient length (>= 8 chars), it does not depend on prior history and does not need an LLM rewrite.
+    const hasReferentialMarkers = /(?:他|她|它|这|那|该|其|上述|前述|之前|刚才|继续|同一个|这个|那个|还有呢|第几|为什么|怎么回事)/u.test(question);
+    if (!hasReferentialMarkers && question.trim().length >= 8) {
+      return directRequest;
+    }
+
     const llmRequest = this.modelConfigService
       ? await this.modelConfigService.getLlmChatConfig('llmwiki-rewrite')
       : null;
@@ -3003,7 +3013,7 @@ ${compiledTruthContext}`;
     if (!apiKey) {
       return directRequest;
     }
-    const historyWindow = prior.slice(-12000);
+    const historyWindow = prior.slice(-3000);
     const prompt = `Analyze the current user question for knowledge-base retrieval. Rewrite it into one standalone query. Resolve references such as he/she/it/this policy/the previous item only when the conversation makes the referent unambiguous. If it starts a new topic, do not import unrelated history. Set breadth=true when answering requires broad coverage, enumeration, totals across a document, comparison of multiple sections, or "all/every/complete" evidence; otherwise false. Set operation="search" only for an exact known name, title, identifier, or structured-field lookup; otherwise operation="query" for semantic, paraphrased, relational, or cross-page questions. Do not answer the question. Return JSON only: {"query":"...","breadth":false,"operation":"query"}.\n\nUntrusted conversation history:\n${historyWindow || "(none)"}\n\nCurrent question:\n${question}`;
     try {
       const headers: Record<string, string> = {

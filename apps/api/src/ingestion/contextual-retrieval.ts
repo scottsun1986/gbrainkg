@@ -73,6 +73,20 @@ ${safeMarkdown}
         return; // Skip
       }
 
+      // Skip chunks that already possess rich structural heading context (e.g. multi-level section breadcrumbs)
+      const skipStructured = process.env.CONTEXTUAL_RETRIEVAL_SKIP_STRUCTURED !== 'false';
+      if (skipStructured) {
+        const hasRichSection = typeof chunk.metadata?.section === 'string' &&
+          chunk.metadata.section.includes('>') &&
+          chunk.metadata.section !== 'Default';
+        const hasChapterArticle = typeof chunk.metadata?.chapter_no === 'number' &&
+          typeof chunk.metadata?.article_no === 'number';
+        if (hasRichSection || hasChapterArticle) {
+          skipCount++;
+          return;
+        }
+      }
+
       const enrichOnce = async (): Promise<string | null> => {
         const response = await fetch(`${config.baseUrl}/chat/completions`, {
           method: 'POST',

@@ -106,7 +106,7 @@ export class AgenticRagService {
             { role: 'user', content: `请拆解以下问题：${query}` },
           ],
           temperature: 0,
-          max_tokens: Number(process.env.AGENTIC_DECOMPOSE_MAX_TOKENS || 2000),
+          max_tokens: Number(process.env.AGENTIC_DECOMPOSE_MAX_TOKENS || 450),
           response_format: { type: 'json_object' },
         }),
         signal: AbortSignal.timeout(15000),
@@ -177,7 +177,7 @@ export class AgenticRagService {
             { role: 'user', content: query },
           ],
           temperature: 0.1,
-          max_tokens: Number(process.env.HYDE_MAX_TOKENS || 1200),
+          max_tokens: Number(process.env.HYDE_MAX_TOKENS || 400),
         }),
         signal: AbortSignal.timeout(12000),
       });
@@ -227,7 +227,7 @@ export class AgenticRagService {
           { role: 'user', content: query },
         ],
         temperature: 0,
-        max_tokens: Number(process.env.QUERY_EXPANSION_MAX_TOKENS || 1200),
+        max_tokens: Number(process.env.QUERY_EXPANSION_MAX_TOKENS || 300),
         ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
       });
       let response = await fetch(`${config.baseUrl}/chat/completions`, {
@@ -286,10 +286,89 @@ export class AgenticRagService {
   private readonly expansionCache = new Map<string, { terms: string[]; expiresAt: number }>();
 
   /**
-   * Build the full agentic retrieval plan in one call: complexity, expanded
-   * retrieval terms, decomposed sub-queries, and an optional HyDE passage.
-   * Expansion runs for every query (cheap, cached); decomposition and HyDE are
-   * reserved for complex questions to control cost.
+   * Unified query planner: combines sub-query decomposition and canonical
+   * institutional terminology expansion into a SINGLE LLM round trip, cutting
+   * query planning API calls from 3 down to 1.
+   */
+  async planComplexQuery(
+    query: string,
+    complexity: QueryComplexity,
+  ): Promise<{ subQueries: string[]; expansions: string[]; reasoning: string }> {
+    if (!this.enabled || complexity === 'simple') {
+      return { subQueries: [query], expansions: [], reasoning: '' };
+    }
+
+    try {
+      const config = await this.getLlmConfig();
+      if (!config) {
+        return { subQueries: [query], expansions: [], reasoning: 'No LLM config available.' };
+      }
+
+      const systemPrompt = `你是一个企业知识库检索规划专家。请针对用户复杂问题进行双重检索规划：
+1. 子问题拆解（subQueries）：拆解为 2-3 个可独立在知识库检索的子问题（对比/冲突类问题必须分别查询各方比较对象或不同制度的表述，严禁使用“第一份文档”、“第二份文档”等无意义代词）。
+2. 规范术语扩展（expansions）：给出 3-5 个有助于弥合口语与正式制度文本差异的正式术语、行业规范用语或制度相关词汇（如夏令时/冬令时、标准工时等）。
+
+输出合法 JSON：
+{
+  "subQueries": ["子问题1", "子问题2"],
+  "expansions": ["扩展术语1", "扩展术语2"],
+  "reasoning": "简要规划理由"
+}`;
+
+      const response = await fetch(`${config.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: config.headers,
+        body: JSON.stringify({
+          model: config.modelName,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: `请规划以下问题：${query}` },
+          ],
+          temperature: 0,
+          max_tokens: Number(process.env.AGENTIC_PLAN_MAX_TOKENS || 450),
+          response_format: { type: 'json_object' },
+        }),
+        signal: AbortSignal.timeout(12000),
+      });
+
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+      const payload: any = await response.json();
+      const content = this.assistantText(payload);
+      if (!content) throw new Error('empty completion content');
+
+      let parsed: any = null;
+      try {
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        parsed = JSON.parse(jsonMatch ? jsonMatch[0] : content);
+      } catch (e) {
+        parsed = {};
+      }
+
+      const subQueries = Array.isArray(parsed?.subQueries)
+        ? parsed.subQueries.filter((q: any) => typeof q === 'string' && q.trim().length > 0 && !q.includes('...')).slice(0, 4)
+        : [query];
+
+      const expansions = Array.isArray(parsed?.expansions)
+        ? parsed.expansions.filter((t: any) => typeof t === 'string' && t.trim().length > 0 && t.trim().length <= 30).slice(0, 6)
+        : [];
+
+      return {
+        subQueries: subQueries.length > 0 ? subQueries : [query],
+        expansions,
+        reasoning: parsed.reasoning || '',
+      };
+    } catch (err) {
+      this.logger.warn(`Unified query planning failed: ${err instanceof Error ? err.message : String(err)}`);
+      return { subQueries: [query], expansions: [], reasoning: '' };
+    }
+  }
+
+  /**
+   * Build the full agentic retrieval plan: complexity, expanded retrieval terms,
+   * decomposed sub-queries, and an optional HyDE passage.
+   * Simple queries bypass expansion when exact; complex queries use a unified
+   * single-call planner (subQueries + expansions in 1 call) unless disabled.
    */
   async planQuery(query: string): Promise<{
     complexity: QueryComplexity;
@@ -299,21 +378,51 @@ export class AgenticRagService {
   }> {
     const complexity = await this.classifyQuery(query);
     if (complexity === 'simple') {
+      // Direct pass for exact clauses (e.g. 第十条) to avoid unnecessary LLM expansion
+      const isExactClause = /第\s*[\d一二三四五六七八九十百千万〇零两]+\s*[章节条款项]|附件/u.test(query);
+      if (isExactClause) {
+        return { complexity, expansions: [], subQueries: [query], hyde: null };
+      }
       const expansions = await this.expandQuery(query);
       return { complexity, expansions, subQueries: [query], hyde: null };
     }
+
+    const useUnified = process.env.AGENTIC_UNIFIED_PLAN !== 'false';
+    if (useUnified) {
+      const planPromise = this.planComplexQuery(query, complexity);
+      const hydePromise = process.env.HYDE_ENABLED === 'true'
+        ? this.generateHypotheticalDocument(query)
+        : Promise.resolve(null);
+      const [plan, hyde] = await Promise.all([planPromise, hydePromise]);
+
+      const llmSubs = (plan.subQueries || [])
+        .map((q) => String(q || '').trim())
+        .filter((q) => q.length >= 4 && q !== query.trim());
+
+      const deterministicSubs = llmSubs.length > 0
+        ? llmSubs
+        : query
+            .split(/[,，?？;；。]|并且|另外|以及|同时|还有|再加上/)
+            .map((part) => part.trim())
+            .filter((part) => part.length >= 4 && part !== query.trim())
+            .slice(0, 3);
+
+      return {
+        complexity,
+        expansions: plan.expansions,
+        subQueries: deterministicSubs.length ? deterministicSubs : [query],
+        hyde,
+      };
+    }
+
     const [decomposed, hyde, expansions] = await Promise.all([
       this.decomposeQuery(query, complexity),
       this.generateHypotheticalDocument(query),
       this.expandQuery(query),
     ]);
-    // Keep only real sub-questions (drop pass-through of the original).
     const llmSubs = (decomposed.subQueries || [])
       .map((q) => String(q || '').trim())
       .filter((q) => q.length >= 4 && q !== query.trim());
-    // Deterministic fallback: reasoning models sometimes echo the original
-    // question instead of decomposing it. Split on compound conjunctions so
-    // every hop of a compound question still gets its own recall probes.
     const deterministicSubs = llmSubs.length > 0
       ? llmSubs
       : query
@@ -368,6 +477,41 @@ export class AgenticRagService {
 
     // Heuristic entity coverage & subquery gap detection
     const heuristicGaps = this.analyzeHeuristicCoverage(query, retrievedContext, options);
+
+    // ── Fast-Pass Heuristic: skip LLM when evidence is demonstrably complete ──
+    if (heuristicGaps.missingAspects.length === 0) {
+      const docTitles = new Set((retrievedContext.match(/《([^》]+)》/g) || []).map((t) => t.replace(/[《》]/g, '').trim()));
+      if (options?.complexity === 'comparative' && docTitles.size >= 2) {
+        this.logger.debug('Sufficiency Fast-Pass: comparative entities and multi-doc evidence fully covered by heuristic.');
+        return {
+          status: 'sufficient',
+          missingAspects: [],
+          suggestedFollowUp: [],
+          confidence: 0.95,
+          reasoning: '启发式验证已完整覆盖对比双方文档与全部关键维度',
+          hopNumber: iterationCount,
+        };
+      }
+    }
+
+    // ── Fast-Fail Heuristic: skip LLM when a conflict question clearly lacks the second doc ──
+    if (/冲突|矛盾|不一致|两个文档|两份文档|多份文档|两个版本|两份|多份|哪个为准|新旧|为何没有都出来|为什么没有都出来/u.test(query)) {
+      const docTitles = new Set((retrievedContext.match(/《([^》]+)》/g) || []).map((t) => t.replace(/[《》]/g, '').trim()));
+      if (docTitles.size < 2 && heuristicGaps.suggestedFollowUp.length > 0) {
+        const freshFollowUps = heuristicGaps.suggestedFollowUp.filter((p) => !executedSet.has(p.trim().toLowerCase()));
+        if (freshFollowUps.length > 0) {
+          this.logger.debug('Sufficiency Fast-Fail: conflict question lacks second document, immediately triggering hop.');
+          return {
+            status: 'insufficient',
+            missingAspects: heuristicGaps.missingAspects,
+            suggestedFollowUp: freshFollowUps.slice(0, 2),
+            confidence: 0.9,
+            reasoning: '多文档对比/冲突问题仅检索到单份文档，定向补充检索另一份制度',
+            hopNumber: iterationCount,
+          };
+        }
+      }
+    }
 
     try {
       const config = await this.getLlmConfig();
@@ -430,7 +574,7 @@ export class AgenticRagService {
             },
           ],
           temperature: 0,
-          max_tokens: 600,
+          max_tokens: Number(process.env.AGENTIC_RAG_JUDGE_MAX_TOKENS || 350),
           response_format: { type: 'json_object' },
         }),
         signal: AbortSignal.timeout(Number(process.env.AGENTIC_RAG_JUDGE_TIMEOUT_MS || 15000)),
@@ -537,17 +681,20 @@ export class AgenticRagService {
       /(?:比较|对比)?\s*([^\s与和跟同相比以及及差异区别]+?)\s*(?:与|和|跟|同|相比|及)\s*([^\s与和跟同相比以及及差异区别]+?)(?:的)?(?:区别|差异|不同|对比|比较|优缺点)/u,
     );
     if (compMatch) {
+      const cleanEntity = (e: string) => e.replace(/(?:的|关于)?(?:参数|指标|要求|规定|内容|标准|条款|方案|流程|阶段)?$/u, '').trim();
       const entityA = compMatch[1].trim();
       const entityB = compMatch[2].trim();
+      const cleanA = cleanEntity(entityA);
+      const cleanB = cleanEntity(entityB);
       if (entityA.length >= 2 && entityB.length >= 2) {
-        const hasA = ctxLower.includes(entityA.toLowerCase());
-        const hasB = ctxLower.includes(entityB.toLowerCase());
+        const hasA = ctxLower.includes(entityA.toLowerCase()) || (cleanA.length >= 2 && ctxLower.includes(cleanA.toLowerCase()));
+        const hasB = ctxLower.includes(entityB.toLowerCase()) || (cleanB.length >= 2 && ctxLower.includes(cleanB.toLowerCase()));
         if (hasA && !hasB) {
-          missingAspects.push(`缺少对比实体“${entityB}”的相关信息`);
-          suggestedFollowUp.push(`${entityB} 相关规范与要求`);
+          missingAspects.push(`缺少对比实体“${cleanB || entityB}”的相关信息`);
+          suggestedFollowUp.push(`${cleanB || entityB} 相关规范与要求`);
         } else if (!hasA && hasB) {
-          missingAspects.push(`缺少对比实体“${entityA}”的相关信息`);
-          suggestedFollowUp.push(`${entityA} 相关规范与要求`);
+          missingAspects.push(`缺少对比实体“${cleanA || entityA}”的相关信息`);
+          suggestedFollowUp.push(`${cleanA || entityA} 相关规范与要求`);
         }
       }
     }
