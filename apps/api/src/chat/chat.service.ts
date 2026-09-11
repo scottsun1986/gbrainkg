@@ -607,6 +607,42 @@ export class ChatService {
   }
 
   /**
+   * Append document-level (level 1) RAPTOR summaries for documents already
+   * present in the candidate set. Guarantees whole-document coverage for
+   * "what is this document about" questions without query-pattern rules.
+   */
+  private async augmentWithDocumentSummaries(queryResult: any, scope: string[]): Promise<any> {
+    if (!this.raptorService?.isEnabled()) return queryResult;
+    const citations = Array.isArray(queryResult?.citations) ? queryResult.citations : [];
+    if (!citations.length) return queryResult;
+    const docIds = Array.from(
+      new Set(citations.map((c: any) => c.docId || c.documentId).filter(Boolean)),
+    ).slice(0, 3) as string[];
+    if (!docIds.length) return queryResult;
+    const summaries = await this.raptorService.getDocumentSummaries(docIds, 3);
+    if (!summaries.length) return queryResult;
+    const existing = new Set(citations.map((c: any) => c.docId || c.documentId));
+    const additions = summaries
+      .filter((s) => s.documentId && existing.has(s.documentId))
+      .filter((s) => !citations.some((c: any) => (c.docId || c.documentId) === s.documentId && c.section === "raptor-level1"))
+      .map((s) => ({
+        topic: s.title,
+        docId: s.documentId,
+        kbId: s.kbId,
+        version: 1,
+        evidence: s.evidence,
+        snippet: s.evidence,
+        context: s.evidence,
+        score: s.score,
+        docTitle: s.title,
+        previewUrl: s.previewUrl,
+        section: "raptor-level1",
+      }));
+    if (!additions.length) return queryResult;
+    return { ...queryResult, citations: [...citations, ...additions] };
+  }
+
+  /**
    * Chunk-level semantic retrieval over Chunk.embedding (pgvector). Applies the
    * knowledge-base ACL and published-document filter in SQL (pre-filtering), so
    * unauthorized chunks can never enter the candidate set. Returns [] when no
@@ -790,18 +826,23 @@ export class ChatService {
 
       const stopGeneralTokens = new Set(["记录", "表中", "内容", "部分", "情况", "要求", "相关", "规定", "文档", "系统", "什么", "怎么", "如何"]);
 
-      // 3. Query general keywords (fill up to limit * 3)
+      // 3. General keywords — queried PER TOKEN. A single unordered OR-query
+      // with `take: N` returns an arbitrary row subset that varies between
+      // runs (observed: it silently dropped the matching document across a
+      // 61-KB scope, producing a refusal that then got cached). Per-token
+      // queries give every keyword deterministic representation.
       if (chunkMap.size < limit * 3) {
         const generalTokens = keywords
           .filter((kw) => !highPriorityTokens.includes(kw) && !stopGeneralTokens.has(kw))
-          .slice(0, 25);
-        if (generalTokens.length > 0) {
-          const gChunks = await (this.prisma as any).chunk.findMany({
+          .sort((a, b) => b.length - a.length)
+          .slice(0, 10);
+        const perTokenTake = Math.max(40, Number(process.env.RETRIEVAL_TOKEN_QUERY_TAKE || 80));
+        for (const kw of generalTokens) {
+          if (chunkMap.size >= limit * 3) break;
+          const tChunks = await (this.prisma as any).chunk.findMany({
             where: {
               kbId: { in: scope },
-              OR: generalTokens.map((kw) => ({
-                content: { contains: kw, mode: "insensitive" },
-              })),
+              content: { contains: kw, mode: "insensitive" },
             },
             select: {
               id: true,
@@ -812,9 +853,10 @@ export class ChatService {
               metadata: true,
               document: { select: { title: true, version: true } },
             },
-            take: 400,
+            orderBy: [{ documentId: "asc" }, { ord: "asc" }],
+            take: perTokenTake,
           });
-          gChunks.forEach((c: any) => chunkMap.set(c.id, c));
+          tChunks.forEach((c: any) => chunkMap.set(c.id, c));
         }
       }
 
@@ -1054,6 +1096,10 @@ export class ChatService {
       const sectionHeadRe = sectionStopRe;
       const sectionExpansionMax = Math.max(2, Number(process.env.RETRIEVAL_SECTION_EXPANSION_MAX || 12));
       let regionBudget = sectionExpansionMax;
+      // Chunk objects exist as DUPLICATE instances (chunkMap from the token
+      // queries vs allDocChunks from the expansion query), so the group tag is
+      // recorded by chunk ID and applied to every expanded instance afterwards.
+      const sectionGroupByChunkId = new Map<string, string>();
       for (const selected of topSelected.slice(0, 4)) {
         if (regionBudget <= 0) break;
         const anchor = selected.chunk;
@@ -1082,15 +1128,19 @@ export class ChatService {
         }
         for (const member of region) {
           if (regionBudget <= 0) break;
+          sectionGroupByChunkId.set(member.id, groupKey);
+          sectionGroupByChunkId.set(anchor.id, groupKey);
           if (!expandedChunkIds.has(member.id)) {
             expandedChunkIds.add(member.id);
             expandedChunks.push(member);
             chunkScores.set(member.id, Math.max(1, (selected.score || 1) * 0.6));
             regionBudget -= 1;
           }
-          (member as any).sectionGroup = groupKey;
-          (anchor as any).sectionGroup = groupKey;
         }
+      }
+      for (const c of expandedChunks) {
+        const g = sectionGroupByChunkId.get(c.id);
+        if (g) (c as any).sectionGroup = g;
       }
 
       const chnNums = ["", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"];
@@ -1125,8 +1175,10 @@ export class ChatService {
       // RAPTOR macro arm: add chapter/document-level summaries for global
       // questions (or to fill an otherwise empty result set). Kept to a small
       // number so precise clause evidence always dominates focused lookups.
-      const wantsMacro = /总结|概述|综述|全景|总体|架构|框架|目录|有哪些章|主要(?:内容|讲|说)|讲什么|核心(?:内容|思想)/.test(query);
-      if (this.raptorService?.isEnabled() && (wantsMacro || results.length < limit)) {
+      // Macro arm is always queried (cheap keyword match over summary nodes);
+      // the unified selection stage decides relevance. This removes any
+      // dependence on the question's wording (e.g. "整体内容").
+      if (this.raptorService?.isEnabled()) {
         try {
           const raptorHits = await this.raptorService.search(scope, query, Math.min(3, Math.max(1, limit - results.length + 2)));
           for (const hit of raptorHits) {
@@ -1700,6 +1752,12 @@ export class ChatService {
         },
       );
     }
+    // Whole-document coverage: whenever evidence already comes from a
+    // document, add that document's level-1 summary as a candidate. The single
+    // selection stage (cross-encoder + relevance floor) keeps it for macro
+    // questions and drops it for focused ones — no query-pattern heuristics.
+    queryResult = await this.augmentWithDocumentSummaries(queryResult, scope);
+
     trace.start("permission_guard", "结果权限复核", "按当前数据库权限和 Source 世代复核候选结果");
     queryResult = await this.filterQueryResultByCurrentPermission(
       queryResult,
@@ -2861,7 +2919,10 @@ ${compiledTruthContext}`;
       groups.set(key, entry);
     });
 
-    const topBest = Math.max(...[...groups.values()].map((g) => g.best));
+    // Relevance floor on RAW score ratios: min-max normalization stretches a
+    // long-tailed reranker distribution and makes a 0.35 relative floor cut
+    // genuinely relevant groups. Raw cross-encoder scores share one scale.
+    const rawBest = Math.max(...[...groups.values()].map((g) => g.best));
     const relFloor = Math.max(0, Number(process.env.RETRIEVAL_RELEVANCE_FLOOR_RATIO || 0.35));
     const maxGroups = opts.breadth
       ? Math.max(8, Number(process.env.RETRIEVAL_MAX_GROUPS_BREADTH || 16))
@@ -2869,7 +2930,7 @@ ${compiledTruthContext}`;
 
     const entries = [...groups.entries()]
       .map(([key, g]) => ({ key, ...g }))
-      .filter((g) => g.best >= topBest * relFloor)
+      .filter((g) => g.best >= rawBest * relFloor)
       .sort((a, b) => b.best - a.best);
 
     const tokenize = (text: string): Set<string> =>
@@ -3013,7 +3074,7 @@ ${compiledTruthContext}`;
             {
               role: 'system',
               content:
-                '你是事实蕴含判定专家。给定【证据】与若干【陈述】，判断每条陈述是否能由证据直接支持（entailment），不得使用外部知识。只输出 JSON：{"supported":[陈述序号数组]}。',
+                '你是事实蕴含判定专家。给定【证据】与若干【陈述】，判断每条陈述是否能由证据直接支持（entailment），不得使用外部知识。只输出 json：{"supported":[陈述序号数组]}。',
             },
             { role: 'user', content: userContent },
           ],
@@ -3240,7 +3301,18 @@ ${compiledTruthContext}`;
     subscriber.next({
       data: { type: "done", total_tokens: totalTokens, latency_ms: 0 },
     });
-    if (this.semanticCacheService && question && userScope?.fingerprint && fullAnswer.trim()) {
+    // Never cache refusals: weak evidence must not poison the cache, or every
+    // paraphrase of the question replays the refusal (observed in production).
+    const refusalNotCacheable =
+      /(未包含相关信息|无法(?:根据知识库)?回答|不知道|无法提供(?:该信息)?)/.test(fullAnswer) ||
+      !fullAnswer.trim();
+    if (
+      this.semanticCacheService &&
+      question &&
+      userScope?.fingerprint &&
+      fullAnswer.trim() &&
+      !refusalNotCacheable
+    ) {
       this.semanticCacheService.store(
         question,
         null,

@@ -51,6 +51,7 @@ export class RaptorService {
         version: true,
         chunks: {
           orderBy: { ord: 'asc' },
+          take: Math.max(20, Number(process.env.RAPTOR_MAX_CHUNKS || 300)),
           select: { id: true, ord: true, content: true, metadata: true },
         },
       },
@@ -58,7 +59,10 @@ export class RaptorService {
     if (!document || !document.chunks?.length) return { nodes: 0 };
 
     const llm = await this.llmConfig();
-    const groups = this.groupChunks(document.chunks);
+    // Bound the number of summary groups: a 2600-paragraph document would
+    // otherwise trigger thousands of sequential LLM calls and stall the queue.
+    const maxGroups = Math.max(1, Number(process.env.RAPTOR_MAX_GROUPS || 40));
+    const groups = this.groupChunks(document.chunks).slice(0, maxGroups);
     const modelVersion = llm ? llm.modelName : 'extractive-v1';
     const sectionNodes: Array<{ title: string; content: string; chunkIds: string[]; clusterKey: string }> = [];
 
@@ -104,6 +108,34 @@ export class RaptorService {
     const nodes = sectionNodes.length + 1;
     this.logger.log(`RAPTOR indexed ${nodes} summary nodes for document ${documentId}.`);
     return { nodes };
+  }
+
+  /**
+   * Fetch the document-level (level 1) summary nodes for specific documents.
+   * Used to guarantee whole-document coverage when a question touches a
+   * document, regardless of how the query is phrased.
+   */
+  async getDocumentSummaries(documentIds: string[], limit = 4): Promise<RaptorSearchHit[]> {
+    if (!this.isEnabled() || !documentIds.length) return [];
+    try {
+      const nodes = await (this.prisma as any).raptorNode.findMany({
+        where: { documentId: { in: documentIds }, level: 1 },
+        take: Math.max(1, limit),
+      });
+      return nodes.map((node: any) => ({
+        documentId: node.documentId,
+        kbId: node.kbId,
+        title: node.title,
+        evidence: `【宏观摘要 · 全文】${node.title}\n${node.content}`,
+        score: 0.9,
+        previewUrl: node.documentId ? buildDocumentPreviewUrl(node.kbId, node.documentId) : null,
+        level: 1,
+        raptor: true,
+      }));
+    } catch (err) {
+      this.logger.warn(`Document summary fetch failed: ${err instanceof Error ? err.message : String(err)}`);
+      return [];
+    }
   }
 
   /** Keyword search over summary nodes, scoped to the caller's visible KBs. */
@@ -206,7 +238,7 @@ export class RaptorService {
         });
         if (response.ok) {
           const payload: any = await response.json();
-          const content = String(payload?.choices?.[0]?.message?.content || '').trim();
+          const content = this.assistantText(payload);
           if (content) return content;
         }
       } catch (err) {
@@ -224,6 +256,31 @@ export class RaptorService {
       .filter((s) => s.length >= 8);
     const picked = sentences.slice(0, 5).join('');
     return picked.slice(0, 800) || text.slice(0, 300);
+  }
+
+  /**
+   * Reasoning models (e.g. deepseek-v4-flash) may return an empty `content`
+   * and place the text in `reasoning_content`; recover the drafted summary
+   * from the reasoning tail instead of silently degrading to extractive output.
+   */
+  private assistantText(payload: any): string {
+    const message = payload?.choices?.[0]?.message || {};
+    const content = String(message.content || '').trim();
+    if (content) return content;
+    const reasoning = String(message.reasoning_content || message.reasoning || '').trim();
+    if (!reasoning) return '';
+    const cues = ['摘要：', '正文：', '概述：', '总结：'];
+    let body = reasoning;
+    for (const cue of cues) {
+      const idx = body.lastIndexOf(cue);
+      if (idx >= 0) { body = body.slice(idx + cue.length); break; }
+    }
+    if (body === reasoning) {
+      const parts = reasoning.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+      if (parts.length > 1) body = parts[parts.length - 1];
+    }
+    body = body.replace(/^["'`\s]+|["'`\s]+$/g, '').trim();
+    return body.length >= 20 ? body.slice(0, 1200) : '';
   }
 
   private async llmConfig(): Promise<{ baseUrl: string; apiKey: string; modelName: string } | null> {

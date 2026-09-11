@@ -77,7 +77,7 @@ export class AgenticRagService {
 4. 多跳类问题：按推理链的步骤拆解
 5. 综合类问题：按主题或维度拆解
 
-输出 JSON 格式：
+输出 json 格式：
 {"subQueries": ["子问题1", "子问题2", ...], "reasoning": "拆解理由"}`;
 
       const response = await fetch(`${config.baseUrl}/chat/completions`, {
@@ -192,32 +192,46 @@ export class AgenticRagService {
     try {
       const config = await this.getLlmConfig();
       if (!config) return [];
-      const response = await fetch(`${config.baseUrl}/chat/completions`, {
+      const buildBody = (jsonMode: boolean) => JSON.stringify({
+        model: config.modelName,
+        messages: [
+          {
+            role: 'system',
+            content: `你是企业知识库检索助手。针对用户问题，产出有助于检索的同义词、正式/规范表述与相关制度术语，用于弥合口语与制度文本之间的用词差异。
+要求：
+1. 只输出 json：{"expansions": ["词1", "词2", ...]}
+2. 3-6 个，每个是简短检索词或短语（不要整句）
+3. 覆盖：同义词、正式/行业规范用语、相关制度术语、可能的别名（如季节性作息称"夏令时/冬令时"）
+4. 不要解释，不要编号`,
+          },
+          { role: 'user', content: query },
+        ],
+        temperature: 0,
+        max_tokens: Number(process.env.QUERY_EXPANSION_MAX_TOKENS || 1200),
+        ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
+      });
+      let response = await fetch(`${config.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${config.apiKey}`,
         },
-        body: JSON.stringify({
-          model: config.modelName,
-          messages: [
-            {
-              role: 'system',
-              content: `你是企业知识库检索助手。针对用户问题，产出有助于检索的同义词、正式/规范表述与相关制度术语，用于弥合口语与制度文本之间的用词差异。
-要求：
-1. 只输出 JSON：{"expansions": ["词1", "词2", ...]}
-2. 3-6 个，每个是简短检索词或短语（不要整句）
-3. 覆盖：同义词、正式/行业规范用语、相关制度术语、可能的别名（如季节性作息称"夏令时/冬令时"）
-4. 不要解释，不要编号`,
-            },
-            { role: 'user', content: query },
-          ],
-          temperature: 0,
-          max_tokens: Number(process.env.QUERY_EXPANSION_MAX_TOKENS || 1200),
-          response_format: { type: 'json_object' },
-        }),
+        body: buildBody(true),
         signal: AbortSignal.timeout(Number(process.env.QUERY_EXPANSION_TIMEOUT_MS || 10000)),
       });
+      // Some providers reject response_format for certain models (HTTP 400):
+      // retry once without JSON mode, extracting the JSON from the text.
+      if (response.status === 400) {
+        response = await fetch(`${config.baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${config.apiKey}`,
+          },
+          body: buildBody(false),
+          signal: AbortSignal.timeout(Number(process.env.QUERY_EXPANSION_TIMEOUT_MS || 10000)),
+        });
+      }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const payload: any = await response.json();
       let content = this.assistantText(payload);

@@ -33,6 +33,7 @@ import { OpenApiModule } from './open-api/open-api.module';
         ...(process.env.REDIS_PASS ? { password: process.env.REDIS_PASS } : {}),
       },
     }),
+    BullModule.registerQueue({ name: 'enrichment-queue' }),
     ChatModule,
     BrainCompilerModule,
     PermissionModule,

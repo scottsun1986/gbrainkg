@@ -28,6 +28,9 @@ import {
 import { BrainOutboxService } from "./brain-compiler/brain-outbox.service";
 import { ChunkEmbeddingService } from "./embedding/chunk-embedding.service";
 import { execSync } from "node:child_process";
+import { InjectQueue } from "@nestjs/bullmq";
+import { Queue } from "bullmq";
+import { Inject, Optional } from "@nestjs/common";
 
 function normalizeServiceBaseUrl(value: unknown): string {
   const raw = String(value || "").trim();
@@ -76,12 +79,45 @@ export class AdminController {
     private readonly modelConfigService: ModelConfigService,
     private readonly brainOutboxService?: BrainOutboxService,
     private readonly chunkEmbeddingService?: ChunkEmbeddingService,
+    @Optional() @InjectQueue("enrichment-queue") private readonly enrichmentQueue?: Queue,
   ) {}
 
   @Get("embeddings/coverage")
   async getEmbeddingCoverage() {
     if (!this.chunkEmbeddingService) throw new ForbiddenException("Embedding service unavailable.");
     return this.chunkEmbeddingService.coverage();
+  }
+
+  @Post("enrichment/backfill")
+  async backfillEnrichment(@Body("limit") limit?: number) {
+    if (!this.enrichmentQueue) throw new ForbiddenException("Enrichment queue unavailable.");
+    const boundedLimit = limit === undefined ? 50 : boundedInteger(limit, "limit", 1, 500);
+    const docs = await this.prisma.document.findMany({
+      where: { status: "published", indexReadiness: { not: "ready" } },
+      select: { id: true, kbId: true },
+      orderBy: { updatedAt: "asc" },
+      take: boundedLimit,
+    });
+    let enqueued = 0;
+    for (const d of docs) {
+      await this.prisma.document
+        .update({ where: { id: d.id }, data: { indexReadiness: "pending" } })
+        .catch(() => undefined);
+      await this.enrichmentQueue
+        .add(
+          "enrich",
+          { documentId: d.id, kbId: d.kbId },
+          {
+            attempts: Number(process.env.ENRICHMENT_ATTEMPTS || 3),
+            backoff: { type: "exponential", delay: Number(process.env.ENRICHMENT_BACKOFF_MS || 30_000) },
+            removeOnComplete: 500,
+            removeOnFail: 1000,
+          },
+        )
+        .then(() => { enqueued += 1; })
+        .catch(() => undefined);
+    }
+    return { enqueued, remaining: docs.length - enqueued };
   }
 
   @Post("embeddings/backfill")
