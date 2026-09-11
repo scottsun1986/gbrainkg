@@ -648,7 +648,7 @@ export class ChatService {
     if (!this.raptorService?.isEnabled() || !scope.length) return queryResult;
     const isMacro =
       complexity === "global_synthesis" ||
-      /总结|概述|全景|历程|演进|架构|体系|全库|全局|所有.*有哪些|主要.*有哪些/u.test(question);
+      /总结|概述|全景|历程|演进|架构|体系|全库|全局|所有.*有哪些|主要.*有哪些|一共.*多少|共有.*几|多少条|几条|多少章|几章/u.test(question);
     if (!isMacro) return queryResult;
 
     try {
@@ -1086,16 +1086,34 @@ export class ChatService {
         return [];
       }
 
+      const lowQuery = query.toLowerCase();
+      const variantLowers = variantQueries.map((v) => v.toLowerCase());
+      const activeDomainTerms = domainTerms.filter((term) => {
+        const normalized = String(term || "").toLowerCase();
+        if (!normalized) return false;
+        return (
+          variantLowers.some((v) => v.includes(normalized)) ||
+          keywords.some((k) => k.toLowerCase() === normalized)
+        );
+      });
+      const isArticleCountQuery = /(?:一共|共有|总共|全部)?(?:有多少|几条|几章|哪些章节|全文结构).*(?:条|章|篇)/.test(query);
+
       const scored = allFound.map((c: any) => {
         let score = 0;
         const text = (c.content || "").toLowerCase();
         const docTitle = (c.document?.title || "").toLowerCase();
+        const baseTitle = docTitle.replace(/\.[a-z0-9]+$/i, "").trim();
 
         // Exact high-priority token matches get massive boost
         for (const tok of highPriorityTokens) {
           if (text.includes(tok.toLowerCase())) {
             score += 25.0;
           }
+        }
+
+        // Exact or base document title mentioned directly in user query
+        if (baseTitle.length >= 2 && lowQuery.includes(baseTitle)) {
+          score += 30.0;
         }
 
         // Keywords scoring
@@ -1118,16 +1136,21 @@ export class ChatService {
           score += vectorSim * Number(process.env.VECTOR_SCORE_WEIGHT || 30);
         }
 
-        // KB-configured domain terms act as high-priority anchors. This
-        // replaces the former hardcoded application-side vocabulary; admins
-        // maintain per-KB terms via knowledgeBase.domainTerms.
-        for (const term of domainTerms) {
+        // KB-configured domain terms act as high-priority anchors only when
+        // relevant to the active user query or decomposed keywords.
+        for (const term of activeDomainTerms) {
           const normalized = String(term || "").toLowerCase();
           if (normalized && text.includes(normalized)) score += 25.0;
         }
 
         if (isChapterListing && /(?:##\s*第[一二三四五六七八九十百0-9]+章|##\s*附则)/.test(c.content)) {
           score += 100.0;
+        }
+
+        if (isArticleCountQuery && baseTitle.length >= 2 && lowQuery.includes(baseTitle)) {
+          if (c.ord === 0 || /(?:##\s*第[一二三四五六七八九十百0-9]+章|##\s*附则|\*\*第[一二三四五六七八九十百0-9]+条\*\*)/.test(c.content)) {
+            score += 35.0;
+          }
         }
 
         return { chunk: c, score };

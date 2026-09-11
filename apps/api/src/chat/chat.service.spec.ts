@@ -802,4 +802,68 @@ describe("ChatService", () => {
     expect(hits[0].hop).toBe(2);
     expect(hits[0].subQueryOrigin).toBe('量产公差规范');
   });
+
+  it('searchChunksFallback scopes domainTerms to query and prioritizes targeted document title', async () => {
+    (service as any).scopeDomainTermsCache.set('kb-target', {
+      terms: ['绩效考核', '指标体系', '总则', '处分', '安全偏航'],
+      expiresAt: Date.now() + 60000,
+    });
+
+    const mockPrisma = {
+      chunk: {
+        findMany: jest.fn().mockImplementation((args) => {
+          if (args.where?.OR && args.where.OR.some((x: any) => x.content?.contains === '第十条')) {
+            return Promise.resolve([
+              {
+                id: 'chunk-target',
+                documentId: 'doc-target',
+                kbId: 'kb-target',
+                ord: 3,
+                content: '## 第三章 使用管理\n\n**第十条** 建立公务用车管理台账，对车辆使用时间进行登记。',
+                metadata: {},
+                document: { title: '公车管理办法.docx', version: 1 },
+              },
+              {
+                id: 'chunk-irrelevant',
+                documentId: 'doc-irrelevant',
+                kbId: 'kb-target',
+                ord: 12,
+                content: '## 绩效考核总则与处分指标体系\n\n**第十条** 绩效考核办法与指标体系。',
+                metadata: {},
+                document: { title: '绩效考核方案.docx', version: 1 },
+              },
+            ]);
+          }
+          if (args.where?.documentId?.in) {
+            return Promise.resolve([
+              {
+                id: 'chunk-target',
+                documentId: 'doc-target',
+                kbId: 'kb-target',
+                ord: 3,
+                content: '## 第三章 使用管理\n\n**第十条** 建立公务用车管理台账，对车辆使用时间进行登记。',
+                metadata: {},
+                document: { title: '公车管理办法.docx', version: 1 },
+              },
+            ]);
+          }
+          return Promise.resolve([]);
+        }),
+      },
+      document: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 'doc-target', title: '公车管理办法.docx' },
+        ]),
+      },
+    };
+    (service as any).prisma = mockPrisma;
+    (service as any).searchChunksByVector = jest.fn().mockResolvedValue([]);
+
+    const results = await (service as any).searchChunksFallback(['kb-target'], '公车管理办法第十条内容是什么。', 15);
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].documentId).toBe('doc-target');
+    expect(results[0].title).toBe('公车管理办法.docx');
+    expect(results[0].evidence).toContain('建立公务用车管理台账');
+  });
 });
+

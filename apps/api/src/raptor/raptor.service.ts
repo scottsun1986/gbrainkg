@@ -174,22 +174,36 @@ export class RaptorService {
           },
         },
       });
-      const headingRe = /^(?:#{1,6}\s*)?(?:[一二三四五六七八九十百]+、|（[一二三四五六七八九十百]+）|第[一二三四五六七八九十百0-9]+[章节]|[0-9]{1,3}[.．])/;
+      const headingRe = /^(?:#{1,6}\s*)?(?:[一二三四五六七八九十百0-9]+[、.]|第[一二三四五六七八九十百0-9]+[章节])/;
       const hits: RaptorSearchHit[] = [];
       for (const doc of docs) {
         const lines: string[] = [];
+        const articleMatches: string[] = [];
         for (const chunk of doc.chunks || []) {
-          const firstLine = String(chunk.content || '')
+          const rawLines = String(chunk.content || '')
             .replace(/\r/g, '')
             .split(/\n+/)
             .map((l) => l.trim())
-            .find(Boolean) || '';
-          if (!headingRe.test(firstLine)) continue;
-          const label = firstLine.replace(/^#{1,6}\s*/, '').slice(0, 50).trim();
-          if (!label || /第\s*\d+\s*页/.test(label)) continue;
-          if (lines[lines.length - 1] === label) continue;
-          lines.push(label);
-          if (lines.length >= Number(process.env.RAPTOR_OUTLINE_MAX_LINES || 60)) break;
+            .filter(Boolean);
+          for (const l of rawLines) {
+            if (headingRe.test(l)) {
+              const label = l.replace(/^#{1,6}\s*/, '').slice(0, 50).trim();
+              if (label && !/第\s*\d+\s*页/.test(label) && lines[lines.length - 1] !== label) {
+                lines.push(label);
+                if (lines.length >= Number(process.env.RAPTOR_OUTLINE_MAX_LINES || 60)) break;
+              }
+            }
+          }
+          const arts = String(chunk.content || '').match(/(?:^|\s|\*\*)(第[一二三四五六七八九十百0-9]+条)(?:\*\*|\s|$)/g) || [];
+          for (const a of arts) {
+            const clean = a.replace(/[\s\*]/g, '');
+            if (clean && !articleMatches.includes(clean)) {
+              articleMatches.push(clean);
+            }
+          }
+        }
+        if (articleMatches.length > 0) {
+          lines.push(`【条款统计】全文共包含 ${articleMatches.length} 条（自${articleMatches[0]}至${articleMatches[articleMatches.length - 1]}）。`);
         }
         if (!lines.length) continue;
         hits.push({

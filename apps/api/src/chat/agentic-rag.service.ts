@@ -46,7 +46,7 @@ export class AgenticRagService {
     // Comparative patterns
     if (/比较|对比|区别|不同|差异|vs|versus|相比/u.test(q)) return 'comparative';
     // Global synthesis patterns  
-    if (/所有|全部|总结|概述|哪些|列举|汇总|主要.*有/u.test(q) && q.length > 15) return 'global_synthesis';
+    if (/所有|全部|总结|概述|哪些|列举|汇总|主要.*有|一共|共有|总共|多少条|几条|多少章|几章|全文结构|架构体系/u.test(q)) return 'global_synthesis';
     // Multi-hop patterns
     if (/(.*的.*的|.*中.*关于|根据.*那么|如果.*则.*怎么)/u.test(q) && q.length > 20) return 'multi_hop';
     // Multiple question marks or conjunctions
