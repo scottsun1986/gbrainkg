@@ -1562,7 +1562,6 @@ function ChatScreen(){
   const [hiddenConvs, setHiddenConvs] = useState(() => new Set());
   const taRef = useRef(null);
   const scrollRef = useRef(null);
-  const chatFileRef = useRef(null);
   const streamController = useRef(null);
 
   const allSel = selected.length === visibleKbs.length;
@@ -1770,18 +1769,6 @@ function ChatScreen(){
       pageNo: citation.pageNo || citation.page_no,
       bbox: citation.bbox,
     });
-  };
-  const uploadAttachment = async (file) => {
-    const targetKb = KNOWLEDGE_BASES.find(k => k.id === selected[0]);
-    if (!file || !selected[0] || !targetKb?.canWrite) {
-      window.dispatchEvent(new CustomEvent('app-toast',{detail:'当前查询范围没有可写入的知识库，请切换到有维护权限的库'}));
-      return;
-    }
-    const form = new FormData(); form.append('file', file);
-    const response = await fetch(`${API_BASE_URL}/api/v1/kbs/${selected[0]}/documents`, {method:'POST',headers:apiHeaders(),body:form});
-    const result = await response.json().catch(()=>({}));
-    window.dispatchEvent(new CustomEvent('app-toast',{detail:response.ok?'附件已上传并进入解析队列':result.message || '附件上传失败'}));
-    if (response.ok) window.dispatchEvent(new CustomEvent('app-data-refresh'));
   };
   const rememberPersonalFact = async () => {
     const fact = input.trim() || window.prompt('输入要保存到个人记忆的内容：', '')?.trim();
@@ -2086,10 +2073,6 @@ function ChatScreen(){
                   <span className="scope-dot" style={{width:6,height:6}}/>
                   范围 · {scopeLabel}
                   <span className="kbd">⌘K</span>
-                </div>
-                <input ref={chatFileRef} type="file" hidden accept=".md,.txt,.csv,.html,.htm,.doc,.docx,.pdf,.xls,.xlsx,.pptx,.png,.jpg,.jpeg" onChange={e=>{const file=e.target.files?.[0]; if(file) void uploadAttachment(file); e.target.value='';}}/>
-                <div className="comp-chip" style={{opacity:KNOWLEDGE_BASES.find(k => k.id === selected[0])?.canWrite ? .7 : .4,cursor:KNOWLEDGE_BASES.find(k => k.id === selected[0])?.canWrite ? 'pointer' : 'not-allowed'}} onClick={()=>KNOWLEDGE_BASES.find(k => k.id === selected[0])?.canWrite && chatFileRef.current?.click()}>
-                  <Icon name="pin" size={11}/> 上传附件
                 </div>
                 <button type="button" className="comp-chip" onClick={rememberPersonalFact} title="显式保存到仅自己可见的 GBrain 个人记忆">
                   <Icon name="book" size={11}/> 记住
