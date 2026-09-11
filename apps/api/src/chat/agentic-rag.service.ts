@@ -82,10 +82,7 @@ export class AgenticRagService {
 
       const response = await fetch(`${config.baseUrl}/chat/completions`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${config.apiKey}`,
-        },
+        headers: config.headers,
         body: JSON.stringify({
           model: config.modelName,
           messages: [
@@ -143,10 +140,7 @@ export class AgenticRagService {
       if (!config) return null;
       const response = await fetch(`${config.baseUrl}/chat/completions`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${config.apiKey}`,
-        },
+        headers: config.headers,
         body: JSON.stringify({
           model: config.modelName,
           messages: [
@@ -212,10 +206,7 @@ export class AgenticRagService {
       });
       let response = await fetch(`${config.baseUrl}/chat/completions`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${config.apiKey}`,
-        },
+        headers: config.headers,
         body: buildBody(true),
         signal: AbortSignal.timeout(Number(process.env.QUERY_EXPANSION_TIMEOUT_MS || 10000)),
       });
@@ -224,10 +215,7 @@ export class AgenticRagService {
       if (response.status === 400) {
         response = await fetch(`${config.baseUrl}/chat/completions`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${config.apiKey}`,
-          },
+          headers: config.headers,
           body: buildBody(false),
           signal: AbortSignal.timeout(Number(process.env.QUERY_EXPANSION_TIMEOUT_MS || 10000)),
         });
@@ -325,10 +313,7 @@ export class AgenticRagService {
 
       const response = await fetch(`${config.baseUrl}/chat/completions`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${config.apiKey}`,
-        },
+        headers: config.headers,
         body: JSON.stringify({
           model: config.modelName,
           messages: [
@@ -409,17 +394,11 @@ export class AgenticRagService {
     return body.length >= 30 ? body : reasoning.slice(-600);
   }
 
-  private async getLlmConfig(): Promise<{ baseUrl: string; apiKey: string; modelName: string } | null> {
-    try {
-      const config = await this.modelConfigService.getDefault('llm');
-      if (!config) return null;
-      return {
-        baseUrl: (config.provider.baseUrl || process.env.LLM_BASE_URL || '').replace(/\/$/, ''),
-        apiKey: config.provider.apiKey || process.env.DEEPSEEK_API_KEY || '',
-        modelName: config.modelName || process.env.LLM_MODEL || 'deepseek-chat',
-      };
-    } catch {
-      return null;
-    }
+  private async getLlmConfig(): Promise<{ baseUrl: string; modelName: string; headers: Record<string, string> } | null> {
+    // Page-configured default LLM + provider-required headers, via the single
+    // shared resolver (no hardcoded model name).
+    const resolved = await this.modelConfigService.getLlmChatConfig('llmwiki-agentic');
+    if (!resolved) return null;
+    return { baseUrl: resolved.baseUrl, modelName: resolved.modelName, headers: resolved.headers };
   }
 }

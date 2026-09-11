@@ -2305,23 +2305,13 @@ export class ChatService {
     try {
       // 从数据库中获取用户在后台页面配置的大模型信息
       trace.start("llm_generation", "大模型流式生成", "基于授权证据生成回答并要求逐项引用");
-      const modelConfig = this.modelConfigService
-        ? await this.modelConfigService.getDefault("llm")
+      // Page-configured default LLM via the single shared resolver (no hardcoded model).
+      const llmRequest = this.modelConfigService
+        ? await this.modelConfigService.getLlmChatConfig(`llmwiki-${userId}`)
         : null;
-
-      let apiKey = modelConfig?.provider.apiKey;
-      let baseUrl = modelConfig?.provider.baseUrl;
-      let modelName = modelConfig?.modelName;
-
-      // If provider has no API key configured, fall back to environment DeepSeek
-      if (!apiKey && process.env.DEEPSEEK_API_KEY) {
-        apiKey = process.env.DEEPSEEK_API_KEY;
-        baseUrl = process.env.LLM_BASE_URL || "https://api.deepseek.com/v1";
-        modelName = process.env.LLM_MODEL || "deepseek-chat";
-      }
-      baseUrl = (baseUrl || process.env.LLM_BASE_URL || "https://api.deepseek.com/v1").replace(/\/$/, "");
-      modelName = modelName || process.env.LLM_MODEL || "deepseek-chat";
-      apiKey = apiKey || "";
+      const apiKey = llmRequest?.apiKey || "";
+      const baseUrl = llmRequest?.baseUrl || "";
+      const modelName = llmRequest?.modelName || "";
 
       if (!apiKey) {
         // The compiled truth remains useful when the model gateway is not
@@ -2377,13 +2367,10 @@ ${queryResult?.diagnostics?.mode === "inventory" ? `8. 【全景统计规范】�
       ${priorConversation ? `历史对话参考（仅供消歧，以当前知识库资料为准）：\n${priorConversation}\n\n` : ""}${personalMemoryBlock}【参考知识库资料】：
 ${compiledTruthContext}`;
 
-      const headers: Record<string, string> = {
+      const headers: Record<string, string> = llmRequest?.headers || {
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
       };
-      if (baseUrl.includes("opencode.ai")) {
-        headers["x-opencode-session"] = `llmwiki-${userId}`;
-      }
 
       const llmResponse = await fetch(
         `${baseUrl}/chat/completions`,
@@ -2545,23 +2532,12 @@ ${compiledTruthContext}`;
     // original user wording is the highest-fidelity GBrain query. Historical
     // turns still use the contextual rewrite below.
     if (!prior) return directRequest;
-    const config = this.modelConfigService
-      ? await this.modelConfigService.getDefault("llm")
+    const llmRequest = this.modelConfigService
+      ? await this.modelConfigService.getLlmChatConfig('llmwiki-rewrite')
       : null;
-
-    let apiKey = config?.provider.apiKey;
-    let baseUrl = config?.provider.baseUrl;
-    let modelName = config?.modelName;
-
-    // Fall back to environment DeepSeek if provider has no key
-    if (!apiKey && process.env.DEEPSEEK_API_KEY) {
-      apiKey = process.env.DEEPSEEK_API_KEY;
-      baseUrl = process.env.LLM_BASE_URL || "https://api.deepseek.com/v1";
-      modelName = process.env.LLM_MODEL || "deepseek-chat";
-    }
-    baseUrl = (baseUrl || process.env.LLM_BASE_URL || "https://api.deepseek.com/v1").replace(/\/$/, "");
-    modelName = modelName || process.env.LLM_MODEL || "deepseek-chat";
-    apiKey = apiKey || "";
+    const apiKey = llmRequest?.apiKey || "";
+    const baseUrl = llmRequest?.baseUrl || "";
+    const modelName = llmRequest?.modelName || "";
 
     if (!apiKey) {
       return directRequest;
@@ -3057,17 +3033,18 @@ ${compiledTruthContext}`;
     const supported = new Set<number>();
     if (!statements.length || !evidence.trim()) return supported;
     try {
-      const config = await this.modelConfigService?.getDefault('llm');
-      const baseUrl = (config?.provider.baseUrl || process.env.LLM_BASE_URL || '').replace(/\/$/, '');
-      const apiKey = config?.provider.apiKey || process.env.DEEPSEEK_API_KEY || '';
-      if (!baseUrl || !apiKey) return supported;
-      const model = config?.modelName || process.env.LLM_MODEL || 'deepseek-chat';
+      const llmRequest = this.modelConfigService
+        ? await this.modelConfigService.getLlmChatConfig('llmwiki-entailment')
+        : null;
+      if (!llmRequest) return supported;
+      const baseUrl = llmRequest.baseUrl;
+      const model = llmRequest.modelName;
       const userContent = `【证据】\n${evidence}\n\n【陈述】\n${statements
         .map((s, i) => `${i + 1}. ${s}`)
         .join('\n')}`;
       const response = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        headers: llmRequest.headers,
         body: JSON.stringify({
           model,
           messages: [

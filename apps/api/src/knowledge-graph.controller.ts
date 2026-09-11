@@ -298,7 +298,7 @@ export class KnowledgeGraphController {
             llmConfig = {
               baseUrl: (cfg.provider.baseUrl || process.env.LLM_BASE_URL || '').replace(/\/$/, ''),
               apiKey: cfg.provider.apiKey || process.env.DEEPSEEK_API_KEY || '',
-              modelName: cfg.modelName || process.env.LLM_MODEL || 'deepseek-chat',
+              modelName: cfg.modelName || process.env.LLM_MODEL ,
             };
           }
         } catch {}

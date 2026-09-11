@@ -83,6 +83,33 @@ export class ModelConfigService {
   }>();
   private appliedSignature = "";
 
+  /**
+   * Single source of truth for LLM chat calls. Resolves the page-configured
+   * default route (DB) plus any provider-required headers, so every auxiliary
+   * LLM call (RAPTOR summaries, query expansion, entailment judge, graph
+   * extraction) uses the same configured model and headers as chat generation.
+   * No model name is hardcoded: when no route is configured this returns null.
+   */
+  async getLlmChatConfig(sessionId = 'llmwiki'): Promise<{
+    baseUrl: string;
+    apiKey: string;
+    modelName: string;
+    headers: Record<string, string>;
+  } | null> {
+    const config = await this.getDefault('llm');
+    const baseUrl = (config?.provider.baseUrl || process.env.LLM_BASE_URL || '').replace(/\/$/, '');
+    const apiKey = config?.provider.apiKey || process.env.DEEPSEEK_API_KEY || '';
+    const modelName = config?.modelName || process.env.LLM_MODEL || '';
+    if (!baseUrl || !apiKey || !modelName) return null;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    };
+    // OpenCode Zen Go requires a routing session header.
+    if (baseUrl.includes('opencode.ai')) headers['x-opencode-session'] = sessionId;
+    return { baseUrl, apiKey, modelName, headers };
+  }
+
   async getDefault(kind: ModelKind, force = false): Promise<ResolvedModelConfig | null> {
     const now = Date.now();
     const cached = this.cache.get(kind);

@@ -251,7 +251,7 @@ export class IngestionService implements OnModuleInit {
             {
               baseUrl: (llmConfig.provider.baseUrl || process.env.LLM_BASE_URL || '').replace(/\/$/, ''),
               apiKey: llmConfig.provider.apiKey || process.env.DEEPSEEK_API_KEY || '',
-              modelName: llmConfig.modelName || process.env.LLM_MODEL || 'deepseek-chat',
+              modelName: llmConfig.modelName || process.env.LLM_MODEL ,
             },
             {
               concurrency: Number(process.env.CONTEXTUAL_RETRIEVAL_CONCURRENCY || 5),

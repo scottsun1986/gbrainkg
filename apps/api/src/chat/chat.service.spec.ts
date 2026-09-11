@@ -5,6 +5,7 @@ import { BrainCompilerService } from "../brain-compiler/brain-compiler.service";
 import { BrainScopeService } from "../brain-compiler/brain-scope.service";
 import { lastValueFrom, toArray } from "rxjs";
 import { GraphRagService } from "../graph-rag/graph-rag.service";
+import { ModelConfigService } from "../model-config.service";
 
 const mockGraphRag = {
   searchLocalGraph: jest.fn().mockResolvedValue({
@@ -101,6 +102,23 @@ describe("ChatService", () => {
         {
           provide: BrainScopeService,
           useValue: { resolveUserScope: jest.fn().mockResolvedValue({ fingerprint: "test-scope", sourceKeys: [] }) },
+        },
+        {
+          provide: ModelConfigService,
+          useValue: {
+            getDefault: jest.fn().mockResolvedValue(null),
+            applyRuntimeConfig: jest.fn().mockResolvedValue(undefined),
+            getRuntimeStatus: jest.fn().mockResolvedValue({ routes: {}, gbrain: {} }),
+            getLlmChatConfig: jest.fn().mockImplementation(async () => {
+              if (!process.env.DEEPSEEK_API_KEY) return null;
+              return {
+                baseUrl: process.env.LLM_BASE_URL || "https://api.deepseek.com/v1",
+                apiKey: process.env.DEEPSEEK_API_KEY,
+                modelName: process.env.LLM_MODEL || "test-model",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}` },
+              };
+            }),
+          },
         },
       ],
     }).compile();

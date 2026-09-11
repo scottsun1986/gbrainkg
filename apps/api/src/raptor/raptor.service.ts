@@ -61,7 +61,7 @@ export class RaptorService {
     const llm = await this.llmConfig();
     // Bound the number of summary groups: a 2600-paragraph document would
     // otherwise trigger thousands of sequential LLM calls and stall the queue.
-    const maxGroups = Math.max(1, Number(process.env.RAPTOR_MAX_GROUPS || 40));
+    const maxGroups = Math.max(1, Number(process.env.RAPTOR_MAX_GROUPS || 12));
     const groups = this.groupChunks(document.chunks).slice(0, maxGroups);
     const modelVersion = llm ? llm.modelName : 'extractive-v1';
     const sectionNodes: Array<{ title: string; content: string; chunkIds: string[]; clusterKey: string }> = [];
@@ -211,17 +211,14 @@ export class RaptorService {
     }));
   }
 
-  private async summarize(label: string, text: string, llm: { baseUrl: string; apiKey: string; modelName: string } | null): Promise<string> {
+  private async summarize(label: string, text: string, llm: { baseUrl: string; modelName: string; headers: Record<string, string> } | null): Promise<string> {
     const bounded = (text || '').trim().slice(0, this.maxSourceChars);
     if (!bounded) return '';
     if (llm) {
       try {
         const response = await fetch(`${llm.baseUrl}/chat/completions`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${llm.apiKey}`,
-          },
+          headers: llm.headers,
           body: JSON.stringify({
             model: llm.modelName,
             messages: [
@@ -232,7 +229,7 @@ export class RaptorService {
               { role: 'user', content: `${label}\n\n${bounded}` },
             ],
             temperature: 0.1,
-            max_tokens: 500,
+            max_tokens: Number(process.env.RAPTOR_SUMMARY_MAX_TOKENS || 2000),
           }),
           signal: AbortSignal.timeout(15000),
         });
@@ -248,14 +245,30 @@ export class RaptorService {
     return this.extractiveSummary(bounded);
   }
 
+  /**
+   * Model-independent structured fallback: a real outline (section headings +
+   * leading sentences), never a raw concatenation of the source. Used when the
+   * configured LLM returns empty/echoed content (e.g. reasoning models on long
+   * inputs), so macro retrieval still gets usable summaries.
+   */
   private extractiveSummary(text: string): string {
-    const sentences = text
+    const clean = text.replace(/\[上下文:[^\]]*\]/g, '').replace(/<!--[\s\S]*?-->/g, '');
+    const lines = clean.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+    const headings = lines
+      .filter((l) => /^(?:#{1,6}\s|（[一二三四五六七八九十]+）|[一二三四五六七八九十]+、|第[一二三四五六七八九十百0-9]+[章节]|\d{1,3}[.．])/.test(l))
+      .map((l) => l.replace(/^#{1,6}\s*/, '').slice(0, 40))
+      .filter((v, i, arr) => v && arr.indexOf(v) === i)
+      .slice(0, 12);
+    const sentences = clean
       .replace(/\s+/g, ' ')
       .split(/(?<=[。！？!?；;])/)
       .map((s) => s.trim())
-      .filter((s) => s.length >= 8);
-    const picked = sentences.slice(0, 5).join('');
-    return picked.slice(0, 800) || text.slice(0, 300);
+      .filter((s) => s.length >= 10 && !/^[\d\s.、）)]+$/.test(s));
+    const picked: string[] = [];
+    if (headings.length) picked.push(`要点章节：${headings.join('；')}`);
+    picked.push(...sentences.slice(0, 4));
+    const out = picked.join(' ').trim().slice(0, 900);
+    return out || clean.slice(0, 300);
   }
 
   /**
@@ -280,20 +293,17 @@ export class RaptorService {
       if (parts.length > 1) body = parts[parts.length - 1];
     }
     body = body.replace(/^["'`\s]+|["'`\s]+$/g, '').trim();
+    // Reject meta-reasoning ("I need to ...", planning) that is not the summary
+    // itself; falling back to extractive output is better than storing thoughts.
+    if (/^(?:我需要|我们要|需要把|我们需|We need|I need|Let me|let me)/i.test(body)) return '';
     return body.length >= 20 ? body.slice(0, 1200) : '';
   }
 
-  private async llmConfig(): Promise<{ baseUrl: string; apiKey: string; modelName: string } | null> {
+  private async llmConfig(): Promise<{ baseUrl: string; modelName: string; headers: Record<string, string> } | null> {
     if (process.env.RAPTOR_USE_LLM === 'false') return null;
-    try {
-      const cfg = await this.modelConfigService?.getDefault('llm');
-      const baseUrl = (cfg?.provider?.baseUrl || process.env.LLM_BASE_URL || '').replace(/\/$/, '');
-      const apiKey = cfg?.provider?.apiKey || process.env.DEEPSEEK_API_KEY || '';
-      if (!baseUrl || !apiKey) return null;
-      return { baseUrl, apiKey, modelName: cfg?.modelName || process.env.LLM_MODEL || 'deepseek-chat' };
-    } catch {
-      return null;
-    }
+    const resolved = await this.modelConfigService?.getLlmChatConfig('llmwiki-raptor');
+    if (!resolved) return null;
+    return { baseUrl: resolved.baseUrl, modelName: resolved.modelName, headers: resolved.headers };
   }
 
   private keywords(query: string): string[] {

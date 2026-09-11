@@ -229,12 +229,15 @@ ${chunkContent.slice(0, 4000)}
 5. 只输出 JSON，不要其他内容`;
 
     try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${llmConfig.apiKey}`,
+      };
+      // OpenCode Zen Go requires a routing session header.
+      if (llmConfig.baseUrl.includes('opencode.ai')) headers['x-opencode-session'] = 'llmwiki-graph';
       const response = await fetch(`${llmConfig.baseUrl}/chat/completions`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${llmConfig.apiKey}`,
-        },
+        headers,
         body: JSON.stringify({
           model: llmConfig.modelName,
           messages: [

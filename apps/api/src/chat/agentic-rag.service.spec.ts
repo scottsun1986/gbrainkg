@@ -6,6 +6,12 @@ describe('AgenticRagService', () => {
       provider: { baseUrl: 'https://llm.example.com/v1', apiKey: 'test-key' },
       modelName: 'test-model',
     }),
+    getLlmChatConfig: jest.fn().mockResolvedValue({
+      baseUrl: 'https://llm.example.com/v1',
+      apiKey: 'test-key',
+      modelName: 'test-model',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-key' },
+    }),
   } as any;
 
   let service: AgenticRagService;
