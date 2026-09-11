@@ -443,17 +443,8 @@ export class ChatService {
       if (cleaned && cleaned !== raw && cleaned.length >= 4) {
         subQueries.add(cleaned);
       }
-      const compoundMatch = (cleaned || raw).match(/([\u4e00-\u9fa5]{4,20})/g);
-      if (compoundMatch) {
-        for (const phrase of compoundMatch) {
-          if (phrase.length >= 6) {
-            const subTerms = ["指标体系", "度量指标", "考核指标", "绩效考核", "绩效管理", "研发人员", "研发效能", "考勤制度", "考勤管理", "施行日期", "废止情况", "主备切换", "结业考核", "检验有效期"];
-            for (const st of subTerms) {
-              if (phrase.includes(st)) subQueries.add(subject ? `${subject} ${st}` : st);
-            }
-          }
-        }
-      }
+      // (Hardcoded domain sub-term expansion removed — superseded by
+      // KB-configured domainTerms and LLM query expansion.)
     }
 
     return Array.from(subQueries).filter((q) => q.length >= 2).slice(0, 6);
@@ -980,16 +971,6 @@ export class ChatService {
 
         if (isChapterListing && /(?:##\s*第[一二三四五六七八九十百0-9]+章|##\s*附则)/.test(c.content)) {
           score += 100.0;
-        }
-
-        // Target document affinity boost
-        const targetDocHint = query.includes("无人机") ? "02b_legal_clean"
-          : query.includes("考核") || query.includes("总表") ? "04_big_table"
-          : query.includes("汇总") ? "22_assessment"
-          : query.includes("花名册") || query.includes("EMP") ? "11_roster"
-          : "";
-        if (targetDocHint && docTitle.includes(targetDocHint)) {
-          score += 50.0;
         }
 
         return { chunk: c, score };
