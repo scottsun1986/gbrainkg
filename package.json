@@ -14,7 +14,9 @@
     "test:kb": "python3 tests/e2e/sota_knowledge_base_suite.py",
     "evaluate": "npx --yes tsx@4.23.13 tests/evaluation/run-evaluation.ts",
     "gate": "bash tests/evaluation/ci-gate.sh",
-    "ci": "bash scripts/ci.sh"
+    "ci": "bash scripts/ci.sh",
+    "evaluate:paraphrase": "npx --yes tsx@4.23.13 tests/evaluation/paraphrase-eval.ts",
+    "evaluate:human": "npx --yes tsx@4.23.13 tests/evaluation/export-human-review.ts"
   },
   "devDependencies": {
     "turbo": "^2.0.0",

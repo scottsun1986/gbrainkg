@@ -17,6 +17,7 @@
  */
 import fs from 'fs';
 import path from 'path';
+import { llmChat, extractJson, llmConfig } from './llm-client';
 
 interface EvalQuestion {
   id: string;
@@ -47,6 +48,10 @@ const API_BASE = (process.env.API_URL || process.env.API_BASE || 'http://127.0.0
 const CHAT_URL = `${API_BASE}/api/v1/chat/completions`;
 const TOKEN = process.env.LLMWIKI_TOKEN || process.env.AUTH_TOKEN || '';
 const REQUEST_TIMEOUT_MS = Number(process.env.GATE_REQUEST_TIMEOUT_MS || 90_000);
+// Independent (LLM-as-judge) scoring: opt-in, reported always, gated only when
+// GATE_LLM_JUDGE_MIN > 0. This avoids a gate that only measures keyword overlap.
+const LLM_JUDGE_ENABLED = process.env.GATE_LLM_JUDGE === 'true';
+const LLM_JUDGE_MIN = parseFloat(process.env.GATE_LLM_JUDGE_MIN || '0');
 
 const DATASET_PATH = path.join(__dirname, 'golden-dataset.json');
 const RESULTS_DIR = path.join(__dirname, 'results');
@@ -160,6 +165,32 @@ async function fetchChatCompletion(
   }
 }
 
+async function judgeAnswer(
+  question: string,
+  answer: string,
+  expectedKeywords: string[],
+  citations: string[],
+  expectedNoAnswer: boolean,
+): Promise<number> {
+  if (!llmConfig()) return -1; // no route configured: skip
+  const direction = expectedNoAnswer
+    ? '本题在知识库中无答案，期望模型明确拒答且不编造。'
+    : `期望答案覆盖要点：${expectedKeywords.join('、') || '(以引用为准)'}`;
+  const prompt = `你是独立评阅人。请只依据"引用来源"判断回答质量，不得使用外部知识。
+问题：${question}
+${direction}
+引用来源标题：${citations.slice(0, 8).join(' | ') || '(无)'}
+模型回答：${answer.slice(0, 1200)}
+请输出 json：{"score": 0.0-1.0, "reason": "一句话理由"}
+评分标准：1.0=完全正确且被引用支撑；0.5=部分正确/有少量无支撑推断；0.0=错误、编造或该拒答却作答。`;
+  try {
+    const text = await llmChat([{ role: 'user', content: prompt }], { maxTokens: 400, timeoutMs: 30000 });
+    const parsed = extractJson<{ score?: number }>(text);
+    if (parsed && typeof parsed.score === 'number') return Math.max(0, Math.min(1, parsed.score));
+  } catch { /* fail-open */ }
+  return -1;
+}
+
 // ---------------------------------------------------------------- main
 async function runQualityGate() {
   console.log(`${colors.cyan}========================================${colors.reset}`);
@@ -170,7 +201,9 @@ async function runQualityGate() {
     console.error(`${colors.red}Dataset not found: ${DATASET_PATH}${colors.reset}`);
     process.exit(1);
   }
-  const dataset: EvalQuestion[] = JSON.parse(fs.readFileSync(DATASET_PATH, 'utf-8'));
+  const allQuestions: EvalQuestion[] = JSON.parse(fs.readFileSync(DATASET_PATH, 'utf-8'));
+  const limit = Math.max(0, Number(process.env.GATE_LIMIT || 0));
+  const dataset: EvalQuestion[] = limit > 0 ? allQuestions.slice(0, limit) : allQuestions;
 
   const allScopes = dataset.map((item) => item.expected_kb_scope).filter((s) => s.length > 0);
   const scopeMap = await resolveScopeMap(allScopes);
@@ -184,7 +217,7 @@ async function runQualityGate() {
     id: string; category: string; success: boolean;
     hitRate: boolean; citationAccuracy: boolean; noAnswer: boolean;
     permission: boolean; keywordCoverage: number; faithfulness: boolean; contextPrecision: boolean;
-    answer: string; citations: string[]; error?: string;
+    answer: string; citations: string[]; error?: string; llmJudge?: number;
   }
   const results: Row[] = [];
   let totalScore = 0;
@@ -253,13 +286,19 @@ async function runQualityGate() {
 
     const success = (item.expected_no_answer ? noAnswer : hitRate) && permission;
     if (success) totalScore++;
+
+    let llmJudge: number | undefined;
+    if (LLM_JUDGE_ENABLED) {
+      const score = await judgeAnswer(item.question, res.answer, item.expected_keywords, titles, item.expected_no_answer);
+      if (score >= 0) llmJudge = score;
+    }
     console.log(success ? `${colors.green}✓ PASS${colors.reset}` : `${colors.red}✗ FAIL${colors.reset}`);
 
     results.push({
       id: item.id, category: item.category, success,
       hitRate, citationAccuracy, noAnswer, permission,
       keywordCoverage, faithfulness, contextPrecision,
-      answer: res.answer.slice(0, 400), citations: titles, error: res.error,
+      answer: res.answer.slice(0, 400), citations: titles, error: res.error, llmJudge,
     });
   }
 
@@ -272,6 +311,10 @@ async function runQualityGate() {
     citationAccuracy: results.filter((r) => r.citationAccuracy).length / total,
     faithfulness: results.filter((r) => r.faithfulness).length / total,
     contextPrecision: results.filter((r) => r.contextPrecision).length / total,
+    llmJudge: (() => {
+      const judged = results.filter((r) => typeof r.llmJudge === 'number');
+      return judged.length ? judged.reduce((acc, r) => acc + (r.llmJudge as number), 0) / judged.length : -1;
+    })(),
   };
 
   const categories: Record<string, any> = {};
@@ -298,6 +341,8 @@ async function runQualityGate() {
     results,
   }, null, 2));
 
+  const llmJudgePass = LLM_JUDGE_MIN <= 0 || (agg.llmJudge >= 0 && agg.llmJudge >= LLM_JUDGE_MIN);
+
   const checks: Array<[string, number, number, boolean]> = [
     ['Hit Rate', THRESHOLDS.hitRate, agg.hitRate, agg.hitRate >= THRESHOLDS.hitRate],
     ['Keyword Coverage', THRESHOLDS.keywordCoverage, agg.keywordCoverage, agg.keywordCoverage >= THRESHOLDS.keywordCoverage],
@@ -306,6 +351,7 @@ async function runQualityGate() {
     ['Faithfulness', THRESHOLDS.faithfulness, agg.faithfulness, agg.faithfulness >= THRESHOLDS.faithfulness],
     ['Citation Accuracy', THRESHOLDS.citationAccuracy, agg.citationAccuracy, agg.citationAccuracy >= THRESHOLDS.citationAccuracy],
     ['Context Precision', THRESHOLDS.contextPrecision, agg.contextPrecision, agg.contextPrecision >= THRESHOLDS.contextPrecision],
+    ['LLM Judge (independent)', LLM_JUDGE_MIN, agg.llmJudge, llmJudgePass],
   ];
 
   console.log(`\n${colors.cyan}--- Quality Gate Summary ---${colors.reset}`);
