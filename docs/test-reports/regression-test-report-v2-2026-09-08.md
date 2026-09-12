@@ -196,3 +196,17 @@ CITATIONS(10): [1]云中台知识库（1 篇） [2]回归A组知识库（1 篇�
 - 语义缓存回放引用字段完整（历史缓存行亦被防御性归一化）
 
 > 附带发现（记录待办）：前端登录后 ChatScreen 的 `selected` 状态可能在知识库列表加载完成前初始化为空数组，导致「发送」静默无效（刷新页面即恢复）。属前端模块变量时序问题，建议纳入 OPT-10 前端拆分时一并处理（用 React 状态替代模块变量，或在 send() 中对空 selected 做自动全选兜底）。
+
+---
+
+## 七、生产发布记录（v9.0 · 2026-09-09）
+
+| 项 | 内容 |
+|---|---|
+| 发布版本 | `v9.0`（commit b964714，tag 与 HEAD 一致） |
+| 发布方式 | 官方路径 `./deploy/upgrade.sh`（依赖 → prisma generate/migrate deploy → 构建 API/Web → daemon-reload + 平滑重启 parser/api/web → healthcheck） |
+| 预部署备份 | `deploy/backup.sh` 实测产出：db-20260909-083159.dump（8.6M）+ files-20260909-083159.tar.gz（27M），位于 `~/.local/share/llmwiki/backups/` |
+| 数据库安全断言 | GBrain `sources` 表完好（141 行）；`KnowledgeBase.domainTerms` 列在位；`migrate deploy` 空操作（无 pending 迁移，规避 db push 删表风险） |
+| 健康检查 | 内置 healthcheck.sh 4/4 通过（三服务 active + 三端点 200） |
+| 生产冒烟 | **8/8 PASS**：登录 / 全景盘点（11 条 KB 级引用）/ 锚点检索（WP-2026-R9 命中）/ 上传受理 201 / 发布终态 published / 空文件快败 400 / 越权 scope 403 |
+| 回滚预案 | 恢复 `db-*.dump`（pg_restore）+ `files-*.tar.gz` 解包 → `git checkout v8.0` 重建 → 重启三服务 |

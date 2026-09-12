@@ -1,19 +1,21 @@
-# GBrainKG Evaluation Infrastructure
+# LLMWiki Golden Evaluation Framework
 
-This directory contains the evaluation infrastructure for measuring RAG retrieval quality.
+## Overview
+This framework evaluates the retrieval and generation quality of the LLMWiki system based on the P0/P1 standard documented in the project plan.
+It runs a multi-stage evaluation on the system separating retrieval effectiveness (Hit Rate, MRR, Context Recall) from generation quality (Faithfulness, Keyword Coverage, Hallucination avoidance).
 
-## Files
-- `golden-dataset.json`: 50 annotated test questions.
-- `run-evaluation.ts`: TypeScript script to run the evaluation.
-- `run.sh`: Bash wrapper script to easily execute the evaluation.
+## Components
+- `golden_dataset.json`: 220+ golden standard evaluation questions covering 9 enterprise scenarios.
+- `conftest.py`: Reusable fixtures for SSE streaming, authentication, and HTTP sessions.
+- `test_retrieval_quality.py`: Pytest suite that compares LLMWiki's real-time chat completions against the golden references.
+- `quality_gate.py`: CI script that reads results and enforces thresholds before deployment.
 
-## Running the Evaluation
-You can run the evaluation using the shell script:
+## Execution
+
 ```bash
-bash tests/evaluation/run.sh
+# Run tests
+TEST_PORT=3202 pytest test_retrieval_quality.py -v --golden-file=golden_dataset.json
+
+# Run quality gate
+python quality_gate.py
 ```
-
-Or using `npm run evaluate` (if configured in `package.json`).
-
-## Metrics Output
-Results will be saved in the `results/` directory as timestamped JSON files.
