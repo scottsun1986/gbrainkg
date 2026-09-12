@@ -154,10 +154,16 @@ export class AdminController {
     @Query("auditPage") auditPageParam?: string,
     @Query("auditLimit") auditLimitParam?: string,
     @Query("dreamPage") dreamPageParam?: string,
+    @Query("telemetry") telemetryParam?: string,
   ) {
     const auditPage = Math.max(1, Math.min(10000, Number.parseInt(auditPageParam || "1", 10) || 1));
     const auditLimit = Math.max(1, Math.min(100, Number.parseInt(auditLimitParam || "20", 10) || 20));
     const dreamPage = Math.max(1, Math.min(10000, Number.parseInt(dreamPageParam || "1", 10) || 1));
+    // Dream + system-status telemetry account for ~1.6MB of this payload and
+    // only the monitoring views consume them. Default them OFF so the app
+    // bootstrap (which calls this endpoint just to render the shell) is not
+    // blocked by a megabyte-scale response; pass telemetry=1 to opt in.
+    const includeTelemetry = ["true", "1"].includes(String(telemetryParam || ""));
     const auditWindow = Math.min(1000, auditPage * auditLimit);
     const adminId = await this.authService.userIdFromRequest(req);
     const capabilities = await this.permissionService.getCapabilities(adminId);
@@ -508,14 +514,14 @@ export class AdminController {
           })
         : [],
       audit,
-      dream: isSystemAdmin || canReadAudit
+      dream: includeTelemetry && (isSystemAdmin || canReadAudit)
         ? await this.brainCompilerService.getDreamTelemetry({
             excludePrivate: true,
             runsPage: dreamPage,
             runsLimit: auditLimit,
           })
         : null,
-      systemStatus: isSystemAdmin || canReadAudit
+      systemStatus: includeTelemetry && (isSystemAdmin || canReadAudit)
         ? await this.getSystemStatusTelemetryData()
         : null,
       auditPagination: {

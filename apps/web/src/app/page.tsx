@@ -4097,10 +4097,17 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
     if (initialTab) setTab(initialTab);
   }, [initialTab]);
   useEffect(() => setAuditMeta(AUDIT_META), [AUDIT.length, AUDIT_META.total, AUDIT_META.page]);
+  // Dream 遥测(~800KB)已从启动载荷剥离；首次进入审计页时按需拉取
+  const dreamLazyRef = useRef(false);
+  useEffect(() => {
+    if (tab === 'audit' && !DREAM && capabilities.includes('*') && !dreamLazyRef.current) {
+      dreamLazyRef.current = true;
+      void loadAuditPage(1);
+    }
+  }, [tab]);
   const loadAuditPage = async (page) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/admin/data?auditPage=${page}&auditLimit=20`, { headers: apiHeaders() });
-      const result = await response.json().catch(() => ({}));
+      const response = await fetch(`${API_BASE_URL}/api/v1/admin/data?auditPage=${page}&auditLimit=20&telemetry=1`, { headers: apiHeaders() });      const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || '审计日志加载失败');
       AUDIT = (result.audit || []).map((item) => ({ ...item, when: new Date(item.when).toLocaleString('zh-CN'), what: item.action, actor: item.actor }));
       AUDIT_META = result.auditPagination || { page, limit: 20, total: AUDIT.length, totalPages: 1 };
@@ -4112,7 +4119,7 @@ function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}){
   };
   const loadDreamPage = async (page) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/admin/data?auditPage=${auditMeta.page || 1}&auditLimit=20&dreamPage=${page}`, { headers: apiHeaders() });
+      const response = await fetch(`${API_BASE_URL}/api/v1/admin/data?auditPage=${auditMeta.page || 1}&auditLimit=20&dreamPage=${page}&telemetry=1`, { headers: apiHeaders() });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || 'Dream 运行记录加载失败');
       if (result.dream) DREAM = result.dream;
