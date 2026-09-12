@@ -383,6 +383,13 @@ export class AgenticRagService {
       if (isExactClause) {
         return { complexity, expansions: [], subQueries: [query], hyde: null };
       }
+      // Plain factual questions skip the LLM expansion round trip entirely:
+      // the hybrid recall arms (vector + keyword + rerank) already cover them,
+      // and the planning call only delays the first token. Restore the old
+      // behaviour with AGENTIC_SIMPLE_EXPANSION=true.
+      if (process.env.AGENTIC_SIMPLE_EXPANSION !== 'true') {
+        return { complexity, expansions: [], subQueries: [query], hyde: null };
+      }
       const expansions = await this.expandQuery(query);
       return { complexity, expansions, subQueries: [query], hyde: null };
     }

@@ -1,9 +1,10 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { getPrismaClient } from '../prisma';
 import { ModelConfigService } from '../model-config.service';
+import { EmbeddingService } from '../embedding/embedding.service';
 
 @Injectable()
-export class SemanticCacheService implements OnModuleInit, OnModuleDestroy {
+export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
   private readonly logger = new Logger(SemanticCacheService.name);
   private readonly prisma = getPrismaClient();
   private readonly enabled = process.env.SEMANTIC_CACHE_ENABLED !== 'false';
@@ -11,7 +12,10 @@ export class SemanticCacheService implements OnModuleInit, OnModuleDestroy {
   private readonly ttlHours = Number(process.env.SEMANTIC_CACHE_TTL_HOURS || '24');
   private cleanupTimer?: NodeJS.Timeout;
 
-  constructor(private readonly modelConfigService: ModelConfigService) {}
+  constructor(
+    private readonly modelConfigService: ModelConfigService,
+    @Optional() private readonly embeddingService?: EmbeddingService,
+  ) {}
 
   onModuleInit(): void {
     // Expired rows are never matched at lookup time (epoch + TTL check), but
@@ -28,6 +32,17 @@ export class SemanticCacheService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async getEmbedding(text: string): Promise<number[] | null> {
+    // Route through the shared EmbeddingService first: its in-memory cache
+    // makes the cache-lookup embedding and the retrieval-arms embedding of
+    // the same query a single upstream call instead of two.
+    if (this.embeddingService?.isEnabled()) {
+      try {
+        const shared = await this.embeddingService.embedOne(text);
+        if (shared && shared.length > 0) return shared;
+      } catch {
+        // fall through to the direct provider call below
+      }
+    }
     try {
       const config = await this.modelConfigService.getDefault('embedding');
       if (!config) return null;

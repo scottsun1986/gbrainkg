@@ -31,6 +31,53 @@ function stripInvalidCitationMarkers(value: string, citationCount: number): stri
 }
 
 /**
+ * Extract the numeric claims (amounts, thresholds, counts, dates, IDs) that a
+ * statement asserts. Citation markers are stripped first so their indices are
+ * never mistaken for factual numbers.
+ */
+export function numericClaimsOf(statement: string): string[] {
+  const body = statement.replace(/\[\d+\]/g, ' ');
+  return (body.match(/\d+(?:\.\d+)?/g) || []).filter((token) => token.replace(/[.\s]/g, '').length >= 1);
+}
+
+/**
+ * Deterministic grounding check for one answer statement against the evidence
+ * texts of the sources it cites (or, when untagged, the full evidence pool).
+ * A valid citation marker alone is NOT proof:
+ *  1. every numeric claim in the statement must literally appear (modulo
+ *     whitespace) in the evidence — fabricated or mutated numbers with a real
+ *     citation index are rejected;
+ *  2. the statement needs lexical overlap with the evidence (0.5 when it
+ *     carries a valid marker and the model only paraphrased, 0.7 when it
+ *     carries none) so fully invented prose cannot ride on a real marker.
+ */
+export function statementSupportedBy(
+  statement: string,
+  evidenceTexts: string[],
+  hasValidTag: boolean,
+): boolean {
+  const evidence = evidenceTexts.join('\n');
+  if (!evidence.trim()) return false;
+  const normalizedEvidence = evidence.replace(/\s+/g, '');
+  const body = statement.replace(/\[\d+\]/g, ' ');
+  const chars = Array.from(new Set(body.replace(/\s+/g, '').split('')));
+  if (chars.length === 0) return true;
+  let overlap = 0;
+  for (const ch of chars) {
+    if (normalizedEvidence.includes(ch)) overlap++;
+  }
+  const overlapRatio = overlap / chars.length;
+  const overlapBar = hasValidTag ? 0.5 : 0.7;
+  if (overlapRatio < overlapBar) return false;
+  const claims = numericClaimsOf(statement);
+  if (claims.length > 0) {
+    const allPresent = claims.every((claim) => normalizedEvidence.includes(claim.replace(/\s+/g, '')));
+    if (!allPresent) return false;
+  }
+  return true;
+}
+
+/**
  * Derive the semantic-cache scope key from the exact source set selected for
  * this request plus the ACL/knowledge epochs. The previous key used only the
  * user's full visible-source fingerprint, so a query narrowed to a subset of
@@ -45,12 +92,33 @@ export function semanticCacheScopeKey(
 ): string {
   // The key version salt is bumped whenever the retrieval/answer pipeline
   // changes materially, so cached answers produced by older logic are not
-  // replayed after an upgrade. Override with SEMANTIC_CACHE_KEY_VERSION.
-  const version = process.env.SEMANTIC_CACHE_KEY_VERSION || 'v3';
+  // replayed after an upgrade. v4: sentence-level grounding gate + temporal
+  // lifecycle filtering change answer content materially.
+  // Override with SEMANTIC_CACHE_KEY_VERSION.
+  const version = process.env.SEMANTIC_CACHE_KEY_VERSION || 'v4';
   return createHash('sha256')
     .update(`${version}|${[...sourceKeys].sort().join(',')}|acl:${aclEpoch}|kb:${knowledgeEpoch}`)
     .digest('hex')
     .slice(0, 32);
+}
+
+/**
+ * Temporal effectiveness of a document edition at a point in time (default
+ * asOf = now): repealed editions and editions not yet in force must never
+ * enter the candidate set. Missing date metadata is treated as unknown — the
+ * edition stays eligible rather than being silently discarded.
+ */
+export function documentCurrentlyEffective(doc: any, now = Date.now()): boolean {
+  if (String(doc?.lifecycleStatus || 'current') === 'repealed') return false;
+  if (doc?.effectiveFrom) {
+    const from = new Date(doc.effectiveFrom).getTime();
+    if (Number.isFinite(from) && from > now) return false;
+  }
+  if (doc?.effectiveTo) {
+    const to = new Date(doc.effectiveTo).getTime();
+    if (Number.isFinite(to) && to < now) return false;
+  }
+  return true;
 }
 
 @Injectable()
@@ -943,6 +1011,7 @@ export class ChatService {
         const pChunks = await (this.prisma as any).chunk.findMany({
           where: {
             kbId: { in: scope },
+            document: { status: "published" },
             OR: highPriorityTokens.map((kw) => ({
               content: { contains: kw, mode: "insensitive" },
             })),
@@ -982,6 +1051,7 @@ export class ChatService {
         const chChunks = await (this.prisma as any).chunk.findMany({
           where: {
             kbId: { in: scope },
+            document: { status: "published" },
             ...(targetDocIds.length > 0 ? { documentId: { in: targetDocIds } } : {}),
             OR: [
               { content: { startsWith: "## " } },
@@ -1029,6 +1099,7 @@ export class ChatService {
             (this.prisma as any).chunk.findMany({
               where: {
                 kbId: { in: scope },
+                document: { status: "published" },
                 content: { contains: kw, mode: "insensitive" },
               },
               select: {
@@ -1074,7 +1145,7 @@ export class ChatService {
         const affinityDocIds = affinityDocs.map((d: any) => d.id);
         if (affinityDocIds.length > 0) {
           const aChunks = await (this.prisma as any).chunk.findMany({
-            where: { kbId: { in: scope }, documentId: { in: affinityDocIds } },
+            where: { kbId: { in: scope }, documentId: { in: affinityDocIds }, document: { status: "published" } },
             select: {
               id: true,
               documentId: true,
@@ -1225,7 +1296,7 @@ export class ChatService {
       const maxDocChunks = Math.max(200, Number(process.env.RETRIEVAL_MAX_DOC_CHUNKS || 3000));
       const docIds = Array.from(new Set(topSelected.map((s: any) => s.chunk.documentId))).slice(0, maxExpandDocs);
       const allDocChunks = await (this.prisma as any).chunk.findMany({
-        where: { documentId: { in: docIds } },
+        where: { documentId: { in: docIds }, document: { status: "published" } },
         select: {
           id: true,
           documentId: true,
@@ -2604,36 +2675,76 @@ export class ChatService {
     let versionConflictNote = "";
     if (citations.length > 0) {
       const docTitles: string[] = Array.from(new Set(citations.map((c: any) => c.docTitle).filter(Boolean))) as string[];
-      if (docTitles.length > 0) {
-        const publishedDocs = await this.prisma.document.findMany({
+      const citedDocIds: string[] = Array.from(new Set(
+        citations.map((c: any) => c.docId).filter((id: any): id is string => typeof id === "string" && id.length > 0),
+      ));
+      if (docTitles.length > 0 || citedDocIds.length > 0) {
+        const versionSelect = {
+          id: true,
+          title: true,
+          version: true,
+          updatedAt: true,
+          parserMetadata: true,
+          effectiveFrom: true,
+          effectiveTo: true,
+          lifecycleStatus: true,
+          supersedesDocumentId: true,
+        };
+        const baseDocs = await this.prisma.document.findMany({
           where: {
             kbId: { in: visibleKbs },
-            title: { in: docTitles },
             status: "published",
+            OR: [
+              ...(docTitles.length ? [{ title: { in: docTitles } }] : []),
+              ...(citedDocIds.length ? [{ id: { in: citedDocIds } }] : []),
+            ],
           },
-          select: {
-            id: true,
-            title: true,
-            version: true,
-            updatedAt: true,
-            parserMetadata: true,
-            effectiveFrom: true,
-            effectiveTo: true,
-            lifecycleStatus: true,
-            supersedesDocumentId: true,
-          },
-          orderBy: { version: "desc" },
+          select: versionSelect,
         });
-        // Group every published version of each title. The effective edition is
-        // chosen by lifecycle status, then effective date, then version number.
-        const versionsByTitle = new Map<string, Array<{
+        // Pull in direct superseding editions (e.g. a renamed V2 that points
+        // back at the cited V1 via supersedesDocumentId) so a version family
+        // survives title changes.
+        const baseIds = baseDocs.map((d: any) => d.id);
+        const superseders = baseIds.length
+          ? await this.prisma.document.findMany({
+              where: {
+                kbId: { in: visibleKbs },
+                status: "published",
+                supersedesDocumentId: { in: baseIds },
+              },
+              select: versionSelect,
+            })
+          : [];
+        const docsById = new Map<string, any>();
+        for (const d of [...baseDocs, ...superseders]) docsById.set(d.id, d);
+        const familyRootOf = (doc: any): string => {
+          let current = doc;
+          let guard = 0;
+          while (
+            current?.supersedesDocumentId &&
+            docsById.has(current.supersedesDocumentId) &&
+            guard < 4
+          ) {
+            current = docsById.get(current.supersedesDocumentId);
+            guard++;
+          }
+          return current?.id || doc.id;
+        };
+        // Group every published edition of each document family (linked by
+        // the supersedes chain rather than by title alone). The effective
+        // edition is chosen by lifecycle status, then effective date, then
+        // version number.
+        const versionsByFamily = new Map<string, Array<{
+          title: string;
           version: number;
           updatedAt: Date;
           effectiveDate?: string;
           current: boolean;
           repealed: boolean;
         }>>();
-        for (const pd of publishedDocs) {
+        const familyKeyByDocId = new Map<string, string>();
+        const familyKeyByTitle = new Map<string, string>();
+        for (const pd of docsById.values()) {
           const meta = (pd as any).parserMetadata || {};
           const lifecycle = String((pd as any).lifecycleStatus || "current");
           const effectiveFrom = (pd as any).effectiveFrom ? new Date((pd as any).effectiveFrom) : null;
@@ -2644,10 +2755,14 @@ export class ChatService {
               : typeof meta.effectiveDate === "string"
                 ? meta.effectiveDate
                 : undefined;
-          const list = versionsByTitle.get(pd.title) || [];
+          const familyKey = familyRootOf(pd);
+          familyKeyByDocId.set(pd.id, familyKey);
+          if (!familyKeyByTitle.has(pd.title)) familyKeyByTitle.set(pd.title, familyKey);
+          const list = versionsByFamily.get(familyKey) || [];
           if (!list.some((entry) => entry.version === (pd.version || 1))) {
             const updatedAt = pd.updatedAt ? new Date(pd.updatedAt) : new Date(0);
             list.push({
+              title: pd.title,
               version: pd.version || 1,
               updatedAt: Number.isNaN(updatedAt.getTime()) ? new Date(0) : updatedAt,
               effectiveDate,
@@ -2655,11 +2770,69 @@ export class ChatService {
               repealed: lifecycle === "repealed" || Boolean((pd as any).effectiveTo && new Date((pd as any).effectiveTo) < new Date()),
             });
           }
-          versionsByTitle.set(pd.title, list);
+          versionsByFamily.set(familyKey, list);
         }
+        // Legacy corpora may carry multiple editions of the same regulation
+        // without an explicit supersedesDocumentId link — for those, a shared
+        // (normalized) title is the only family signal. Merge any families
+        // that share a title so a renamed V2 chains correctly while unlinked
+        // same-title editions still resolve as one family.
+        const familyAlias = new Map<string, string>();
+        const resolveFamily = (key: string): string => {
+          let current = key;
+          let guard = 0;
+          while (familyAlias.has(current) && guard < 8) {
+            current = familyAlias.get(current)!;
+            guard++;
+          }
+          return current;
+        };
+        const familiesByNormTitle = new Map<string, Set<string>>();
+        for (const pd of docsById.values()) {
+          const normTitle = String(pd.title || "").replace(/\(V\d+.*?\)/i, "").replace(/\s+/g, "").trim();
+          if (!normTitle) continue;
+          const set = familiesByNormTitle.get(normTitle) || new Set<string>();
+          set.add(resolveFamily(familyRootOf(pd)));
+          familiesByNormTitle.set(normTitle, set);
+        }
+        for (const keys of familiesByNormTitle.values()) {
+          const distinct = Array.from(keys);
+          const root = resolveFamily(distinct[0]);
+          for (const key of distinct.slice(1)) {
+            const resolved = resolveFamily(key);
+            if (resolved !== root) familyAlias.set(resolved, root);
+          }
+        }
+        if (familyAlias.size) {
+          const merged = new Map(versionsByFamily);
+          for (const [key, entries] of versionsByFamily.entries()) {
+            const target = resolveFamily(key);
+            if (target === key) continue;
+            const combined = [...(merged.get(target) || []), ...entries].filter(
+              (entry, index, all) => all.findIndex((e) => e.version === entry.version) === index,
+            );
+            merged.set(target, combined);
+            merged.delete(key);
+          }
+          for (const [docId, key] of familyKeyByDocId.entries()) {
+            familyKeyByDocId.set(docId, resolveFamily(key));
+          }
+          for (const [title, key] of familyKeyByTitle.entries()) {
+            familyKeyByTitle.set(title, resolveFamily(key));
+          }
+          const mergedEntries = Array.from(merged.entries());
+          versionsByFamily.clear();
+          for (const [key, entries] of mergedEntries) versionsByFamily.set(key, entries);
+        }
+        const familyKeyOfCitation = (cit: any): string | null => {
+          if (cit.docId && familyKeyByDocId.has(cit.docId)) return familyKeyByDocId.get(cit.docId)!;
+          if (cit.docTitle && familyKeyByTitle.has(cit.docTitle)) return familyKeyByTitle.get(cit.docTitle)!;
+          return null;
+        };
         const conflictTitles: string[] = [];
         for (const cit of citations as any[]) {
-          const allEntries = versionsByTitle.get(cit.docTitle) || [];
+          const familyKey = familyKeyOfCitation(cit);
+          const allEntries = familyKey ? versionsByFamily.get(familyKey) || [] : [];
           if (allEntries.length <= 1) continue;
           const sorted = allEntries.slice().sort((a, b) => {
             if (a.current !== b.current) return a.current ? -1 : 1;
@@ -2693,7 +2866,7 @@ export class ChatService {
           if (!conflictTitles.includes(cit.docTitle)) {
             conflictTitles.push(cit.docTitle);
             const effective = latestDateLabel;
-            versionConflictNote += `\n【时序效力裁决】《${cit.docTitle}》存在多版本（库中: v${cit.versionConflict.allVersions.join(', v')}），现行有效版本为 v${latest.version}（生效/更新于 ${effective}）。请以现行有效版本为准，并明确说明旧版已废止或被修订。`;
+            versionConflictNote += `\n【时序效力裁决】《${cit.docTitle}》存在多版本（库中: v${cit.versionConflict.allVersions.join(', v')}），现行有效版本为 v${latest.version}（生效/更新于 ${effective}${latest.title !== cit.docTitle ? `，现行版标题：《${latest.title}》` : ""}）。请以现行有效版本为准，并明确说明旧版已废止或被修订。`;
           }
         }
         trace.finish(
@@ -2861,6 +3034,68 @@ ${compiledTruthContext}`;
       let promptCacheHitTokens = 0;
       let promptCacheMissTokens = 0;
       let citationTail = "";
+      // Grounding gate (strict mode): each completed sentence is verified
+      // against the evidence of the sources it cites BEFORE it is forwarded to
+      // the client. Unsupported sentences are held back and re-checked by the
+      // LLM entailment judge at flush time; anything still unsupported is
+      // dropped with a trace note. A real citation index can no longer
+      // authenticate an invented number. Set GROUNDING_STRICT=false to restore
+      // immediate passthrough (the post-hoc coverage check still applies).
+      const strictGrounding = process.env.GROUNDING_STRICT !== 'false';
+      const allEvidenceTexts = (): string[] =>
+        (queryResult.citations || []).map((c: any) => String(c.context || c.snippet || '')).filter(Boolean);
+      const citedEvidenceTexts = (sentence: string): { texts: string[]; tagged: boolean } => {
+        const tags = sentence.match(/\[(\d+)\]/g) || [];
+        const valid = tags
+          .map((t) => parseInt(t.replace(/\D/g, ''), 10))
+          .filter((n) => n >= 1 && n <= citations.length);
+        return {
+          texts: valid.map((n) => String(queryResult.citations?.[n - 1]?.context || queryResult.citations?.[n - 1]?.snippet || '')),
+          tagged: valid.length > 0,
+        };
+      };
+      const isRefusalSentence = (sentence: string) =>
+        /(未包含相关信息|无法(?:根据知识库)?回答|不知道|无法提供(?:该信息)?)/.test(sentence);
+      const heldSentences: string[] = [];
+      let gateVerifiedCount = 0;
+      const emitVerified = (sentence: string) => {
+        gateVerifiedCount++;
+        totalTokens += estimateTokens(sentence);
+        fullAnswer += sentence;
+        subscriber.next({ data: { type: 'delta', content: sentence, delta: sentence } });
+      };
+      const gateSentence = (sentence: string) => {
+        const body = sentence.replace(/\[\d+\]/g, ' ');
+        if (body.replace(/\s+/g, '').length < 5 || isRefusalSentence(sentence)) {
+          emitVerified(sentence);
+          return;
+        }
+        const { texts, tagged } = citedEvidenceTexts(sentence);
+        const supported = statementSupportedBy(sentence, tagged ? texts : allEvidenceTexts(), tagged);
+        if (supported || !strictGrounding) {
+          // Non-strict mode keeps legacy behaviour (emit immediately; the
+          // post-hoc coverage accounting at completion still reports gaps).
+          emitVerified(sentence);
+        } else {
+          heldSentences.push(sentence);
+        }
+      };
+      let gatePending = '';
+      const gatePush = (content: string) => {
+        gatePending += content;
+        let boundary = gatePending.search(/[。！？；\n]|[!?;]/);
+        while (boundary >= 0) {
+          const sentence = gatePending.slice(0, boundary + 1);
+          gatePending = gatePending.slice(boundary + 1);
+          gateSentence(sentence);
+          boundary = gatePending.search(/[。！？；\n]|[!?;]/);
+        }
+      };
+      const gateFlush = () => {
+        const rest = gatePending.trim();
+        gatePending = '';
+        if (rest) gateSentence(rest);
+      };
       const emitModelContent = (rawContent: string) => {
         const merged = citationTail + rawContent;
         citationTail = "";
@@ -2871,9 +3106,7 @@ ${compiledTruthContext}`;
         if (trailingMarker) citationTail = trailingMarker[0];
         const safeContent = stripInvalidCitationMarkers(body, citations.length);
         if (safeContent) {
-          totalTokens += estimateTokens(safeContent);
-          fullAnswer += safeContent;
-          subscriber.next({ data: { type: "delta", content: safeContent, delta: safeContent } });
+          gatePush(safeContent);
         }
       };
 
@@ -2921,6 +3154,30 @@ ${compiledTruthContext}`;
             }
           }
         } catch (e) {}
+      }
+
+      gateFlush();
+      // Held sentences get one batched entailment review; anything the judge
+      // cannot support from the evidence is dropped and never shown.
+      if (heldSentences.length > 0) {
+        trace.start('grounding_gate', '证据核验门控', '对暂扣语句执行证据蕴含复核');
+        const toJudge = heldSentences.slice(0, 6);
+        const evidenceText = allEvidenceTexts().join('\n\n').slice(0, 6000);
+        const entailed = evidenceText
+          ? await this.judgeEntailment(toJudge, evidenceText)
+          : new Set<number>();
+        for (let i = 0; i < toJudge.length; i++) {
+          if (entailed.has(i)) emitVerified(toJudge[i]);
+        }
+        const dropped = heldSentences.length - entailed.size;
+        trace.finish(
+          'grounding_gate',
+          dropped > 0 ? 'warning' : 'success',
+          dropped > 0
+            ? `${dropped} 句因缺乏证据支持被拦截，未向用户展示`
+            : '暂扣语句经蕴含复核全部放行',
+          { verified: gateVerifiedCount, held: heldSentences.length, recovered: entailed.size, dropped, strict: strictGrounding },
+        );
       }
 
       trace.finish(
@@ -3182,11 +3439,21 @@ ${compiledTruthContext}`;
             version: true,
             createdAt: true,
             updatedAt: true,
+            effectiveFrom: true,
+            effectiveTo: true,
+            lifecycleStatus: true,
             kb: { select: { name: true, type: true } },
           },
         })
       : [];
-    const allowed = new Map<string, any>(docs.map((doc: any) => [doc.id, doc]));
+    // Temporal effectiveness gate (default asOf = now): repealed editions and
+    // editions not yet in force must never enter the candidate set, regardless
+    // of which retrieval arm produced them. Documents without effective-date
+    // metadata stay eligible (unknown is not asserted as invalid).
+    const now = Date.now();
+    const allowed = new Map<string, any>(
+      docs.filter((doc: any) => documentCurrentlyEffective(doc, now)).map((doc: any) => [doc.id, doc]),
+    );
     const sourceKeys = [...new Set(derivedGuard.sourceKeys)].sort();
     const derivedCandidates = citations.filter((citation: any) => !citation.docId && citation.slug);
     const derivedPages = derivedCandidates.length
@@ -3839,27 +4106,24 @@ ${compiledTruthContext}`;
     const ungroundedStatements: string[] = [];
     for (const stmt of statements) {
       const tags = stmt.match(/\[(\d+)\]/g) || [];
-      const hasValidTag = tags.some(tag => citedIndices.has(parseInt(tag.replace(/\D/g, ""), 10)));
-      if (hasValidTag) {
+      const validTagIndices = tags
+        .map((tag) => parseInt(tag.replace(/\D/g, ""), 10))
+        .filter((n) => citedIndices.has(n));
+      const hasValidTag = validTagIndices.length > 0;
+      // A valid marker alone is not grounding: numeric claims must appear in
+      // the cited evidence and the statement must overlap it lexically (see
+      // statementSupportedBy). This closes the "fabricated fact wearing a real
+      // citation index" hole.
+      const evidenceTexts = hasValidTag
+        ? validTagIndices.map((n) => {
+            const item = finalCitations.find((f) => f.originalIndex === n);
+            return String(item?.citation?.context || item?.citation?.snippet || "");
+          }).filter(Boolean)
+        : finalCitations.map((item: any) => String(item.citation?.context || item.citation?.snippet || ""));
+      if (evidenceTexts.length > 0 && statementSupportedBy(stmt, evidenceTexts, hasValidTag)) {
         groundedStatements++;
       } else {
-        const chars = Array.from(new Set(stmt.replace(/\s+/g, '').split('')));
-        let isGrounded = false;
-        if (chars.length > 0) {
-          for (const item of finalCitations) {
-            const contextText = String(item.citation.context || item.citation.snippet || "");
-            let overlap = 0;
-            for (const ch of chars) {
-              if (contextText.includes(ch)) overlap++;
-            }
-            if (overlap / chars.length >= 0.7) {
-              isGrounded = true;
-              break;
-            }
-          }
-        }
-        if (isGrounded) groundedStatements++;
-        else ungroundedStatements.push(stmt);
+        ungroundedStatements.push(stmt);
       }
     }
     // When the deterministic overlap heuristic reports weak coverage, confirm
@@ -3942,15 +4206,26 @@ ${compiledTruthContext}`;
     });
     // Never cache refusals: weak evidence must not poison the cache, or every
     // paraphrase of the question replays the refusal (observed in production).
+    // Low-grounding answers are equally excluded: only answers whose claims
+    // were verified against the cited evidence may serve later cache hits.
     const refusalNotCacheable =
       /(未包含相关信息|无法(?:根据知识库)?回答|不知道|无法提供(?:该信息)?)/.test(fullAnswer) ||
       !fullAnswer.trim();
+    const cacheMinGrounding = Number(process.env.CACHE_MIN_GROUNDING || 0.8);
+    const groundingNotCacheable =
+      !isRefusalAnswer && totalStatements > 0 && coverageRatio < cacheMinGrounding;
+    if (groundingNotCacheable) {
+      this.logger.warn(
+        `Answer not cached: grounding coverage ${coverageRatio} below threshold ${cacheMinGrounding}.`,
+      );
+    }
     if (
       this.semanticCacheService &&
       question &&
       userScope?.fingerprint &&
       fullAnswer.trim() &&
-      !refusalNotCacheable
+      !refusalNotCacheable &&
+      !groundingNotCacheable
     ) {
       this.semanticCacheService.store(
         question,

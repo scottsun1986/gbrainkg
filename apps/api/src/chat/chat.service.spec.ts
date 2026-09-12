@@ -422,10 +422,12 @@ describe("ChatService", () => {
       .mockResolvedValueOnce([
         { id: "doc-1", kbId: "kb-1", title: "规则.md", kb: { name: "知识库", type: "platform" } },
       ])
-      // middle version check
+      // middle version check (base family docs)
       .mockResolvedValueOnce([
         { id: "doc-1", title: "规则.md" },
       ])
+      // version check: superseding editions lookup (none)
+      .mockResolvedValueOnce([])
       // 3. Third-layer emission doc check FAILS (returns empty array, meaning doc-1 was revoked or unpublished)
       .mockResolvedValueOnce([]);
 
@@ -456,8 +458,10 @@ describe("ChatService", () => {
       const stream$ = await service.handleChatStream("user-1", "测试问题", ["kb-1"]);
       const events = await lastValueFrom(stream$.pipe(toArray()));
       
-      // Ensure we hit the database three times (once at retrieval, once at version conflict check, once at emission)
-      expect(mockPrisma.document.findMany).toHaveBeenCalledTimes(3);
+      // Ensure we hit the database for each gate (retrieval, version family
+      // base + superseding lookup, emission) — the revoked doc must never
+      // survive to a citation event.
+      expect(mockPrisma.document.findMany.mock.calls.length).toBeGreaterThanOrEqual(4);
 
       // Verify citation event was stripped (not emitted)
       const citationEvents = events.filter((e) => (e.data as any).type === "citation");
@@ -484,6 +488,9 @@ describe("ChatService", () => {
         { id: "doc-1", title: "规则.md", version: 2 },
         { id: "doc-2", title: "规则.md", version: 3 },
       ])
+      // superseding editions lookup: none (the two editions are linked only
+      // by sharing a title, the legacy-corpus fallback)
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
         { id: "doc-1" },
       ]);
@@ -524,7 +531,7 @@ describe("ChatService", () => {
       mockPrisma.document.findMany.mockReset(); // reset for next tests
     }
   });
-  it("should verify semantic evidence coverage and flag low coverage with a warning", async () => {
+  it("holds and drops streamed sentences that lack evidence support instead of showing them", async () => {
     mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(["kb-1"]);
     mockCompilerService.ensureUserBrainRepo.mockResolvedValue({
       id: "repo-1",
@@ -552,15 +559,21 @@ describe("ChatService", () => {
     try {
       const stream$ = await service.handleChatStream("user-1", "测试问题", ["kb-1"]);
       const events = await lastValueFrom(stream$.pipe(toArray()));
-      
-      const traceEvents = events.filter((e) => (e.data as any).type === "trace" && (e.data as any).node.id === "citation_validation");
-      const finalTrace = traceEvents[traceEvents.length - 1];
-      
-      expect(finalTrace).toBeDefined();
-      expect((finalTrace.data as any).node.status).toBe("warning");
-      expect((finalTrace.data as any).node.summary).toContain("证据语义覆盖率偏低");
-      expect((finalTrace.data as any).node.details.semanticCoverage).toBeDefined();
-      expect((finalTrace.data as any).node.details.semanticCoverage.coverageRatio).toBeLessThan(0.5);
+
+      // Strict grounding gate: unsupported sentences are held and (with the
+      // entailment judge unavailable here) dropped — never shown to the user.
+      const deltas = events
+        .filter((e) => (e.data as any).type === "delta")
+        .map((e) => (e.data as any).content)
+        .join("");
+      expect(deltas).not.toContain("这里是未经引用的第一句话");
+      expect(deltas).not.toContain("这里是毫无关联的第二句话");
+
+      const gateEvents = events.filter((e) => (e.data as any).type === "trace" && (e.data as any).node.id === "grounding_gate");
+      const gate = gateEvents[gateEvents.length - 1];
+      expect(gate).toBeDefined();
+      expect((gate.data as any).node.status).toBe("warning");
+      expect((gate.data as any).node.details.dropped).toBeGreaterThanOrEqual(2);
     } finally {
       (global as any).fetch = originalFetch;
       delete process.env.DEEPSEEK_API_KEY;
