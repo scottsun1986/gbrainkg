@@ -264,6 +264,10 @@ export class ChatService {
       previewUrl: string | null;
     }>;
   }> {
+    // Same 403 semantics as the completions path: a requested scope outside
+    // the caller's visibility is a authorization error, not something to
+    // silently narrow (silent filtering hides misconfiguration from callers).
+    await this.assertRequestedScopeAuthorized(userId, requestedKbScope);
     const visibleKbs = await this.permissionService.getVisibleKnowledgeBases(userId);
     const parsedRequestedScope = Array.isArray(requestedKbScope)
       ? requestedKbScope
@@ -3492,6 +3496,14 @@ ${compiledTruthContext}`;
           if (citation.inventory && citation.kbId && visibleKbIds.includes(citation.kbId)) {
             return citation;
           }
+          // RAPTOR macro summaries (Level-2 KB-global nodes have documentId
+          // null by design) were retrieved with the caller's visible-KB scope,
+          // so KB-level membership IS their authorization boundary. Without
+          // this branch the permission guard deleted every Level-2 node and
+          // the global-recall arm contributed nothing to answers.
+          if (citation.raptor && citation.kbId && visibleKbIds.includes(citation.kbId)) {
+            return citation;
+          }
           return citation.slug && validDerived.has(citation.slug) ? citation : null;
         }
         const doc = allowed.get(citation.docId);
@@ -4230,6 +4242,9 @@ ${compiledTruthContext}`;
       this.semanticCacheService.store(
         question,
         null,
+        // userScope.fingerprint here IS the semanticCacheScopeKey hash: the
+        // processChat call site passes { fingerprint: cacheScopeKey }, so
+        // lookup and store share the same salted scope key.
         userScope.fingerprint,
         userScope.knowledgeEpoch,
         fullAnswer,

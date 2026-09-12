@@ -1836,7 +1836,8 @@ function ChatScreen(){
 
             const groups = [
               { label: '今天', items: filtered.filter((c) => c.createdAt && new Date(c.createdAt).getTime() >= startOfTodayMs) },
-              { label: '近 7 天', items: filtered.filter((c) => c.createdAt && new Date(c.createdAt).getTime() < startOfTodayMs && new Date(c.createdAt).getTime() >= sevenDaysAgoMs) },
+              { label: '昨天', items: filtered.filter((c) => c.createdAt && new Date(c.createdAt).getTime() < startOfTodayMs && new Date(c.createdAt).getTime() >= startOfTodayMs - 86400000) },
+              { label: '近 7 天', items: filtered.filter((c) => c.createdAt && new Date(c.createdAt).getTime() < startOfTodayMs - 86400000 && new Date(c.createdAt).getTime() >= sevenDaysAgoMs) },
               { label: '30 天内', items: filtered.filter((c) => c.createdAt && new Date(c.createdAt).getTime() < sevenDaysAgoMs && new Date(c.createdAt).getTime() >= thirtyDaysAgoMs) },
               { label: '更早', items: filtered.filter((c) => c.createdAt && new Date(c.createdAt).getTime() < thirtyDaysAgoMs) },
               { label: '未分类', items: filtered.filter((c) => !c.createdAt) },
@@ -1972,7 +1973,7 @@ function ChatScreen(){
                           <button onClick={shareConversation}><Icon name="share" size={12}/> 分享</button>
                           <button style={{marginLeft:'auto'}} onClick={()=>saveFeedback('useful')}><Icon name="check" size={12}/> 有用</button>
                         </div>
-                        {isLast && (
+                        {isLast && FOLLOWUPS.length > 0 && (
                           <div className="followup">
                             <h5>建议追问</h5>
                             <ul>

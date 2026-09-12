@@ -1,7 +1,7 @@
 declare const require: any;
 declare const process: any;
 
-const { mkdir, writeFile, access, rename, unlink, readdir, readFile } = require('node:fs').promises;
+const { mkdir, writeFile, access, rename, unlink, readdir, readFile, stat, rm } = require('node:fs').promises;
 const { join, dirname, resolve } = require('node:path');
 const { spawn } = require('node:child_process');
 
@@ -635,10 +635,43 @@ export class BrainRepoAdapter {
       const child = spawn('git', args, { cwd, stdio: 'ignore' });
       child.on('error', reject);
       child.on('close', (code: number) => code === 0 ? resolve() : reject(new Error(`git ${args.join(' ')} failed`)));
-    }).catch((err) => {
+    }).catch(async (err) => {
       if (args[0] === 'commit') return;
-      throw err;
+      // A crashed/killed git run leaves .git/index.lock behind forever; every
+      // subsequent add/commit in that repo then fails until manual cleanup
+      // (observed: Dream Cycle reporting permanent partial failures). When a
+      // lock is clearly stale — older than 10 minutes and no live git process
+      // holds it — remove it and retry once.
+      if (['add', 'commit', 'reset'].includes(args[0]) && String((err as Error)?.message || '').includes('failed')) {
+        if (await this.clearStaleIndexLock(cwd)) {
+          await new Promise<void>((resolve, reject) => {
+            const child = spawn('git', args, { cwd, stdio: 'ignore' });
+            child.on('error', reject);
+            child.on('close', (code: number) => code === 0 ? resolve() : reject(new Error(`git ${args.join(' ')} failed`)));
+          }).catch((retryErr) => {
+            if (args[0] !== 'commit') throw retryErr;
+          });
+          return;
+        }
+      }
+      if (args[0] !== 'commit') throw err;
     });
+  }
+
+  /** Remove a .git/index.lock that no live git run can still own. */
+  private async clearStaleIndexLock(repoPath: string): Promise<boolean> {
+    const lockPath = join(repoPath, '.git', 'index.lock');
+    try {
+      const st = await stat(lockPath);
+      const ageMs = Date.now() - st.mtimeMs;
+      const staleMs = Math.max(60_000, Number(process.env.GIT_STALE_LOCK_MS || 600_000));
+      if (ageMs < staleMs) return false;
+      await rm(lockPath);
+      console.warn(`[gbrain-adapter] Removed stale git index.lock (${Math.round(ageMs / 60000)}min old) in ${repoPath}`);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private async runGitOutput(args: string[], cwd: string): Promise<string> {
