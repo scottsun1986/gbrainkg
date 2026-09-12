@@ -17,7 +17,9 @@ describe('admin outbox transaction boundaries', () => {
   const controller = new AdminController(
     { canManageUser: async () => true, canGrantIndustryKb: async () => true } as any,
     { userIdFromRequest: async () => 'admin' } as any,
-    { queueAccessReconciliation } as any, {} as any, { dispatchPending } as any,
+    { queueAccessReconciliation } as any, {} as any,
+    { log: jest.fn().mockResolvedValue(undefined) } as any,
+    { dispatchPending } as any,
   );
   beforeEach(() => { jest.clearAllMocks(); mockTx.brainChangeEvent.create.mockReset(); });
 

@@ -3,12 +3,16 @@ import { getPrismaClient } from "../prisma";
 import { Throttle } from "@nestjs/throttler";
 import { AuthService } from "./auth.service";
 import { AuthGuard } from "./auth.guard";
+import { AuditService } from "../audit/audit.service";
 
 @Controller("api/v1/auth")
 export class AuthController {
   private readonly prisma = getPrismaClient();
 
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly auditService: AuditService,
+  ) {}
 
   @Throttle({
     default: {
@@ -17,11 +21,33 @@ export class AuthController {
     },
   })
   @Post("login")
-  login(@Body() body: { username?: string; password?: string }) {
-    return this.authService.login(
-      String(body.username || "").trim(),
-      String(body.password || ""),
-    );
+  async login(@Body() body: { username?: string; password?: string }) {
+    const username = String(body?.username || "").trim();
+    try {
+      const result = await this.authService.login(
+        username,
+        String(body?.password || ""),
+      );
+      this.auditService
+        .log({
+          userId: result.user.id,
+          action: "login",
+          resource: "auth",
+          details: { username },
+        })
+        .catch(() => undefined);
+      return result;
+    } catch (error) {
+      this.auditService
+        .log({
+          userId: username,
+          action: "login_failed",
+          resource: "auth",
+          details: { username },
+        })
+        .catch(() => undefined);
+      throw error;
+    }
   }
 
   @UseGuards(AuthGuard)

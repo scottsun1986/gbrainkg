@@ -49,7 +49,6 @@ export { Icon } from '@/components/common/Icon';
 let KNOWLEDGE_BASES: any[] = [];
 let CONVERSATIONS: any[] = [];
 let CITATIONS: any[] = [];
-let FOLLOWUPS: string[] = [];
 let DOCS: any[] = [];
 
 let ORG_TREE: any = null;
@@ -1075,7 +1074,7 @@ function ConfirmModal({title, msg, onConfirm, onClose}){
   );
 }
 
-function TopBar({title, sub, theme, onToggleTheme, onOpenPalette, onOpenHelp, onOpenNotifications, onToggleSidebar}){
+function TopBar({title, sub, theme, onToggleTheme, onOpenPalette, onOpenHelp, onToggleSidebar}){
   return (
     <div className="topbar">
       <button type="button" className="icon-btn sidebar-toggle-btn" onClick={onToggleSidebar} title="打开主菜单" aria-label="打开主菜单">
@@ -1090,7 +1089,6 @@ function TopBar({title, sub, theme, onToggleTheme, onOpenPalette, onOpenHelp, on
       </button>
       <div className="topbar-actions">
         <button className="icon-btn" title={theme==='dark'?'切换为亮色模式':'切换为暗色模式'} aria-label={theme==='dark'?'切换为亮色模式':'切换为暗色模式'} onClick={onToggleTheme}><Icon name={theme==='dark'?'sun':'moon'} size={16}/></button>
-        <button className="icon-btn" title="通知" onClick={onOpenNotifications}><Icon name="bell" size={16}/></button>
         <button className="icon-btn" title="快捷键与帮助 (?)" onClick={onOpenHelp}><Icon name="help" size={16}/></button>
       </div>
     </div>
@@ -1195,36 +1193,7 @@ function CommandPalette({open, onClose, onNav, onNewChat, onNewKb, onUpload, con
   );
 }
 
-/* ============== 通知面板 ============== */
-function NotificationsPanel({open, onClose}){
-  if (!open) return null;
-  const notifications = [
-    { id: 'n1', title: '欢迎使用百纳知识库', body: '上传文档 → 知识图谱会自动编译主题与关系。', when: '刚刚', icon: 'spark' },
-    { id: 'n2', title: '快捷键已启用', body: '按 ⌘K 打开命令面板；按 ? 查看所有快捷键。', when: '刚刚', icon: 'help' },
-  ];
-  return (
-    <div className="cmdk-mask" onClick={onClose}>
-      <div className="notif-panel" onClick={(e) => e.stopPropagation()}>
-        <div className="notif-head">
-          <h3>通知</h3>
-          <span className="x" onClick={onClose}>×</span>
-        </div>
-        <div className="notif-body">
-          {notifications.map((n) => (
-            <div key={n.id} className="notif-item">
-              <Icon name={n.icon} size={14} color="var(--evidence)"/>
-              <div>
-                <div className="notif-item-title">{n.title}</div>
-                <div className="notif-item-body">{n.body}</div>
-                <div className="notif-item-when">{n.when}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
+
 
 /* ============== 快捷键速查与使用手册浮层 ============== */
 function HelpOverlay({open, onClose}){
@@ -1686,7 +1655,6 @@ function ChatScreen(){
   };
 
   const copyAnswer = async (text) => { try { await navigator.clipboard.writeText(text); window.dispatchEvent(new CustomEvent('app-toast',{detail:'回答已复制'})); } catch { window.dispatchEvent(new CustomEvent('app-toast',{detail:'复制失败，请检查浏览器权限'})); } };
-  const shareConversation = async () => { const url = window.location.href; try { if (navigator.share) await navigator.share({title:'百纳对话',url}); else await navigator.clipboard.writeText(url); window.dispatchEvent(new CustomEvent('app-toast',{detail:navigator.share?'已打开分享面板':'会话链接已复制'})); } catch {} };
   const saveFeedback = async (feedback) => {
     if (!activeConv) return;
     try {
@@ -1970,20 +1938,9 @@ function ChatScreen(){
                         <div className="actions">
                           <button onClick={()=>copyAnswer(msg.text)}><Icon name="copy" size={12}/> 复制</button>
                           <button onClick={()=>send([...messages].reverse().find(item=>item.role==='user')?.text)}><Icon name="refresh" size={12}/> 重写</button>
-                          <button onClick={shareConversation}><Icon name="share" size={12}/> 分享</button>
                           <button style={{marginLeft:'auto'}} onClick={()=>saveFeedback('useful')}><Icon name="check" size={12}/> 有用</button>
                         </div>
-                        {isLast && FOLLOWUPS.length > 0 && (
-                          <div className="followup">
-                            <h5>建议追问</h5>
-                            <ul>
-                              {FOLLOWUPS.map((q,i)=>(
-                                <li key={i} onClick={()=>{setInput(q); focusInput();}}>→ {q}</li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-                      </>
+                                              </>
                     )}
                   </div>
                 </div>
@@ -6196,7 +6153,6 @@ function App(){
   const [graphOnlinePreview, setGraphOnlinePreview] = useState(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [notifOpen, setNotifOpen] = useState(false);
 
   useEffect(() => {
     if (window.location.pathname.startsWith('/admin')) setScreen('admin');
@@ -6306,7 +6262,6 @@ function App(){
           onToggleTheme={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')}
           onOpenPalette={() => setPaletteOpen(true)}
           onOpenHelp={() => { window.location.assign('/help'); }}
-          onOpenNotifications={() => setNotifOpen(true)}
           onToggleSidebar={() => setSidebarOpen(v => !v)}
         />
         <div className="content">
@@ -6349,7 +6304,6 @@ function App(){
         knowledgeBases={KNOWLEDGE_BASES}
       />
       <HelpOverlay open={helpOpen} onClose={() => setHelpOpen(false)}/>
-      <NotificationsPanel open={notifOpen} onClose={() => setNotifOpen(false)}/>
     </div>
   );
 }

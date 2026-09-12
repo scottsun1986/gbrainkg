@@ -20,6 +20,7 @@ import { AgenticRagService } from "./agentic-rag.service";
 import { RaptorService } from "../raptor/raptor.service";
 import { EmbeddingService } from "../embedding/embedding.service";
 import { buildDocumentPreviewUrl } from "../ingestion/preview-url";
+import { buildBm25Pool, bm25Scores } from "./lexical-bm25";
 
 type RetrievalRequest = { query: string; breadth: boolean; operation: 'search' | 'query' };
 
@@ -1193,6 +1194,18 @@ export class ChatService {
       });
       const isArticleCountQuery = /(?:一共|共有|总共|全部)?(?:有多少|几条|几章|哪些章节|全文结构).*(?:条|章|篇)/.test(query);
 
+      // Lexical channel scoring: local BM25 over the candidate pool (real
+      // IDF/TF/length normalisation) replaces the fixed per-keyword points.
+      // Structural boosts (第X条 anchors, title match, chapter listing) and
+      // the vector-similarity contribution stay as-is. Set
+      // LEXICAL_BM25=false to restore the legacy fixed scoring.
+      const useBm25 = process.env.LEXICAL_BM25 !== 'false';
+      const bm25Index = useBm25
+        ? buildBm25Pool(allFound.map((c: any) => ({ id: c.id, text: `${c.content || ''}\n${c.document?.title || ''}` })), keywords)
+        : null;
+      const bm25 = bm25Index ? bm25Scores(bm25Index) : null;
+      const bm25Scale = Number(process.env.LEXICAL_BM25_SCALE || 2.0);
+
       const scored = allFound.map((c: any) => {
         let score = 0;
         const text = (c.content || "").toLowerCase();
@@ -1211,19 +1224,31 @@ export class ChatService {
           score += 30.0;
         }
 
-        // Keywords scoring: differentiated weighting between primary user query keywords and expanded recall terms
-        for (const kw of keywords) {
-          const lowKw = kw.toLowerCase();
-          const isPrimary = primaryKeywords.has(kw);
-          const weightMultiplier = isPrimary ? 1.5 : 0.7;
-
-          if (/第[一二三四五六七八九十百0-9]+[章节条款]/.test(kw) && text.includes(lowKw)) {
-            score += 12.0 * weightMultiplier;
-          } else if (text.includes(lowKw)) {
-            score += (kw.length >= 4 ? 3.0 : 1.5) * weightMultiplier;
+        if (bm25) {
+          const lexical = bm25.get(c.id) || 0;
+          score += lexical * bm25Scale;
+          // Title affinity stays outside BM25: the document title is not part
+          // of the chunk text statistics.
+          for (const kw of keywords) {
+            if (docTitle.includes(kw.toLowerCase())) {
+              score += primaryKeywords.has(kw) ? 5.0 : 2.0;
+            }
           }
-          if (docTitle.includes(lowKw)) {
-            score += 5.0 * weightMultiplier;
+        } else {
+          // Keywords scoring: differentiated weighting between primary user query keywords and expanded recall terms
+          for (const kw of keywords) {
+            const lowKw = kw.toLowerCase();
+            const isPrimary = primaryKeywords.has(kw);
+            const weightMultiplier = isPrimary ? 1.5 : 0.7;
+
+            if (/第[一二三四五六七八九十百0-9]+[章节条款]/.test(kw) && text.includes(lowKw)) {
+              score += 12.0 * weightMultiplier;
+            } else if (text.includes(lowKw)) {
+              score += (kw.length >= 4 ? 3.0 : 1.5) * weightMultiplier;
+            }
+            if (docTitle.includes(lowKw)) {
+              score += 5.0 * weightMultiplier;
+            }
           }
         }
 
@@ -2339,6 +2364,40 @@ export class ChatService {
           }
         }
 
+        // CRAG-style corrective retry: deterministic retries missed, so ask
+        // the LLM once for alternative phrasings (synonyms / broader or more
+        // formal terms) and give them a final bounded attempt before the
+        // honest refusal.
+        if (!queryResult.citations?.length) {
+          trace.start("crag_rewrite_retry", "纠错式改写重试", "常规改写未命中，让模型给出替代检索措辞");
+          const retryQueries = await this.rewriteQueryForRetry(retrieval.query || question);
+          for (const qTry of retryQueries) {
+            if (queryResult.citations?.length) break;
+            const retryResult = refreshedRefs.length > 1
+              ? await this.gbrain.queryMany(refreshedRefs, qTry, {
+                  breadth: true,
+                  operation: "search",
+                  signal: gbrainAbort.signal,
+                })
+              : await this.gbrain.query(
+                  refreshedRefs[0] || brainRepo.gitRepoUrl,
+                  qTry,
+                  { breadth: true, operation: "search", signal: gbrainAbort.signal },
+                );
+            if (retryResult.citations?.length) {
+              queryResult = retryResult;
+            }
+          }
+          trace.finish(
+            "crag_rewrite_retry",
+            queryResult.citations?.length ? "success" : "warning",
+            queryResult.citations?.length
+              ? `改写重试命中 ${queryResult.citations.length} 个候选`
+              : "改写重试仍未命中，将诚实拒答",
+            { retryQueries },
+          );
+        }
+
         queryResult = await this.filterQueryResultByCurrentPermission(
           queryResult,
           scope,
@@ -3038,6 +3097,7 @@ ${compiledTruthContext}`;
       let promptCacheHitTokens = 0;
       let promptCacheMissTokens = 0;
       let citationTail = "";
+      let reasoningBuf = "";
       // Grounding gate (strict mode): each completed sentence is verified
       // against the evidence of the sources it cites BEFORE it is forwarded to
       // the client. Unsupported sentences are held back and re-checked by the
@@ -3127,8 +3187,9 @@ ${compiledTruthContext}`;
             if (line.startsWith("data: ") && line !== "data: [DONE]") {
               try {
                 const data = JSON.parse(line.slice(6));
-                const content = data.choices?.[0]?.delta?.content;
-                if (content) emitModelContent(String(content));
+                const delta = data.choices?.[0]?.delta || {};
+                if (delta.reasoning_content) reasoningBuf += String(delta.reasoning_content);
+                if (delta.content) emitModelContent(String(delta.content));
                 if (data.usage) {
                   if (typeof data.usage.prompt_cache_hit_tokens === "number") {
                     promptCacheHitTokens = data.usage.prompt_cache_hit_tokens;
@@ -3147,8 +3208,9 @@ ${compiledTruthContext}`;
       if (finalLine.startsWith("data: ") && finalLine !== "data: [DONE]") {
         try {
           const data = JSON.parse(finalLine.slice(6));
-          const content = data.choices?.[0]?.delta?.content;
-          if (content) emitModelContent(String(content));
+          const delta = data.choices?.[0]?.delta || {};
+          if (delta.reasoning_content) reasoningBuf += String(delta.reasoning_content);
+          if (delta.content) emitModelContent(String(delta.content));
           if (data.usage) {
             if (typeof data.usage.prompt_cache_hit_tokens === "number") {
               promptCacheHitTokens = data.usage.prompt_cache_hit_tokens;
@@ -3160,7 +3222,17 @@ ${compiledTruthContext}`;
         } catch (e) {}
       }
 
+      // Reasoning-model fallback: some models stream everything into
+      // reasoning_content and never emit content. An empty answer must not
+      // end the turn — degrade to the model's reasoning tail (the gate still
+      // applies) rather than showing "未返回正文".
       gateFlush();
+      if (!fullAnswer.trim() && reasoningBuf.trim()) {
+        this.logger.warn('LLM returned no content; falling back to reasoning_content tail.');
+        const tail = reasoningBuf.trim().split(/\n+/).filter(Boolean).slice(-8).join('\n');
+        gatePush(tail);
+        gateFlush();
+      }
       // Held sentences get one batched entailment review; anything the judge
       // cannot support from the evidence is dropped and never shown.
       if (heldSentences.length > 0) {
@@ -3962,6 +4034,52 @@ ${compiledTruthContext}`;
         ? "语义命中缺少可比较分数，需要扩检"
         : `${hasFallbackRerankScore ? "交叉编码" : "语义命中"}分数 ${topScore.toFixed(3)} 低于扩检门槛 ${scoreFloor.toFixed(3)}`,
     };
+  }
+
+  /**
+   * CRAG corrective step: one LLM call producing alternative search phrasings
+   * for a query that retrieved nothing (synonyms, broader terms, or the
+   * formal terminology a policy document would use). Returns at most 2
+   * queries; [] on any failure so callers fall through to honest refusal.
+   */
+  private async rewriteQueryForRetry(query: string): Promise<string[]> {
+    try {
+      const llmRequest = this.modelConfigService
+        ? await this.modelConfigService.getLlmChatConfig('llmwiki-retry-rewrite')
+        : null;
+      if (!llmRequest?.apiKey) return [];
+      const response = await fetch(`${llmRequest.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: llmRequest.headers,
+        body: JSON.stringify({
+          model: llmRequest.modelName,
+          messages: [
+            {
+              role: 'system',
+              content: '你是检索查询改写器。给定一个在知识库中检索不到任何结果的查询，给出 2 个替代检索措辞：同义词、更宽泛的上位词、或正式制度文档会使用的术语。只输出 JSON：{"queries":["...","..."]}',
+            },
+            { role: 'user', content: query },
+          ],
+          temperature: 0,
+          max_tokens: 600,
+          response_format: { type: 'json_object' },
+        }),
+        signal: AbortSignal.timeout(12000),
+      });
+      if (!response.ok) return [];
+      const payload: any = await response.json();
+      const message = payload?.choices?.[0]?.message || {};
+      let content = String(message.content || '').trim();
+      if (!content) content = String(message.reasoning_content || '').trim();
+      const parsed = JSON.parse((content.match(/\{[\s\S]*\}/) || [content])[0]);
+      return (Array.isArray(parsed?.queries) ? parsed.queries : [])
+        .map((q: any) => String(q || '').trim())
+        .filter((q: string) => q.length >= 2 && q.length <= 100)
+        .slice(0, 2);
+    } catch (err) {
+      this.logger.debug(`Retry rewrite unavailable: ${err instanceof Error ? err.message : String(err)}`);
+      return [];
+    }
   }
 
   /**

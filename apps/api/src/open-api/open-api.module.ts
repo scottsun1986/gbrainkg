@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { OpenApiController } from './open-api.controller';
 import { OpenApiGuard } from './open-api.guard';
+import { OpenApiRateLimitService } from './open-api-rate-limit.service';
 import { AuthModule } from '../auth/auth.module';
 import { ChatModule } from '../chat/chat.module';
 import { PermissionModule } from '../permission/permission.module';
@@ -16,7 +17,7 @@ import { IngestionModule } from '../ingestion/ingestion.module';
     IngestionModule,
   ],
   controllers: [OpenApiController],
-  providers: [OpenApiGuard],
+  providers: [OpenApiRateLimitService, OpenApiGuard],
   exports: [OpenApiGuard],
 })
 export class OpenApiModule {}

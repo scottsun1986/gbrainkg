@@ -109,10 +109,24 @@ export class BrainScopeService {
    */
   async invalidateUserScope(userId: string): Promise<void> {
     const db: any = this.prisma;
+    // 先取用户所在 Scope 再删除成员关系：语义缓存键嵌入了 aclEpoch，
+    // 权限变更后必须 bump 这些 Scope 的 epoch，旧 ACL 下缓存的答案才会失效。
+    const memberships = await db.brainScopeMember.findMany({
+      where: { userId },
+      select: { scopeId: true },
+    });
     await db.brainScopeMember.deleteMany({
       where: { userId },
     });
-    this.logger.log(`Invalidated BrainScope membership for user ${userId}.`);
+    for (const { scopeId } of memberships) {
+      await db.brainScope.updateMany({
+        where: { id: scopeId },
+        data: { aclEpoch: { increment: 1 }, status: 'dirty' },
+      }).catch(() => undefined);
+    }
+    this.logger.log(
+      `Invalidated BrainScope membership for user ${userId} (${memberships.length} scope epoch(s) bumped).`,
+    );
   }
 
   /**

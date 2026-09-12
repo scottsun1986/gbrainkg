@@ -4,7 +4,9 @@ import {
   Controller,
   Delete,
   ForbiddenException,
+  Logger,
   NotFoundException,
+  Optional,
   Param,
   Post,
   Req,
@@ -21,6 +23,7 @@ import { PermissionService } from "../permission/permission.service";
 import { AuthService } from "../auth/auth.service";
 import { BrainCompilerService } from "../brain-compiler/brain-compiler.service";
 import { AuthGuard } from "../auth/auth.guard";
+import { GraphRagService } from "../graph-rag/graph-rag.service";
 import { IngestionService } from "./ingestion.service";
 
 function normalizeUploadFilename(value: unknown): string {
@@ -55,6 +58,7 @@ function isUuid(value: string): boolean {
 @UseGuards(AuthGuard)
 @Controller("api/v1/kbs")
 export class IngestionController {
+  private readonly logger = new Logger(IngestionController.name);
   private readonly prisma = getPrismaClient();
   private readonly uploadRoot =
     process.env.UPLOAD_ROOT || "/tmp/llmwiki/uploads";
@@ -64,6 +68,7 @@ export class IngestionController {
     private readonly authService: AuthService,
     private readonly compilerService: BrainCompilerService,
     private readonly ingestionService: IngestionService,
+    @Optional() private readonly graphRagService?: GraphRagService,
   ) {}
 
   @Post(":kbId/documents")
@@ -300,6 +305,19 @@ export class IngestionController {
     if (!document) throw new NotFoundException("Document not found.");
     await this.compilerService.onKnowledgeDeleted(kbId, docId);
     await this.prisma.document.delete({ where: { id: docId } });
+    // Fire-and-forget graph cleanup: prune relations/entities contributed by
+    // the deleted document (the method itself is idempotent and swallows its
+    // own errors; the catch below only guards against unexpected rejections).
+    // Must never block or fail the deletion main flow.
+    this.graphRagService
+      ?.removeDocumentFromGraph(kbId, docId)
+      .catch((err: unknown) => {
+        this.logger.warn(
+          `Post-delete graph cleanup failed for document ${docId} in KB ${kbId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      });
     if (document.rawFileOid)
       await unlink(document.rawFileOid).catch(() => undefined);
     await unlink(join(this.uploadRoot, docId, "content.md")).catch(

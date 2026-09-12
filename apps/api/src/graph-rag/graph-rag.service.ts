@@ -560,6 +560,79 @@ ${chunkContent.slice(0, 4000)}
   }
 
   /**
+   * Removes graph elements contributed by a deleted/archived document so the
+   * graph does not keep stale metadata. Two-phase cleanup:
+   *   1. Delete every relation whose provenance (JSONB array of
+   *      [{ documentId, documentVersion, chunkId, snippet }]) cites the
+   *      document.
+   *   2. Delete entities that are no longer referenced by any relation (no
+   *      outgoing and no incoming edges), or whose own provenance
+   *      (properties.docIds — the documents that contributed the entity)
+   *      exclusively cites documents that are gone.
+   * Idempotent: re-running for the same document removes nothing. All errors
+   * are logged and swallowed so graph cleanup never breaks its caller.
+   */
+  async removeDocumentFromGraph(
+    kbId: string,
+    documentId: string,
+  ): Promise<{ relationsRemoved: number; entitiesRemoved: number }> {
+    const result = { relationsRemoved: 0, entitiesRemoved: 0 };
+    try {
+      // Phase 1 — relations. "provenance" is a JSONB column (migration
+      // 20260907135700_add_graph_tables); the @> containment operator matches
+      // whenever any provenance element carries the deleted documentId.
+      result.relationsRemoved = await (this.prisma as any).$executeRaw`
+        DELETE FROM "GraphRelation"
+        WHERE "kbId" = ${kbId}::uuid
+          AND "provenance" @> ${JSON.stringify([{ documentId }])}::jsonb
+      `;
+
+      // Phase 2 — entities. Must run strictly after phase 1 so orphan
+      // detection sees the post-cleanup edge set.
+      result.entitiesRemoved = await (this.prisma as any).$executeRaw`
+        DELETE FROM "GraphEntity" AS e
+        WHERE e."kbId" = ${kbId}::uuid
+          AND (
+            -- Orphans: no outgoing and no incoming relation left.
+            NOT EXISTS (
+              SELECT 1 FROM "GraphRelation" AS r
+              WHERE r."sourceId" = e."id" OR r."targetId" = e."id"
+            )
+            OR (
+              -- Entities whose provenance (properties.docIds) cites only the
+              -- deleted document. The trailing edge check guards against
+              -- cascade-deleting relations contributed by other documents
+              -- (relation FKs are ON DELETE CASCADE).
+              jsonb_typeof(e."properties" -> 'docIds') = 'array'
+              AND jsonb_array_length(e."properties" -> 'docIds') > 0
+              AND NOT EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements_text(e."properties" -> 'docIds') AS d(docId)
+                WHERE d.docId <> ${documentId}
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM "GraphRelation" AS r
+                WHERE r."sourceId" = e."id" OR r."targetId" = e."id"
+              )
+            )
+          )
+      `;
+
+      if (result.relationsRemoved || result.entitiesRemoved) {
+        this.logger.log(
+          `Graph cleanup for document ${documentId} in KB ${kbId}: removed ${result.relationsRemoved} relation(s), ${result.entitiesRemoved} entity(ies).`,
+        );
+      }
+      return result;
+    } catch (err) {
+      this.logger.warn(
+        `Graph cleanup failed for document ${documentId} in KB ${kbId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return result;
+    }
+  }
+
+  /**
    * Builds communities and global summaries for a Knowledge Base (WeKnora GraphRAG Global Search).
    */
   async buildCommunitiesForKb(kbId: string): Promise<number> {

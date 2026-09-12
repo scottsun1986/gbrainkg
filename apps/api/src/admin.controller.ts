@@ -26,6 +26,7 @@ import {
 } from "./model-credential";
 
 import { BrainOutboxService } from "./brain-compiler/brain-outbox.service";
+import { AuditService } from "./audit/audit.service";
 import { ChunkEmbeddingService } from "./embedding/chunk-embedding.service";
 import { execSync } from "node:child_process";
 import { InjectQueue } from "@nestjs/bullmq";
@@ -77,6 +78,7 @@ export class AdminController {
     private readonly authService: AuthService,
     private readonly brainCompilerService: BrainCompilerService,
     private readonly modelConfigService: ModelConfigService,
+    private readonly auditService: AuditService,
     private readonly brainOutboxService?: BrainOutboxService,
     private readonly chunkEmbeddingService?: ChunkEmbeddingService,
     @Optional() @InjectQueue("enrichment-queue") private readonly enrichmentQueue?: Queue,
@@ -294,6 +296,12 @@ export class AdminController {
           take: auditWindow,
         }),
       ]);
+    const recentAuditLogs = canReadAudit
+      ? await this.prisma.auditLog.findMany({
+          orderBy: { createdAt: "desc" },
+          take: 50,
+        })
+      : [];
     const safeProviders = (isSystemAdmin ? providers : []).map(
       ({ apiKeyEncrypted, secretKeyEncrypted, ...provider }) => ({
         ...provider,
@@ -410,6 +418,18 @@ export class AdminController {
             action: `为「${grant.kb.name}」新增 ${grant.subjectType} 授权`,
             actor: grant.grantedById,
             source: grant.kb.name,
+          }))
+        : []),
+      ...(canReadAudit
+        ? recentAuditLogs.map((entry) => ({
+            id: `auditlog-${entry.id}`,
+            when: entry.createdAt,
+            action: entry.action,
+            actor:
+              entry.userId ||
+              (entry.details as any)?.attemptedIdentity ||
+              "系统",
+            source: entry.resource || "",
           }))
         : []),
     ]
@@ -1515,6 +1535,22 @@ export class AdminController {
         },
       });
     });
+    if (data.status && data.status !== exists.status) {
+      this.auditService
+        .log({
+          userId: operatorId,
+          action: data.status === "disabled" ? "user.disable" : "user.enable",
+          resource: "user",
+          resourceId: id,
+          details: {
+            targetUserId: id,
+            username: user?.username,
+            from: exists.status,
+            to: data.status,
+          },
+        })
+        .catch(() => undefined);
+    }
     await this.brainOutboxService?.dispatchPending();
     await this.scheduleAccessReconciliation();
     return { user };
@@ -1535,6 +1571,19 @@ export class AdminController {
       } });
       return updated;
     });
+    this.auditService
+      .log({
+        userId: operatorId,
+        action: "user.disable",
+        resource: "user",
+        resourceId: id,
+        details: {
+          targetUserId: id,
+          username: user.username,
+          displayName: user.displayName,
+        },
+      })
+      .catch(() => undefined);
     await this.brainOutboxService?.dispatchPending();
     await this.scheduleAccessReconciliation();
     return { user };
@@ -1707,7 +1756,7 @@ export class AdminController {
     const userId = await this.authService.userIdFromRequest(req);
     const kb = await this.prisma.knowledgeBase.findUnique({
       where: { id },
-      select: { id: true, type: true, ownerUserId: true },
+      select: { id: true, name: true, type: true, ownerUserId: true },
     });
     if (!kb) throw new NotFoundException("Knowledge base not found.");
     const allowed =
@@ -1725,6 +1774,15 @@ export class AdminController {
       where: { id },
       data: { status: "archived" },
     });
+    this.auditService
+      .log({
+        userId,
+        action: "kb.delete",
+        resource: "knowledge_base",
+        resourceId: id,
+        details: { kbId: id, kbName: kb.name, kbType: kb.type },
+      })
+      .catch(() => undefined);
     await this.scheduleAccessReconciliation();
     return { knowledgeBase };
   }
@@ -1783,7 +1841,7 @@ export class AdminController {
       throw new BadRequestException("Invalid grant.");
     const kb = await this.prisma.knowledgeBase.findUnique({
       where: { id: kbId },
-      select: { id: true, type: true, status: true },
+      select: { id: true, name: true, type: true, status: true },
     });
     if (!kb || kb.type !== "industry" || kb.status !== "active")
       throw new NotFoundException("Industry knowledge base not found.");
@@ -1836,6 +1894,21 @@ export class AdminController {
     } });
     return created;
     });
+    this.auditService
+      .log({
+        userId: grantedById,
+        action: "grant.create",
+        resource: "knowledge_base",
+        resourceId: kbId,
+        details: {
+          kbId,
+          kbName: kb?.name,
+          subjectType,
+          subjectId,
+          grantId: grant.id,
+        },
+      })
+      .catch(() => undefined);
     await this.brainOutboxService?.dispatchPending();
     await this.scheduleAccessReconciliation();
     return { grant };
@@ -1860,6 +1933,15 @@ export class AdminController {
         payload: { grantId: id }, status: 'pending',
       } });
     });
+    this.auditService
+      .log({
+        userId,
+        action: "grant.revoke",
+        resource: "knowledge_base",
+        resourceId: grant.kbId,
+        details: { grantId: id, kbId: grant.kbId },
+      })
+      .catch(() => undefined);
     await this.brainOutboxService?.dispatchPending();
     await this.scheduleAccessReconciliation();
     return { ok: true };
@@ -1874,7 +1956,7 @@ export class AdminController {
 
   @Post("providers")
   async createProvider(@Req() req: any, @Body() body: any) {
-    await this.authService.adminUserIdFromRequest(req);
+    const operatorId = await this.authService.adminUserIdFromRequest(req);
     const name = String(body?.name || "").trim();
     const baseUrl = normalizeServiceBaseUrl(body?.baseUrl);
     if (!name || !baseUrl)
@@ -1893,6 +1975,22 @@ export class AdminController {
         defaultParams: body?.defaultParams || undefined,
       },
     });
+    this.auditService
+      .log({
+        userId: operatorId,
+        action: "model.upsert",
+        resource: "model_provider",
+        resourceId: provider.id,
+        details: {
+          providerId: provider.id,
+          name: provider.name,
+          kind: provider.kind,
+          baseUrl: provider.baseUrl,
+          hasApiKey: Boolean(body?.apiKey),
+          hasSecretKey: Boolean(body?.secretKey),
+        },
+      })
+      .catch(() => undefined);
     await this.modelConfigService.applyRuntimeConfig(true);
     const {
       apiKeyEncrypted,
@@ -1931,7 +2029,7 @@ export class AdminController {
     @Param("id") id: string,
     @Body() body: any,
   ) {
-    await this.authService.adminUserIdFromRequest(req);
+    const operatorId = await this.authService.adminUserIdFromRequest(req);
     const provider = await this.prisma.modelProvider.findUnique({
       where: { id },
       include: { configs: { select: { kind: true } } },
@@ -1957,6 +2055,22 @@ export class AdminController {
         defaultParams: nextParams,
       },
     });
+    this.auditService
+      .log({
+        userId: operatorId,
+        action: "model.upsert",
+        resource: "model_provider",
+        resourceId: id,
+        details: {
+          providerId: id,
+          name: updated.name,
+          kind: updated.kind,
+          baseUrl: updated.baseUrl,
+          apiKeyRotated: Boolean(body?.apiKey),
+          secretKeyRotated: Boolean(body?.secretKey),
+        },
+      })
+      .catch(() => undefined);
     await this.modelConfigService.applyRuntimeConfig(true);
     const {
       apiKeyEncrypted,
@@ -1976,7 +2090,7 @@ export class AdminController {
 
   @Post("models")
   async createModel(@Req() req: any, @Body() body: any) {
-    await this.authService.adminUserIdFromRequest(req);
+    const operatorId = await this.authService.adminUserIdFromRequest(req);
     const providerId = String(body?.providerId || "");
     const modelName = String(body?.modelName || "").trim();
     if (!providerId || !modelName)
@@ -2004,6 +2118,21 @@ export class AdminController {
         },
       });
     });
+    this.auditService
+      .log({
+        userId: operatorId,
+        action: "model.upsert",
+        resource: "model_config",
+        resourceId: model.id,
+        details: {
+          modelId: model.id,
+          modelName,
+          providerId,
+          kind,
+          isDefault: Boolean(body?.isDefault),
+        },
+      })
+      .catch(() => undefined);
     await this.modelConfigService.applyRuntimeConfig(true);
     return { model };
   }
@@ -2014,7 +2143,7 @@ export class AdminController {
     @Param("id") id: string,
     @Body() body: any,
   ) {
-    await this.authService.adminUserIdFromRequest(req);
+    const operatorId = await this.authService.adminUserIdFromRequest(req);
     const existing = await this.prisma.modelConfig.findUnique({
       where: { id },
     });
@@ -2048,6 +2177,21 @@ export class AdminController {
         },
       });
     });
+    this.auditService
+      .log({
+        userId: operatorId,
+        action: "model.upsert",
+        resource: "model_config",
+        resourceId: id,
+        details: {
+          modelId: id,
+          modelName: model.modelName,
+          providerId,
+          kind,
+          isDefault: model.isDefault,
+        },
+      })
+      .catch(() => undefined);
     await this.modelConfigService.applyRuntimeConfig(true);
     return { model };
   }

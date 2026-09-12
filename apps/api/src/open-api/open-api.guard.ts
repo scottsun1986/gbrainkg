@@ -1,11 +1,13 @@
 import {
   CanActivate,
   ExecutionContext,
+  HttpException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
 import { UserCredentialService } from '../auth/user-credential.service';
 import { AuthService } from '../auth/auth.service';
+import { OpenApiRateLimitService } from './open-api-rate-limit.service';
 import { getPrismaClient } from '../prisma';
 
 @Injectable()
@@ -15,6 +17,7 @@ export class OpenApiGuard implements CanActivate {
   constructor(
     private readonly userCredentialService: UserCredentialService,
     private readonly authService: AuthService,
+    private readonly rateLimitService: OpenApiRateLimitService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -51,6 +54,24 @@ export class OpenApiGuard implements CanActivate {
       }
       request.user = verified.user;
       request.credential = verified.credential;
+
+      // 凭证级限流：仅在鉴权成功后按 appId 计数（凭证路径是对外的开放 API 入口）。
+      // Bearer JWT 会话路径为内部登录用户复用通道，不做限流——这是侵入最小、
+      // 语义最清晰的方案（会话用户已受全局 ThrottlerGuard 的 IP 级限流约束）。
+      const rate = this.rateLimitService.check(String(appId).trim());
+      if (!rate.allowed) {
+        const response = context.switchToHttp().getResponse();
+        response.setHeader?.('Retry-After', String(rate.retryAfterSec));
+        throw new HttpException(
+          {
+            code: 429,
+            msg: `请求过于频繁：该 AppId 每分钟最多 ${this.rateLimitService.limitPerMinute} 次请求，请在 ${rate.retryAfterSec} 秒后重试`,
+            data: null,
+          },
+          429,
+        );
+      }
+
       return true;
     }
 
