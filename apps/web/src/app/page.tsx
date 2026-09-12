@@ -6273,7 +6273,7 @@ function App(){
             <LibrariesScreen initialKbId={libraryKbId} capabilities={CAPABILITIES} onManageGrant={(kb)=>{setAdminTab('grant'); setScreen('admin');}}/>
           </div>
           <div style={{display: visibleScreen==='graph'?'flex':'none', flex:1, minWidth:0}}>
-            <KnowledgeGraphScreen onOpenDocument={openGraphDocument} onOpenKb={openGraphKb}/>
+            <KnowledgeGraphScreen active={visibleScreen==='graph'} onOpenDocument={openGraphDocument} onOpenKb={openGraphKb}/>
           </div>
           <div style={{display: visibleScreen==='personal_settings'?'flex':'none', flex:1, minWidth:0, overflowY:'auto'}}>
             <PersonalSettingsScreen user={currentUser} apiBaseUrl={API_BASE_URL} apiHeaders={apiHeaders} onNotify={(msg) => setToast({ text: msg, undo: null })}/>

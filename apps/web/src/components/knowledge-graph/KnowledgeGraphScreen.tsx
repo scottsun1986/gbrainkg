@@ -80,7 +80,7 @@ export function runForceLayout(nodes: any[], edges: any[], options?: any) {
   return nodes.map((n, i) => ({ ...n, x: pos[i].x, y: pos[i].y }));
 }
 
-export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb }: any){
+export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
   const [graph, setGraph] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -99,7 +99,13 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb }: any){
   const panRef = useRef<any>(null);
   const [canvasSize, setCanvasSize] = useState({ w: 1100, h: 720 });
 
+  // 多屏常驻挂载下 display:none 也 mounted；图谱构建是重接口（冷调用秒级），
+  // 必须等首次可见再拉取，避免拖慢其它页面。
+  const [hasBeenActive, setHasBeenActive] = useState(false);
+  useEffect(() => { if (active) setHasBeenActive(true); }, [active]);
+
   useEffect(() => {
+    if (!hasBeenActive) return;
     let active = true;
     setLoading(true);
     fetch(`${API_BASE_URL}/api/v1/knowledge-graph`, {headers: apiHeaders()})
