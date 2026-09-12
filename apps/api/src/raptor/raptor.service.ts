@@ -85,7 +85,10 @@ export class RaptorService {
         version: true,
         chunks: {
           orderBy: { ord: 'asc' },
-          take: Math.max(20, Number(process.env.RAPTOR_MAX_CHUNKS || 300)),
+          // Whole-document coverage: the cap is a runaway guard, not a content
+          // window. The previous default of 300 meant a 2600-chunk document
+          // had its tail silently excluded from every summary level.
+          take: Math.max(20, Number(process.env.RAPTOR_MAX_CHUNKS || 5000)),
           select: { id: true, ord: true, content: true, metadata: true },
         },
       },
@@ -93,10 +96,20 @@ export class RaptorService {
     if (!document || !document.chunks?.length) return { nodes: 0 };
 
     const llm = await this.llmConfig();
-    // Bound the number of summary groups: a 2600-paragraph document would
-    // otherwise trigger thousands of sequential LLM calls and stall the queue.
-    const maxGroups = Math.max(1, Number(process.env.RAPTOR_MAX_GROUPS || 12));
-    const groups = (await this.clusterChunks(document.chunks)).slice(0, maxGroups);
+    // Windowed clustering: k-means over thousands of chunks at once both costs
+    // a huge embedding batch and collapses the tree into 8 generic clusters.
+    // Windows keep each clustering run bounded while still covering every
+    // chunk of the document (windows are contiguous in ord order).
+    const windowSize = Math.max(50, Number(process.env.RAPTOR_CLUSTER_WINDOW || 250));
+    const windows: Array<typeof document.chunks> = [];
+    for (let i = 0; i < document.chunks.length; i += windowSize) {
+      windows.push(document.chunks.slice(i, i + windowSize));
+    }
+    const clusteredWindows = await Promise.all(windows.map((w) => this.clusterChunks(w)));
+    // Bound the number of summary groups per window: a 2600-paragraph
+    // document would otherwise trigger thousands of sequential LLM calls.
+    const perWindowGroups = Math.max(1, Number(process.env.RAPTOR_MAX_GROUPS_PER_WINDOW || 6));
+    const groups = clusteredWindows.flatMap((g) => g.slice(0, perWindowGroups));
     const modelVersion = llm ? llm.modelName : 'extractive-v1';
     const sectionNodes: Array<{ title: string; content: string; chunkIds: string[]; clusterKey: string }> = [];
 
@@ -105,9 +118,15 @@ export class RaptorService {
       sectionNodes.push({ title: group.title, content: summary, chunkIds: group.chunkIds, clusterKey: group.clusterKey });
     }
 
+    // Document panorama assembles from EVERY group summary (not a truncated
+    // prefix), so the level-1 node reflects the whole document including its
+    // tail sections.
+    const panoramaSource = sectionNodes
+      .map((n) => `【${n.title}】${n.content.slice(0, 600)}`)
+      .join('\n\n');
     const docSummary = await this.summarize(
       `文档《${document.title}》全景`,
-      groups.map((g) => `【${g.title}】${g.text.slice(0, 800)}`).join('\n\n').slice(0, this.maxSourceChars),
+      panoramaSource.slice(0, this.maxSourceChars * 2),
       llm,
     );
 
@@ -133,11 +152,22 @@ export class RaptorService {
             title: `${document.title} · 全文摘要`,
             content: docSummary,
             sourceChunkIds: document.chunks.map((c: any) => c.id),
-            metadata: { clusterKey: 'document', modelVersion, tokenCount: estimateTokens(docSummary) },
+            metadata: {
+              clusterKey: 'document',
+              modelVersion,
+              tokenCount: estimateTokens(docSummary),
+              coveredChunkCount: document.chunks.length,
+            },
           },
         ],
       }),
     ]);
+    // Vectorize the fresh summary nodes so search() can use cosine recall
+    // instead of keyword containment. Fail-open: keyword search keeps working
+    // when the embedding provider is unavailable.
+    await this.embedNodesForDocument(documentId).catch((err) => {
+      this.logger.warn(`RAPTOR node embedding failed for ${documentId}: ${err instanceof Error ? err.message : String(err)}`);
+    });
 
     const nodes = sectionNodes.length + 1;
     this.logger.log(`RAPTOR indexed ${nodes} summary nodes for document ${documentId}.`);
@@ -252,10 +282,11 @@ export class RaptorService {
     }
   }
 
-  /** Keyword search over summary nodes, scoped to the caller's visible KBs. */
   /** Keyword & macro search over summary nodes, scoped to visible KBs. */
   async search(kbIds: string[], query: string, limit = 5): Promise<RaptorSearchHit[]> {
     if (!this.isEnabled() || !kbIds.length) return [];
+    const vectorHits = await this.vectorSearch(kbIds, query, limit, undefined);
+    if (vectorHits.length > 0) return vectorHits;
     const keywords = this.keywords(query);
     if (!keywords.length) return [];
     try {
@@ -303,6 +334,8 @@ export class RaptorService {
    */
   async searchGlobal(kbIds: string[], query: string, limit = 5): Promise<RaptorSearchHit[]> {
     if (!this.isEnabled() || !kbIds.length) return [];
+    const vectorHits = await this.vectorSearch(kbIds, query, limit, [1, 2]);
+    if (vectorHits.length > 0) return vectorHits;
     const keywords = this.keywords(query);
     try {
       const nodes = await (this.prisma as any).raptorNode.findMany({
@@ -412,7 +445,7 @@ export class RaptorService {
       }
 
       const title = '全库业务架构与制度演进全景';
-      await (this.prisma as any).$transaction([
+      const [, createdGlobal] = await (this.prisma as any).$transaction([
         (this.prisma as any).raptorNode.deleteMany({ where: { kbId, level: 2 } }),
         (this.prisma as any).raptorNode.create({
           data: {
@@ -433,6 +466,17 @@ export class RaptorService {
       ]);
 
       this.logger.log(`RAPTOR built Level 2 KB global tree for KB ${kbId} (covered ${docNodes.length} docs).`);
+      if (this.embeddingService?.isEnabled() && createdGlobal?.id) {
+        const globalVector = await this.embeddingService
+          .embedOne(`${createdGlobal.title}\n${String(createdGlobal.content || '').slice(0, 4000)}`)
+          .catch(() => null);
+        if (globalVector) {
+          await (this.prisma as any).$executeRaw`
+            UPDATE "RaptorNode" SET embedding = ${`[${globalVector.join(',')}]`}::vector
+            WHERE id = ${createdGlobal.id}::uuid
+          `.catch(() => undefined);
+        }
+      }
       return { nodes: 1 };
     } catch (err) {
       this.logger.warn(`RAPTOR buildKbGlobalTree failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -797,6 +841,131 @@ export class RaptorService {
     const resolved = await this.modelConfigService?.getLlmChatConfig('llmwiki-raptor');
     if (!resolved) return null;
     return { baseUrl: resolved.baseUrl, modelName: resolved.modelName, headers: resolved.headers };
+  }
+
+  /**
+   * Cosine recall over RaptorNode.embedding (level filter optional). Returns
+   * [] when the embedding route is unavailable or no node is embedded yet, so
+   * callers fall back to the keyword path unchanged.
+   */
+  private async vectorSearch(
+    kbIds: string[],
+    query: string,
+    limit: number,
+    levels?: number[],
+  ): Promise<RaptorSearchHit[]> {
+    if (!this.embeddingService?.isEnabled() || !kbIds.length) return [];
+    try {
+      const vector = await this.embeddingService.embedOne(query);
+      if (!vector || !vector.length) return [];
+      const literal = `[${vector.join(',')}]`;
+      const rows = levels
+        ? await (this.prisma as any).$queryRaw<any[]>`
+            SELECT id, "kbId", "documentId", level, title, content,
+                   1 - (embedding <=> ${literal}::vector) AS similarity
+            FROM "RaptorNode"
+            WHERE "kbId" = ANY(${kbIds}::uuid[])
+              AND embedding IS NOT NULL
+              AND level = ANY(${levels}::int[])
+            ORDER BY embedding <=> ${literal}::vector
+            LIMIT ${Math.max(limit * 2, 8)}
+          `
+        : await (this.prisma as any).$queryRaw<any[]>`
+            SELECT id, "kbId", "documentId", level, title, content,
+                   1 - (embedding <=> ${literal}::vector) AS similarity
+            FROM "RaptorNode"
+            WHERE "kbId" = ANY(${kbIds}::uuid[])
+              AND embedding IS NOT NULL
+            ORDER BY embedding <=> ${literal}::vector
+            LIMIT ${Math.max(limit * 2, 8)}
+          `;
+      const hits = (rows || [])
+        .filter((row) => Number(row.similarity) >= Number(process.env.RAPTOR_VECTOR_MIN_SCORE || 0.30))
+        .slice(0, limit)
+        .map((row, index) => ({
+          documentId: row.documentId,
+          kbId: row.kbId,
+          title: row.title,
+          evidence: `【宏观摘要 · ${row.level === 2 ? '全库演进全景' : row.level === 1 ? '全文' : '章节'}】${row.title}\n${row.content}`,
+          score: Math.max(0.75, Math.min(0.98, Number(row.similarity) - index * 0.01)),
+          previewUrl: row.documentId ? buildDocumentPreviewUrl(row.kbId, row.documentId) : null,
+          level: row.level,
+          raptor: true as const,
+          section: row.level === 2 ? 'raptor-level2-global' : row.level === 1 ? 'raptor-level1' : 'raptor-level0',
+        }));
+      if (hits.length === 0) {
+        // Nodes written before the embedding column existed (or with the
+        // provider down) would pin this KB to keyword-only recall forever;
+        // self-heal in the background.
+        void this.backfillNodeEmbeddings(kbIds[0]);
+      }
+      return hits;
+    } catch (err) {
+      this.logger.debug(`RAPTOR vector search unavailable: ${err instanceof Error ? err.message : String(err)}`);
+      return [];
+    }
+  }
+
+  /** Embed all summary nodes of a document and persist the vectors. */
+  private async embedNodesForDocument(documentId: string): Promise<number> {
+    if (!this.embeddingService?.isEnabled()) return 0;
+    const nodes = await (this.prisma as any).$queryRaw<any[]>`
+      SELECT id, title, content FROM "RaptorNode"
+      WHERE "documentId" = ${documentId}::uuid AND embedding IS NULL
+    `;
+    if (!nodes?.length) return 0;
+    const vectors = await this.embeddingService.embed(nodes.map((n: any) => `${n.title}\n${String(n.content || '').slice(0, 4000)}`));
+    let written = 0;
+    for (let i = 0; i < nodes.length; i++) {
+      const vector = vectors[i];
+      if (!vector) continue;
+      await (this.prisma as any).$executeRaw`
+        UPDATE "RaptorNode" SET embedding = ${`[${vector.join(',')}]`}::vector
+        WHERE id = ${nodes[i].id}::uuid
+      `;
+      written++;
+    }
+    return written;
+  }
+
+  private readonly backfillInFlight = new Set<string>();
+
+  /**
+   * Lazy self-healing: nodes written before the embedding column existed have
+   * no vectors, which would silently pin the KB to keyword-only recall. On a
+   * vector-miss we backfill the KB's missing embeddings in the background
+   * (bounded batches, deduplicated per KB).
+   */
+  private async backfillNodeEmbeddings(kbId: string): Promise<void> {
+    if (!this.embeddingService?.isEnabled() || this.backfillInFlight.has(kbId)) return;
+    this.backfillInFlight.add(kbId);
+    try {
+      for (let round = 0; round < 20; round++) {
+        const nodes = await (this.prisma as any).$queryRaw<any[]>`
+          SELECT id, title, content FROM "RaptorNode"
+          WHERE "kbId" = ${kbId}::uuid AND embedding IS NULL
+          LIMIT 100
+        `;
+        if (!nodes?.length) return;
+        const vectors = await this.embeddingService.embed(nodes.map((n: any) => `${n.title}\n${String(n.content || '').slice(0, 4000)}`));
+        let written = 0;
+        for (let i = 0; i < nodes.length; i++) {
+          const vector = vectors[i];
+          if (!vector) continue;
+          await (this.prisma as any).$executeRaw`
+            UPDATE "RaptorNode" SET embedding = ${`[${vector.join(',')}]`}::vector
+            WHERE id = ${nodes[i].id}::uuid
+          `;
+          written++;
+        }
+        if (written === 0) return;
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+    } catch (err) {
+      this.logger.debug(`RAPTOR embedding backfill stopped for KB ${kbId}: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      this.backfillInFlight.delete(kbId);
+    }
   }
 
   private keywords(query: string): string[] {

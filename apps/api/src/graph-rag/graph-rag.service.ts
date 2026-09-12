@@ -1,5 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { getPrismaClient } from '../prisma';
+import { EmbeddingService } from '../embedding/embedding.service';
 
 export type EntityType = 'concept' | 'organization' | 'system' | 'policy' | 'document';
 export type RelationType = 'contains' | 'references' | 'regulates' | 'depends_on' | 'relates_to' | 'mentions' | 'supersedes' | 'amends';
@@ -58,6 +59,8 @@ function cleanLabel(value: string): string {
 export class GraphRagService {
   private readonly logger = new Logger(GraphRagService.name);
   private prisma = getPrismaClient();
+
+  constructor(@Optional() private readonly embeddingService?: EmbeddingService) {}
 
   /**
    * Determine entity semantic category by naming heuristics and patterns.
@@ -605,6 +608,7 @@ ${chunkContent.slice(0, 4000)}
     await (this.prisma as any).graphCommunity.deleteMany({ where: { kbId } });
 
     let created = 0;
+    const createdCommunities: Array<{ id: string; text: string }> = [];
     for (let i = 0; i < communities.length; i++) {
       const cluster = communities[i];
       const titles = cluster.map((e: any) => e.name);
@@ -613,7 +617,7 @@ ${chunkContent.slice(0, 4000)}
 
       const summary = `本知识社区涵盖了以下核心实体：${titles.slice(0, 10).join('、')}。涵盖领域类别：${types.join('、')}。涉及制度引用与系统实体间的相互协作、归属与管理关系。`;
 
-      await (this.prisma as any).graphCommunity.create({
+      const comm = await (this.prisma as any).graphCommunity.create({
         data: {
           kbId,
           title: mainTitle,
@@ -626,7 +630,27 @@ ${chunkContent.slice(0, 4000)}
           ],
         },
       });
+      createdCommunities.push({ id: comm.id, text: `${mainTitle}\n${summary}` });
       created++;
+    }
+
+    // Vectorize community summaries so global search ranks by cosine recall
+    // instead of raw keyword overlap. Fail-open: keyword ranking keeps working
+    // when the embedding provider is unavailable.
+    if (this.embeddingService?.isEnabled() && createdCommunities.length) {
+      try {
+        const vectors = await this.embeddingService.embed(createdCommunities.map((c) => c.text.slice(0, 4000)));
+        for (let i = 0; i < createdCommunities.length; i++) {
+          const vector = vectors[i];
+          if (!vector) continue;
+          await (this.prisma as any).$executeRaw`
+            UPDATE "GraphCommunity" SET embedding = ${`[${vector.join(',')}]`}::vector
+            WHERE id = ${createdCommunities[i].id}::uuid
+          `;
+        }
+      } catch (err) {
+        this.logger.debug(`Community embedding skipped: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     this.logger.log(`Built ${created} GraphRAG communities for KB ${kbId}`);
@@ -782,6 +806,44 @@ ${chunkContent.slice(0, 4000)}
   ): Promise<GlobalCommunitySearchResult> {
     if (!kbIds.length) {
       return { communities: [], formattedContext: '' };
+    }
+
+    // Vector recall over embedded community summaries first; keyword overlap
+    // remains the fallback for un-embedded rows / disabled provider.
+    if (this.embeddingService?.isEnabled()) {
+      try {
+        const vector = await this.embeddingService.embedOne(query);
+        if (vector && vector.length) {
+          const literal = `[${vector.join(',')}]`;
+          const rows = await (this.prisma as any).$queryRaw<any[]>`
+            SELECT id, title, summary, findings,
+                   1 - (embedding <=> ${literal}::vector) AS similarity
+            FROM "GraphCommunity"
+            WHERE "kbId" = ANY(${kbIds}::uuid[]) AND embedding IS NOT NULL
+            ORDER BY embedding <=> ${literal}::vector
+            LIMIT ${Math.max(limit * 2, 6)}
+          `;
+          const hits = (rows || []).filter((row) => Number(row.similarity) >= Number(process.env.GRAPHRAG_VECTOR_MIN_SCORE || 0.30));
+          if (hits.length) {
+            const selected = hits.slice(0, limit);
+            const contextLines: string[] = ['【知识图谱社区宏观摘要 (GraphRAG Global Search)】'];
+            for (const c of selected) {
+              contextLines.push(`### 领域社区: ${c.title}\n${c.summary}`);
+            }
+            return {
+              communities: selected.map((c: any) => ({
+                id: c.id,
+                title: c.title,
+                summary: c.summary,
+                findings: Array.isArray(c.findings) ? c.findings : [],
+              })),
+              formattedContext: contextLines.join('\n\n'),
+            };
+          }
+        }
+      } catch (err) {
+        this.logger.debug(`Community vector search unavailable: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     const communities = await (this.prisma as any).graphCommunity.findMany({
