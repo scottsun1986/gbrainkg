@@ -11,7 +11,7 @@ export default function Error({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error('GBrain page error:', error);
+    console.error('百纳 page error:', error);
     // Add more context to the error log
     console.error('Error details:', { digest: error.digest, message: error.message, stack: error.stack });
   }, [error]);

@@ -107,8 +107,8 @@ function SideNav({active, setActive, user, onLogout, kbCount=0, capabilities=[],
       {open && <div className="side-backdrop" onClick={onClose} />}
       <aside className={`side ${open ? 'open' : ''}`}>
         <div className="brand">
-          <span className="brand-mark">G</span>
-          <span className="brand-name">GBrain</span>
+          <span className="brand-mark">百</span>
+          <span className="brand-name">百纳</span>
           <span className="brand-sub">企业级知识库</span>
           <button type="button" className="side-close-btn" onClick={onClose} title="关闭菜单" aria-label="关闭菜单">
             <Icon name="x" size={16}/>
@@ -348,7 +348,7 @@ function UniversalDocumentViewer({ preview, onClose }) {
     setCompileTruthLoading(true);
 
     // Compile Truth is deliberately read from the current user's BrainTopic
-    // and the authorized GBrain source mapping, not inferred from UI status.
+    // and the authorized 百纳 source mapping, not inferred from UI status.
     fetch(`${API_BASE_URL}/api/v1/kbs/${kbId}/documents/${docId}/compile-truth`, { headers: apiHeaders() })
       .then(async (res) => {
         const json = await res.json().catch(() => ({}));
@@ -642,7 +642,7 @@ function UniversalDocumentViewer({ preview, onClose }) {
             type="button"
             className={`preview-tab-btn ${activeTab === 'truth' ? 'active' : ''}`}
             onClick={() => setActiveTab('truth')}
-            title="查看当前用户的 GBrain 编译状态、source 同步状态和最近编译记录"
+            title="查看当前用户的百纳编译状态、source 同步状态和最近编译记录"
           >
             <span>✅</span> Compile Truth
           </button>
@@ -911,7 +911,7 @@ function UniversalDocumentViewer({ preview, onClose }) {
                 </div>
               )}
 
-              {/* Tab 5: 当前用户的 GBrain Compile Truth */}
+              {/* Tab 5: 当前用户的 百纳 Compile Truth */}
               {activeTab === 'truth' && (
                 <div style={{ maxWidth: '900px', width: '100%', margin: '0 auto' }}>
                   <div style={{ padding: '16px 18px', borderRadius: '10px', border: '1px solid var(--line)', background: 'var(--surface)' }}>
@@ -919,7 +919,7 @@ function UniversalDocumentViewer({ preview, onClose }) {
                       <div>
                         <div style={{ fontSize: '15px', fontWeight: 650, color: 'var(--ink)' }}>Compile Truth · 编译真相</div>
                         <div style={{ fontSize: '12px', color: 'var(--ink-3)', marginTop: '5px', lineHeight: 1.6 }}>
-                          这里展示当前登录用户实际可用的 GBrain topic 与 source 状态。数据库权限校验仍是最终准入条件。
+                          这里展示当前登录用户实际可用的百纳 topic 与 source 状态。数据库权限校验仍是最终准入条件。
                         </div>
                       </div>
                       {compileTruth?.compileTruth?.state && (
@@ -942,7 +942,7 @@ function UniversalDocumentViewer({ preview, onClose }) {
                           <div style={{ color: 'var(--ink-3)' }}>当前文档</div><div>{compileTruth.document.status} · {compileTruth.document.chunkCount} 个检索 Chunk · v{compileTruth.document.version}</div>
                         </div>
                         <div style={{ marginTop: '18px', paddingTop: '14px', borderTop: '1px solid var(--line)' }}>
-                          <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '8px' }}>GBrain source 同步记录</div>
+                          <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '8px' }}>百纳 source 同步记录</div>
                           {compileTruth.compileTruth.sources?.length ? compileTruth.compileTruth.sources.map((source) => (
                             <div key={source.sourceKey} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '5px 16px', padding: '10px 12px', marginBottom: '7px', borderRadius: '7px', background: 'var(--surface-2)' }}>
                               <div><code>{source.sourceKey}</code> <span style={{ color: 'var(--ink-3)', marginLeft: '6px' }}>{source.kind === 'shared' ? '共享 source' : '权限组 source'}</span></div>
@@ -1199,7 +1199,7 @@ function CommandPalette({open, onClose, onNav, onNewChat, onNewKb, onUpload, con
 function NotificationsPanel({open, onClose}){
   if (!open) return null;
   const notifications = [
-    { id: 'n1', title: '欢迎使用企业级 GBrain 知识库', body: '上传文档 → 知识图谱会自动编译主题与关系。', when: '刚刚', icon: 'spark' },
+    { id: 'n1', title: '欢迎使用百纳知识库', body: '上传文档 → 知识图谱会自动编译主题与关系。', when: '刚刚', icon: 'spark' },
     { id: 'n2', title: '快捷键已启用', body: '按 ⌘K 打开命令面板；按 ? 查看所有快捷键。', when: '刚刚', icon: 'help' },
   ];
   return (
@@ -1686,7 +1686,7 @@ function ChatScreen(){
   };
 
   const copyAnswer = async (text) => { try { await navigator.clipboard.writeText(text); window.dispatchEvent(new CustomEvent('app-toast',{detail:'回答已复制'})); } catch { window.dispatchEvent(new CustomEvent('app-toast',{detail:'复制失败，请检查浏览器权限'})); } };
-  const shareConversation = async () => { const url = window.location.href; try { if (navigator.share) await navigator.share({title:'GBrain 对话',url}); else await navigator.clipboard.writeText(url); window.dispatchEvent(new CustomEvent('app-toast',{detail:navigator.share?'已打开分享面板':'会话链接已复制'})); } catch {} };
+  const shareConversation = async () => { const url = window.location.href; try { if (navigator.share) await navigator.share({title:'百纳对话',url}); else await navigator.clipboard.writeText(url); window.dispatchEvent(new CustomEvent('app-toast',{detail:navigator.share?'已打开分享面板':'会话链接已复制'})); } catch {} };
   const saveFeedback = async (feedback) => {
     if (!activeConv) return;
     try {
@@ -1926,7 +1926,7 @@ function ChatScreen(){
                   <div className="body">
                     <div className="who">
                       <span className="dot"/>
-                      <span>GBrain · 大脑综述</span>
+                      <span>百纳 · 大脑综述</span>
                       <span style={{color:'var(--ink-4)'}}>· 你的大脑 · {scopeLabel}{allSel ? `（${selected.length} 库）` : ''}</span>
                     </div>
                     <div className="answer">
@@ -3561,7 +3561,7 @@ function TextKnowledgeModal({onClose, onSave}){
   return <Modal title="添加文本知识" onClose={onClose} foot={<><button className="btn" onClick={onClose}>取消</button><button className="btn primary" disabled={!content.trim() || saving} onClick={save}>{saving?'保存中…':'保存并索引'}</button></>}>
     <div className="field"><label>标题（可选）</label><input value={title} onChange={e=>setTitle(e.target.value)} placeholder="不填写则显示为“未命名文本知识”" maxLength={200}/></div>
     <div className="field"><label>内容<span className="req">*</span></label><textarea value={content} onChange={e=>setContent(e.target.value)} placeholder="记录制度、经验、账号备注等文本知识……" style={{minHeight:220}} maxLength={10000000}/></div>
-    <div className="field-hint">内容会经过统一解析、分块、向量化和 GBrain 索引，保存后即可用于问答。</div>
+    <div className="field-hint">内容会经过统一解析、分块、向量化和百纳索引，保存后即可用于问答。</div>
   </Modal>;
 }
 
@@ -4036,11 +4036,11 @@ function NewProviderModal({target, onClose, onSaved}){
         </select>
       </div>
       <div className="field"><label>Base URL<span className="req">*</span></label><input value={baseUrl} onChange={e=>setBaseUrl(e.target.value)} placeholder="https://..."/></div>
-      {kind!=='ocr' && <div className="field"><label>GBrain 协议适配</label>
+      {kind!=='ocr' && <div className="field"><label>百纳 协议适配</label>
         <select value={gbrainRecipe} onChange={e=>setGbrainRecipe(e.target.value)}>
           <option value="openai">OpenAI 兼容</option><option value="deepseek">DeepSeek</option><option value="openrouter">OpenRouter</option><option value="litellm">LiteLLM</option><option value="ollama">Ollama</option><option value="voyage">Voyage（向量）</option><option value="llama-server">llama.cpp（向量）</option><option value="llama-server-reranker">llama.cpp（重排）</option>
         </select>
-        <div className="hint" style={{marginTop:6}}>模型类别会校验可用协议；不修改 GBrain 源码。</div>
+        <div className="hint" style={{marginTop:6}}>模型类别会校验可用协议；不修改百纳引擎源码。</div>
       </div>}
       <div className="field"><label>API Key</label><input type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder={kind==='selfhost'?'(自托管通常不需要)':'sk-...'}/></div>
       {kind==='ocr' && <div className="field"><label>Secret Key</label><input type="password" value={secretKey} onChange={e=>setSecretKey(e.target.value)} placeholder="百度智能云 Secret Key"/></div>}
@@ -4492,7 +4492,7 @@ function SystemStatusPanel({ capabilities }){
       <div style={{ display: 'flex', alignItems: 'flex-start', marginBottom: 20 }}>
         <div style={{ flex: 1 }}>
           <div className="h1">系统运行状态与全流程质量监控</div>
-          <div className="subline">端到端全链路质量监控 · GBrain 知识源与 Scope 脑 · 物理存储 · 向量解析 · 事务 Outbox 队列 · 实时指标遥测</div>
+          <div className="subline">端到端全链路质量监控 · 百纳知识源与 Scope 脑 · 物理存储 · 向量解析 · 事务 Outbox 队列 · 实时指标遥测</div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn" onClick={() => fetchTelemetry()} disabled={loading}>
@@ -4537,7 +4537,7 @@ function SystemStatusPanel({ capabilities }){
           </div>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 11.5 }}>
-          <span className="badge ok" style={{ padding: '3px 8px' }}>GBrain 0.47 核心引擎</span>
+          <span className="badge ok" style={{ padding: '3px 8px' }}>百纳 0.47 核心引擎</span>
           <span className="badge" style={{ padding: '3px 8px', background: 'var(--surface)', color: 'var(--ink)' }}>双级 Dream 自愈就绪</span>
         </div>
       </div>
@@ -4561,7 +4561,7 @@ function SystemStatusPanel({ capabilities }){
         </div>
 
         <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, padding: '14px 16px' }}>
-          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 6 }}>🗄️ GBrain 物理知识源</div>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 6 }}>🗄️ 百纳 物理知识源</div>
           <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--ink)' }}>{gbs.sourcesCount || 0} <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--ink-3)' }}>个 Source</span></div>
           <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
             磁盘占用 {s.storageUsage?.repoFormatted || '—'}
@@ -4619,7 +4619,7 @@ function SystemStatusPanel({ capabilities }){
 
           <div style={{ padding: '10px 12px', background: 'var(--surface-2)', borderRadius: 6, border: '1px solid var(--line-2)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--ink-3)', marginBottom: 4 }}>
-              <span>3. GBrain 物理源物化</span>
+              <span>3. 百纳 物理源物化</span>
               <span className="badge ok" style={{ fontSize: 9.5 }}>Git 底座</span>
             </div>
             <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)' }}>{gbs.sourcesCount || 0} 个 Source 仓库</div>
@@ -4650,7 +4650,7 @@ function SystemStatusPanel({ capabilities }){
       <div style={{ display: 'flex', borderBottom: '1px solid var(--line)', gap: 18, marginBottom: 16 }}>
         {[
           { k: 'kbs', l: '知识库与切片解析质量' },
-          { k: 'sources', l: 'GBrain 知识源与 Scope 脑' },
+          { k: 'sources', l: '百纳知识源与 Scope 脑' },
           { k: 'dream', l: '双级 Dream 维护记录' },
           { k: 'outbox', l: 'Outbox 事件总线与队列' },
           { k: 'models', l: '问答检索与模型网关' },
@@ -4743,7 +4743,7 @@ function SystemStatusPanel({ capabilities }){
 
       {activeTab === 'sources' && (
         <>
-          <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)', marginBottom: 8 }}>GBrain 物理源列表 (Raw Sources)</div>
+          <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)', marginBottom: 8 }}>百纳 物理源列表 (Raw Sources)</div>
           <div className="table-wrap" style={{ marginBottom: 20 }}>
             <table>
               <thead>
@@ -4992,11 +4992,11 @@ function SystemStatusPanel({ capabilities }){
           </div>
           {rag.runtime && (
             <div style={{ marginTop: 14, padding: '12px 14px', background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, fontSize: 12, lineHeight: 1.7 }}>
-              <div style={{ fontWeight: 600, marginBottom: 4 }}>GBrain 实际运行态</div>
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>百纳 实际运行态</div>
               <div style={{ color: 'var(--ink-2)' }}>
                 {['llm', 'embedding', 'rerank'].map((kind) => {
                   const route = rag.runtime.routes?.[kind] || {};
-                  return <span key={kind} style={{ marginRight: 16 }}>{kind === 'llm' ? 'LLM' : kind === 'embedding' ? 'Embedding' : 'Reranker'}：{route.modelName || '未配置'} {route.injected ? '🟢 已注入 GBrain' : '🔴 未注入'}</span>;
+                  return <span key={kind} style={{ marginRight: 16 }}>{kind === 'llm' ? 'LLM' : kind === 'embedding' ? 'Embedding' : 'Reranker'}：{route.modelName || '未配置'} {route.injected ? '🟢 已注入 百纳' : '🔴 未注入'}</span>;
                 })}
               </div>
               <div style={{ color: 'var(--ink-3)' }}>连接池 {rag.runtime.gbrain?.poolSize || 2} · Scope Synthesize {rag.runtime.gbrain?.scopeSynthesizeEnabled ? '开启' : '关闭'} · 图谱增量抽取 {rag.runtime.gbrain?.graphExtractEnabled ? '开启' : '关闭'}</div>
@@ -5056,7 +5056,7 @@ function DreamTelemetryPanel({telemetry, onPageChange}){
       <b style={{color:'var(--ink)'}}>双级 Dream 维护架构</b>：{telemetry.enabled ? `已启用，每日 ${telemetry.cron}（${telemetry.timezone || '服务器时区'}）执行` : '已停用'}。
       <b>Tier 1 (Source Dream)</b> 负责单原始源的确定性维护与 Embedding 索引；
       <b>Tier 2 (Scope Dream)</b> 负责用户权限 Scope 内的跨源宏观综合与派生智能维护。
-      {last && skippedPhases > 0 && <div style={{marginTop:4}}>GBrain phase 隔离：{skippedPhases} 个按 source 隔离策略跳过（私密 source 不外泄跨权限全局总结）。</div>}
+      {last && skippedPhases > 0 && <div style={{marginTop:4}}>百纳 phase 隔离：{skippedPhases} 个按 source 隔离策略跳过（私密 source 不外泄跨权限全局总结）。</div>}
       {last?.errorMessage && <div style={{color:'var(--red)',marginTop:4}}>最近失败：{last.errorMessage}</div>}
     </div>
 
@@ -6292,7 +6292,7 @@ function App(){
       />
       <div className="main">
         <TopBar
-          title={titles[visibleScreen]?.t || 'GBrain'}
+          title={titles[visibleScreen]?.t || '百纳'}
           sub={titles[visibleScreen]?.s || ''}
           theme={theme || 'light'}
           onToggleTheme={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')}

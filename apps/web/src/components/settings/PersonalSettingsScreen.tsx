@@ -234,16 +234,16 @@ export function PersonalSettingsScreen({
   const sampleAppId = credentials.find((c) => c.status === 'active')?.appId || 'app_demo_example';
 
   return (
-    <div style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
+    <div className="settings-page">
       {/* 头部导航与标题 */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, gap: 12, flexWrap: 'wrap' }}>
         <div>
           <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600, color: 'var(--ink)' }}>个人设置</h2>
           <p style={{ margin: '4px 0 0 0', fontSize: 13, color: 'var(--ink-3)' }}>
             管理对外开放服务接口凭证 (AppId / AppSecret) 及个人账号信息
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 8, background: 'var(--bg-2)', padding: 4, borderRadius: 8 }}>
+        <div style={{ display: 'flex', gap: 8, background: 'var(--bg-2)', padding: 4, borderRadius: 8, maxWidth: '100%', overflowX: 'auto' }}>
           <button
             onClick={() => setActiveTab('credentials')}
             style={{

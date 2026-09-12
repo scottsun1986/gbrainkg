@@ -18,9 +18,9 @@ export default function HelpPage() {
   return (
     <main className="help-page">
       <header className="help-nav">
-          <Link className="help-brand" href="/" aria-label="返回 GBrain 首页">
-          <span className="help-brand-mark">G</span>
-          <span><strong>GBrain</strong><small>企业级知识库</small></span>
+          <Link className="help-brand" href="/" aria-label="返回百纳首页">
+          <span className="help-brand-mark">百</span>
+          <span><strong>百纳</strong><small>企业级知识库</small></span>
           </Link>
         <nav className="help-nav-links" aria-label="帮助目录">
           {sections.map((section) => <a key={section.id} href={`#${section.id}`}>{section.label}</a>)}
@@ -32,7 +32,7 @@ export default function HelpPage() {
         <div className="help-hero-copy">
           <p className="help-kicker">G B R A I N  ·  使用指南</p>
           <h1>把知识变成<br /><em>可用的答案。</em></h1>
-          <p className="help-lead">从上传一份制度文件，到带着原文依据得到答案，这里带你走完 GBrain 的完整使用路径。</p>
+          <p className="help-lead">从上传一份制度文件，到带着原文依据得到答案，这里带你走完百纳的完整使用路径。</p>
           <div className="help-hero-actions"><a className="help-primary" href="#start">开始使用 <Arrow /></a><a className="help-text-link" href="#trouble">遇到问题？</a></div>
         </div>
         <div className="help-hero-visual" aria-label="知识入库到可信问答的流程示意图">
@@ -54,7 +54,7 @@ export default function HelpPage() {
           </section>
 
           <section id="ask" className="help-section tint-section">
-            <div className="section-label">02 / 智能问答</div><h2>让问题进入正确的知识范围</h2><p className="section-intro">GBrain 会结合当前会话上下文改写问题，再执行混合检索、融合、重排和权限校验。历史对话用于理解“它、刚才、这份”等指代，但不会绕过知识权限。</p>
+            <div className="section-label">02 / 智能问答</div><h2>让问题进入正确的知识范围</h2><p className="section-intro">百纳 会结合当前会话上下文改写问题，再执行混合检索、融合、重排和权限校验。历史对话用于理解“它、刚才、这份”等指代，但不会绕过知识权限。</p>
             <div className="feature-grid"><div className="feature-card"><b className="feature-icon">⌕</b><h3>先选检索范围</h3><p>默认使用“我可见的全部”。需要核对某个库时，可以在输入框上方只勾选指定知识库。</p></div><div className="feature-card"><b className="feature-icon">↳</b><h3>连续追问</h3><p>在同一个会话里继续追问，系统会保留前文语境；切换新会话后，需要补充必要背景。</p></div><div className="feature-card"><b className="feature-icon">⌁</b><h3>问完整内容</h3><p>对制度、条款、清单等内容，优先询问“请基于原文完整列出并标注来源”，避免只看摘要。</p></div></div>
             <div className="callout"><strong>推荐提问格式</strong><span>对象 + 任务 + 范围 + 输出要求</span><code>请根据《企业研发管理规范》原文，完整列出全部条款并标注章节来源。</code></div>
           </section>
@@ -67,7 +67,7 @@ export default function HelpPage() {
 
           <section id="trouble" className="help-section tint-section"><div className="section-label">06 / 问题排查</div><h2>常见问题，先看这里</h2><div className="faq-list"><details open><summary>上传后显示“解析失败”怎么办？</summary><p>检查文件是否损坏、格式是否受支持、文件名和大小是否符合限制；在知识库管理界面重试解析。解析成功并完成索引后，状态才会变为“已发布”。</p></details><details><summary>文件已发布，但问答找不到内容？</summary><p>确认当前会话的检索范围包含该知识库；再确认账号仍有阅读权限。对全文问题建议明确要求“基于原文完整回答并列出来源”，并检查文档是否被正确解析。</p></details><details><summary>为什么看不到某个菜单或按钮？</summary><p>平台按权限动态隐藏菜单和操作。组织管理员、行业库管理员和系统管理员的管理范围不同；看不到通常意味着当前账号没有对应能力或不在目标组织/知识库的授权范围内。</p></details><details><summary>为什么能阅读但不能上传或删除？</summary><p>阅读和维护是两种不同权限。只有知识库管理权限才能上传、删除或维护知识；个人库由本人维护，行业库的删除还受创建者规则约束。</p></details></div></section>
 
-          <footer className="help-footer"><div><span className="help-brand-mark">G</span><strong>GBrain</strong></div><p>知识可治理，回答可追溯。</p><Link href="/">返回系统 <Arrow /></Link></footer>
+          <footer className="help-footer"><div><span className="help-brand-mark">百</span><strong>百纳</strong></div><p>知识可治理，回答可追溯。</p><Link href="/">返回系统 <Arrow /></Link></footer>
         </div>
       </div>
     </main>

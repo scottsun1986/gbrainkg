@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "企业级 GBrain 知识库",
-  description: "企业级 GBrain 知识库 · 编译你的组织大脑",
+  title: "百纳知识库",
+  description: "百纳知识库 · 编译你的组织大脑",
 };
 
 export default function RootLayout({

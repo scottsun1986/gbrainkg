@@ -12,6 +12,25 @@
   --font-mono: var(--font-geist-mono);
 }
 
+@media (max-width:640px){
+  /* 顶栏搜索药丸在小屏收成纯图标，避免占位挤压标题 */
+  .topbar-search-trigger span:not(.kbd){display:none}
+  .topbar-search-trigger .kbd{display:none}
+}
+
+/* ============== 个人设置页（settings-page） ============== */
+/* min-width:0 —— 作为行向 flex 子项时默认 min-width:auto 会被宽表格内容
+   撑破视口，导致内部横向滚动永不生效 */
+.settings-page{padding:24px 32px;max-width:1100px;margin:0 auto;min-width:0}
+@media (max-width:768px){
+  .settings-page{padding:16px 14px}
+  /* 表格转为块级横向滚动，杜绝单元格被压成一字一行 */
+  .settings-page table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .settings-page table td,.settings-page table th{white-space:nowrap}
+  .settings-page pre{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .settings-page pre code{white-space:pre}
+}
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
     --background: #0a0a0a;
@@ -622,9 +641,11 @@ ul,ol{list-style:none}
 
 @media (max-width:768px){
   .lib-list{width:100%;flex:1}
-  .lib-detail{display:none}
+  /* 子选择器提高特异性：基础 .lib-detail 规则在本媒体块之后声明，
+     同特异性会覆盖 display:none，导致窄屏下详情面板从右缘露出 */
+  .lib>.lib-detail{display:none}
   .lib.detail-active .lib-list{display:none}
-  .lib.detail-active .lib-detail{display:flex;width:100%}
+  .lib.detail-active>.lib-detail{display:flex;width:100%}
   .lib-back-btn{
     display:inline-flex;align-items:center;gap:5px;
     font-size:12px;color:var(--ink-2);background:var(--surface-2);

@@ -9,7 +9,7 @@ export function LoginScreen({ onSubmit, error, loading }: any) {
     <div className="login-shell">
       <form className="login-card" onSubmit={(event) => { event.preventDefault(); onSubmit(username, password); }}>
         <div style={{display:'flex',alignItems:'baseline',gap:8,marginBottom:10}}>
-          <span style={{fontSize:28,fontWeight:700,letterSpacing:'-0.02em',color:'#191817'}}>GBrain</span>
+          <span style={{fontSize:28,fontWeight:700,letterSpacing:'-0.02em',color:'#191817'}}>百纳</span>
           <span style={{fontSize:12,color:'#9C978C',letterSpacing:'0.04em'}}>企业级知识库</span>
         </div>
         <div style={{color:'#756f66',fontSize:14,marginBottom:28}}>登录你的企业大脑</div>
