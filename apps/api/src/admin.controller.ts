@@ -1108,6 +1108,11 @@ export class AdminController {
           data: { path },
         });
       }
+      // 组织知识库名称跟随组织名称：改名后同步该组织活跃组织库的展示名
+      await tx.knowledgeBase.updateMany({
+        where: { orgNodeId: id, type: "org", status: "active" },
+        data: { name: `${name}知识库` },
+      });
       return tx.orgNode.update({
         where: { id },
         data: { name, parentId, path: nextPath, sort: siblingCount },

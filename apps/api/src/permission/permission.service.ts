@@ -229,8 +229,18 @@ export class PermissionService implements OnModuleInit {
       select: { type: true, ownerUserId: true, orgNodeId: true, status: true },
     });
     if (!kb || kb.status !== "active") return false;
-    if (kb.type === "org" && kb.orgNodeId)
-      return this.canManageOrganization(userId, kb.orgNodeId);
+    if (kb.type === "org" && kb.orgNodeId) {
+      // 组织库维护规则：本级（及上级）组织管理员始终可维护——即使库另指派
+      // 了知识库管理员也不被剥夺；被指派的知识库管理员同样获得维护权
+      //（否则指派无意义）。未指派时则仅组织管理员可维护。
+      if (await this.canManageOrganization(userId, kb.orgNodeId)) return true;
+      return Boolean(
+        await this.prisma.kbAdmin.findFirst({
+          where: { kbId, userId },
+          select: { kbId: true },
+        }),
+      );
+    }
     // An industry-library creator retains resource-level administration
     // (administrator assignment and archive/delete), but knowledge writes
     // belong to the currently assigned library administrators. This keeps
