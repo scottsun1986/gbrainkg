@@ -15,6 +15,15 @@ import { GraphRagService } from "../graph-rag/graph-rag.service";
 import { RaptorService } from "../raptor/raptor.service";
 import { ChunkEmbeddingService } from "../embedding/chunk-embedding.service";
 
+// Thrown inside the save transaction when the document was re-ingested while
+// this run was parsing, so the caller can return instead of marking failed.
+class SupersededVersionError extends Error {
+  constructor(documentId: string, expected: number, actual: number) {
+    super(`Document ${documentId} version changed during ingestion: expected ${expected}, found ${actual}.`);
+    this.name = 'SupersededVersionError';
+  }
+}
+
 @Injectable()
 export class IngestionService implements OnModuleInit {
   private readonly logger = new Logger(IngestionService.name);
@@ -309,33 +318,72 @@ export class IngestionService implements OnModuleInit {
       markdown,
       "utf8",
     );
-    await this.prisma.$transaction([
-      this.prisma.chunk.deleteMany({ where: { documentId } }),
-      this.prisma.chunk.createMany({
-        data: enrichedChunks.map((chunk) => ({
-          documentId,
-          kbId: document.kbId,
-          ord: chunk.ord,
-          content: chunk.content,
-          tokenCount: chunk.tokenCount,
-          charStart: chunk.charStart,
-          charEnd: chunk.charEnd,
-          metadata: chunk.metadata as any,
-        })),
-      }),
-      this.prisma.document.update({
-        where: { id: documentId },
-        data: {
-          status: qualityStatus === "passed" ? "indexing" : "needs_review",
-          parserEngine: parsed.engine || null,
-          parserClassification: parsed.classification || null,
-          parserMetadata: parserMetadata as any,
-          qualityStatus,
-          qualityScore,
-          qualityIssues: qualityIssues as any,
+    // The expectedVersion check at the top only fences queue-time. Re-check
+    // inside the save transaction: a concurrent re-upload that bumped the
+    // version between parse and save must not have its chunks clobbered.
+    // Chunk rows carry no version column, so the delete scope cannot be
+    // narrowed below documentId; the in-transaction version fence above is
+    // what makes that document-wide delete safe.
+    const targetVersion = expectedVersion ?? document.version;
+    try {
+      await this.prisma.$transaction(
+        async (tx) => {
+          const current = await tx.document.findUnique({
+            where: { id: documentId },
+            select: { version: true },
+          });
+          if (!current || current.version !== targetVersion) {
+            throw new SupersededVersionError(
+              documentId,
+              targetVersion as number,
+              current?.version as number,
+            );
+          }
+          await tx.chunk.deleteMany({ where: { documentId } });
+          await tx.chunk.createMany({
+            data: enrichedChunks.map((chunk) => ({
+              documentId,
+              kbId: document.kbId,
+              ord: chunk.ord,
+              content: chunk.content,
+              tokenCount: chunk.tokenCount,
+              charStart: chunk.charStart,
+              charEnd: chunk.charEnd,
+              metadata: chunk.metadata as any,
+            })),
+          });
+          await tx.document.update({
+            where: { id: documentId },
+            data: {
+              status: qualityStatus === "passed" ? "indexing" : "needs_review",
+              parserEngine: parsed.engine || null,
+              parserClassification: parsed.classification || null,
+              parserMetadata: parserMetadata as any,
+              qualityStatus,
+              qualityScore,
+              qualityIssues: qualityIssues as any,
+            },
+          });
         },
-      }),
-    ]);
+        // Chunk replacement for large documents can exceed the default 5s
+        // interactive-transaction timeout.
+        {
+          timeout: Math.max(5_000, Number(process.env.INGESTION_TX_TIMEOUT_MS || 120_000)),
+          maxWait: 5_000,
+        },
+      );
+    } catch (err) {
+      if (err instanceof SupersededVersionError) {
+        this.logger.warn(`Skipping save for ${documentId}: ${err.message}`);
+        return {
+          documentId,
+          status: document.status,
+          skipped: true,
+          reason: "superseded-version",
+        };
+      }
+      throw err;
+    }
 
     if (qualityStatus !== "passed") {
       this.logger.warn(
@@ -377,7 +425,9 @@ export class IngestionService implements OnModuleInit {
       await this.enrichmentQueue
         .add(
           "enrich",
-          { documentId, kbId: document.kbId },
+          // Carry the version whose chunks were just saved so a stale
+          // enrichment job cannot flip readiness of a newer version.
+          { documentId, kbId: document.kbId, expectedVersion: targetVersion ?? undefined },
           {
             attempts: Number(process.env.ENRICHMENT_ATTEMPTS || 3),
             backoff: { type: "exponential", delay: Number(process.env.ENRICHMENT_BACKOFF_MS || 30_000) },

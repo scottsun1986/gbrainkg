@@ -865,8 +865,14 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
       {
         jobId: `source-sync-${sourceKey}-${docId}-v${publishVersion}`,
         priority: CompilePriority.NORMAL,
-        attempts: 3,
-        backoff: { type: "exponential", delay: 3_000 },
+        // The core-indexing gate defers publish until every required chunk
+        // carries an embedding. Large documents take minutes to embed, so a
+        // 3-attempt/3s-backoff window exhausts long before enrichment
+        // finishes and strands the document in 'indexing' forever. Keep
+        // retrying across a ~10-minute window instead (enrichment completion
+        // also re-drives the publish, see enrichment.processor).
+        attempts: 30,
+        backoff: { type: "fixed", delay: 20_000 },
         removeOnComplete: 200,
         removeOnFail: 500,
       },

@@ -10,6 +10,7 @@ import { BrainScopeService } from "./brain-scope.service";
 import { BrainOutboxService } from "./brain-outbox.service";
 import { readCanonicalDocument } from "./canonical-document";
 import { getSharedBrainRepoAdapter } from "./brain-adapter.provider";
+import { ChunkEmbeddingService } from "../embedding/chunk-embedding.service";
 
 @Processor("dirty-compiler-queue")
 export class BrainCompilerProcessor extends WorkerHost {
@@ -25,6 +26,9 @@ export class BrainCompilerProcessor extends WorkerHost {
     private readonly compilerService: BrainCompilerService,
     private readonly scopeService: BrainScopeService,
     private readonly outboxService: BrainOutboxService,
+    // EmbeddingModule is @Global, so this resolves without a module import;
+    // optional so tests can exercise the processor without an embedding stack.
+    @Optional() private readonly chunkEmbeddingService?: ChunkEmbeddingService,
     @Optional() @Inject('BRAIN_REPO_ADAPTER') gbrainAdapter?: BrainRepoAdapter,
   ) {
     super();
@@ -68,6 +72,22 @@ export class BrainCompilerProcessor extends WorkerHost {
     // when thousands of users can read it.
     if (job.name === "source-sync") {
       const { kbId, docIds = [] } = job.data;
+      // Core-indexing gate: publishing a document before its required chunks
+      // all carry embeddings would push a partially indexed version to GBrain.
+      // indexReadiness 'ready' short-circuits the per-chunk stats query.
+      if (docIds && docIds.length && this.chunkEmbeddingService?.isEnabled()) {
+        const incomplete = await this.findCoreIncompleteDocuments(docIds);
+        if (incomplete.length) {
+          const detail = incomplete
+            .map((d) => `${d.id} (${d.missing}/${d.total} chunks missing embeddings)`)
+            .join(", ");
+          // Keep the documents in 'indexing' and let BullMQ retry with
+          // backoff; throwing skips the sync and the publish update entirely.
+          const message = `Source publish deferred, core indexing incomplete: ${detail}`;
+          this.logger.warn(message);
+          throw new Error(message);
+        }
+      }
       const start = Date.now();
       const result = docIds && docIds.length
         ? await this.compilerService.syncKnowledgeBaseSource(kbId, docIds)
@@ -365,5 +385,26 @@ export class BrainCompilerProcessor extends WorkerHost {
       this.logger.error(`Compile job failed: ${message}`, stack);
       throw error;
     }
+  }
+
+  /**
+   * Documents among `docIds` whose required chunks are not fully embedded.
+   * Skipped entirely when the chunk-embedding service is not enabled.
+   */
+  private async findCoreIncompleteDocuments(
+    docIds: string[],
+  ): Promise<Array<{ id: string; total: number; missing: number }>> {
+    if (!this.chunkEmbeddingService?.isEnabled() || !docIds.length) return [];
+    const documents = await this.prisma.document.findMany({
+      where: { id: { in: docIds } },
+      select: { id: true, indexReadiness: true },
+    });
+    const incomplete: Array<{ id: string; total: number; missing: number }> = [];
+    for (const document of documents) {
+      if (document.indexReadiness === "ready") continue;
+      const coverage = await this.chunkEmbeddingService.documentCoverage(document.id);
+      if (coverage.missing > 0) incomplete.push({ id: document.id, ...coverage });
+    }
+    return incomplete;
   }
 }

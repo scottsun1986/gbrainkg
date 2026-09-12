@@ -6,6 +6,7 @@ import { ModelConfigService } from "../model-config.service";
 import { BrainCompilerService } from "./brain-compiler.service";
 import { BrainScopeService } from "./brain-scope.service";
 import { BrainOutboxService } from "./brain-outbox.service";
+import { ChunkEmbeddingService } from "../embedding/chunk-embedding.service";
 
 const mockPrisma = {
   brainChangeEvent: { findUnique: jest.fn(), update: jest.fn() },
@@ -25,6 +26,11 @@ const mockPrisma = {
 
 const mockGbrainAdapter = {
   ingest: jest.fn(),
+};
+
+const chunkEmbedding = {
+  isEnabled: jest.fn().mockReturnValue(false),
+  documentCoverage: jest.fn(),
 };
 
 jest.mock("@prisma/client", () => ({
@@ -55,6 +61,7 @@ describe("BrainCompilerProcessor", () => {
   };
 
   beforeEach(async () => {
+    chunkEmbedding.isEnabled.mockReturnValue(false);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BrainCompilerProcessor,
@@ -63,6 +70,7 @@ describe("BrainCompilerProcessor", () => {
         { provide: BrainCompilerService, useValue: compilerService },
         { provide: BrainScopeService, useValue: {} },
         { provide: BrainOutboxService, useValue: { logOperation: jest.fn() } },
+        { provide: ChunkEmbeddingService, useValue: chunkEmbedding },
       ],
     }).compile();
 
@@ -178,5 +186,101 @@ describe("BrainCompilerProcessor", () => {
     });
     expect(compilerService.invalidateScopesForSource).toHaveBeenCalledWith("llmwiki-kb-stable");
     expect(compilerService.queueScopeSynthesis).toHaveBeenCalledWith(["scope-1"], 3);
+  });
+
+  describe("core-indexing gate for source publish", () => {
+    const sourceSyncJob = (docIds: string[] = ["doc-1"]) =>
+      ({ name: "source-sync", data: { kbId: "kb-1", docIds } } as Job);
+
+    it("defers publish when required chunks lack embeddings", async () => {
+      chunkEmbedding.isEnabled.mockReturnValue(true);
+      mockPrisma.document.findMany.mockResolvedValue([
+        { id: "doc-1", indexReadiness: "pending" },
+      ]);
+      chunkEmbedding.documentCoverage.mockResolvedValue({ total: 10, missing: 4 });
+
+      await expect(processor.process(sourceSyncJob())).rejects.toThrow(
+        /core indexing incomplete: doc-1 \(4\/10/,
+      );
+      expect(compilerService.syncKnowledgeBaseSource).not.toHaveBeenCalled();
+      expect(mockPrisma.document.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("publishes without a coverage query when indexReadiness is ready", async () => {
+      chunkEmbedding.isEnabled.mockReturnValue(true);
+      mockPrisma.document.findMany.mockResolvedValue([
+        { id: "doc-1", indexReadiness: "ready" },
+      ]);
+      compilerService.syncKnowledgeBaseSource.mockResolvedValue({
+        sourceKey: "src",
+        synced: 1,
+        removed: 0,
+      });
+      compilerService.invalidateScopesForSource.mockResolvedValue([]);
+      compilerService.queueScopeSynthesis.mockResolvedValue(undefined);
+
+      await expect(processor.process(sourceSyncJob())).resolves.toMatchObject({
+        status: "success",
+      });
+      expect(chunkEmbedding.documentCoverage).not.toHaveBeenCalled();
+      expect(mockPrisma.document.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: ["doc-1"] }, status: "indexing" },
+        data: { status: "published" },
+      });
+    });
+
+    it("publishes once the coverage query reports no missing chunks", async () => {
+      chunkEmbedding.isEnabled.mockReturnValue(true);
+      mockPrisma.document.findMany.mockResolvedValue([
+        { id: "doc-1", indexReadiness: "enriching" },
+      ]);
+      chunkEmbedding.documentCoverage.mockResolvedValue({ total: 10, missing: 0 });
+      compilerService.syncKnowledgeBaseSource.mockResolvedValue({
+        sourceKey: "src",
+        synced: 1,
+        removed: 0,
+      });
+      compilerService.invalidateScopesForSource.mockResolvedValue([]);
+      compilerService.queueScopeSynthesis.mockResolvedValue(undefined);
+
+      await expect(processor.process(sourceSyncJob())).resolves.toMatchObject({
+        status: "success",
+      });
+      expect(chunkEmbedding.documentCoverage).toHaveBeenCalledWith("doc-1");
+    });
+
+    it("skips the gate when the embedding service is disabled", async () => {
+      chunkEmbedding.isEnabled.mockReturnValue(false);
+      compilerService.syncKnowledgeBaseSource.mockResolvedValue({
+        sourceKey: "src",
+        synced: 1,
+        removed: 0,
+      });
+      compilerService.invalidateScopesForSource.mockResolvedValue([]);
+      compilerService.queueScopeSynthesis.mockResolvedValue(undefined);
+
+      await expect(processor.process(sourceSyncJob())).resolves.toMatchObject({
+        status: "success",
+      });
+      expect(mockPrisma.document.findMany).not.toHaveBeenCalled();
+      expect(chunkEmbedding.documentCoverage).not.toHaveBeenCalled();
+    });
+
+    it("skips the gate for full-source maintenance syncs without doc ids", async () => {
+      chunkEmbedding.isEnabled.mockReturnValue(true);
+      compilerService.syncKnowledgeBaseSource.mockResolvedValue({
+        sourceKey: "src",
+        synced: 2,
+        removed: 0,
+      });
+      compilerService.invalidateScopesForSource.mockResolvedValue([]);
+      compilerService.queueScopeSynthesis.mockResolvedValue(undefined);
+
+      await expect(processor.process(sourceSyncJob([]))).resolves.toMatchObject({
+        status: "success",
+      });
+      expect(chunkEmbedding.documentCoverage).not.toHaveBeenCalled();
+      expect(compilerService.syncKnowledgeBaseSource).toHaveBeenCalledWith("kb-1", [], true);
+    });
   });
 });

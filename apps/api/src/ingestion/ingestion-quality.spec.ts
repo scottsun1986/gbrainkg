@@ -5,6 +5,22 @@ const mockPrisma = {
   chunk: { deleteMany: jest.fn(), createMany: jest.fn() },
   $transaction: jest.fn(),
 };
+// Interactive-transaction client delegating to the shared mocks so specs keep
+// asserting against mockPrisma.
+const tx = {
+  document: {
+    findUnique: (...args: unknown[]) => mockPrisma.document.findUnique(...(args as [])),
+    update: (...args: unknown[]) => mockPrisma.document.update(...(args as [])),
+  },
+  chunk: {
+    deleteMany: (...args: unknown[]) => mockPrisma.chunk.deleteMany(...(args as [])),
+    createMany: (...args: unknown[]) => mockPrisma.chunk.createMany(...(args as [])),
+  },
+};
+mockPrisma.$transaction.mockImplementation(async (arg: unknown) => {
+  if (typeof arg === 'function') return (arg as (client: typeof tx) => unknown)(tx);
+  return Promise.all(arg as unknown[]);
+});
 const mockReadFile = jest.fn();
 const mockToMarkdown = jest.fn();
 jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => mockPrisma) }));
