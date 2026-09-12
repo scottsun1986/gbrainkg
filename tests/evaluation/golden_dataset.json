@@ -1,0 +1,5137 @@
+[
+  {
+    "id": "GS-EC-001",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第1条是什么内容？",
+    "expected_keywords": [
+      "第1条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第1条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-EC-002",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第2条是什么内容？",
+    "expected_keywords": [
+      "第2条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第2条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-EC-003",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第3条是什么内容？",
+    "expected_keywords": [
+      "第3条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第3条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-EC-004",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第4条是什么内容？",
+    "expected_keywords": [
+      "第4条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第4条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-EC-005",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第5条是什么内容？",
+    "expected_keywords": [
+      "第5条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第5条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-EC-006",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第6条是什么内容？",
+    "expected_keywords": [
+      "第6条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第6条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-EC-007",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第7条是什么内容？",
+    "expected_keywords": [
+      "第7条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第7条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-EC-008",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第8条是什么内容？",
+    "expected_keywords": [
+      "第8条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第8条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-EC-009",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第9条是什么内容？",
+    "expected_keywords": [
+      "第9条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第9条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-EC-010",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第10条是什么内容？",
+    "expected_keywords": [
+      "第10条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第10条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-EC-011",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第11条是什么内容？",
+    "expected_keywords": [
+      "第11条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第11条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-EC-012",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第12条是什么内容？",
+    "expected_keywords": [
+      "第12条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第12条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-EC-013",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第13条是什么内容？",
+    "expected_keywords": [
+      "第13条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第13条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-EC-014",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第14条是什么内容？",
+    "expected_keywords": [
+      "第14条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第14条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-EC-015",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第15条是什么内容？",
+    "expected_keywords": [
+      "第15条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第15条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-EC-016",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第16条是什么内容？",
+    "expected_keywords": [
+      "第16条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第16条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-EC-017",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第17条是什么内容？",
+    "expected_keywords": [
+      "第17条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第17条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-EC-018",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第18条是什么内容？",
+    "expected_keywords": [
+      "第18条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第18条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-EC-019",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第19条是什么内容？",
+    "expected_keywords": [
+      "第19条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第19条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-EC-020",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第20条是什么内容？",
+    "expected_keywords": [
+      "第20条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第20条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-EC-021",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第21条是什么内容？",
+    "expected_keywords": [
+      "第21条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第21条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-EC-022",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第22条是什么内容？",
+    "expected_keywords": [
+      "第22条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第22条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-EC-023",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第23条是什么内容？",
+    "expected_keywords": [
+      "第23条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第23条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-EC-024",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第24条是什么内容？",
+    "expected_keywords": [
+      "第24条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第24条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-EC-025",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第25条是什么内容？",
+    "expected_keywords": [
+      "第25条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第25条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-EC-026",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第26条是什么内容？",
+    "expected_keywords": [
+      "第26条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第26条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-EC-027",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第27条是什么内容？",
+    "expected_keywords": [
+      "第27条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第27条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-EC-028",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第28条是什么内容？",
+    "expected_keywords": [
+      "第28条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第28条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-EC-029",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第29条是什么内容？",
+    "expected_keywords": [
+      "第29条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第29条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-EC-030",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第30条是什么内容？",
+    "expected_keywords": [
+      "第30条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第30条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-EC-031",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第31条是什么内容？",
+    "expected_keywords": [
+      "第31条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第31条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-EC-032",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第32条是什么内容？",
+    "expected_keywords": [
+      "第32条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第32条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-EC-033",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第33条是什么内容？",
+    "expected_keywords": [
+      "第33条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第33条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-EC-034",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第34条是什么内容？",
+    "expected_keywords": [
+      "第34条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第34条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-EC-035",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第35条是什么内容？",
+    "expected_keywords": [
+      "第35条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第35条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-EC-036",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第36条是什么内容？",
+    "expected_keywords": [
+      "第36条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第36条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-EC-037",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第37条是什么内容？",
+    "expected_keywords": [
+      "第37条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第37条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-EC-038",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第38条是什么内容？",
+    "expected_keywords": [
+      "第38条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第38条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-EC-039",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第39条是什么内容？",
+    "expected_keywords": [
+      "第39条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第39条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-EC-040",
+    "category": "exact_clause",
+    "query": "软件研发中心绩效管理办法第40条是什么内容？",
+    "expected_keywords": [
+      "第40条",
+      "考核"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "软件研发中心绩效管理办法第40条规定了绩效考核的原则和具体指标要求。",
+    "must_contain_snippets": [
+      "规定了",
+      "绩效考核"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-SO-041",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景1",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-SO-042",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景2",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-SO-043",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景3",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-SO-044",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景4",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-SO-045",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景5",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-SO-046",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景6",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-SO-047",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景7",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-SO-048",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景8",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-SO-049",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景9",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-SO-050",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景10",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-SO-051",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景11",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-SO-052",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景12",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-SO-053",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景13",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-SO-054",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景14",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-SO-055",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景15",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-SO-056",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景16",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-SO-057",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景17",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-SO-058",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景18",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-SO-059",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景19",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-SO-060",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景20",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-SO-061",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景21",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-SO-062",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景22",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-SO-063",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景23",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-SO-064",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景24",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-SO-065",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景25",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-SO-066",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景26",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-SO-067",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景27",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-SO-068",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景28",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-SO-069",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景29",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-SO-070",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景30",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-SO-071",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景31",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-SO-072",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景32",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-SO-073",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景33",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-SO-074",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景34",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-SO-075",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景35",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-SO-076",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景36",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-SO-077",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景37",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-SO-078",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景38",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-SO-079",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景39",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-SO-080",
+    "category": "synonym_oral",
+    "query": "咱们研发部要是迟到了扣多少钱啊？场景40",
+    "expected_keywords": [
+      "迟到",
+      "扣罚",
+      "旷工"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据企业考勤管理制度，迟到不同时长有不同的扣罚标准，超过规定时间视同旷工。",
+    "must_contain_snippets": [
+      "考勤管理制度",
+      "扣罚标准"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-TL-081",
+    "category": "table_list",
+    "query": "列出考核等级比例分布表中的各级别要求（表格1）",
+    "expected_keywords": [
+      "S级",
+      "A级",
+      "比例"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "S级占10%，A级占20%，B级占60%，C级和D级共占10%。",
+    "must_contain_snippets": [
+      "10%",
+      "20%",
+      "60%"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-TL-082",
+    "category": "table_list",
+    "query": "列出考核等级比例分布表中的各级别要求（表格2）",
+    "expected_keywords": [
+      "S级",
+      "A级",
+      "比例"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "S级占10%，A级占20%，B级占60%，C级和D级共占10%。",
+    "must_contain_snippets": [
+      "10%",
+      "20%",
+      "60%"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-TL-083",
+    "category": "table_list",
+    "query": "列出考核等级比例分布表中的各级别要求（表格3）",
+    "expected_keywords": [
+      "S级",
+      "A级",
+      "比例"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "S级占10%，A级占20%，B级占60%，C级和D级共占10%。",
+    "must_contain_snippets": [
+      "10%",
+      "20%",
+      "60%"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-TL-084",
+    "category": "table_list",
+    "query": "列出考核等级比例分布表中的各级别要求（表格4）",
+    "expected_keywords": [
+      "S级",
+      "A级",
+      "比例"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "S级占10%，A级占20%，B级占60%，C级和D级共占10%。",
+    "must_contain_snippets": [
+      "10%",
+      "20%",
+      "60%"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-TL-085",
+    "category": "table_list",
+    "query": "列出考核等级比例分布表中的各级别要求（表格5）",
+    "expected_keywords": [
+      "S级",
+      "A级",
+      "比例"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "S级占10%，A级占20%，B级占60%，C级和D级共占10%。",
+    "must_contain_snippets": [
+      "10%",
+      "20%",
+      "60%"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-TL-086",
+    "category": "table_list",
+    "query": "列出考核等级比例分布表中的各级别要求（表格6）",
+    "expected_keywords": [
+      "S级",
+      "A级",
+      "比例"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "S级占10%，A级占20%，B级占60%，C级和D级共占10%。",
+    "must_contain_snippets": [
+      "10%",
+      "20%",
+      "60%"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-TL-087",
+    "category": "table_list",
+    "query": "列出考核等级比例分布表中的各级别要求（表格7）",
+    "expected_keywords": [
+      "S级",
+      "A级",
+      "比例"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "S级占10%，A级占20%，B级占60%，C级和D级共占10%。",
+    "must_contain_snippets": [
+      "10%",
+      "20%",
+      "60%"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-TL-088",
+    "category": "table_list",
+    "query": "列出考核等级比例分布表中的各级别要求（表格8）",
+    "expected_keywords": [
+      "S级",
+      "A级",
+      "比例"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "S级占10%，A级占20%，B级占60%，C级和D级共占10%。",
+    "must_contain_snippets": [
+      "10%",
+      "20%",
+      "60%"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-TL-089",
+    "category": "table_list",
+    "query": "列出考核等级比例分布表中的各级别要求（表格9）",
+    "expected_keywords": [
+      "S级",
+      "A级",
+      "比例"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "S级占10%，A级占20%，B级占60%，C级和D级共占10%。",
+    "must_contain_snippets": [
+      "10%",
+      "20%",
+      "60%"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-TL-090",
+    "category": "table_list",
+    "query": "列出考核等级比例分布表中的各级别要求（表格10）",
+    "expected_keywords": [
+      "S级",
+      "A级",
+      "比例"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "S级占10%，A级占20%，B级占60%，C级和D级共占10%。",
+    "must_contain_snippets": [
+      "10%",
+      "20%",
+      "60%"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-TL-091",
+    "category": "table_list",
+    "query": "列出考核等级比例分布表中的各级别要求（表格11）",
+    "expected_keywords": [
+      "S级",
+      "A级",
+      "比例"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "S级占10%，A级占20%，B级占60%，C级和D级共占10%。",
+    "must_contain_snippets": [
+      "10%",
+      "20%",
+      "60%"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-TL-092",
+    "category": "table_list",
+    "query": "列出考核等级比例分布表中的各级别要求（表格12）",
+    "expected_keywords": [
+      "S级",
+      "A级",
+      "比例"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "S级占10%，A级占20%，B级占60%，C级和D级共占10%。",
+    "must_contain_snippets": [
+      "10%",
+      "20%",
+      "60%"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-TL-093",
+    "category": "table_list",
+    "query": "列出考核等级比例分布表中的各级别要求（表格13）",
+    "expected_keywords": [
+      "S级",
+      "A级",
+      "比例"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "S级占10%，A级占20%，B级占60%，C级和D级共占10%。",
+    "must_contain_snippets": [
+      "10%",
+      "20%",
+      "60%"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-TL-094",
+    "category": "table_list",
+    "query": "列出考核等级比例分布表中的各级别要求（表格14）",
+    "expected_keywords": [
+      "S级",
+      "A级",
+      "比例"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "S级占10%，A级占20%，B级占60%，C级和D级共占10%。",
+    "must_contain_snippets": [
+      "10%",
+      "20%",
+      "60%"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-TL-095",
+    "category": "table_list",
+    "query": "列出考核等级比例分布表中的各级别要求（表格15）",
+    "expected_keywords": [
+      "S级",
+      "A级",
+      "比例"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "S级占10%，A级占20%，B级占60%，C级和D级共占10%。",
+    "must_contain_snippets": [
+      "10%",
+      "20%",
+      "60%"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-TL-096",
+    "category": "table_list",
+    "query": "列出考核等级比例分布表中的各级别要求（表格16）",
+    "expected_keywords": [
+      "S级",
+      "A级",
+      "比例"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "S级占10%，A级占20%，B级占60%，C级和D级共占10%。",
+    "must_contain_snippets": [
+      "10%",
+      "20%",
+      "60%"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-TL-097",
+    "category": "table_list",
+    "query": "列出考核等级比例分布表中的各级别要求（表格17）",
+    "expected_keywords": [
+      "S级",
+      "A级",
+      "比例"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "S级占10%，A级占20%，B级占60%，C级和D级共占10%。",
+    "must_contain_snippets": [
+      "10%",
+      "20%",
+      "60%"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-TL-098",
+    "category": "table_list",
+    "query": "列出考核等级比例分布表中的各级别要求（表格18）",
+    "expected_keywords": [
+      "S级",
+      "A级",
+      "比例"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "S级占10%，A级占20%，B级占60%，C级和D级共占10%。",
+    "must_contain_snippets": [
+      "10%",
+      "20%",
+      "60%"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-TL-099",
+    "category": "table_list",
+    "query": "列出考核等级比例分布表中的各级别要求（表格19）",
+    "expected_keywords": [
+      "S级",
+      "A级",
+      "比例"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "S级占10%，A级占20%，B级占60%，C级和D级共占10%。",
+    "must_contain_snippets": [
+      "10%",
+      "20%",
+      "60%"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-TL-100",
+    "category": "table_list",
+    "query": "列出考核等级比例分布表中的各级别要求（表格20）",
+    "expected_keywords": [
+      "S级",
+      "A级",
+      "比例"
+    ],
+    "expected_doc_titles": [
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "S级占10%，A级占20%，B级占60%，C级和D级共占10%。",
+    "must_contain_snippets": [
+      "10%",
+      "20%",
+      "60%"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-LDC-101",
+    "category": "long_doc_completeness",
+    "query": "请总结特种设备检验规程的全部关键检验节点1",
+    "expected_keywords": [
+      "年度检验",
+      "月度抽检",
+      "特种设备"
+    ],
+    "expected_doc_titles": [
+      "特种设备检验规程.pdf"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "特种设备检验规程规定了设备采购入库、月度抽检、年度全面检验等多个关键节点。",
+    "must_contain_snippets": [
+      "年度检验",
+      "月度抽检"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-LDC-102",
+    "category": "long_doc_completeness",
+    "query": "请总结特种设备检验规程的全部关键检验节点2",
+    "expected_keywords": [
+      "年度检验",
+      "月度抽检",
+      "特种设备"
+    ],
+    "expected_doc_titles": [
+      "特种设备检验规程.pdf"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "特种设备检验规程规定了设备采购入库、月度抽检、年度全面检验等多个关键节点。",
+    "must_contain_snippets": [
+      "年度检验",
+      "月度抽检"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-LDC-103",
+    "category": "long_doc_completeness",
+    "query": "请总结特种设备检验规程的全部关键检验节点3",
+    "expected_keywords": [
+      "年度检验",
+      "月度抽检",
+      "特种设备"
+    ],
+    "expected_doc_titles": [
+      "特种设备检验规程.pdf"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "特种设备检验规程规定了设备采购入库、月度抽检、年度全面检验等多个关键节点。",
+    "must_contain_snippets": [
+      "年度检验",
+      "月度抽检"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-LDC-104",
+    "category": "long_doc_completeness",
+    "query": "请总结特种设备检验规程的全部关键检验节点4",
+    "expected_keywords": [
+      "年度检验",
+      "月度抽检",
+      "特种设备"
+    ],
+    "expected_doc_titles": [
+      "特种设备检验规程.pdf"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "特种设备检验规程规定了设备采购入库、月度抽检、年度全面检验等多个关键节点。",
+    "must_contain_snippets": [
+      "年度检验",
+      "月度抽检"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-LDC-105",
+    "category": "long_doc_completeness",
+    "query": "请总结特种设备检验规程的全部关键检验节点5",
+    "expected_keywords": [
+      "年度检验",
+      "月度抽检",
+      "特种设备"
+    ],
+    "expected_doc_titles": [
+      "特种设备检验规程.pdf"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "特种设备检验规程规定了设备采购入库、月度抽检、年度全面检验等多个关键节点。",
+    "must_contain_snippets": [
+      "年度检验",
+      "月度抽检"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-LDC-106",
+    "category": "long_doc_completeness",
+    "query": "请总结特种设备检验规程的全部关键检验节点6",
+    "expected_keywords": [
+      "年度检验",
+      "月度抽检",
+      "特种设备"
+    ],
+    "expected_doc_titles": [
+      "特种设备检验规程.pdf"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "特种设备检验规程规定了设备采购入库、月度抽检、年度全面检验等多个关键节点。",
+    "must_contain_snippets": [
+      "年度检验",
+      "月度抽检"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-LDC-107",
+    "category": "long_doc_completeness",
+    "query": "请总结特种设备检验规程的全部关键检验节点7",
+    "expected_keywords": [
+      "年度检验",
+      "月度抽检",
+      "特种设备"
+    ],
+    "expected_doc_titles": [
+      "特种设备检验规程.pdf"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "特种设备检验规程规定了设备采购入库、月度抽检、年度全面检验等多个关键节点。",
+    "must_contain_snippets": [
+      "年度检验",
+      "月度抽检"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-LDC-108",
+    "category": "long_doc_completeness",
+    "query": "请总结特种设备检验规程的全部关键检验节点8",
+    "expected_keywords": [
+      "年度检验",
+      "月度抽检",
+      "特种设备"
+    ],
+    "expected_doc_titles": [
+      "特种设备检验规程.pdf"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "特种设备检验规程规定了设备采购入库、月度抽检、年度全面检验等多个关键节点。",
+    "must_contain_snippets": [
+      "年度检验",
+      "月度抽检"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-LDC-109",
+    "category": "long_doc_completeness",
+    "query": "请总结特种设备检验规程的全部关键检验节点9",
+    "expected_keywords": [
+      "年度检验",
+      "月度抽检",
+      "特种设备"
+    ],
+    "expected_doc_titles": [
+      "特种设备检验规程.pdf"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "特种设备检验规程规定了设备采购入库、月度抽检、年度全面检验等多个关键节点。",
+    "must_contain_snippets": [
+      "年度检验",
+      "月度抽检"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-LDC-110",
+    "category": "long_doc_completeness",
+    "query": "请总结特种设备检验规程的全部关键检验节点10",
+    "expected_keywords": [
+      "年度检验",
+      "月度抽检",
+      "特种设备"
+    ],
+    "expected_doc_titles": [
+      "特种设备检验规程.pdf"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "特种设备检验规程规定了设备采购入库、月度抽检、年度全面检验等多个关键节点。",
+    "must_contain_snippets": [
+      "年度检验",
+      "月度抽检"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-LDC-111",
+    "category": "long_doc_completeness",
+    "query": "请总结特种设备检验规程的全部关键检验节点11",
+    "expected_keywords": [
+      "年度检验",
+      "月度抽检",
+      "特种设备"
+    ],
+    "expected_doc_titles": [
+      "特种设备检验规程.pdf"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "特种设备检验规程规定了设备采购入库、月度抽检、年度全面检验等多个关键节点。",
+    "must_contain_snippets": [
+      "年度检验",
+      "月度抽检"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-LDC-112",
+    "category": "long_doc_completeness",
+    "query": "请总结特种设备检验规程的全部关键检验节点12",
+    "expected_keywords": [
+      "年度检验",
+      "月度抽检",
+      "特种设备"
+    ],
+    "expected_doc_titles": [
+      "特种设备检验规程.pdf"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "特种设备检验规程规定了设备采购入库、月度抽检、年度全面检验等多个关键节点。",
+    "must_contain_snippets": [
+      "年度检验",
+      "月度抽检"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-LDC-113",
+    "category": "long_doc_completeness",
+    "query": "请总结特种设备检验规程的全部关键检验节点13",
+    "expected_keywords": [
+      "年度检验",
+      "月度抽检",
+      "特种设备"
+    ],
+    "expected_doc_titles": [
+      "特种设备检验规程.pdf"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "特种设备检验规程规定了设备采购入库、月度抽检、年度全面检验等多个关键节点。",
+    "must_contain_snippets": [
+      "年度检验",
+      "月度抽检"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-LDC-114",
+    "category": "long_doc_completeness",
+    "query": "请总结特种设备检验规程的全部关键检验节点14",
+    "expected_keywords": [
+      "年度检验",
+      "月度抽检",
+      "特种设备"
+    ],
+    "expected_doc_titles": [
+      "特种设备检验规程.pdf"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "特种设备检验规程规定了设备采购入库、月度抽检、年度全面检验等多个关键节点。",
+    "must_contain_snippets": [
+      "年度检验",
+      "月度抽检"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-LDC-115",
+    "category": "long_doc_completeness",
+    "query": "请总结特种设备检验规程的全部关键检验节点15",
+    "expected_keywords": [
+      "年度检验",
+      "月度抽检",
+      "特种设备"
+    ],
+    "expected_doc_titles": [
+      "特种设备检验规程.pdf"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "特种设备检验规程规定了设备采购入库、月度抽检、年度全面检验等多个关键节点。",
+    "must_contain_snippets": [
+      "年度检验",
+      "月度抽检"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-MDS-116",
+    "category": "multi_doc_synthesis",
+    "query": "综合研发规范和绩效管理办法，说明代码审查(CR)质量如何影响绩效1",
+    "expected_keywords": [
+      "代码审查",
+      "绩效",
+      "质量分"
+    ],
+    "expected_doc_titles": [
+      "企业研发管理规范.doc",
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "代码审查(CR)的质量评分会直接计入研发人员的能力指标中，占绩效总分的10%。",
+    "must_contain_snippets": [
+      "计入",
+      "10%"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-MDS-117",
+    "category": "multi_doc_synthesis",
+    "query": "综合研发规范和绩效管理办法，说明代码审查(CR)质量如何影响绩效2",
+    "expected_keywords": [
+      "代码审查",
+      "绩效",
+      "质量分"
+    ],
+    "expected_doc_titles": [
+      "企业研发管理规范.doc",
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "代码审查(CR)的质量评分会直接计入研发人员的能力指标中，占绩效总分的10%。",
+    "must_contain_snippets": [
+      "计入",
+      "10%"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-MDS-118",
+    "category": "multi_doc_synthesis",
+    "query": "综合研发规范和绩效管理办法，说明代码审查(CR)质量如何影响绩效3",
+    "expected_keywords": [
+      "代码审查",
+      "绩效",
+      "质量分"
+    ],
+    "expected_doc_titles": [
+      "企业研发管理规范.doc",
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "代码审查(CR)的质量评分会直接计入研发人员的能力指标中，占绩效总分的10%。",
+    "must_contain_snippets": [
+      "计入",
+      "10%"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-MDS-119",
+    "category": "multi_doc_synthesis",
+    "query": "综合研发规范和绩效管理办法，说明代码审查(CR)质量如何影响绩效4",
+    "expected_keywords": [
+      "代码审查",
+      "绩效",
+      "质量分"
+    ],
+    "expected_doc_titles": [
+      "企业研发管理规范.doc",
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "代码审查(CR)的质量评分会直接计入研发人员的能力指标中，占绩效总分的10%。",
+    "must_contain_snippets": [
+      "计入",
+      "10%"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-MDS-120",
+    "category": "multi_doc_synthesis",
+    "query": "综合研发规范和绩效管理办法，说明代码审查(CR)质量如何影响绩效5",
+    "expected_keywords": [
+      "代码审查",
+      "绩效",
+      "质量分"
+    ],
+    "expected_doc_titles": [
+      "企业研发管理规范.doc",
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "代码审查(CR)的质量评分会直接计入研发人员的能力指标中，占绩效总分的10%。",
+    "must_contain_snippets": [
+      "计入",
+      "10%"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-MDS-121",
+    "category": "multi_doc_synthesis",
+    "query": "综合研发规范和绩效管理办法，说明代码审查(CR)质量如何影响绩效6",
+    "expected_keywords": [
+      "代码审查",
+      "绩效",
+      "质量分"
+    ],
+    "expected_doc_titles": [
+      "企业研发管理规范.doc",
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "代码审查(CR)的质量评分会直接计入研发人员的能力指标中，占绩效总分的10%。",
+    "must_contain_snippets": [
+      "计入",
+      "10%"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-MDS-122",
+    "category": "multi_doc_synthesis",
+    "query": "综合研发规范和绩效管理办法，说明代码审查(CR)质量如何影响绩效7",
+    "expected_keywords": [
+      "代码审查",
+      "绩效",
+      "质量分"
+    ],
+    "expected_doc_titles": [
+      "企业研发管理规范.doc",
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "代码审查(CR)的质量评分会直接计入研发人员的能力指标中，占绩效总分的10%。",
+    "must_contain_snippets": [
+      "计入",
+      "10%"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-MDS-123",
+    "category": "multi_doc_synthesis",
+    "query": "综合研发规范和绩效管理办法，说明代码审查(CR)质量如何影响绩效8",
+    "expected_keywords": [
+      "代码审查",
+      "绩效",
+      "质量分"
+    ],
+    "expected_doc_titles": [
+      "企业研发管理规范.doc",
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "代码审查(CR)的质量评分会直接计入研发人员的能力指标中，占绩效总分的10%。",
+    "must_contain_snippets": [
+      "计入",
+      "10%"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-MDS-124",
+    "category": "multi_doc_synthesis",
+    "query": "综合研发规范和绩效管理办法，说明代码审查(CR)质量如何影响绩效9",
+    "expected_keywords": [
+      "代码审查",
+      "绩效",
+      "质量分"
+    ],
+    "expected_doc_titles": [
+      "企业研发管理规范.doc",
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "代码审查(CR)的质量评分会直接计入研发人员的能力指标中，占绩效总分的10%。",
+    "must_contain_snippets": [
+      "计入",
+      "10%"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-MDS-125",
+    "category": "multi_doc_synthesis",
+    "query": "综合研发规范和绩效管理办法，说明代码审查(CR)质量如何影响绩效10",
+    "expected_keywords": [
+      "代码审查",
+      "绩效",
+      "质量分"
+    ],
+    "expected_doc_titles": [
+      "企业研发管理规范.doc",
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "代码审查(CR)的质量评分会直接计入研发人员的能力指标中，占绩效总分的10%。",
+    "must_contain_snippets": [
+      "计入",
+      "10%"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-MDS-126",
+    "category": "multi_doc_synthesis",
+    "query": "综合研发规范和绩效管理办法，说明代码审查(CR)质量如何影响绩效11",
+    "expected_keywords": [
+      "代码审查",
+      "绩效",
+      "质量分"
+    ],
+    "expected_doc_titles": [
+      "企业研发管理规范.doc",
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "代码审查(CR)的质量评分会直接计入研发人员的能力指标中，占绩效总分的10%。",
+    "must_contain_snippets": [
+      "计入",
+      "10%"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-MDS-127",
+    "category": "multi_doc_synthesis",
+    "query": "综合研发规范和绩效管理办法，说明代码审查(CR)质量如何影响绩效12",
+    "expected_keywords": [
+      "代码审查",
+      "绩效",
+      "质量分"
+    ],
+    "expected_doc_titles": [
+      "企业研发管理规范.doc",
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "代码审查(CR)的质量评分会直接计入研发人员的能力指标中，占绩效总分的10%。",
+    "must_contain_snippets": [
+      "计入",
+      "10%"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-MDS-128",
+    "category": "multi_doc_synthesis",
+    "query": "综合研发规范和绩效管理办法，说明代码审查(CR)质量如何影响绩效13",
+    "expected_keywords": [
+      "代码审查",
+      "绩效",
+      "质量分"
+    ],
+    "expected_doc_titles": [
+      "企业研发管理规范.doc",
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "代码审查(CR)的质量评分会直接计入研发人员的能力指标中，占绩效总分的10%。",
+    "must_contain_snippets": [
+      "计入",
+      "10%"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-MDS-129",
+    "category": "multi_doc_synthesis",
+    "query": "综合研发规范和绩效管理办法，说明代码审查(CR)质量如何影响绩效14",
+    "expected_keywords": [
+      "代码审查",
+      "绩效",
+      "质量分"
+    ],
+    "expected_doc_titles": [
+      "企业研发管理规范.doc",
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "代码审查(CR)的质量评分会直接计入研发人员的能力指标中，占绩效总分的10%。",
+    "must_contain_snippets": [
+      "计入",
+      "10%"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-MDS-130",
+    "category": "multi_doc_synthesis",
+    "query": "综合研发规范和绩效管理办法，说明代码审查(CR)质量如何影响绩效15",
+    "expected_keywords": [
+      "代码审查",
+      "绩效",
+      "质量分"
+    ],
+    "expected_doc_titles": [
+      "企业研发管理规范.doc",
+      "软件研发中心绩效管理办法.doc"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "代码审查(CR)的质量评分会直接计入研发人员的能力指标中，占绩效总分的10%。",
+    "must_contain_snippets": [
+      "计入",
+      "10%"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-CV-131",
+    "category": "conflict_version",
+    "query": "旧版与新版考勤制度在年假折算上有何冲突1",
+    "expected_keywords": [
+      "废止",
+      "新版",
+      "折算"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [
+      "旧版考勤制度_已废止.doc"
+    ],
+    "ground_truth_answer": "新版规定10年以上工龄年假为10天，并明确废止了旧版中的8天规定。",
+    "must_contain_snippets": [
+      "明确废止",
+      "新版规定"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-CV-132",
+    "category": "conflict_version",
+    "query": "旧版与新版考勤制度在年假折算上有何冲突2",
+    "expected_keywords": [
+      "废止",
+      "新版",
+      "折算"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [
+      "旧版考勤制度_已废止.doc"
+    ],
+    "ground_truth_answer": "新版规定10年以上工龄年假为10天，并明确废止了旧版中的8天规定。",
+    "must_contain_snippets": [
+      "明确废止",
+      "新版规定"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-CV-133",
+    "category": "conflict_version",
+    "query": "旧版与新版考勤制度在年假折算上有何冲突3",
+    "expected_keywords": [
+      "废止",
+      "新版",
+      "折算"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [
+      "旧版考勤制度_已废止.doc"
+    ],
+    "ground_truth_answer": "新版规定10年以上工龄年假为10天，并明确废止了旧版中的8天规定。",
+    "must_contain_snippets": [
+      "明确废止",
+      "新版规定"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-CV-134",
+    "category": "conflict_version",
+    "query": "旧版与新版考勤制度在年假折算上有何冲突4",
+    "expected_keywords": [
+      "废止",
+      "新版",
+      "折算"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [
+      "旧版考勤制度_已废止.doc"
+    ],
+    "ground_truth_answer": "新版规定10年以上工龄年假为10天，并明确废止了旧版中的8天规定。",
+    "must_contain_snippets": [
+      "明确废止",
+      "新版规定"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-CV-135",
+    "category": "conflict_version",
+    "query": "旧版与新版考勤制度在年假折算上有何冲突5",
+    "expected_keywords": [
+      "废止",
+      "新版",
+      "折算"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [
+      "旧版考勤制度_已废止.doc"
+    ],
+    "ground_truth_answer": "新版规定10年以上工龄年假为10天，并明确废止了旧版中的8天规定。",
+    "must_contain_snippets": [
+      "明确废止",
+      "新版规定"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-CV-136",
+    "category": "conflict_version",
+    "query": "旧版与新版考勤制度在年假折算上有何冲突6",
+    "expected_keywords": [
+      "废止",
+      "新版",
+      "折算"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [
+      "旧版考勤制度_已废止.doc"
+    ],
+    "ground_truth_answer": "新版规定10年以上工龄年假为10天，并明确废止了旧版中的8天规定。",
+    "must_contain_snippets": [
+      "明确废止",
+      "新版规定"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-CV-137",
+    "category": "conflict_version",
+    "query": "旧版与新版考勤制度在年假折算上有何冲突7",
+    "expected_keywords": [
+      "废止",
+      "新版",
+      "折算"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [
+      "旧版考勤制度_已废止.doc"
+    ],
+    "ground_truth_answer": "新版规定10年以上工龄年假为10天，并明确废止了旧版中的8天规定。",
+    "must_contain_snippets": [
+      "明确废止",
+      "新版规定"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-CV-138",
+    "category": "conflict_version",
+    "query": "旧版与新版考勤制度在年假折算上有何冲突8",
+    "expected_keywords": [
+      "废止",
+      "新版",
+      "折算"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [
+      "旧版考勤制度_已废止.doc"
+    ],
+    "ground_truth_answer": "新版规定10年以上工龄年假为10天，并明确废止了旧版中的8天规定。",
+    "must_contain_snippets": [
+      "明确废止",
+      "新版规定"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-CV-139",
+    "category": "conflict_version",
+    "query": "旧版与新版考勤制度在年假折算上有何冲突9",
+    "expected_keywords": [
+      "废止",
+      "新版",
+      "折算"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [
+      "旧版考勤制度_已废止.doc"
+    ],
+    "ground_truth_answer": "新版规定10年以上工龄年假为10天，并明确废止了旧版中的8天规定。",
+    "must_contain_snippets": [
+      "明确废止",
+      "新版规定"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-CV-140",
+    "category": "conflict_version",
+    "query": "旧版与新版考勤制度在年假折算上有何冲突10",
+    "expected_keywords": [
+      "废止",
+      "新版",
+      "折算"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [
+      "旧版考勤制度_已废止.doc"
+    ],
+    "ground_truth_answer": "新版规定10年以上工龄年假为10天，并明确废止了旧版中的8天规定。",
+    "must_contain_snippets": [
+      "明确废止",
+      "新版规定"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-CV-141",
+    "category": "conflict_version",
+    "query": "旧版与新版考勤制度在年假折算上有何冲突11",
+    "expected_keywords": [
+      "废止",
+      "新版",
+      "折算"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [
+      "旧版考勤制度_已废止.doc"
+    ],
+    "ground_truth_answer": "新版规定10年以上工龄年假为10天，并明确废止了旧版中的8天规定。",
+    "must_contain_snippets": [
+      "明确废止",
+      "新版规定"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-CV-142",
+    "category": "conflict_version",
+    "query": "旧版与新版考勤制度在年假折算上有何冲突12",
+    "expected_keywords": [
+      "废止",
+      "新版",
+      "折算"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [
+      "旧版考勤制度_已废止.doc"
+    ],
+    "ground_truth_answer": "新版规定10年以上工龄年假为10天，并明确废止了旧版中的8天规定。",
+    "must_contain_snippets": [
+      "明确废止",
+      "新版规定"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-CV-143",
+    "category": "conflict_version",
+    "query": "旧版与新版考勤制度在年假折算上有何冲突13",
+    "expected_keywords": [
+      "废止",
+      "新版",
+      "折算"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [
+      "旧版考勤制度_已废止.doc"
+    ],
+    "ground_truth_answer": "新版规定10年以上工龄年假为10天，并明确废止了旧版中的8天规定。",
+    "must_contain_snippets": [
+      "明确废止",
+      "新版规定"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-CV-144",
+    "category": "conflict_version",
+    "query": "旧版与新版考勤制度在年假折算上有何冲突14",
+    "expected_keywords": [
+      "废止",
+      "新版",
+      "折算"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [
+      "旧版考勤制度_已废止.doc"
+    ],
+    "ground_truth_answer": "新版规定10年以上工龄年假为10天，并明确废止了旧版中的8天规定。",
+    "must_contain_snippets": [
+      "明确废止",
+      "新版规定"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-CV-145",
+    "category": "conflict_version",
+    "query": "旧版与新版考勤制度在年假折算上有何冲突15",
+    "expected_keywords": [
+      "废止",
+      "新版",
+      "折算"
+    ],
+    "expected_doc_titles": [
+      "企业考勤管理制度详细手册.doc"
+    ],
+    "forbidden_doc_titles": [
+      "旧版考勤制度_已废止.doc"
+    ],
+    "ground_truth_answer": "新版规定10年以上工龄年假为10天，并明确废止了旧版中的8天规定。",
+    "must_contain_snippets": [
+      "明确废止",
+      "新版规定"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-SOP-146",
+    "category": "scan_ocr_ppt",
+    "query": "2026年度培训计划PPT中提到的Q3重点培训项目是什么1",
+    "expected_keywords": [
+      "Q3",
+      "重点",
+      "安全培训"
+    ],
+    "expected_doc_titles": [
+      "2026年度培训计划.pptx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据PPT第12页，Q3的重点培训项目是全员信息安全合规培训。",
+    "must_contain_snippets": [
+      "信息安全合规",
+      "第12页"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-SOP-147",
+    "category": "scan_ocr_ppt",
+    "query": "2026年度培训计划PPT中提到的Q3重点培训项目是什么2",
+    "expected_keywords": [
+      "Q3",
+      "重点",
+      "安全培训"
+    ],
+    "expected_doc_titles": [
+      "2026年度培训计划.pptx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据PPT第12页，Q3的重点培训项目是全员信息安全合规培训。",
+    "must_contain_snippets": [
+      "信息安全合规",
+      "第12页"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-SOP-148",
+    "category": "scan_ocr_ppt",
+    "query": "2026年度培训计划PPT中提到的Q3重点培训项目是什么3",
+    "expected_keywords": [
+      "Q3",
+      "重点",
+      "安全培训"
+    ],
+    "expected_doc_titles": [
+      "2026年度培训计划.pptx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据PPT第12页，Q3的重点培训项目是全员信息安全合规培训。",
+    "must_contain_snippets": [
+      "信息安全合规",
+      "第12页"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-SOP-149",
+    "category": "scan_ocr_ppt",
+    "query": "2026年度培训计划PPT中提到的Q3重点培训项目是什么4",
+    "expected_keywords": [
+      "Q3",
+      "重点",
+      "安全培训"
+    ],
+    "expected_doc_titles": [
+      "2026年度培训计划.pptx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据PPT第12页，Q3的重点培训项目是全员信息安全合规培训。",
+    "must_contain_snippets": [
+      "信息安全合规",
+      "第12页"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-SOP-150",
+    "category": "scan_ocr_ppt",
+    "query": "2026年度培训计划PPT中提到的Q3重点培训项目是什么5",
+    "expected_keywords": [
+      "Q3",
+      "重点",
+      "安全培训"
+    ],
+    "expected_doc_titles": [
+      "2026年度培训计划.pptx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据PPT第12页，Q3的重点培训项目是全员信息安全合规培训。",
+    "must_contain_snippets": [
+      "信息安全合规",
+      "第12页"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-SOP-151",
+    "category": "scan_ocr_ppt",
+    "query": "2026年度培训计划PPT中提到的Q3重点培训项目是什么6",
+    "expected_keywords": [
+      "Q3",
+      "重点",
+      "安全培训"
+    ],
+    "expected_doc_titles": [
+      "2026年度培训计划.pptx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据PPT第12页，Q3的重点培训项目是全员信息安全合规培训。",
+    "must_contain_snippets": [
+      "信息安全合规",
+      "第12页"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-SOP-152",
+    "category": "scan_ocr_ppt",
+    "query": "2026年度培训计划PPT中提到的Q3重点培训项目是什么7",
+    "expected_keywords": [
+      "Q3",
+      "重点",
+      "安全培训"
+    ],
+    "expected_doc_titles": [
+      "2026年度培训计划.pptx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据PPT第12页，Q3的重点培训项目是全员信息安全合规培训。",
+    "must_contain_snippets": [
+      "信息安全合规",
+      "第12页"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-SOP-153",
+    "category": "scan_ocr_ppt",
+    "query": "2026年度培训计划PPT中提到的Q3重点培训项目是什么8",
+    "expected_keywords": [
+      "Q3",
+      "重点",
+      "安全培训"
+    ],
+    "expected_doc_titles": [
+      "2026年度培训计划.pptx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据PPT第12页，Q3的重点培训项目是全员信息安全合规培训。",
+    "must_contain_snippets": [
+      "信息安全合规",
+      "第12页"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-SOP-154",
+    "category": "scan_ocr_ppt",
+    "query": "2026年度培训计划PPT中提到的Q3重点培训项目是什么9",
+    "expected_keywords": [
+      "Q3",
+      "重点",
+      "安全培训"
+    ],
+    "expected_doc_titles": [
+      "2026年度培训计划.pptx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据PPT第12页，Q3的重点培训项目是全员信息安全合规培训。",
+    "must_contain_snippets": [
+      "信息安全合规",
+      "第12页"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-SOP-155",
+    "category": "scan_ocr_ppt",
+    "query": "2026年度培训计划PPT中提到的Q3重点培训项目是什么10",
+    "expected_keywords": [
+      "Q3",
+      "重点",
+      "安全培训"
+    ],
+    "expected_doc_titles": [
+      "2026年度培训计划.pptx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据PPT第12页，Q3的重点培训项目是全员信息安全合规培训。",
+    "must_contain_snippets": [
+      "信息安全合规",
+      "第12页"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-SOP-156",
+    "category": "scan_ocr_ppt",
+    "query": "2026年度培训计划PPT中提到的Q3重点培训项目是什么11",
+    "expected_keywords": [
+      "Q3",
+      "重点",
+      "安全培训"
+    ],
+    "expected_doc_titles": [
+      "2026年度培训计划.pptx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据PPT第12页，Q3的重点培训项目是全员信息安全合规培训。",
+    "must_contain_snippets": [
+      "信息安全合规",
+      "第12页"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-SOP-157",
+    "category": "scan_ocr_ppt",
+    "query": "2026年度培训计划PPT中提到的Q3重点培训项目是什么12",
+    "expected_keywords": [
+      "Q3",
+      "重点",
+      "安全培训"
+    ],
+    "expected_doc_titles": [
+      "2026年度培训计划.pptx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据PPT第12页，Q3的重点培训项目是全员信息安全合规培训。",
+    "must_contain_snippets": [
+      "信息安全合规",
+      "第12页"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-SOP-158",
+    "category": "scan_ocr_ppt",
+    "query": "2026年度培训计划PPT中提到的Q3重点培训项目是什么13",
+    "expected_keywords": [
+      "Q3",
+      "重点",
+      "安全培训"
+    ],
+    "expected_doc_titles": [
+      "2026年度培训计划.pptx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据PPT第12页，Q3的重点培训项目是全员信息安全合规培训。",
+    "must_contain_snippets": [
+      "信息安全合规",
+      "第12页"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-SOP-159",
+    "category": "scan_ocr_ppt",
+    "query": "2026年度培训计划PPT中提到的Q3重点培训项目是什么14",
+    "expected_keywords": [
+      "Q3",
+      "重点",
+      "安全培训"
+    ],
+    "expected_doc_titles": [
+      "2026年度培训计划.pptx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据PPT第12页，Q3的重点培训项目是全员信息安全合规培训。",
+    "must_contain_snippets": [
+      "信息安全合规",
+      "第12页"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-SOP-160",
+    "category": "scan_ocr_ppt",
+    "query": "2026年度培训计划PPT中提到的Q3重点培训项目是什么15",
+    "expected_keywords": [
+      "Q3",
+      "重点",
+      "安全培训"
+    ],
+    "expected_doc_titles": [
+      "2026年度培训计划.pptx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "根据PPT第12页，Q3的重点培训项目是全员信息安全合规培训。",
+    "must_contain_snippets": [
+      "信息安全合规",
+      "第12页"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-NA-161",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少1",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-NA-162",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少2",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-NA-163",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少3",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-NA-164",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少4",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-NA-165",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少5",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-NA-166",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少6",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-NA-167",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少7",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-NA-168",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少8",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-NA-169",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少9",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-NA-170",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少10",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-NA-171",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少11",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-NA-172",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少12",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-NA-173",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少13",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-NA-174",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少14",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-NA-175",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少15",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-NA-176",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少16",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-NA-177",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少17",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-NA-178",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少18",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-NA-179",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少19",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-NA-180",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少20",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-NA-181",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少21",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-NA-182",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少22",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-NA-183",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少23",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-NA-184",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少24",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-NA-185",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少25",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-NA-186",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少26",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-NA-187",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少27",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-NA-188",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少28",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-NA-189",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少29",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-NA-190",
+    "category": "no_answer",
+    "query": "公司2028年的火星殖民计划具体预算是多少30",
+    "expected_keywords": [],
+    "expected_doc_titles": [],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "当前授权知识库中没有关于火星殖民计划的内容，无法回答。",
+    "must_contain_snippets": [
+      "无法回答",
+      "没有关于",
+      "知识库中"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-MT-191-T1",
+    "category": "multi_turn",
+    "query": "合同法中关于不可抗力的条款在哪一条1",
+    "expected_keywords": [
+      "不可抗力",
+      "第一百一十七条"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "不可抗力规定在合同法第一百一十七条。",
+    "must_contain_snippets": [
+      "第一百一十七条"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-MT-192-T2",
+    "category": "multi_turn",
+    "query": "那它具体是怎么定义的",
+    "expected_keywords": [
+      "不能预见",
+      "不能避免",
+      "不能克服"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "它指的是不能预见、不能避免并不能克服的客观情况。",
+    "must_contain_snippets": [
+      "不能预见",
+      "客观情况"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-MT-193-T3",
+    "category": "multi_turn",
+    "query": "如果因为这个原因导致不能履行合同，还要承担违约责任吗",
+    "expected_keywords": [
+      "免除",
+      "不承担",
+      "责任"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "因不可抗力不能履行合同的，根据不可抗力的影响，部分或者全部免除责任。",
+    "must_contain_snippets": [
+      "免除责任",
+      "部分或者全部"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-MT-194-T1",
+    "category": "multi_turn",
+    "query": "合同法中关于不可抗力的条款在哪一条2",
+    "expected_keywords": [
+      "不可抗力",
+      "第一百一十七条"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "不可抗力规定在合同法第一百一十七条。",
+    "must_contain_snippets": [
+      "第一百一十七条"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-MT-195-T2",
+    "category": "multi_turn",
+    "query": "那它具体是怎么定义的",
+    "expected_keywords": [
+      "不能预见",
+      "不能避免",
+      "不能克服"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "它指的是不能预见、不能避免并不能克服的客观情况。",
+    "must_contain_snippets": [
+      "不能预见",
+      "客观情况"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-MT-196-T3",
+    "category": "multi_turn",
+    "query": "如果因为这个原因导致不能履行合同，还要承担违约责任吗",
+    "expected_keywords": [
+      "免除",
+      "不承担",
+      "责任"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "因不可抗力不能履行合同的，根据不可抗力的影响，部分或者全部免除责任。",
+    "must_contain_snippets": [
+      "免除责任",
+      "部分或者全部"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-MT-197-T1",
+    "category": "multi_turn",
+    "query": "合同法中关于不可抗力的条款在哪一条3",
+    "expected_keywords": [
+      "不可抗力",
+      "第一百一十七条"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "不可抗力规定在合同法第一百一十七条。",
+    "must_contain_snippets": [
+      "第一百一十七条"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-MT-198-T2",
+    "category": "multi_turn",
+    "query": "那它具体是怎么定义的",
+    "expected_keywords": [
+      "不能预见",
+      "不能避免",
+      "不能克服"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "它指的是不能预见、不能避免并不能克服的客观情况。",
+    "must_contain_snippets": [
+      "不能预见",
+      "客观情况"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-MT-199-T3",
+    "category": "multi_turn",
+    "query": "如果因为这个原因导致不能履行合同，还要承担违约责任吗",
+    "expected_keywords": [
+      "免除",
+      "不承担",
+      "责任"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "因不可抗力不能履行合同的，根据不可抗力的影响，部分或者全部免除责任。",
+    "must_contain_snippets": [
+      "免除责任",
+      "部分或者全部"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-MT-200-T1",
+    "category": "multi_turn",
+    "query": "合同法中关于不可抗力的条款在哪一条4",
+    "expected_keywords": [
+      "不可抗力",
+      "第一百一十七条"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "不可抗力规定在合同法第一百一十七条。",
+    "must_contain_snippets": [
+      "第一百一十七条"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-MT-201-T2",
+    "category": "multi_turn",
+    "query": "那它具体是怎么定义的",
+    "expected_keywords": [
+      "不能预见",
+      "不能避免",
+      "不能克服"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "它指的是不能预见、不能避免并不能克服的客观情况。",
+    "must_contain_snippets": [
+      "不能预见",
+      "客观情况"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-MT-202-T3",
+    "category": "multi_turn",
+    "query": "如果因为这个原因导致不能履行合同，还要承担违约责任吗",
+    "expected_keywords": [
+      "免除",
+      "不承担",
+      "责任"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "因不可抗力不能履行合同的，根据不可抗力的影响，部分或者全部免除责任。",
+    "must_contain_snippets": [
+      "免除责任",
+      "部分或者全部"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-MT-203-T1",
+    "category": "multi_turn",
+    "query": "合同法中关于不可抗力的条款在哪一条5",
+    "expected_keywords": [
+      "不可抗力",
+      "第一百一十七条"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "不可抗力规定在合同法第一百一十七条。",
+    "must_contain_snippets": [
+      "第一百一十七条"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-MT-204-T2",
+    "category": "multi_turn",
+    "query": "那它具体是怎么定义的",
+    "expected_keywords": [
+      "不能预见",
+      "不能避免",
+      "不能克服"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "它指的是不能预见、不能避免并不能克服的客观情况。",
+    "must_contain_snippets": [
+      "不能预见",
+      "客观情况"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-MT-205-T3",
+    "category": "multi_turn",
+    "query": "如果因为这个原因导致不能履行合同，还要承担违约责任吗",
+    "expected_keywords": [
+      "免除",
+      "不承担",
+      "责任"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "因不可抗力不能履行合同的，根据不可抗力的影响，部分或者全部免除责任。",
+    "must_contain_snippets": [
+      "免除责任",
+      "部分或者全部"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-MT-206-T1",
+    "category": "multi_turn",
+    "query": "合同法中关于不可抗力的条款在哪一条6",
+    "expected_keywords": [
+      "不可抗力",
+      "第一百一十七条"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "不可抗力规定在合同法第一百一十七条。",
+    "must_contain_snippets": [
+      "第一百一十七条"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-MT-207-T2",
+    "category": "multi_turn",
+    "query": "那它具体是怎么定义的",
+    "expected_keywords": [
+      "不能预见",
+      "不能避免",
+      "不能克服"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "它指的是不能预见、不能避免并不能克服的客观情况。",
+    "must_contain_snippets": [
+      "不能预见",
+      "客观情况"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-MT-208-T3",
+    "category": "multi_turn",
+    "query": "如果因为这个原因导致不能履行合同，还要承担违约责任吗",
+    "expected_keywords": [
+      "免除",
+      "不承担",
+      "责任"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "因不可抗力不能履行合同的，根据不可抗力的影响，部分或者全部免除责任。",
+    "must_contain_snippets": [
+      "免除责任",
+      "部分或者全部"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-MT-209-T1",
+    "category": "multi_turn",
+    "query": "合同法中关于不可抗力的条款在哪一条7",
+    "expected_keywords": [
+      "不可抗力",
+      "第一百一十七条"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "不可抗力规定在合同法第一百一十七条。",
+    "must_contain_snippets": [
+      "第一百一十七条"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-MT-210-T2",
+    "category": "multi_turn",
+    "query": "那它具体是怎么定义的",
+    "expected_keywords": [
+      "不能预见",
+      "不能避免",
+      "不能克服"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "它指的是不能预见、不能避免并不能克服的客观情况。",
+    "must_contain_snippets": [
+      "不能预见",
+      "客观情况"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-MT-211-T3",
+    "category": "multi_turn",
+    "query": "如果因为这个原因导致不能履行合同，还要承担违约责任吗",
+    "expected_keywords": [
+      "免除",
+      "不承担",
+      "责任"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "因不可抗力不能履行合同的，根据不可抗力的影响，部分或者全部免除责任。",
+    "must_contain_snippets": [
+      "免除责任",
+      "部分或者全部"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-MT-212-T1",
+    "category": "multi_turn",
+    "query": "合同法中关于不可抗力的条款在哪一条8",
+    "expected_keywords": [
+      "不可抗力",
+      "第一百一十七条"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "不可抗力规定在合同法第一百一十七条。",
+    "must_contain_snippets": [
+      "第一百一十七条"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-MT-213-T2",
+    "category": "multi_turn",
+    "query": "那它具体是怎么定义的",
+    "expected_keywords": [
+      "不能预见",
+      "不能避免",
+      "不能克服"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "它指的是不能预见、不能避免并不能克服的客观情况。",
+    "must_contain_snippets": [
+      "不能预见",
+      "客观情况"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-MT-214-T3",
+    "category": "multi_turn",
+    "query": "如果因为这个原因导致不能履行合同，还要承担违约责任吗",
+    "expected_keywords": [
+      "免除",
+      "不承担",
+      "责任"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "因不可抗力不能履行合同的，根据不可抗力的影响，部分或者全部免除责任。",
+    "must_contain_snippets": [
+      "免除责任",
+      "部分或者全部"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-MT-215-T1",
+    "category": "multi_turn",
+    "query": "合同法中关于不可抗力的条款在哪一条9",
+    "expected_keywords": [
+      "不可抗力",
+      "第一百一十七条"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "不可抗力规定在合同法第一百一十七条。",
+    "must_contain_snippets": [
+      "第一百一十七条"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-MT-216-T2",
+    "category": "multi_turn",
+    "query": "那它具体是怎么定义的",
+    "expected_keywords": [
+      "不能预见",
+      "不能避免",
+      "不能克服"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "它指的是不能预见、不能避免并不能克服的客观情况。",
+    "must_contain_snippets": [
+      "不能预见",
+      "客观情况"
+    ],
+    "test_user": "admin",
+    "difficulty": "easy",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-MT-217-T3",
+    "category": "multi_turn",
+    "query": "如果因为这个原因导致不能履行合同，还要承担违约责任吗",
+    "expected_keywords": [
+      "免除",
+      "不承担",
+      "责任"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "因不可抗力不能履行合同的，根据不可抗力的影响，部分或者全部免除责任。",
+    "must_contain_snippets": [
+      "免除责任",
+      "部分或者全部"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "single_doc"
+    ]
+  },
+  {
+    "id": "GS-MT-218-T1",
+    "category": "multi_turn",
+    "query": "合同法中关于不可抗力的条款在哪一条10",
+    "expected_keywords": [
+      "不可抗力",
+      "第一百一十七条"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "不可抗力规定在合同法第一百一十七条。",
+    "must_contain_snippets": [
+      "第一百一十七条"
+    ],
+    "test_user": "admin",
+    "difficulty": "medium",
+    "tags": [
+      "structured"
+    ]
+  },
+  {
+    "id": "GS-MT-219-T2",
+    "category": "multi_turn",
+    "query": "那它具体是怎么定义的",
+    "expected_keywords": [
+      "不能预见",
+      "不能避免",
+      "不能克服"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "它指的是不能预见、不能避免并不能克服的客观情况。",
+    "must_contain_snippets": [
+      "不能预见",
+      "客观情况"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "multi_doc"
+    ]
+  },
+  {
+    "id": "GS-MT-220-T3",
+    "category": "multi_turn",
+    "query": "如果因为这个原因导致不能履行合同，还要承担违约责任吗",
+    "expected_keywords": [
+      "免除",
+      "不承担",
+      "责任"
+    ],
+    "expected_doc_titles": [
+      "中华人民共和国合同法.docx"
+    ],
+    "forbidden_doc_titles": [],
+    "ground_truth_answer": "因不可抗力不能履行合同的，根据不可抗力的影响，部分或者全部免除责任。",
+    "must_contain_snippets": [
+      "免除责任",
+      "部分或者全部"
+    ],
+    "test_user": "admin",
+    "difficulty": "hard",
+    "tags": [
+      "multi_doc"
+    ]
+  }
+]

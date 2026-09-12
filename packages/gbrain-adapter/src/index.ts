@@ -38,7 +38,18 @@ export interface BrainQueryResult {
   reranked?: boolean;
   platformRerankApplied?: boolean;
   fallbackMerged?: boolean;
-  evidenceSelection?: Record<string, unknown>;
+  evidenceSelection?: {
+    before?: number;
+    after?: number;
+    removed?: number;
+    groups?: number;
+    usedTokens?: number;
+    relevanceFloorRatio?: number;
+    subQueries?: number;
+    subQueryCovered?: number;
+    subQueryInjected?: number;
+    [key: string]: unknown;
+  };
   documentDiversity?: { demoted: number; maxPerDoc: number };
   retrievalGate?: { removed: number; scoreFloor: number; topScore: number };
   diagnostics?: {

@@ -18,6 +18,7 @@
 import fs from 'fs';
 import path from 'path';
 import { llmChat, extractJson, llmConfig } from './llm-client';
+import { runMetadata } from './run-meta';
 
 interface EvalQuestion {
   id: string;
@@ -36,7 +37,7 @@ interface EvalQuestion {
 
 interface ChatResult {
   answer: string;
-  citations: Array<{ doc_title?: string; document_id?: string; page_no?: number }>;
+  citations: Array<{ doc_title?: string; document_id?: string; page_no?: number; snippet?: string }>;
   conversationId?: string;
   status: number;
   error?: string;
@@ -90,7 +91,7 @@ async function apiJson(method: string, pathname: string, token: string, body?: u
 }
 
 /** Resolve golden scope names (e.g. "kb-company-policy") to real KB ids. */
-async function resolveScopeMap(scopes: string[]): Promise<Map<string, string>> {
+async function resolveScopeMap(scopes: string[][]): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   const wanted = new Set(scopes.flat());
   let page = 1;
@@ -155,6 +156,7 @@ async function fetchChatCompletion(
             doc_title: data.timeline_entry.doc_title,
             document_id: data.timeline_entry.document_id,
             page_no: data.timeline_entry.page_no,
+            snippet: data.timeline_entry.snippet,
           });
         }
       } catch { /* partial SSE line */ }
@@ -165,28 +167,55 @@ async function fetchChatCompletion(
   }
 }
 
+// Max evidence text passed to the judge per citation (keeps prompts bounded).
+const EVIDENCE_SNIPPET_MAX_CHARS = 800;
+
+/**
+ * Independent LLM-as-judge over assertion-evidence entailment. The judge sees
+ * the snippet text of every citation (not just titles) and decomposes the
+ * answer into atomic assertions; the returned score is the ratio of assertions
+ * supported by the evidence. Returns -1 when no judge route is configured or
+ * the judge output cannot be parsed (fail-open).
+ */
 async function judgeAnswer(
   question: string,
   answer: string,
   expectedKeywords: string[],
-  citations: string[],
+  citations: Array<{ doc_title?: string; snippet?: string }>,
   expectedNoAnswer: boolean,
 ): Promise<number> {
   if (!llmConfig()) return -1; // no route configured: skip
+  const evidence = citations.slice(0, 8)
+    .map((c, index) => {
+      const snippet = String(c.snippet || '').trim().slice(0, EVIDENCE_SNIPPET_MAX_CHARS);
+      return `[${index + 1}] 《${c.doc_title || '未命名文档'}》 ${snippet || '(无正文片段)'}`;
+    })
+    .join('\n');
   const direction = expectedNoAnswer
     ? '本题在知识库中无答案，期望模型明确拒答且不编造。'
     : `期望答案覆盖要点：${expectedKeywords.join('、') || '(以引用为准)'}`;
-  const prompt = `你是独立评阅人。请只依据"引用来源"判断回答质量，不得使用外部知识。
+  const prompt = `你是独立评阅人。请只依据下方"证据片段"判断回答质量，不得使用外部知识。
 问题：${question}
 ${direction}
-引用来源标题：${citations.slice(0, 8).join(' | ') || '(无)'}
+证据片段（引用正文，与引用编号对应）：
+${evidence || '(无)'}
 模型回答：${answer.slice(0, 1200)}
-请输出 json：{"score": 0.0-1.0, "reason": "一句话理由"}
-评分标准：1.0=完全正确且被引用支撑；0.5=部分正确/有少量无支撑推断；0.0=错误、编造或该拒答却作答。`;
+评分步骤：
+1. 将模型回答拆分为原子断言（可独立验证的最小陈述）。
+2. 逐断言判断其是否被证据片段蕴含（supported / unsupported）。${expectedNoAnswer ? '任何编造的断言一律记为 unsupported；正确拒答则 score=1.0。' : ''}
+3. score = supported 断言数 / 总断言数。
+请输出 json：{"assertions": [{"text": "断言", "supported": true}], "score": 0.0-1.0, "reason": "一句话理由"}`;
   try {
-    const text = await llmChat([{ role: 'user', content: prompt }], { maxTokens: 400, timeoutMs: 30000 });
-    const parsed = extractJson<{ score?: number }>(text);
-    if (parsed && typeof parsed.score === 'number') return Math.max(0, Math.min(1, parsed.score));
+    const text = await llmChat([{ role: 'user', content: prompt }], { maxTokens: 600, timeoutMs: 45000 });
+    const parsed = extractJson<{ score?: number; assertions?: Array<{ supported?: boolean }> }>(text);
+    if (!parsed) return -1;
+    // Recount the judge's own assertion table instead of trusting its arithmetic.
+    const judgments = Array.isArray(parsed.assertions) ? parsed.assertions : [];
+    if (judgments.length > 0) {
+      const supported = judgments.filter((a) => a?.supported === true).length;
+      return Math.max(0, Math.min(1, supported / judgments.length));
+    }
+    if (typeof parsed.score === 'number') return Math.max(0, Math.min(1, parsed.score));
   } catch { /* fail-open */ }
   return -1;
 }
@@ -216,7 +245,8 @@ async function runQualityGate() {
   interface Row {
     id: string; category: string; success: boolean;
     hitRate: boolean; citationAccuracy: boolean; noAnswer: boolean;
-    permission: boolean; keywordCoverage: number; faithfulness: boolean; contextPrecision: boolean;
+    permission: boolean; keywordCoverage: number;
+    faithfulness: number; contextPrecision: number; judged: boolean;
     answer: string; citations: string[]; error?: string; llmJudge?: number;
   }
   const results: Row[] = [];
@@ -260,9 +290,12 @@ async function runQualityGate() {
     const citationAccuracy = citationsNotApplicable
       ? true
       : titles.some((t) => item.expected_document_titles.some((e) => t.includes(e)));
+    // Coverage of ALL expected documents across the full returned citation
+    // list (the previous check only inspected the first returned title).
     const contextPrecision = citationsNotApplicable
-      ? true
-      : item.expected_document_titles.some((e) => (titles[0] || '').includes(e));
+      ? 1
+      : item.expected_document_titles.filter((e) => titles.some((rt) => rt.includes(e))).length
+        / item.expected_document_titles.length;
 
     const finalRefused = REFUSAL_MARKERS.some((m) => res.answer.includes(m));
     const noAnswer = item.expected_no_answer
@@ -273,8 +306,19 @@ async function runQualityGate() {
       ? item.expected_keywords.filter((kw) => res.answer.includes(kw)).length / item.expected_keywords.length
       : 1;
 
-    const faithfulness = !(!item.expected_no_answer && res.citations.length === 0
-      && res.answer.length > 20 && !finalRefused);
+    // Faithfulness = ratio of answer assertions supported by the cited
+    // evidence (judge-based entailment). Without a judge route the metric
+    // degrades to a strict grounding-presence check (0/1) so ungrounded
+    // long answers still fail the gate.
+    let llmJudge: number | undefined;
+    if (LLM_JUDGE_ENABLED) {
+      const score = await judgeAnswer(item.question, res.answer, item.expected_keywords, res.citations, item.expected_no_answer);
+      if (score >= 0) llmJudge = score;
+    }
+    const faithfulness = llmJudge !== undefined
+      ? llmJudge
+      : (!item.expected_no_answer && res.citations.length === 0
+        && res.answer.length > 20 && !finalRefused) ? 0 : 1;
 
     // Permission probe: any permission-boundary case must also reject an
     // out-of-scope KB request outright (403), proving scope is enforced.
@@ -287,17 +331,12 @@ async function runQualityGate() {
     const success = (item.expected_no_answer ? noAnswer : hitRate) && permission;
     if (success) totalScore++;
 
-    let llmJudge: number | undefined;
-    if (LLM_JUDGE_ENABLED) {
-      const score = await judgeAnswer(item.question, res.answer, item.expected_keywords, titles, item.expected_no_answer);
-      if (score >= 0) llmJudge = score;
-    }
     console.log(success ? `${colors.green}✓ PASS${colors.reset}` : `${colors.red}✗ FAIL${colors.reset}`);
 
     results.push({
       id: item.id, category: item.category, success,
       hitRate, citationAccuracy, noAnswer, permission,
-      keywordCoverage, faithfulness, contextPrecision,
+      keywordCoverage, faithfulness, contextPrecision, judged: llmJudge !== undefined,
       answer: res.answer.slice(0, 400), citations: titles, error: res.error, llmJudge,
     });
   }
@@ -309,8 +348,8 @@ async function runQualityGate() {
     permission: results.filter((r) => r.permission).length / total,
     noAnswer: results.filter((r) => r.noAnswer).length / total,
     citationAccuracy: results.filter((r) => r.citationAccuracy).length / total,
-    faithfulness: results.filter((r) => r.faithfulness).length / total,
-    contextPrecision: results.filter((r) => r.contextPrecision).length / total,
+    faithfulness: results.reduce((acc, r) => acc + r.faithfulness, 0) / total,
+    contextPrecision: results.reduce((acc, r) => acc + r.contextPrecision, 0) / total,
     llmJudge: (() => {
       const judged = results.filter((r) => typeof r.llmJudge === 'number');
       return judged.length ? judged.reduce((acc, r) => acc + (r.llmJudge as number), 0) / judged.length : -1;
@@ -332,7 +371,8 @@ async function runQualityGate() {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const reportPath = path.join(RESULTS_DIR, `quality-gate-report-${timestamp}.json`);
   fs.writeFileSync(reportPath, JSON.stringify({
-    timestamp, api: API_BASE,
+    ...runMetadata(DATASET_PATH),
+    api: API_BASE,
     thresholds: THRESHOLDS,
     summary: {
       total, passed: totalScore, overallSuccessRate: totalScore / total,

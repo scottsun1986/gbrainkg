@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { runMetadata } from './run-meta';
 
 // Types for the golden dataset and evaluation results
 interface EvalQuestion {
@@ -28,6 +29,7 @@ interface EvalResult {
   details: {
     answer: string;
     citations: string[];
+    citation_snippets: Array<{ doc_title: string; snippet: string }>;
     error?: string;
   };
 }
@@ -154,6 +156,13 @@ async function runEvaluation() {
     const success = (item.expected_no_answer ? noAnswerCompliance : hitRate) && permissionCompliance;
     if (success) totalScore++;
 
+    // Keep the citation snippet text (SSE timeline_entry.snippet) so judges
+    // and offline analysis can verify assertion-evidence entailment.
+    const citationSnippets = res.citations.map((c: any) => ({
+      doc_title: String(c?.doc_title || c?.title || ''),
+      snippet: String(c?.snippet || c?.evidence || '').slice(0, 800),
+    }));
+
     results.push({
       questionId: item.id,
       success,
@@ -167,6 +176,7 @@ async function runEvaluation() {
       details: {
         answer: res.answer,
         citations: returnedTitles,
+        citation_snippets: citationSnippets,
         error: res.error,
       }
     });
@@ -178,7 +188,10 @@ async function runEvaluation() {
   }
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const reportPath = path.join(RESULTS_DIR, `eval-report-${timestamp}.json`);
-  fs.writeFileSync(reportPath, JSON.stringify({ summary: { total: dataset.length, score: totalScore }, results }, null, 2));
+  fs.writeFileSync(reportPath, JSON.stringify({
+    // Run provenance: id, commit, time and golden-corpus fingerprint.
+    ...runMetadata(DATASET_PATH),
+    summary: { total: dataset.length, score: totalScore }, results }, null, 2));
 
   // Print summary
   console.log('\n--- Evaluation Summary ---');
