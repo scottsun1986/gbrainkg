@@ -61,7 +61,7 @@ describe('ingestion version fencing', () => {
 
   it('re-checks the version inside the save transaction and aborts on a mid-parse bump', async () => {
     mockPrisma.document.findUnique.mockResolvedValue({
-      id: 'doc-1', kbId: 'kb-1', title: 'fixture.txt', rawFileOid: '/fixture',
+      id: 'doc-1', kbId: 'kb-1', title: 'fixture.txt', rawFileOid: '/fixture.txt',
       status: 'uploaded', version: 3,
     });
     tx.document.findUnique.mockResolvedValue({ version: 4 }); // re-uploaded while parsing
@@ -84,7 +84,7 @@ describe('ingestion version fencing', () => {
 
   it('replaces chunks and carries the version into the enrichment job on the happy path', async () => {
     mockPrisma.document.findUnique.mockResolvedValue({
-      id: 'doc-1', kbId: 'kb-1', title: 'fixture.txt', rawFileOid: '/fixture',
+      id: 'doc-1', kbId: 'kb-1', title: 'fixture.txt', rawFileOid: '/fixture.txt',
       status: 'uploaded', version: 3,
     });
     tx.document.findUnique.mockResolvedValue({ version: 3 });
@@ -108,5 +108,27 @@ describe('ingestion version fencing', () => {
       expect.objectContaining({ documentId: 'doc-1', kbId: 'kb-1', expectedVersion: 3 }),
       expect.anything(),
     );
+  });
+
+  it('routes text documents by the stored file extension, not dotted display titles', async () => {
+    // "Mrs. Washington" yields extname(". washington"); the parser would 415
+    // on that fake suffix. The stored file's .txt extension decides the route.
+    mockPrisma.document.findUnique.mockResolvedValue({
+      id: 'doc-1', kbId: 'kb-1', title: 'Mrs. Washington', rawFileOid: '/uploads/doc-1/Mrs. Washington.txt',
+      status: 'uploaded', version: 2,
+    });
+    tx.document.findUnique.mockResolvedValue({ version: 2 });
+    mockReadFile.mockResolvedValue(
+      Buffer.from('Martha Dandridge Custis Washington was the first first lady of the United States. '.repeat(10)),
+    );
+
+    const service = new IngestionService(
+      queue as any, compiler as any, models as any,
+      undefined, undefined, undefined, enrichQueue as any,
+    );
+    const result = await service.processDocument('doc-1', 2);
+
+    expect(result.status).toBe('indexing');
+    expect(tx.chunk.createMany).toHaveBeenCalledTimes(1);
   });
 });

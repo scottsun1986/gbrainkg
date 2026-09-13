@@ -9,7 +9,7 @@ import { ModelConfigService } from "../model-config.service";
 import { splitMarkdownIntoChunks } from "./markdown-chunker";
 import { assessContentQuality } from "./content-quality";
 import { parserPollBudget } from "./parser-budget";
-import { ANYDOC_UPLOAD_EXTENSIONS } from './parser-capabilities';
+import { ANYDOC_UPLOAD_EXTENSIONS, SUPPORTED_UPLOAD_EXTENSIONS } from './parser-capabilities';
 import { enrichChunksWithContext } from './contextual-retrieval';
 import { GraphRagService } from "../graph-rag/graph-rag.service";
 import { RaptorService } from "../raptor/raptor.service";
@@ -152,7 +152,10 @@ export class IngestionService implements OnModuleInit {
 
     let parsed: any = null;
     const conversionMetadata: Record<string, unknown> = {};
-    const ext = extname(document.title).toLowerCase();
+    // The stored file carries the true extension (.txt for text ingest, the
+    // original filename for uploads); the display title may contain dots
+    // ("Mrs. Washington") that must never decide the parser route.
+    const ext = extname(document.rawFileOid).toLowerCase();
 
     // L1 Fast-Path: Plaintext files (.txt, .md) read directly in zero milliseconds
     if ([".txt", ".md"].includes(ext)) {
@@ -208,10 +211,15 @@ export class IngestionService implements OnModuleInit {
         content.byteOffset,
         content.byteOffset + content.byteLength,
       ) as ArrayBuffer;
+      const titleExt = extname(document.title).toLowerCase();
+      const parseFilename =
+        SUPPORTED_UPLOAD_EXTENSIONS.has(titleExt) || ANYDOC_UPLOAD_EXTENSIONS.has(titleExt)
+          ? document.title
+          : `${document.title}.md`;
       form.append(
         "file",
         new Blob([fileBytes]),
-        ext ? document.title : `${document.title}.md`,
+        parseFilename,
       );
       const ocrConfig = await this.modelConfigService.getOcrConfig();
       if (ocrConfig) {

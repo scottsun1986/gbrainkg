@@ -34,7 +34,7 @@ describe('ingestion publication boundary', () => {
 
   it.each(['encrypted', 'resourceLimit'])('does not bypass AnyDoc %s safety rejection', async code => {
     mockPrisma.document.findUnique.mockResolvedValue({
-      id: 'doc-1', kbId: 'kb-1', title: 'fixture.pdf', status: 'uploaded', rawFileOid: '/fixture',
+      id: 'doc-1', kbId: 'kb-1', title: 'fixture.pdf', status: 'uploaded', rawFileOid: '/fixture.pdf',
     });
     mockReadFile.mockResolvedValue(Buffer.from('fixture'));
     mockToMarkdown.mockRejectedValue(Object.assign(new Error('sensitive detail'), { code }));
@@ -46,7 +46,7 @@ describe('ingestion publication boundary', () => {
 
   it.each(['txt', 'pdf'])('holds corrupt %s fast-path output without compilation', async extension => {
     mockPrisma.document.findUnique.mockResolvedValue({
-      id: 'doc-1', kbId: 'kb-1', title: `fixture.${extension}`, status: 'uploaded', rawFileOid: '/fixture',
+      id: 'doc-1', kbId: 'kb-1', title: `fixture.${extension}`, status: 'uploaded', rawFileOid: `/fixture.${extension}`,
     });
     const corrupt = '合同条款'.repeat(20) + '\ufffd'.repeat(30);
     mockReadFile.mockResolvedValue(Buffer.from(corrupt));
@@ -65,7 +65,7 @@ describe('ingestion publication boundary', () => {
 
   it('continues to compile valid plaintext', async () => {
     mockPrisma.document.findUnique.mockResolvedValue({
-      id: 'doc-1', kbId: 'kb-1', title: 'fixture.txt', status: 'uploaded', rawFileOid: '/fixture',
+      id: 'doc-1', kbId: 'kb-1', title: 'fixture.txt', status: 'uploaded', rawFileOid: '/fixture.txt',
     });
     mockReadFile.mockResolvedValue(Buffer.from('正常的合同条款内容'));
     const service = new IngestionService({} as any, compiler as any, models as any);
