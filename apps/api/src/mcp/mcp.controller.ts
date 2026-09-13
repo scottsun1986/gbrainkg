@@ -233,18 +233,115 @@ export class McpController implements OnModuleDestroy {
   }
 
   /**
-   * 3. 直连无状态 MCP JSON-RPC 端点 (POST /mcp)
-   * 适用于直接以 HTTP POST 方式调用 JSON-RPC 2.0 的客户端
+   * 3. Streamable HTTP / JSON-RPC 通用端点 (POST /mcp 与 POST /mcp/stream)
+   * 支持标准 MCP Streamable HTTP 协议：
+   * - 客户端若提供 Accept: text/event-stream 或 body.stream=true，采用 Transfer-Encoding: chunked / SSE 渐进式流式返回；
+   * - 工具调用（如 chat_knowledge 或 upload_document）可流式推送中间 token/进度，最后推送完整 JSON-RPC 结果；
+   * - 普通 JSON 请求直接返回标准 JSON-RPC 2.0 响应。
    */
   @Post()
   @HttpCode(200)
-  async handleDirectRpc(@Req() req: Request, @Body() body: any) {
+  async handleDirectRpc(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Body() body: any,
+  ) {
+    return this.processStreamableRpc(req, res, body, false);
+  }
+
+  @Post('stream')
+  @HttpCode(200)
+  async handleStreamEndpoint(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Body() body: any,
+  ) {
+    return this.processStreamableRpc(req, res, body, true);
+  }
+
+  private async processStreamableRpc(
+    req: Request,
+    res: Response,
+    body: any,
+    forceStream = false,
+  ) {
     const { user } = await this.authenticate(req);
+    const acceptHeader = String(req.headers['accept'] || '').toLowerCase();
+    const isStreamRequested =
+      forceStream ||
+      acceptHeader.includes('text/event-stream') ||
+      acceptHeader.includes('application/x-ndjson') ||
+      body?.stream === true;
+
+    if (isStreamRequested) {
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders?.();
+
+      const reqId = body?.id ?? null;
+
+      try {
+        const result = await this.mcpService.handleJsonRpc(user, body, (progressEvent: any) => {
+          if (res.writableEnded) return;
+          if (progressEvent?.type === 'token') {
+            const payload = {
+              jsonrpc: '2.0',
+              method: 'notifications/message',
+              params: {
+                delta: progressEvent.delta,
+                conversation_id: progressEvent.conversation_id,
+              },
+            };
+            res.write(`event: message\ndata: ${JSON.stringify(payload)}\n\n`);
+          } else if (progressEvent?.type === 'progress') {
+            const payload = {
+              jsonrpc: '2.0',
+              method: 'notifications/progress',
+              params: {
+                phase: progressEvent.phase,
+                message: progressEvent.message,
+              },
+            };
+            res.write(`event: progress\ndata: ${JSON.stringify(payload)}\n\n`);
+          } else if (progressEvent?.type === 'citation') {
+            const payload = {
+              jsonrpc: '2.0',
+              method: 'notifications/citation',
+              params: progressEvent.citation,
+            };
+            res.write(`event: citation\ndata: ${JSON.stringify(payload)}\n\n`);
+          }
+        });
+
+        if (result !== null && !res.writableEnded) {
+          res.write(`event: message\ndata: ${JSON.stringify(result)}\n\n`);
+        }
+      } catch (err: any) {
+        if (!res.writableEnded) {
+          res.write(
+            `event: error\ndata: ${JSON.stringify({
+              jsonrpc: '2.0',
+              id: reqId,
+              error: { code: -32603, message: err?.message || 'Internal Streamable HTTP error' },
+            })}\n\n`,
+          );
+        }
+      } finally {
+        if (!res.writableEnded) {
+          res.end();
+        }
+      }
+      return;
+    }
+
+    // 非流式标准 JSON-RPC 2.0 响应
     const result = await this.mcpService.handleJsonRpc(user, body);
     if (result === null) {
-      return { ok: true };
+      return res.status(202).send();
     }
-    return result;
+    return res.status(200).json(result);
   }
 
   /**
@@ -252,16 +349,27 @@ export class McpController implements OnModuleDestroy {
    */
   @Get('spec')
   getMcpSpec(@Req() req: Request) {
-    const host = req.get('host') || '119.45.22.137:20080';
-    const protocol = req.protocol || 'http';
+    const xForwardedHost = req.get('x-forwarded-host');
+    const xForwardedProto = req.get('x-forwarded-proto');
+    let host = xForwardedHost || req.get('host') || 'knowledge.5gsailor.com:20080';
+    let protocol = xForwardedProto || req.protocol || 'https';
+
+    // 强制生产域名携带对外服务的 20080 端口
+    if (host.includes('knowledge.5gsailor.com') && !host.includes(':')) {
+      host = 'knowledge.5gsailor.com:20080';
+      protocol = 'https';
+    }
     const baseUrl = `${protocol}://${host}`;
 
     return {
       name: 'gbrainkg-mcp',
-      description: 'GBrain 知识库 Model Context Protocol (MCP) 服务',
-      version: '1.0.0',
+      description: 'GBrain 知识库 Model Context Protocol (MCP) 服务 (支持 Streamable HTTP 与 SSE)',
+      version: '1.1.0',
       protocolVersion: '2024-11-05',
+      transports: ['streamable-http', 'sse', 'direct-rpc'],
       endpoints: {
+        streamable_http: `${baseUrl}/mcp`,
+        stream: `${baseUrl}/mcp/stream`,
         sse: `${baseUrl}/mcp/sse`,
         messages: `${baseUrl}/mcp/messages`,
         direct_rpc: `${baseUrl}/mcp`,
@@ -279,8 +387,22 @@ export class McpController implements OnModuleDestroy {
       },
       tools: this.mcpService.getTools(),
       clientConfigurations: {
-        cursor_and_windsurf: {
-          description: '适用于 Cursor / Windsurf / VSCode Continue 的 SSE 格式配置',
+        streamable_http: {
+          description: '适用于 Cursor / Windsurf 的 Streamable HTTP 标准配置（推荐）',
+          config: {
+            mcpServers: {
+              gbrainkg: {
+                url: `${baseUrl}/mcp`,
+                headers: {
+                  'X-App-Id': 'YOUR_APP_ID',
+                  'X-App-Secret': 'YOUR_APP_SECRET',
+                },
+              },
+            },
+          },
+        },
+        cursor_and_windsurf_sse: {
+          description: '适用于 Cursor / Windsurf / VSCode Continue 的传统 SSE 格式配置',
           config: {
             mcpServers: {
               gbrainkg: {
@@ -294,7 +416,7 @@ export class McpController implements OnModuleDestroy {
           },
         },
         claude_desktop: {
-          description: '适用于 Claude Desktop (通过 npx mcp-remote 远程桥接)',
+          description: '适用于 Claude Desktop (通过 npx mcp-remote 远程桥接 Streamable HTTP)',
           config: {
             mcpServers: {
               gbrainkg: {
@@ -302,13 +424,24 @@ export class McpController implements OnModuleDestroy {
                 args: [
                   '-y',
                   'mcp-remote',
-                  `${baseUrl}/mcp/sse`,
+                  `${baseUrl}/mcp`,
                   '--header',
                   'X-App-Id: YOUR_APP_ID',
                   '--header',
                   'X-App-Secret: YOUR_APP_SECRET',
                 ],
               },
+            },
+          },
+        },
+        dify_and_orchestrators: {
+          description: '适用于 Dify / Open WebUI 等 Agent 编排平台的 Streamable HTTP 端点配置',
+          config: {
+            server_url: `${baseUrl}/mcp`,
+            transport: 'streamable-http',
+            headers: {
+              'X-App-Id': 'YOUR_APP_ID',
+              'X-App-Secret': 'YOUR_APP_SECRET',
             },
           },
         },

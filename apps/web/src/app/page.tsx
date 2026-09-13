@@ -14,7 +14,11 @@ import { Icon } from "@/components/common/Icon";
 /* eslint-disable */
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { renderMarkdown, renderPlainText } from "../lib/markdown";
-import * as XLSX from "xlsx";
+
+// SheetJS 体积接近 1MB，仅在打开 Excel/CSV 预览时才需要。
+// 按需动态导入，避免拖慢首屏 JS 的下载与解析。
+let XLSX_IMPORT: Promise<typeof import("xlsx")> | null = null;
+const loadXLSX = () => (XLSX_IMPORT ||= import("xlsx"));
 
 declare global {
   interface Window { DocsAPI?: any; }
@@ -384,6 +388,7 @@ function UniversalDocumentViewer({ preview, onClose }) {
 
                 if (isExcel) {
                   const buffer = await blob.arrayBuffer();
+                  const XLSX = await loadXLSX();
                   const wb = XLSX.read(buffer, { type: 'array' });
                   if (wb.SheetNames.length > 0) {
                     const firstSheet = wb.SheetNames[0];
@@ -515,6 +520,7 @@ function UniversalDocumentViewer({ preview, onClose }) {
   const handleSheetChange = async (sheetName) => {
     if (!rawBlob) return;
     try {
+      const XLSX = await loadXLSX();
       const buffer = await rawBlob.arrayBuffer();
       const wb = XLSX.read(buffer, { type: 'array' });
       const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1 });
@@ -2041,7 +2047,11 @@ return (
 }
 
 /* ============== 知识库屏 ============== */
-function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
+function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], active = true}){
+  // 多屏常驻挂载下本组件虽 display:none 但也会执行 effect；文档列表按
+  // 首次可见再拉取，避免启动即请求全部知识库文档拖慢首屏。
+  const [hasBeenActive, setHasBeenActive] = useState(Boolean(active));
+  useEffect(() => { if (active) setHasBeenActive(true); }, [active]);
   const [filter, setFilter] = useState('all');
   const filtered = filter==='all' ? KNOWLEDGE_BASES : KNOWLEDGE_BASES.filter(k=>k.type===filter);
   const [sel, setSel] = useState(null);
@@ -2099,8 +2109,8 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = []}){
     if (!filtered.length && sel) setSel(null);
   }, [filter, filtered.length, filtered[0]?.id, current?.id]);
   useEffect(() => { const target = KNOWLEDGE_BASES.find(k => k.id === initialKbId); if (target) setSel(target); }, [initialKbId]);
-  useEffect(() => { void loadDocuments(current?.id); }, [current?.id]);
-  useEffect(() => { const refresh = () => { if (current?.id) void loadDocuments(current.id); }; window.addEventListener('app-data-refresh', refresh); return () => window.removeEventListener('app-data-refresh', refresh); }, [current?.id]);
+  useEffect(() => { if (hasBeenActive) void loadDocuments(current?.id); }, [hasBeenActive, current?.id]);
+  useEffect(() => { const refresh = () => { if (hasBeenActive && current?.id) void loadDocuments(current.id); }; window.addEventListener('app-data-refresh', refresh); return () => window.removeEventListener('app-data-refresh', refresh); }, [hasBeenActive, current?.id]);
 
   const uploadDocument = async (file: any) => {
     if (!file || !current?.id) return;
@@ -6432,7 +6442,12 @@ function App(){
   }, [theme]);
 
   const loadAdminData = async (token) => {
-    const res = await fetch(`${API_BASE_URL}/api/v1/admin/data`, { headers: { Authorization: `Bearer ${token}` } });
+    // 会话列表与全量底座数据互不依赖，并行拉取节省一个串行往返，
+    // 明显缩短登录后到可交互的等待时间。
+    const [res, conversationsResponse] = await Promise.all([
+      fetch(`${API_BASE_URL}/api/v1/admin/data`, { headers: { Authorization: `Bearer ${token}` } }),
+      fetch(`${API_BASE_URL}/api/v1/conversations`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => null),
+    ]);
     let d;
     if (res.ok) {
       d = await res.json();
@@ -6526,10 +6541,7 @@ function App(){
       ORG_TREES = [];
       ORG_TREE = null;
     }
-    try {
-      const conversationsResponse = await fetch(`${API_BASE_URL}/api/v1/conversations`, { headers: { Authorization: `Bearer ${token}` } });
-      CONVERSATIONS = conversationsResponse.ok ? await conversationsResponse.json() : [];
-    } catch { CONVERSATIONS = []; }
+    CONVERSATIONS = conversationsResponse && conversationsResponse.ok ? await conversationsResponse.json().catch(() => []) : [];
     setDbData(d);
     window.dispatchEvent(new CustomEvent('app-admin-data-updated', { detail: { orgTrees: ORG_TREES, orgTree: ORG_TREE } }));
   };
@@ -6772,13 +6784,13 @@ function App(){
             <ChatScreen/>
           </div>
           <div style={{display: visibleScreen==='libs'?'flex':'none', flex:1, minWidth:0}}>
-            <LibrariesScreen initialKbId={libraryKbId} capabilities={CAPABILITIES} onManageGrant={(kb)=>{setAdminTab('grant'); setScreen('admin');}}/>
+            <LibrariesScreen active={visibleScreen==='libs'} initialKbId={libraryKbId} capabilities={CAPABILITIES} onManageGrant={(kb)=>{setAdminTab('grant'); setScreen('admin');}}/>
           </div>
           <div style={{display: visibleScreen==='graph'?'flex':'none', flex:1, minWidth:0}}>
             <KnowledgeGraphScreen active={visibleScreen==='graph'} onOpenDocument={openGraphDocument} onOpenKb={openGraphKb}/>
           </div>
           <div style={{display: visibleScreen==='personal_settings'?'flex':'none', flex:1, minWidth:0, overflowY:'auto'}}>
-            <PersonalSettingsScreen user={currentUser} apiBaseUrl={API_BASE_URL} apiHeaders={apiHeaders} onNotify={(msg) => setToast({ text: msg, undo: null })}/>
+            <PersonalSettingsScreen active={visibleScreen==='personal_settings'} user={currentUser} apiBaseUrl={API_BASE_URL} apiHeaders={apiHeaders} onNotify={(msg) => setToast({ text: msg, undo: null })}/>
           </div>
           <div style={{display: visibleScreen==='admin' || visibleScreen==='settings'?'flex':'none', flex:1, minWidth:0}}>
             <AdminScreen initialTab={visibleScreen==='settings' ? 'model' : visibleScreen==='admin' ? adminTab : undefined} capabilities={CAPABILITIES} onOpenGrant={(k)=>{setAdminTab('grant'); setScreen('admin');}} onManageKb={(kbId)=>{setLibraryKbId(kbId); setScreen('libs');}}/>

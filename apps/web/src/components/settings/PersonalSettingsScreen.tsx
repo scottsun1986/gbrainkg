@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Icon } from '@/components/common/Icon';
 
 interface CredentialItem {
@@ -19,11 +19,13 @@ export function PersonalSettingsScreen({
   apiBaseUrl,
   apiHeaders,
   onNotify,
+  active = true,
 }: {
   user: any;
   apiBaseUrl: string;
   apiHeaders: () => Record<string, string>;
   onNotify?: (msg: string, type?: 'success' | 'error' | 'info') => void;
+  active?: boolean;
 }) {
   const [activeTab, setActiveTab] = useState<'credentials' | 'security' | 'docs'>('credentials');
   const [credentials, setCredentials] = useState<CredentialItem[]>([]);
@@ -72,9 +74,14 @@ export function PersonalSettingsScreen({
     }
   };
 
+  // 多屏常驻挂载下首次可见时才拉取凭证列表，避免启动即发起隐藏请求。
+  const hasBeenActiveRef = useRef(false);
   useEffect(() => {
-    loadCredentials();
-  }, []);
+    if (active && !hasBeenActiveRef.current) {
+      hasBeenActiveRef.current = true;
+      loadCredentials();
+    }
+  }, [active]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -231,9 +238,9 @@ export function PersonalSettingsScreen({
     }
   };
 
-  const [mcpFormat, setMcpFormat] = useState<'cursor' | 'claude' | 'generic'>('cursor');
+  const [mcpFormat, setMcpFormat] = useState<'streamable' | 'cursor_sse' | 'claude' | 'dify'>('streamable');
   const [selectedMcpAppId, setSelectedMcpAppId] = useState<string>('');
-  const PRODUCTION_DOMAIN = process.env.NEXT_PUBLIC_MCP_URL?.trim() || 'https://knowledge.5gsailor.com';
+  const PRODUCTION_DOMAIN = process.env.NEXT_PUBLIC_MCP_URL?.trim() || 'https://knowledge.5gsailor.com:20080';
   const [domainMode, setDomainMode] = useState<'production' | 'current'>(() => {
     if (typeof window !== 'undefined') {
       const h = window.location.hostname;
@@ -247,17 +254,49 @@ export function PersonalSettingsScreen({
   const effectiveMcpAppId = selectedMcpAppId || sampleAppId;
   const currentOrigin = typeof window !== 'undefined' && window.location.origin ? window.location.origin : (apiBaseUrl || 'http://127.0.0.1:3200');
 
+  // 生产对外服务固定走 https://knowledge.5gsailor.com:20080（nginx 20080 → 80）。
+  // NEXT_PUBLIC_MCP_URL 或当前地址若遗漏端口，这里统一归一化补齐，
+  // 避免生成连不上的 MCP 配置。
+  const normalizeMcpOrigin = (origin: string) => {
+    try {
+      const url = new URL(origin);
+      if (url.hostname === 'knowledge.5gsailor.com' && !url.port) {
+        url.port = '20080';
+      }
+      return url.toString().replace(/\/$/, '');
+    } catch {
+      return origin;
+    }
+  };
+
   const getOrigin = () => {
     if (domainMode === 'production') {
-      return PRODUCTION_DOMAIN;
+      return normalizeMcpOrigin(PRODUCTION_DOMAIN);
     }
-    if (typeof window !== 'undefined' && window.location.origin) return window.location.origin;
+    if (typeof window !== 'undefined' && window.location.origin) return normalizeMcpOrigin(window.location.origin);
     return apiBaseUrl || 'http://127.0.0.1:3202';
   };
 
-  const getMcpJson = (format: 'cursor' | 'claude' | 'generic', appId: string, secret = 'YOUR_APP_SECRET') => {
+  const getMcpJson = (format: 'streamable' | 'cursor_sse' | 'claude' | 'dify', appId: string, secret = 'YOUR_APP_SECRET') => {
     const origin = getOrigin();
-    if (format === 'cursor') {
+    if (format === 'streamable') {
+      return JSON.stringify(
+        {
+          mcpServers: {
+            gbrainkg: {
+              url: `${origin}/mcp`,
+              headers: {
+                'X-App-Id': appId,
+                'X-App-Secret': secret,
+              },
+            },
+          },
+        },
+        null,
+        2,
+      );
+    }
+    if (format === 'cursor_sse') {
       return JSON.stringify(
         {
           mcpServers: {
@@ -283,7 +322,7 @@ export function PersonalSettingsScreen({
               args: [
                 '-y',
                 'mcp-remote',
-                `${origin}/mcp/sse`,
+                `${origin}/mcp`,
                 '--header',
                 `X-App-Id: ${appId}`,
                 '--header',
@@ -298,11 +337,8 @@ export function PersonalSettingsScreen({
     }
     return JSON.stringify(
       {
-        server_name: 'gbrainkg-mcp',
-        protocol_version: '2024-11-05',
-        sse_endpoint: `${origin}/mcp/sse`,
-        messages_endpoint: `${origin}/mcp/messages`,
-        direct_rpc_endpoint: `${origin}/mcp`,
+        server_url: `${origin}/mcp`,
+        transport: 'streamable-http',
         headers: {
           'X-App-Id': appId,
           'X-App-Secret': secret,
@@ -313,10 +349,11 @@ export function PersonalSettingsScreen({
     );
   };
 
-  const mcpLabels: Record<'cursor' | 'claude' | 'generic', string> = {
-    cursor: 'Cursor / Windsurf / VSCode (SSE 格式)',
-    claude: 'Claude Desktop (mcp-remote 命令行格式)',
-    generic: '通用直连 JSON-RPC / API 格式',
+  const mcpLabels: Record<'streamable' | 'cursor_sse' | 'claude' | 'dify', string> = {
+    streamable: 'Streamable HTTP (推荐)',
+    cursor_sse: 'Cursor / Windsurf (SSE 长连接)',
+    claude: 'Claude Desktop (mcp-remote 桥接)',
+    dify: 'Dify / Agent 编排平台',
   };
 
   return (
@@ -657,7 +694,7 @@ export function PersonalSettingsScreen({
             >
               {/* Agent 格式 Tabs */}
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {(['cursor', 'claude', 'generic'] as const).map((fmt) => {
+                {(['streamable', 'cursor_sse', 'claude', 'dify'] as const).map((fmt) => {
                   const isActive = mcpFormat === fmt;
                   return (
                     <button
@@ -710,9 +747,9 @@ export function PersonalSettingsScreen({
                     cursor: 'pointer',
                     transition: 'all 0.15s ease',
                   }}
-                  title="使用生产规范域名（https://knowledge.5gsailor.com）"
+                  title="使用生产规范域名及对外服务端口（https://knowledge.5gsailor.com:20080）"
                 >
-                  生产域名 (knowledge.5gsailor.com)
+                  生产域名 (knowledge.5gsailor.com:20080)
                 </button>
                 <button
                   type="button"
@@ -769,14 +806,14 @@ export function PersonalSettingsScreen({
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Icon name="spark" size={16} color="var(--ink)" />
-                <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--ink)' }}>快速测试调用 (cURL 示例)</span>
+                <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--ink)' }}>快速测试调用 (MCP Streamable HTTP / OpenAPI 示例)</span>
               </div>
               <button
                 className="btn btn-secondary"
                 onClick={() =>
                   copyToClipboard(
-                    `curl -X POST ${apiBaseUrl}/open-api/v1/chat/completions \\\n  -H "X-App-Id: ${sampleAppId}" \\\n  -H "X-App-Secret: YOUR_APP_SECRET" \\\n  -H "Content-Type: application/json" \\\n  -d '{"prompt": "你好，请介绍一下知识库内容"}'`,
-                    'cURL 示例',
+                    `# 1. MCP Streamable HTTP 获取工具列表\ncurl -X POST ${getOrigin()}/mcp \\\n  -H "X-App-Id: ${sampleAppId}" \\\n  -H "X-App-Secret: YOUR_APP_SECRET" \\\n  -H "Content-Type: application/json" \\\n  -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}'\n\n# 2. MCP 上传文档工具 (upload_document)\ncurl -X POST ${getOrigin()}/mcp \\\n  -H "X-App-Id: ${sampleAppId}" \\\n  -H "X-App-Secret: YOUR_APP_SECRET" \\\n  -H "Content-Type: application/json" \\\n  -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "upload_document", "arguments": {"kb_id": "TARGET_KB_ID", "filename": "example.md", "content": "# 文档标题\\n文档内容..."}}}'`,
+                    '调用示例',
                   )
                 }
                 style={{ padding: '4px 10px', fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}
@@ -798,7 +835,22 @@ export function PersonalSettingsScreen({
                 lineHeight: 1.5,
               }}
             >
-              {`curl -X POST ${apiBaseUrl}/open-api/v1/chat/completions \\
+              {`# 1. MCP Streamable HTTP 协议获取支持的工具列表
+curl -X POST ${getOrigin()}/mcp \\
+  -H "X-App-Id: ${sampleAppId}" \\
+  -H "X-App-Secret: YOUR_APP_SECRET" \\
+  -H "Content-Type: application/json" \\
+  -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}'
+
+# 2. 调用 MCP 知识库上传工具 (upload_document)
+curl -X POST ${getOrigin()}/mcp \\
+  -H "X-App-Id: ${sampleAppId}" \\
+  -H "X-App-Secret: YOUR_APP_SECRET" \\
+  -H "Content-Type: application/json" \\
+  -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "upload_document", "arguments": {"kb_id": "TARGET_KB_ID", "filename": "example.md", "content": "# 文档标题\\n文档内容..."}}}'
+
+# 3. OpenAPI 传统问答对话
+curl -X POST ${getOrigin()}/open-api/v1/chat/completions \\
   -H "X-App-Id: ${sampleAppId}" \\
   -H "X-App-Secret: YOUR_APP_SECRET" \\
   -H "Content-Type: application/json" \\
@@ -1206,14 +1258,14 @@ export function PersonalSettingsScreen({
                     className="btn btn-secondary"
                     onClick={() =>
                       copyToClipboard(
-                        getMcpJson('cursor', createdResult.appId, createdResult.appSecret),
-                        '已填入密钥的 Cursor MCP JSON',
+                        getMcpJson('streamable', createdResult.appId, createdResult.appSecret),
+                        '已填入密钥的 Streamable HTTP MCP JSON',
                       )
                     }
                     style={{ padding: '8px 12px', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
                   >
                     <Icon name="copy" size={13} />
-                    <span>复制 Cursor 配置 (含密钥)</span>
+                    <span>复制 Streamable HTTP (含密钥)</span>
                   </button>
                   <button
                     type="button"

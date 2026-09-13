@@ -10,11 +10,16 @@ describe('McpController', () => {
 
   beforeEach(() => {
     mockMcpService = {
-      getTools: jest.fn().mockReturnValue([{ name: 'search_knowledge' }]),
-      handleJsonRpc: jest.fn().mockResolvedValue({
-        jsonrpc: '2.0',
-        id: 1,
-        result: { content: [{ type: 'text', text: 'ok' }] },
+      getTools: jest.fn().mockReturnValue([{ name: 'search_knowledge' }, { name: 'upload_document' }]),
+      handleJsonRpc: jest.fn().mockImplementation((user, body, onProgress) => {
+        if (onProgress) {
+          onProgress({ type: 'progress', phase: 'uploading', message: 'progress test' });
+        }
+        return Promise.resolve({
+          jsonrpc: '2.0',
+          id: body?.id ?? 1,
+          result: { content: [{ type: 'text', text: 'ok' }] },
+        });
       }),
     };
 
@@ -47,17 +52,25 @@ describe('McpController', () => {
     );
   });
 
-  it('should return mcp spec with tools and configurations', () => {
+  it('should return mcp spec with Streamable HTTP and port 20080 for production domain', () => {
     const mockReq = {
-      get: jest.fn().mockReturnValue('127.0.0.1:3202'),
-      protocol: 'http',
+      get: jest.fn().mockImplementation((header: string) => {
+        if (header === 'host') return 'knowledge.5gsailor.com';
+        return undefined;
+      }),
+      protocol: 'https',
     } as any;
 
     const spec = controller.getMcpSpec(mockReq);
     expect(spec.name).toBe('gbrainkg-mcp');
-    expect(spec.endpoints.sse).toBe('http://127.0.0.1:3202/mcp/sse');
-    expect(spec.clientConfigurations.cursor_and_windsurf).toBeDefined();
+    // 强制生产域名包含 20080 端口
+    expect(spec.endpoints.streamable_http).toBe('https://knowledge.5gsailor.com:20080/mcp');
+    expect(spec.endpoints.sse).toBe('https://knowledge.5gsailor.com:20080/mcp/sse');
+    expect(spec.transports).toContain('streamable-http');
+    expect(spec.clientConfigurations.streamable_http).toBeDefined();
+    expect(spec.clientConfigurations.cursor_and_windsurf_sse).toBeDefined();
     expect(spec.clientConfigurations.claude_desktop).toBeDefined();
+    expect(spec.clientConfigurations.dify_and_orchestrators).toBeDefined();
     expect(spec.tools).toBeDefined();
   });
 
@@ -66,9 +79,16 @@ describe('McpController', () => {
       headers: {},
       query: {},
     } as any;
+    const mockRes = {
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn(),
+      setHeader: jest.fn(),
+      write: jest.fn(),
+      end: jest.fn(),
+    } as any;
 
     await expect(
-      controller.handleDirectRpc(mockReq, { jsonrpc: '2.0', id: 1, method: 'ping' }),
+      controller.handleDirectRpc(mockReq, mockRes, { jsonrpc: '2.0', id: 1, method: 'ping' }),
     ).rejects.toThrow(UnauthorizedException);
   });
 
@@ -81,15 +101,62 @@ describe('McpController', () => {
       query: {},
     } as any;
 
-    const res = await controller.handleDirectRpc(mockReq, {
+    let jsonResult: any;
+    const mockRes = {
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn().mockImplementation((data) => {
+        jsonResult = data;
+        return data;
+      }),
+      setHeader: jest.fn(),
+      write: jest.fn(),
+      end: jest.fn(),
+    } as any;
+
+    await controller.handleDirectRpc(mockReq, mockRes, {
       jsonrpc: '2.0',
       id: 1,
       method: 'tools/call',
       params: { name: 'search_knowledge', arguments: { query: 'test' } },
     });
 
-    expect(res).toBeDefined();
-    expect(res.jsonrpc).toBe('2.0');
+    expect(mockRes.status).toHaveBeenCalledWith(200);
+    expect(jsonResult).toBeDefined();
+    expect(jsonResult.jsonrpc).toBe('2.0');
     expect(mockMcpService.handleJsonRpc).toHaveBeenCalled();
+  });
+
+  it('should process Streamable HTTP when Accept: text/event-stream', async () => {
+    const mockReq = {
+      headers: {
+        'x-app-id': 'app_valid',
+        'x-app-secret': 'sec_valid',
+        accept: 'text/event-stream',
+      },
+      query: {},
+    } as any;
+
+    const writes: string[] = [];
+    const mockRes = {
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn(),
+      setHeader: jest.fn(),
+      flushHeaders: jest.fn(),
+      write: jest.fn().mockImplementation((str) => writes.push(str)),
+      end: jest.fn(),
+    } as any;
+
+    await controller.handleDirectRpc(mockReq, mockRes, {
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: { name: 'upload_document', arguments: { kb_id: 'kb-1', filename: 'test.md', content: '# Hello' } },
+    });
+
+    expect(mockRes.setHeader).toHaveBeenCalledWith('Content-Type', 'text/event-stream; charset=utf-8');
+    expect(mockRes.end).toHaveBeenCalled();
+    expect(writes.length).toBeGreaterThan(0);
+    const hasProgress = writes.some((w) => w.includes('notifications/progress'));
+    expect(hasProgress).toBe(true);
   });
 });

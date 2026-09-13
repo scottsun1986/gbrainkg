@@ -262,6 +262,72 @@ export class PermissionService implements OnModuleInit {
     );
   }
 
+  /**
+   * 批量版 canManageKnowledgeBase：一次加载用户的管理面数据
+   * （系统管理员判定、组织管理子树、KbAdmin 关系），避免列表页对每个
+   * 知识库重复发起 3~6 次查询造成的 N+1。
+   */
+  async canManageKnowledgeBases(
+    userId: string,
+    kbIds: string[],
+  ): Promise<Map<string, boolean>> {
+    const result = new Map<string, boolean>();
+    const uniqueIds = [...new Set(kbIds)];
+    if (!uniqueIds.length) return result;
+    if (await this.isSystemAdmin(userId)) {
+      for (const id of uniqueIds) result.set(id, true);
+      return result;
+    }
+    const [kbs, kbAdminRows, managedOrgIds] = await Promise.all([
+      this.prisma.knowledgeBase.findMany({
+        where: { id: { in: uniqueIds } },
+        select: {
+          id: true,
+          type: true,
+          ownerUserId: true,
+          orgNodeId: true,
+          status: true,
+        },
+      }),
+      this.prisma.kbAdmin.findMany({
+        where: { userId, kbId: { in: uniqueIds } },
+        select: { kbId: true },
+      }),
+      this.getManagedOrgIds(userId),
+    ]);
+    const kbById = new Map(kbs.map((kb) => [kb.id, kb]));
+    const adminKbIds = new Set(kbAdminRows.map((row) => row.kbId));
+    for (const id of uniqueIds) {
+      const kb = kbById.get(id);
+      if (!kb || kb.status !== "active") {
+        result.set(id, false);
+        continue;
+      }
+      if (adminKbIds.has(id)) {
+        result.set(id, true);
+        continue;
+      }
+      if (kb.type === "org") {
+        // 组织库维护规则与单个版本保持一致：本级（及上级）组织管理员始终
+        // 可维护；无挂靠组织或不在管理子树时回退到 owner 判定
+        //（KbAdmin 已在上方统一覆盖）。
+        if (kb.orgNodeId && managedOrgIds.has(kb.orgNodeId)) {
+          result.set(id, true);
+        } else {
+          result.set(id, kb.ownerUserId === userId);
+        }
+        continue;
+      }
+      if (kb.type === "industry") {
+        // 行业库的写入权只属于当前在任的库管理员，创建者不自动保留。
+        result.set(id, false);
+        continue;
+      }
+      result.set(id, kb.ownerUserId === userId);
+    }
+    return result;
+  }
+
   async getCapabilities(userId: string): Promise<string[]> {
     const permissions = await this.getRolePermissions(userId);
     if (await this.isSystemAdmin(userId)) return ["*"];

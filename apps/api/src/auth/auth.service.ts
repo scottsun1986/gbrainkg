@@ -7,6 +7,42 @@ type TokenPayload = { sub: string; exp: number };
 @Injectable()
 export class AuthService {
   private readonly prisma = getPrismaClient();
+  /**
+   * 每个请求都会经由 AuthGuard + Controller 至少查询两次用户的存活/改密状态。
+   * 用短 TTL 进程内缓存把高频路径上的这两次 DB 往返收敛为每用户每 TTL 一次；
+   * 改密、禁用等状态变更入口负责主动失效，TTL 只兜底。
+   */
+  private static readonly USER_STATUS_TTL_MS = Math.max(
+    0,
+    Number(process.env.AUTH_USER_STATUS_TTL_MS ?? 30_000),
+  );
+  private readonly userStatusCache = new Map<
+    string,
+    { expiresAt: number; active: boolean; mustChangePassword: boolean }
+  >();
+
+  invalidateUserStatus(userId: string): void {
+    this.userStatusCache.delete(userId);
+  }
+
+  private async getUserStatus(
+    userId: string,
+  ): Promise<{ active: boolean; mustChangePassword: boolean }> {
+    const ttl = AuthService.USER_STATUS_TTL_MS;
+    const cached = this.userStatusCache.get(userId);
+    if (cached && cached.expiresAt > Date.now()) return cached;
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { status: true, mustChangePassword: true },
+    });
+    const entry = {
+      expiresAt: Date.now() + ttl,
+      active: user?.status === 'active',
+      mustChangePassword: Boolean(user?.mustChangePassword),
+    };
+    if (ttl > 0) this.userStatusCache.set(userId, entry);
+    return entry;
+  }
 
   private secret(): string {
     const secret = process.env.AUTH_SECRET;
@@ -67,17 +103,13 @@ export class AuthService {
     const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
     const payload = token ? this.decode(token) : null;
     if (!payload) throw new UnauthorizedException('A valid Bearer token is required.');
-    const user = await this.prisma.user.findFirst({ where: { id: payload.sub, status: 'active' }, select: { id: true } });
-    if (!user) throw new UnauthorizedException('User is inactive or does not exist.');
-    return user.id;
+    const status = await this.getUserStatus(payload.sub);
+    if (!status.active) throw new UnauthorizedException('User is inactive or does not exist.');
+    return payload.sub;
   }
 
   async isPasswordChangeRequired(userId: string): Promise<boolean> {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { mustChangePassword: true },
-    });
-    return Boolean(user?.mustChangePassword);
+    return (await this.getUserStatus(userId)).mustChangePassword;
   }
 
   async changePassword(userId: string, currentPassword: string, newPassword: string) {
@@ -98,6 +130,7 @@ export class AuthService {
       where: { id: userId },
       data: { passwordHash: this.hashPassword(newPassword), mustChangePassword: false },
     });
+    this.invalidateUserStatus(userId);
     return { ok: true };
   }
 

@@ -323,6 +323,8 @@ export class AdminController {
         _count: { select: { documents: true } },
       },
     });
+    // 审计流水只需要标题/状态/时间等汇总字段；不带 parserMetadata 等大
+    // JSON 列，避免为拼审计文案把整张文档表（含 MB 级元数据）拉进内存。
     const [roles, grants, providers, configs, compileJobs, documents] =
       await Promise.all([
         this.prisma.role.findMany({
@@ -339,7 +341,13 @@ export class AdminController {
           orderBy: { createdAt: "asc" },
         }),
         this.prisma.compileJob.findMany({
-          include: {
+          select: {
+            id: true,
+            userId: true,
+            status: true,
+            trigger: true,
+            createdAt: true,
+            inputEvidenceIds: true,
             user: { select: { displayName: true, username: true } },
             brainTopic: { select: { topicSlug: true } },
           },
@@ -347,7 +355,15 @@ export class AdminController {
           take: auditWindow,
         }),
         this.prisma.document.findMany({
-          include: { kb: { select: { name: true } } },
+          select: {
+            id: true,
+            kbId: true,
+            title: true,
+            status: true,
+            updatedAt: true,
+            uploadedById: true,
+            kb: { select: { name: true } },
+          },
           orderBy: { updatedAt: "desc" },
           take: auditWindow,
         }),
@@ -413,12 +429,14 @@ export class AdminController {
           user.orgs.some((org) => managedOrgIds.has(org.orgNodeId)));
       return { ...user, canManage };
     });
+    const visibleKbIdSet = new Set(visibleKbs.map((kb) => kb.id));
+    const industryScopeKbIds = new Set(industryScopeKbs.map((kb) => kb.id));
     const safeGrants = grants.filter(
       (grant) =>
-        isSystemAdmin || industryScopeKbs.some((kb) => kb.id === grant.kbId),
+        isSystemAdmin || industryScopeKbIds.has(grant.kbId),
     );
     const safeDocuments = documents.filter((doc) =>
-      visibleKbs.some((kb) => kb.id === doc.kbId),
+      visibleKbIdSet.has(doc.kbId),
     );
     const userById = new Map<string, any>(users.map((user: any) => [user.id, user]));
     const privateDocumentIds = isSystemAdmin
@@ -514,16 +532,19 @@ export class AdminController {
       : auditCompileJobsTotalRaw;
     const auditTotal = auditDocumentsTotal + auditCompileJobsTotal + auditGrantsTotal;
     const audit = auditItems.slice((auditPage - 1) * auditLimit, auditPage * auditLimit);
-    const writePermissions = await Promise.all(
-      visibleKbs.map((kb) =>
-        this.permissionService.canManageKnowledgeBase(adminId, kb.id),
-      ),
-    );
-    const managedIndustryWritePermissions = await Promise.all(
-      industryScopeKbs.map((kb) =>
-        this.permissionService.canManageKnowledgeBase(adminId, kb.id),
-      ),
-    );
+    // 批量判定写权限：一次加载管理面数据，避免对每个知识库重复发起
+    // isSystemAdmin/组织子树/KbAdmin 查询的 N+1 开销。
+    const [writePermissions, managedIndustryWritePermissions] =
+      await Promise.all([
+        this.permissionService.canManageKnowledgeBases(
+          adminId,
+          visibleKbs.map((kb) => kb.id),
+        ),
+        this.permissionService.canManageKnowledgeBases(
+          adminId,
+          industryScopeKbs.map((kb) => kb.id),
+        ),
+      ]);
     return {
       user: (() => {
         const current = safeUsers.find((item) => item.id === adminId);
@@ -537,10 +558,10 @@ export class AdminController {
         users: _count.users,
         perms: Array.isArray(role.permissions) ? role.permissions : [],
       })),
-      kbs: visibleKbs.map(({ _count, ...kb }, index) => ({
+      kbs: visibleKbs.map(({ _count, ...kb }) => ({
         ...kb,
         documentCount: _count.documents,
-        canWrite: writePermissions[index],
+        canWrite: writePermissions.get(kb.id) || false,
         canManage:
           isSystemAdmin ||
           (kb.type === "industry" &&
@@ -559,10 +580,10 @@ export class AdminController {
       })),
       // 管理后台的行业库页只消费这一组，避免“可阅读但不可管理”的行业库
       // 因阅读权限混入行业库管理列表。
-      managedIndustryKbs: industryScopeKbs.map(({ _count, ...kb }, index) => ({
+      managedIndustryKbs: industryScopeKbs.map(({ _count, ...kb }) => ({
         ...kb,
         documentCount: _count.documents,
-        canWrite: managedIndustryWritePermissions[index],
+        canWrite: managedIndustryWritePermissions.get(kb.id) || false,
         canManage:
           isSystemAdmin ||
           kb.ownerUserId === adminId ||
@@ -1614,6 +1635,7 @@ export class AdminController {
     }
     await this.brainOutboxService?.dispatchPending();
     await this.scheduleAccessReconciliation();
+    this.authService.invalidateUserStatus(id);
     if (typeof this.brainCompilerService?.invalidateUserScope === "function") {
       await this.brainCompilerService.invalidateUserScope(id).catch(() => undefined);
     }
@@ -1650,6 +1672,7 @@ export class AdminController {
       .catch(() => undefined);
     await this.brainOutboxService?.dispatchPending();
     await this.scheduleAccessReconciliation();
+    this.authService.invalidateUserStatus(id);
     if (typeof this.brainCompilerService?.invalidateUserScope === "function") {
       await this.brainCompilerService.invalidateUserScope(id).catch(() => undefined);
     }

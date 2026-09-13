@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Post, Req, UseGuards } from "@nestjs/common";
 import { getPrismaClient } from "../prisma";
 import { Throttle } from "@nestjs/throttler";
 import { AuthService } from "./auth.service";
@@ -21,6 +21,9 @@ export class AuthController {
     },
   })
   @Post("login")
+  // 登录语义是"验证成功"而非"创建资源"，返回 200（而非 POST 默认的
+  // 201），与标准 MCP/OpenAPI 客户端及 E2E 套件的状态码断言保持一致。
+  @HttpCode(200)
   async login(@Body() body: { username?: string; password?: string }) {
     const username = String(body?.username || "").trim();
     try {

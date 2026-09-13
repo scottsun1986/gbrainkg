@@ -118,6 +118,66 @@ export class KnowledgeBaseController {
   private readonly prisma = getPrismaClient();
   private readonly uploadRoot =
     process.env.UPLOAD_ROOT || "/tmp/llmwiki/uploads";
+  /**
+   * 文档列表每次渲染要对多达 50 个文档做文件系统 stat（最多 2 次/文档），
+   * 解析期间前端还会 2 秒轮询一次。文件大小只随文档行变更（updatedAt/
+   * version 变化会换 key），用短 TTL 缓存把重复 stat 收敛掉。
+   */
+  private static readonly SIZE_CACHE_TTL_MS = Math.max(
+    0,
+    Number(process.env.DOC_SIZE_CACHE_TTL_MS ?? 60_000),
+  );
+  private static readonly SIZE_CACHE_MAX = 5000;
+  private readonly docSizeCache = new Map<
+    string,
+    { expiresAt: number; size: number | null }
+  >();
+
+  private async resolveDocumentSize(item: {
+    id: string;
+    version: number;
+    updatedAt: Date;
+    rawFileOid?: string | null;
+  }): Promise<number | null> {
+    const cacheKey = `${item.id}:${item.version}:${item.updatedAt.getTime()}`;
+    const cached = KnowledgeBaseController.SIZE_CACHE_TTL_MS
+      ? this.docSizeCache.get(cacheKey)
+      : undefined;
+    if (cached && cached.expiresAt > Date.now()) return cached.size;
+    let sizeBytes: number | null = null;
+    if (item.rawFileOid) {
+      try {
+        sizeBytes = (await stat(item.rawFileOid)).size;
+      } catch {}
+    }
+    if (!sizeBytes) {
+      try {
+        sizeBytes = (
+          await stat(join(this.uploadRoot, item.id, "content.md"))
+        ).size;
+      } catch {}
+    }
+    if (
+      KnowledgeBaseController.SIZE_CACHE_TTL_MS &&
+      this.docSizeCache.size >= KnowledgeBaseController.SIZE_CACHE_MAX &&
+      !this.docSizeCache.has(cacheKey)
+    ) {
+      // 简单过期清理，避免长期运行下缓存无限膨胀。
+      const now = Date.now();
+      for (const [key, entry] of this.docSizeCache) {
+        if (entry.expiresAt <= now) this.docSizeCache.delete(key);
+        if (this.docSizeCache.size < KnowledgeBaseController.SIZE_CACHE_MAX)
+          break;
+      }
+    }
+    if (KnowledgeBaseController.SIZE_CACHE_TTL_MS) {
+      this.docSizeCache.set(cacheKey, {
+        expiresAt: Date.now() + KnowledgeBaseController.SIZE_CACHE_TTL_MS,
+        size: sizeBytes,
+      });
+    }
+    return sizeBytes;
+  }
 
   constructor(
     private readonly permissionService: PermissionService,
@@ -227,24 +287,33 @@ export class KnowledgeBaseController {
       }),
       this.prisma.knowledgeBase.count({ where }),
     ]);
-    const writePermissions = await Promise.all(
-      items.map((item) =>
-        this.permissionService.canManageKnowledgeBase(userId, item.id),
-      ),
+    const writePermissions = await this.permissionService.canManageKnowledgeBases(
+      userId,
+      items.map((item) => item.id),
     );
-    const deletePermissions = await Promise.all(
-      items.map((item) =>
-        item.type === "industry"
-          ? this.permissionService.canManageIndustryKb(userId, item.id)
-          : item.ownerUserId === userId,
-      ),
-    );
+    // canDelete 与 canManageIndustryKb 语义一致：系统管理员/行业库 owner/
+    // 行业库管理员。批量收集 KbAdmin 关系，避免逐库查询。
+    const industryIds = items
+      .filter((item) => item.type === "industry")
+      .map((item) => item.id);
+    const industryAdminRows = industryIds.length
+      ? await this.prisma.kbAdmin.findMany({
+          where: { userId, kbId: { in: industryIds } },
+          select: { kbId: true },
+        })
+      : [];
+    const industryAdminKbIds = new Set(industryAdminRows.map((row) => row.kbId));
     return {
-      items: items.map(({ _count, ...item }, index) => ({
+      items: items.map(({ _count, ...item }) => ({
         ...item,
         documentCount: _count.documents,
-        canWrite: writePermissions[index],
-        canDelete: deletePermissions[index],
+        canWrite: writePermissions.get(item.id) || false,
+        canDelete:
+          item.type === "industry"
+            ? isSystemAdmin ||
+              item.ownerUserId === userId ||
+              industryAdminKbIds.has(item.id)
+            : item.ownerUserId === userId,
       })),
       total,
       page: pageNumber,
@@ -283,6 +352,24 @@ export class KnowledgeBaseController {
     const [items, total] = await Promise.all([
       this.prisma.document.findMany({
         where,
+        select: {
+          id: true,
+          kbId: true,
+          title: true,
+          mdPath: true,
+          status: true,
+          sourceType: true,
+          rawFileOid: true,
+          version: true,
+          uploadedById: true,
+          parserEngine: true,
+          qualityStatus: true,
+          qualityScore: true,
+          qualityIssues: true,
+          lifecycleStatus: true,
+          createdAt: true,
+          updatedAt: true,
+        },
         skip: (pageNumber - 1) * pageSize,
         take: pageSize,
         orderBy: { updatedAt: "desc" },
@@ -302,30 +389,13 @@ export class KnowledgeBaseController {
     });
     const uploaderById = new Map(uploaders.map((user) => [user.id, user]));
     const itemsWithStats = await Promise.all(
-      items.map(async (item) => {
-        let sizeBytes: number | null = null;
-        if (item.rawFileOid) {
-          try {
-            const fileStat = await stat(item.rawFileOid);
-            sizeBytes = fileStat.size;
-          } catch {}
-        }
-        if (!sizeBytes) {
-          try {
-            const contentStat = await stat(
-              join(this.uploadRoot, item.id, "content.md"),
-            );
-            sizeBytes = contentStat.size;
-          } catch {}
-        }
-        return {
-          ...item,
-          sizeBytes,
-          uploadedBy: item.uploadedById
-            ? uploaderById.get(item.uploadedById) || null
-            : null,
-        };
-      }),
+      items.map(async (item) => ({
+        ...item,
+        sizeBytes: await this.resolveDocumentSize(item),
+        uploadedBy: item.uploadedById
+          ? uploaderById.get(item.uploadedById) || null
+          : null,
+      })),
     );
     return {
       items: itemsWithStats,

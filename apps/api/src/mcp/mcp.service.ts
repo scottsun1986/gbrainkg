@@ -1,7 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ChatService } from '../chat/chat.service';
 import { PermissionService } from '../permission/permission.service';
+import { IngestionService } from '../ingestion/ingestion.service';
 import { getPrismaClient } from '../prisma';
+import { extname, join } from 'node:path';
+import * as fs from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 
 export interface McpToolDefinition {
   name: string;
@@ -17,10 +21,13 @@ export interface McpToolDefinition {
 export class McpService {
   private readonly logger = new Logger(McpService.name);
   private readonly prisma = getPrismaClient();
+  private readonly uploadRoot =
+    process.env.UPLOAD_ROOT || join(process.cwd(), 'runtime/uploads');
 
   constructor(
     private readonly chatService: ChatService,
     private readonly permissionService: PermissionService,
+    @Optional() private readonly ingestionService?: IngestionService,
   ) {}
 
   /**
@@ -28,6 +35,33 @@ export class McpService {
    */
   getTools(): McpToolDefinition[] {
     return [
+      {
+        name: 'upload_document',
+        description:
+          '向指定的有权限的知识库上传并提交新文档（支持 PDF、Word/DOCX/DOC、PPTX、Excel/XLSX、Markdown/MD、TXT、CSV 等格式）。支持传入 Base64 编码文件内容或纯文本字符串。上传后系统自动提交后台流水线完成高保真解析、切块与向量入库。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            kb_id: {
+              type: 'string',
+              description: '目标知识库唯一 ID (UUID)，当前凭证对该库必须具有上传或维护权限',
+            },
+            filename: {
+              type: 'string',
+              description: '文件名，必须包含文件扩展名（如 report.docx, plan.pdf, slides.pptx, data.xlsx, notes.md 等）',
+            },
+            content: {
+              type: 'string',
+              description: '文件内容：二进制文件（PDF/Word/PPTX/Excel等）请提供 Base64 编码字符串；纯文本文件（MD/TXT/CSV等）可提供原始文本字符串或 Base64 字符串',
+            },
+            title: {
+              type: 'string',
+              description: '文档标题（可选，默认使用文件名）',
+            },
+          },
+          required: ['kb_id', 'filename', 'content'],
+        },
+      },
       {
         name: 'search_knowledge',
         description:
@@ -119,9 +153,13 @@ export class McpService {
   }
 
   /**
-   * 处理通用 MCP JSON-RPC 2.0 请求
+   * 处理通用 MCP JSON-RPC 2.0 请求（支持 Streamable HTTP 回调推送）
    */
-  async handleJsonRpc(user: any, request: any): Promise<any> {
+  async handleJsonRpc(
+    user: any,
+    request: any,
+    onProgress?: (event: any) => void,
+  ): Promise<any> {
     if (!request || typeof request !== 'object') {
       return {
         jsonrpc: '2.0',
@@ -180,7 +218,7 @@ export class McpService {
         case 'tools/call': {
           const toolName = params?.name;
           const toolArgs = params?.arguments || {};
-          const toolResult = await this.executeTool(user, toolName, toolArgs);
+          const toolResult = await this.executeTool(user, toolName, toolArgs, onProgress);
           return {
             jsonrpc: '2.0',
             id,
@@ -244,13 +282,144 @@ export class McpService {
   /**
    * 执行指定的 MCP 工具调用
    */
-  async executeTool(user: any, name: string, args: Record<string, any>): Promise<any> {
+  async executeTool(
+    user: any,
+    name: string,
+    args: Record<string, any>,
+    onProgress?: (event: any) => void,
+  ): Promise<any> {
     const userId = user?.id;
     if (!userId) {
       throw new Error('未获取到有效的用户上下文');
     }
 
     switch (name) {
+      case 'upload_document': {
+        const kbId = String(args?.kb_id || args?.kbId || '').trim();
+        if (!kbId) throw new Error('kb_id 参数为必填项（目标知识库 ID）');
+        const filename = String(args?.filename || '').trim();
+        if (!filename) throw new Error('filename 参数为必填项（文件名及扩展名）');
+        const content = String(args?.content || '');
+        if (!content) throw new Error('content 参数为必填项（文档内容或 Base64 编码字符串）');
+        const title = String(args?.title || '').trim() || filename;
+
+        onProgress?.({
+          type: 'progress',
+          phase: 'validating',
+          message: `正在验证知识库 ${kbId} 权限与文件信息...`,
+        });
+
+        const kb = await this.prisma.knowledgeBase.findUnique({
+          where: { id: kbId },
+          select: { id: true, name: true, type: true, ownerUserId: true, status: true },
+        });
+        if (!kb || kb.status !== 'active') {
+          throw new Error(`目标知识库不存在或已被禁用 (kb_id: ${kbId})`);
+        }
+
+        const canManage = await this.permissionService.canManageKnowledgeBase(userId, kbId);
+        if (!canManage) {
+          throw new Error(`当前凭证对应的用户无权向知识库 "${kb.name}" (${kbId}) 上传或维护文档`);
+        }
+
+        const safeExt = extname(filename).toLowerCase();
+        if (!safeExt) {
+          throw new Error(`文件名必须包含有效扩展名（如 .pdf, .docx, .md, .txt）`);
+        }
+
+        onProgress?.({
+          type: 'progress',
+          phase: 'writing_file',
+          message: `正在写入本地存储: ${filename}...`,
+        });
+
+        let fileBuffer: Buffer;
+        let rawContent = content.trim();
+        if (rawContent.startsWith('data:')) {
+          const commaIdx = rawContent.indexOf(',');
+          if (commaIdx !== -1) {
+            rawContent = rawContent.slice(commaIdx + 1);
+          }
+        }
+
+        const textExtensions = ['.md', '.markdown', '.txt', '.csv', '.json', '.xml', '.html'];
+        if (textExtensions.includes(safeExt)) {
+          const isBase64Like =
+            /^[A-Za-z0-9+/=\s]+$/.test(rawContent) &&
+            rawContent.length > 20 &&
+            !rawContent.includes('\n') &&
+            rawContent.length % 4 === 0;
+
+          if (isBase64Like) {
+            try {
+              const decoded = Buffer.from(rawContent, 'base64');
+              if (decoded.length > 0 && !decoded.includes(0)) {
+                fileBuffer = decoded;
+              } else {
+                fileBuffer = Buffer.from(content, 'utf-8');
+              }
+            } catch {
+              fileBuffer = Buffer.from(content, 'utf-8');
+            }
+          } else {
+            fileBuffer = Buffer.from(content, 'utf-8');
+          }
+        } else {
+          fileBuffer = Buffer.from(rawContent, 'base64');
+          if (fileBuffer.length === 0) {
+            throw new Error(`文件 ${filename} 的 Base64 内容解码为空，请检查传参`);
+          }
+        }
+
+        const documentId = randomUUID();
+        const destDir = join(this.uploadRoot, documentId);
+        await fs.mkdir(destDir, { recursive: true });
+        const localFilePath = join(destDir, `raw${safeExt}`);
+        await fs.writeFile(localFilePath, fileBuffer);
+
+        onProgress?.({
+          type: 'progress',
+          phase: 'creating_record',
+          message: `已写入本地文件，正在创建数据库记录...`,
+        });
+
+        const doc = await this.prisma.document.create({
+          data: {
+            id: documentId,
+            kbId,
+            mdPath: `${documentId}/content.md`,
+            title,
+            sourceType: 'upload',
+            rawFileOid: localFilePath,
+            version: 1,
+            uploadedById: userId,
+            status: 'parsing',
+            qualityStatus: 'pending',
+          },
+        });
+
+        if (this.ingestionService) {
+          await this.ingestionService.enqueue(doc.id, 'upload', doc.version);
+        }
+
+        onProgress?.({
+          type: 'progress',
+          phase: 'enqueued',
+          message: `文档已成功入队后台解析队列`,
+        });
+
+        return {
+          document_id: doc.id,
+          title: doc.title,
+          filename,
+          kb_id: kbId,
+          kb_name: kb.name,
+          size_bytes: fileBuffer.length,
+          status: 'parsing',
+          message: `文档 "${doc.title}" 已成功上传至知识库 "${kb.name}"，并提交至后台智能解析流水线。可通过 get_document_status 工具追踪解析进度与切片质检。`,
+        };
+      }
+
       case 'search_knowledge': {
         const query = String(args?.query || '').trim();
         if (!query) throw new Error('query 参数为必填项');
@@ -331,13 +500,35 @@ export class McpService {
             next: (event: any) => {
               const item = event?.data || event;
               if (item?.type === 'delta' || item?.type === 'token') {
-                answer += item.content || item.token || '';
+                const chunk = item.content || item.token || '';
+                answer += chunk;
+                if (onProgress) {
+                  onProgress({
+                    type: 'token',
+                    delta: chunk,
+                    conversation_id: conversationId,
+                  });
+                }
               } else if (item?.type === 'citation') {
                 citations.push(item.timeline_entry);
+                if (onProgress) {
+                  onProgress({
+                    type: 'citation',
+                    citation: item.timeline_entry,
+                  });
+                }
               } else if (item?.type === 'citations') {
-                if (Array.isArray(item.citations)) citations.push(...item.citations);
+                if (Array.isArray(item.citations)) {
+                  citations.push(...item.citations);
+                }
               } else if (item?.type === 'trace') {
                 trace = item.node || null;
+                if (onProgress) {
+                  onProgress({
+                    type: 'trace',
+                    trace,
+                  });
+                }
               }
             },
             error: (err: any) => reject(new Error(err?.message || 'Chat generation error')),

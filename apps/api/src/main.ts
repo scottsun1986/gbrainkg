@@ -5,6 +5,9 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import helmet from 'helmet';
 import * as express from 'express';
+// compression 是旧式 CJS 导出（无 default），tsconfig 未开启 esModuleInterop，
+// 默认导入在编译后会变成 undefined，这里显式按 require 语义引入。
+const compression = require('compression');
 
 function loadLocalEnv() {
   try {
@@ -46,6 +49,9 @@ async function bootstrap() {
   );
   app.use(express.json({ limit: '250mb' }));
   app.use(express.urlencoded({ limit: '250mb', extended: true }));
+  // 列表/管理后台 JSON 响应普遍在数百 KB 到 MB 级，gzip 可压缩 70%+，
+  // 显著缩短弱网/跨地域下页面与列表的首屏等待。
+  app.use(compression({ threshold: 1024 }));
 
   const configuredOrigins = [
     ...(process.env.WEB_ORIGIN || '').split(','),
