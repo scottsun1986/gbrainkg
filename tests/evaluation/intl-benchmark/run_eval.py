@@ -170,6 +170,9 @@ def avg(k, rows):
 
 def main(dataset):
     eval_set = json.load(open(BASE / f"{dataset}_eval_set.json"))
+    limit = int(os.environ.get("EVAL_LIMIT", "0"))
+    if limit > 0:
+        eval_set = eval_set[:limit]
     meta = json.load(open(BASE / f"{dataset}_ingest_meta.json"))
     kb_id = meta["kb_id"]
     token = login()

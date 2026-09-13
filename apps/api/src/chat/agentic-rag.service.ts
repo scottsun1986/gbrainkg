@@ -43,23 +43,37 @@ export class AgenticRagService {
     const q = query.trim();
     
     // Heuristic classification
-    // Comparative patterns
-    if (/比较|对比|区别|不同|差异|vs|versus|相比|冲突|矛盾|不一致|两个文档|两份文档|多份文档|两个版本|两份|多份|哪个为准|新旧|哪份/u.test(q)) return 'comparative';
-    // Global synthesis patterns  
+    // Comparative patterns (Chinese & English)
+    if (/比较|对比|区别|不同|差异|相比|冲突|矛盾|不一致|两个文档|两份文档|多份文档|两个版本|两份|多份|哪个为准|新旧|哪份/u.test(q)) return 'comparative';
+    if (/\b(?:compare|contrast|difference|differ|versus|vs\.?|which\s+(?:one\s+)?(?:is|was|were|are)\s+(?:better|worse|faster|higher|lower|older|younger|earlier|later|more|less))\b/i.test(q)) return 'comparative';
+    if (/\bwhich\b.*\bor\b/i.test(q)) return 'comparative';
+    if (/\b(?:both|either|neither)\b.*\b(?:and|or|nor)\b/i.test(q)) return 'comparative';
+
+    // Global synthesis patterns (Chinese & English)
     if (/所有|全部|总结|概述|哪些|列举|汇总|主要.*有|一共|共有|总共|多少条|几条|多少章|几章|全文结构|架构体系/u.test(q)) return 'global_synthesis';
-    // Multi-hop patterns
+    if (/\b(?:list\s+all|summary\s+of|overview\s+of|synthesize|how\s+many\s+total|all\s+the|table\s+of\s+contents)\b/i.test(q)) return 'global_synthesis';
+
+    // Multi-hop patterns (Chinese & English)
     if (/(.*的.*的|.*中.*关于|根据.*那么|如果.*则.*怎么)/u.test(q) && q.length > 20) return 'multi_hop';
-    // Multiple question marks or conjunctions
     if ((q.match(/？|\?/g) || []).length > 1) return 'multi_hop';
     if (/并且|同时|以及|而且|另外|还有|再加上/u.test(q) && q.length > 20) return 'multi_hop';
+
+    // English relational bridge / multi-hop query patterns (HotpotQA / 2Wiki / MuSiQue)
+    if (/\b(?:who|what|where|when)\s+(?:is|was|are|were)\s+the\s+[\w\s-]+\s+of\s+/i.test(q)) return 'multi_hop';
+    if (/\b(?:who|what|where|when|which)\b.*['’]s\s+(?:father|mother|wife|husband|spouse|son|daughter|parent|child|director|author|creator|founder|manufacturer|developer|publisher|place\s+of|birthplace|burial|death|nationality|alma\s+mater|employer|capital)/i.test(q)) return 'multi_hop';
+    if (/\b(?:who|what|where|when|which)\b.*\b(?:born|directed|founded|created|written|composed|married|spouse|father|mother|director|author|producer|performer|singer|actor|actress|founder|headquarter|capital|located)\b.*\b(?:in|by|of|to)\b.*\b(?:and|or|who|which|where|when|while)\b/i.test(q)) return 'multi_hop';
+    if (/\b(?:which|what)\s+[\w\s-]+\s+(?:did|was|is|has|have)\s+[\w\s-]+\s+(?:and|also|while|where|when)\b/i.test(q)) return 'multi_hop';
+    if (/\b(?:place\s+of\s+burial|place\s+of\s+birth|date\s+of\s+death|date\s+of\s+birth)\s+of\b/i.test(q)) return 'multi_hop';
+
     // Structural compound detection: the question splits into multiple
     // self-contained clauses ("A怎么样，另外B如何"), regardless of which
     // conjunction happens to be used.
     const clauseParts = q
-      .split(/[,，?？;；]|并且|另外|以及|同时|还有|再加上/)
+      .split(/[,，?？;；]|并且|另外|以及|同时|还有|再加上|\b(?:and\s+also|and\s+which|and\s+what|and\s+who|and\s+where|and\s+when|additionally|as\s+well\s+as)\b/i)
       .map((part) => part.trim())
       .filter((part) => part.length >= 4);
     if (clauseParts.length >= 2) return 'multi_hop';
+    if (/\b[A-Za-z]{3,}\b.*\band\b.*\b[A-Za-z]{3,}\b.*\?/i.test(q) && q.length > 40) return 'multi_hop';
 
     return 'simple';
   }
@@ -84,7 +98,16 @@ export class AgenticRagService {
         return { originalQuery: query, complexity, subQueries: [query], reasoning: 'No LLM config available.' };
       }
 
-      const systemPrompt = `你是一个查询分解专家。将复杂问题拆解为 2-4 个可独立检索的子问题。
+      const isEnglish = !/[\u4e00-\u9fa5]/.test(query);
+      const systemPrompt = isEnglish
+        ? `You are an expert query decomposition assistant. Decompose a complex multi-hop or comparative question into 2-3 simpler, self-contained sub-queries that can be retrieved independently from a knowledge base.
+Rules:
+1. Each sub-query must be specific, self-contained, and directly retrievable (avoid vague pronouns like "the first document").
+2. For comparative queries, query each entity or document separately.
+3. For multi-hop queries, follow the reasoning steps (e.g. step 1: who was the director of X; step 2: what other films were directed by that person).
+Output valid JSON format:
+{"subQueries": ["subquery 1", "subquery 2"], "reasoning": "brief explanation"}`
+        : `你是一个查询分解专家。将复杂问题拆解为 2-4 个可独立检索的子问题。
 
 规则：
 1. 每个子问题必须是独立的、可以单独在知识库中检索的问题
@@ -103,7 +126,7 @@ export class AgenticRagService {
           model: config.modelName,
           messages: [
             { role: 'system', content: systemPrompt },
-            { role: 'user', content: `请拆解以下问题：${query}` },
+            { role: 'user', content: isEnglish ? `Please decompose the following question into sub-queries: ${query}` : `请拆解以下问题：${query}` },
           ],
           temperature: 0,
           max_tokens: Number(process.env.AGENTIC_DECOMPOSE_MAX_TOKENS || 450),
@@ -304,7 +327,19 @@ export class AgenticRagService {
         return { subQueries: [query], expansions: [], reasoning: 'No LLM config available.' };
       }
 
-      const systemPrompt = `你是一个企业知识库检索规划专家。请针对用户复杂问题进行双重检索规划：
+      const isEnglish = !/[\u4e00-\u9fa5]/.test(query);
+      const systemPrompt = isEnglish
+        ? `You are a knowledge base retrieval planning expert. For this complex multi-hop or comparative question, provide a dual retrieval plan:
+1. subQueries: decompose into 2-3 self-contained, specific sub-queries that can be retrieved independently from the knowledge base.
+2. expansions: 3-5 formal terms, synonyms, or related vocabulary to bridge colloquial and formal wording.
+
+Output valid JSON:
+{
+  "subQueries": ["subquery 1", "subquery 2"],
+  "expansions": ["expansion term 1", "expansion term 2"],
+  "reasoning": "brief planning rationale"
+}`
+        : `你是一个企业知识库检索规划专家。请针对用户复杂问题进行双重检索规划：
 1. 子问题拆解（subQueries）：拆解为 2-3 个可独立在知识库检索的子问题（对比/冲突类问题必须分别查询各方比较对象或不同制度的表述，严禁使用“第一份文档”、“第二份文档”等无意义代词）。
 2. 规范术语扩展（expansions）：给出 3-5 个有助于弥合口语与正式制度文本差异的正式术语、行业规范用语或制度相关词汇（如夏令时/冬令时、标准工时等）。
 
@@ -322,13 +357,13 @@ export class AgenticRagService {
           model: config.modelName,
           messages: [
             { role: 'system', content: systemPrompt },
-            { role: 'user', content: `请规划以下问题：${query}` },
+            { role: 'user', content: isEnglish ? `Please plan retrieval for the following question: ${query}` : `请规划以下问题：${query}` },
           ],
           temperature: 0,
           max_tokens: Number(process.env.AGENTIC_PLAN_MAX_TOKENS || 450),
           response_format: { type: 'json_object' },
         }),
-        signal: AbortSignal.timeout(12000),
+        signal: AbortSignal.timeout(Number(process.env.AGENTIC_PLAN_TIMEOUT_MS || 20000)),
       });
 
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -406,13 +441,23 @@ export class AgenticRagService {
         .map((q) => String(q || '').trim())
         .filter((q) => q.length >= 4 && q !== query.trim());
 
-      const deterministicSubs = llmSubs.length > 0
-        ? llmSubs
-        : query
+      let deterministicSubs = llmSubs;
+      if (deterministicSubs.length === 0) {
+        const ofMatch = query.match(/(?:husband|wife|spouse|father|mother|son|daughter|brother|sister|parent|child|director|author|producer|performer|composer|creator|founder|inventor|place of birth|birthplace)\s+of\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i);
+        const possMatch = query.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)'s\s+(?:husband|wife|spouse|father|mother|son|daughter|brother|sister|parent|child|director|author|producer|performer|composer|creator|founder|inventor|place of birth|birthplace)/);
+        const bridgeEntity = ofMatch
+          ? ofMatch[1].split(/\s+/).filter((w) => /^[A-Z][a-z]+/.test(w)).join(' ')
+          : possMatch ? possMatch[1] : null;
+        if (bridgeEntity && bridgeEntity.length >= 3) {
+          deterministicSubs = [bridgeEntity, query];
+        } else {
+          deterministicSubs = query
             .split(/[,，?？;；。]|并且|另外|以及|同时|还有|再加上/)
             .map((part) => part.trim())
             .filter((part) => part.length >= 4 && part !== query.trim())
             .slice(0, 3);
+        }
+      }
 
       return {
         complexity,
@@ -550,7 +595,26 @@ export class AgenticRagService {
       }
 
       const executedListStr = Array.from(executedSet).slice(0, 8).join(' | ');
-      const systemPrompt = `你是一个企业知识库检索充分性裁决专家（Sufficiency Evaluator）。
+      const isEnglish = !/[\u4e00-\u9fa5]/.test(query);
+      const systemPrompt = isEnglish
+        ? `You are an expert retrieval sufficiency evaluator.
+Evaluate whether the currently retrieved context evidence (Context) is sufficient to rigorously and completely answer the user query (Query).
+
+Rules:
+1. Comparative queries: Ensure evidence for all compared entities, versions, or aspects is present. If entity B is missing, status MUST be 'insufficient', missingAspects notes entity B, and suggestedFollowUp provides targeted query terms for B.
+2. Multi-hop/Bridge queries: Ensure all steps in the multi-step reasoning chain are supported. If a bridge entity, relationship, or subsequent premise is missing, status MUST be 'insufficient' and suggestedFollowUp gives the next-hop search query.
+3. No duplicate queries: Already executed queries: [${executedListStr}]. suggestedFollowUp must provide novel, targeted queries (max 2).
+4. Grounded: If evidence is sufficient to answer completely, output status = 'sufficient'. If completely irrelevant, output 'irrelevant'.
+
+Output strict JSON:
+{
+  "status": "sufficient" | "insufficient" | "irrelevant",
+  "confidence": 0.0 - 1.0,
+  "reasoning": "brief explanation (under 30 words)",
+  "missingAspects": ["missing dimension/entity/clause"],
+  "suggestedFollowUp": ["next hop query"]
+}`
+        : `你是一个企业知识库检索充分性裁决专家（Sufficiency Evaluator）。
 请严谨判断当前检索到的上下文证据（Context）是否足以完整回答用户问题（Query）。
 
 裁决规则：
@@ -577,7 +641,9 @@ export class AgenticRagService {
             { role: 'system', content: systemPrompt },
             {
               role: 'user',
-              content: `用户问题: ${query}\n问题类型: ${options?.complexity || 'auto'}\n\n已检索到的候选证据 (前 3000 字):\n${retrievedContext.slice(0, 3000)}\n\n请严格评估证据充分性：`,
+              content: isEnglish
+                ? `User Question: ${query}\nQuestion Type: ${options?.complexity || 'auto'}\n\nRetrieved Candidate Evidence (first 3000 chars):\n${retrievedContext.slice(0, 3000)}\n\nPlease evaluate retrieval sufficiency:`
+                : `用户问题: ${query}\n问题类型: ${options?.complexity || 'auto'}\n\n已检索到的候选证据 (前 3000 字):\n${retrievedContext.slice(0, 3000)}\n\n请严格评估证据充分性：`,
             },
           ],
           temperature: 0,
@@ -706,6 +772,26 @@ export class AgenticRagService {
       }
     }
 
+    // English comparative entity detection: "between A and B", "which ... A or B", "compare A and B"
+    const enCompMatch = query.match(
+      /(?:between|compare|contrast|which\s+(?:was|is)\s+[\w\s-]+,\s*)\s*([A-Za-z0-9\s'-]{2,35}?)\s+(?:and|or|versus|vs\.?)\s+([A-Za-z0-9\s'-]{2,35})/i,
+    );
+    if (enCompMatch) {
+      const entA = enCompMatch[1].trim();
+      const entB = enCompMatch[2].trim();
+      if (entA.length >= 2 && entB.length >= 2) {
+        const hasA = ctxLower.includes(entA.toLowerCase());
+        const hasB = ctxLower.includes(entB.toLowerCase());
+        if (hasA && !hasB) {
+          missingAspects.push(`Missing evidence for entity "${entB}"`);
+          suggestedFollowUp.push(entB);
+        } else if (!hasA && hasB) {
+          missingAspects.push(`Missing evidence for entity "${entA}"`);
+          suggestedFollowUp.push(entA);
+        }
+      }
+    }
+
     // 1.5 Multi-document conflict or discrepancy mention in query
     if (/冲突|矛盾|不一致|两个文档|两份文档|多份文档|两个版本|两份|多份|哪个为准|新旧|为何没有都出来|为什么没有都出来/u.test(query)) {
       const docTitles = new Set((context.match(/《([^》]+)》/g) || []).map((t) => t.replace(/[《》]/g, '').trim()));
@@ -719,14 +805,33 @@ export class AgenticRagService {
     // 2. SubQueries coverage
     if (options?.subQueries && options.subQueries.length > 1) {
       for (const sub of options.subQueries) {
-        const cleanedSub = sub.replace(/[？?。！!,，\s]+/g, '').trim();
-        if (cleanedSub.length >= 4 && !ctxLower.includes(cleanedSub.toLowerCase())) {
-          const grams = [];
-          for (let i = 0; i < cleanedSub.length - 1; i += 2) grams.push(cleanedSub.slice(i, i + 2));
-          const hitCount = grams.filter((g) => ctxLower.includes(g.toLowerCase())).length;
-          if (hitCount === 0) {
-            missingAspects.push(`未覆盖子问题：“${sub}”`);
-            suggestedFollowUp.push(sub);
+        const isEn = !/[\u4e00-\u9fa5]/.test(sub);
+        if (isEn) {
+          const stopWords = new Set([
+            'what', 'when', 'where', 'which', 'who', 'whom', 'whose', 'why', 'how',
+            'is', 'was', 'are', 'were', 'the', 'a', 'an', 'in', 'on', 'at', 'of',
+            'for', 'to', 'from', 'by', 'with', 'about', 'did', 'does', 'do', 'has', 'have', 'had',
+          ]);
+          const words = (sub.toLowerCase().match(/[a-z0-9'-]+/g) || []).filter(
+            (w) => w.length >= 3 && !stopWords.has(w),
+          );
+          if (words.length > 0) {
+            const hits = words.filter((w) => ctxLower.includes(w)).length;
+            if (hits / words.length < 0.6) {
+              missingAspects.push(`Missing coverage for: "${sub}"`);
+              suggestedFollowUp.push(sub);
+            }
+          }
+        } else {
+          const cleanedSub = sub.replace(/[？?。！!,，\s]+/g, '').trim();
+          if (cleanedSub.length >= 4 && !ctxLower.includes(cleanedSub.toLowerCase())) {
+            const grams = [];
+            for (let i = 0; i < cleanedSub.length - 1; i += 2) grams.push(cleanedSub.slice(i, i + 2));
+            const hitCount = grams.filter((g) => ctxLower.includes(g.toLowerCase())).length;
+            if (hitCount === 0) {
+              missingAspects.push(`未覆盖子问题：“${sub}”`);
+              suggestedFollowUp.push(sub);
+            }
           }
         }
       }

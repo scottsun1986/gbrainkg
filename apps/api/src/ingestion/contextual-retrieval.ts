@@ -232,6 +232,7 @@ export async function enrichChunksWithContext(
           content: prefix + chunk.content,
           metadata: {
             ...chunk.metadata,
+            rawText: chunk.content,
             contextual_prefix: prefix,
             contextPrefix: prefix,
             contextual_retrieval: true,

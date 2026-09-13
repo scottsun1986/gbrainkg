@@ -87,4 +87,37 @@ describe('EmbeddingService', () => {
       (global as any).fetch = originalFetch;
     }
   });
+
+  it('deduplicates concurrent in-flight calls for the same text (singleflight)', async () => {
+    const originalFetch = global.fetch;
+    let inflightResolve: any;
+    const fetchPromise = new Promise((resolve) => {
+      inflightResolve = resolve;
+    });
+    const fetchMock = jest.fn().mockImplementation(() =>
+      fetchPromise.then(() => ({
+        ok: true,
+        json: async () => ({
+          data: [{ index: 0, embedding: [0.1, 0.2, 0.3, 0.4] }],
+        }),
+      })),
+    );
+    (global as any).fetch = fetchMock;
+    try {
+      // Launch two concurrent calls for the exact same text before fetch finishes
+      const p1 = service.embedOne('concurrent query');
+      const p2 = service.embedOne('concurrent query');
+
+      // Resolve the fetch
+      inflightResolve();
+
+      const [r1, r2] = await Promise.all([p1, p2]);
+      expect(r1).toEqual([0.1, 0.2, 0.3, 0.4]);
+      expect(r2).toEqual([0.1, 0.2, 0.3, 0.4]);
+      // Singleflight must ensure only 1 fetch call was made
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      (global as any).fetch = originalFetch;
+    }
+  });
 });

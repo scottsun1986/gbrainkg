@@ -145,6 +145,30 @@ export class BrainScopeService {
   }
 
   /**
+   * 当知识库发生权限或文档变更时，失效所有包含该知识库的 Scope
+   */
+  async invalidateKbScope(kbId: string, type: 'acl' | 'knowledge' = 'acl'): Promise<void> {
+    const db: any = this.prisma;
+    const sourceKey = sourceKeyForKnowledgeBase(kbId);
+    try {
+      const scopes = await db.brainScope.findMany({
+        where: { status: { not: 'archived' } },
+        select: { id: true, sourceKeys: true },
+      });
+      const targetScopes = scopes.filter((s: any) => {
+        const keys = Array.isArray(s.sourceKeys) ? s.sourceKeys : [];
+        return keys.includes(sourceKey);
+      });
+      for (const s of targetScopes) {
+        await this.bumpScopeEpoch(s.id, type);
+      }
+      this.logger.log(`Invalidated ${targetScopes.length} BrainScope(s) for KB ${kbId} (bumped ${type}Epoch).`);
+    } catch (err) {
+      this.logger.warn(`Failed to invalidate BrainScopes for KB ${kbId}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /**
    * 编译并派生当前 Scope 内的宏观总结、概念与事实卡片（带严密来源追踪）
    */
   async compileScopeDerived(scopeId: string): Promise<{

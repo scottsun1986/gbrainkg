@@ -139,6 +139,9 @@ export class BrainCompilerProcessor extends WorkerHost {
           if (event.resourceType === "user" && event.resourceId) {
             await this.scopeService.invalidateUserScope(event.resourceId);
           }
+          if (event.resourceType === "knowledge_base" && event.resourceId) {
+            await this.scopeService.invalidateKbScope(event.resourceId, "acl");
+          }
           await this.compilerService.reconcileAccess();
         }
 
@@ -149,6 +152,7 @@ export class BrainCompilerProcessor extends WorkerHost {
             select: { id: true, kbId: true },
           });
           if (doc) {
+            await this.scopeService.invalidateKbScope(doc.kbId, "knowledge");
             await this.compilerService.onKnowledgePublished(
               doc.kbId,
               doc.id,
@@ -160,6 +164,7 @@ export class BrainCompilerProcessor extends WorkerHost {
         if (event.eventType === "doc_delete" && event.resourceId) {
           const kbId = event.payload?.kbId;
           if (kbId) {
+            await this.scopeService.invalidateKbScope(kbId, "knowledge");
             await this.compilerService.onKnowledgeDeleted(
               kbId,
               event.resourceId,

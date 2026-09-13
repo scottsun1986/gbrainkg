@@ -70,6 +70,22 @@ export class IngestionService implements OnModuleInit {
       // interrupted. Resume at the compile boundary instead of spending
       // minutes parsing a large PDF for a second time.
       if (document.status === "indexing" && document._count.chunks > 0) {
+        if (this.enrichmentQueue) {
+          await this.enrichmentQueue.add(
+            `enrich-${document.id}-v${document.version}`,
+            {
+              documentId: document.id,
+              kbId: document.kbId,
+              expectedVersion: document.version,
+            },
+            {
+              jobId: `enrich-${document.id}-v${document.version}`,
+              removeOnComplete: true,
+            },
+          ).catch((err) => {
+            this.logger.warn(`Failed to re-enqueue enrichment for ${document.id}: ${err.message}`);
+          });
+        }
         const topic =
           document.title
             .replace(/\.[^.]+$/, "")

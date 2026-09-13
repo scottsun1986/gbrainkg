@@ -17,7 +17,9 @@ describe('semanticCacheScopeKey', () => {
     expect(semanticCacheScopeKey(keys, 2, 1)).not.toBe(semanticCacheScopeKey(keys, 1, 1));
   });
 
-  it('changes when the knowledge epoch changes (content revision)', () => {
-    expect(semanticCacheScopeKey(keys, 1, 2)).not.toBe(semanticCacheScopeKey(keys, 1, 1));
+  it('changes when the modelName changes', () => {
+    expect(semanticCacheScopeKey(keys, 1, 1, 'model-a')).not.toBe(
+      semanticCacheScopeKey(keys, 1, 1, 'model-b'),
+    );
   });
 });

@@ -72,7 +72,19 @@ export class EnrichmentProcessor extends WorkerHost {
       if (process.env.AUTO_GRAPH_EXTRACT_ENABLED === 'true') {
         await this.extractGraph(kbId, documentId);
       }
-      await this.setReadiness(documentId, 'ready');
+      if (expectedVersion !== undefined) {
+        const postCheck = await this.prisma.document.findUnique({
+          where: { id: documentId },
+          select: { version: true },
+        });
+        if (!postCheck || postCheck.version !== expectedVersion) {
+          this.logger.warn(
+            `Enrichment for ${documentId} completed but version ${expectedVersion} was superseded by ${postCheck?.version ?? 'deleted'}. Skipping ready broadcast.`,
+          );
+          return { readiness: 'superseded' };
+        }
+      }
+      await this.setReadiness(documentId, 'ready', expectedVersion);
       // Self-healing publish re-drive: the source-sync job gates publishing on
       // complete embeddings and its retry window may have expired while this
       // enrichment was still running, leaving the document stranded in
@@ -80,9 +92,14 @@ export class EnrichmentProcessor extends WorkerHost {
       try {
         const doc = await this.prisma.document.findUnique({
           where: { id: documentId },
-          select: { kbId: true, status: true },
+          select: { kbId: true, status: true, version: true },
         });
-        if (doc && doc.status === 'indexing' && this.compilerService?.onKnowledgePublished) {
+        if (
+          doc &&
+          doc.status === 'indexing' &&
+          (expectedVersion === undefined || doc.version === expectedVersion) &&
+          this.compilerService?.onKnowledgePublished
+        ) {
           await this.compilerService.onKnowledgePublished(doc.kbId, documentId, []);
           this.logger.log(`Re-drove source publish for fully enriched document ${documentId}.`);
         }
@@ -93,7 +110,7 @@ export class EnrichmentProcessor extends WorkerHost {
       }
       return { readiness: 'ready' };
     } catch (err) {
-      await this.setReadiness(documentId, 'degraded').catch(() => undefined);
+      await this.setReadiness(documentId, 'degraded', expectedVersion).catch(() => undefined);
       this.logger.error(
         `Enrichment failed for ${documentId} (attempt ${job.attemptsMade + 1}): ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -101,11 +118,18 @@ export class EnrichmentProcessor extends WorkerHost {
     }
   }
 
-  private async setReadiness(documentId: string, readiness: string): Promise<void> {
-    await this.prisma.document.update({
-      where: { id: documentId },
-      data: { indexReadiness: readiness },
-    });
+  private async setReadiness(documentId: string, readiness: string, expectedVersion?: number): Promise<void> {
+    if (expectedVersion !== undefined && typeof (this.prisma as any)?.document?.updateMany === 'function') {
+      await (this.prisma as any).document.updateMany({
+        where: { id: documentId, version: expectedVersion },
+        data: { indexReadiness: readiness },
+      });
+    } else {
+      await this.prisma.document.update({
+        where: { id: documentId },
+        data: { indexReadiness: readiness },
+      });
+    }
   }
 
   private async extractGraph(kbId: string, documentId: string): Promise<void> {

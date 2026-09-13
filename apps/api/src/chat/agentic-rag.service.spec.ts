@@ -40,6 +40,15 @@ describe('AgenticRagService', () => {
         service.classifyQuery('如果设备在雨雪天偏航，并且传感器未检修，该怎么处理？'),
       ).resolves.toBe('multi_hop');
     });
+
+    it('classifies English comparative and multi-hop benchmark questions', async () => {
+      await expect(
+        service.classifyQuery("Which magazine was published first, Arthur's Magazine or First for Women?"),
+      ).resolves.toBe('comparative');
+      await expect(
+        service.classifyQuery('Who was the director of the film in which John Doe starred and where was he born?'),
+      ).resolves.toBe('multi_hop');
+    });
   });
 
   describe('planQuery', () => {

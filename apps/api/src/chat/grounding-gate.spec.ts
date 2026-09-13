@@ -46,6 +46,16 @@ describe('statementSupportedBy', () => {
     const spaced = ['响应时间 800 毫秒，可用性不低于 99.95 %。'];
     expect(statementSupportedBy('响应时间800毫秒[1]，可用性99.95%[1]。', spaced, true)).toBe(true);
   });
+
+  it('rejects statement with flipped comparison polarity (higher vs lower)', () => {
+    const limitDoc = ['飞行器飞行高度不得高于 800 米。'];
+    expect(statementSupportedBy('飞行器飞行高度不得低于 800 米[1]。', limitDoc, true)).toBe(false);
+  });
+
+  it('correctly strips contextual prefix from evidence when evaluating support', () => {
+    const prefixed = ['[上下文: 考勤制度补充说明]\n\n员工迟到一次扣款 50 元。'];
+    expect(statementSupportedBy('员工迟到一次扣款 50 元[1]。', prefixed, true)).toBe(true);
+  });
 });
 
 describe('documentCurrentlyEffective', () => {

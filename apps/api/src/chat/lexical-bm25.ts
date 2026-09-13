@@ -34,12 +34,11 @@ export function buildBm25Pool(
   const docs: Bm25Doc[] = entries.map(({ id, text }) => {
     const tf = new Map<string, number>();
     const lower = String(text || '').toLowerCase();
-    let len = lower.length;
+    const len = Math.max(1, lower.length);
     for (const kw of kwList) {
       if (!lower.includes(kw)) continue;
       const parts = lower.split(kw);
       tf.set(kw, parts.length - 1);
-      len += kw.length * (parts.length - 1);
     }
     return { id, len, tf };
   });

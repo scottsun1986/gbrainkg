@@ -52,13 +52,51 @@ export function numericClaimsOf(statement: string): string[] {
  *     carries a valid marker and the model only paraphrased, 0.7 when it
  *     carries none) so fully invented prose cannot ride on a real marker.
  */
+export function extractRawChunkText(text: string): string {
+  if (!text) return '';
+  return text.replace(/^\[(?:上下文|Context):\s*[\s\S]*?\]\n*/i, '').trim();
+}
+
+export function hasPolarityConflict(statement: string, evidence: string): boolean {
+  const normStmt = statement.toLowerCase().replace(/\s+/g, '');
+  const normEv = evidence.toLowerCase().replace(/\s+/g, '');
+
+  const stmtHasLowerBar = /不低于|不得低于|至少|大于等于|不少于/.test(normStmt);
+  const stmtHasUpperBar = /不高于|不得高于|至多|不超过|不得超过|不多于/.test(normStmt);
+  const evHasLowerBar = /不低于|不得低于|至少|大于等于|不少于/.test(normEv);
+  const evHasUpperBar = /不高于|不得高于|至多|不超过|不得超过|不多于/.test(normEv);
+
+  if (stmtHasLowerBar && evHasUpperBar && !evHasLowerBar) return true;
+  if (stmtHasUpperBar && evHasLowerBar && !evHasUpperBar) return true;
+
+  const stmtHigher = /(?<![不大至])高于|(?<![不大至])大于/.test(normStmt);
+  const stmtLower = /(?<![不大至])低于|(?<![不大至])小于/.test(normStmt);
+  const evHigher = /(?<![不大至])高于|(?<![不大至])大于/.test(normEv);
+  const evLower = /(?<![不大至])低于|(?<![不大至])小于/.test(normEv);
+
+  if (stmtHigher && evLower && !evHigher) return true;
+  if (stmtLower && evHigher && !evLower) return true;
+
+  const enStmtHigher = /\b(?:no\s+less\s+than|at\s+least|greater\s+than|higher\s+than|more\s+than)\b/i.test(statement);
+  const enStmtLower = /\b(?:no\s+more\s+than|at\s+most|less\s+than|lower\s+than|fewer\s+than)\b/i.test(statement);
+  const enEvHigher = /\b(?:no\s+less\s+than|at\s+least|greater\s+than|higher\s+than|more\s+than)\b/i.test(evidence);
+  const enEvLower = /\b(?:no\s+more\s+than|at\s+most|less\s+than|lower\s+than|fewer\s+than)\b/i.test(evidence);
+
+  if (enStmtHigher && enEvLower && !enEvHigher) return true;
+  if (enStmtLower && enEvHigher && !enEvLower) return true;
+
+  return false;
+}
+
 export function statementSupportedBy(
   statement: string,
   evidenceTexts: string[],
   hasValidTag: boolean,
 ): boolean {
-  const evidence = evidenceTexts.join('\n');
+  const evidence = evidenceTexts.map(extractRawChunkText).join('\n');
   if (!evidence.trim()) return false;
+  if (hasPolarityConflict(statement, evidence)) return false;
+
   const normalizedEvidence = evidence.replace(/\s+/g, '');
   const body = statement.replace(/\[\d+\]/g, ' ');
   const chars = Array.from(new Set(body.replace(/\s+/g, '').split('')));
@@ -70,6 +108,17 @@ export function statementSupportedBy(
   const overlapRatio = overlap / chars.length;
   const overlapBar = hasValidTag ? 0.5 : 0.7;
   if (overlapRatio < overlapBar) return false;
+
+  const isEn = !/[\u4e00-\u9fa5]/.test(body);
+  if (isEn) {
+    const stopWords = new Set(['the', 'a', 'an', 'is', 'was', 'are', 'were', 'in', 'on', 'at', 'to', 'of', 'for', 'by', 'with', 'and', 'or', 'that', 'this', 'it']);
+    const words = (body.toLowerCase().match(/[a-z0-9'-]+/g) || []).filter((w) => w.length >= 3 && !stopWords.has(w));
+    if (words.length > 0) {
+      const hits = words.filter((w) => evidence.toLowerCase().includes(w)).length;
+      if (hits / words.length < overlapBar) return false;
+    }
+  }
+
   const claims = numericClaimsOf(statement);
   if (claims.length > 0) {
     const allPresent = claims.every((claim) => normalizedEvidence.includes(claim.replace(/\s+/g, '')));
@@ -90,6 +139,7 @@ export function semanticCacheScopeKey(
   sourceKeys: string[],
   aclEpoch: number,
   knowledgeEpoch: number,
+  modelName?: string,
 ): string {
   // The key version salt is bumped whenever the retrieval/answer pipeline
   // changes materially, so cached answers produced by older logic are not
@@ -97,8 +147,9 @@ export function semanticCacheScopeKey(
   // lifecycle filtering change answer content materially.
   // Override with SEMANTIC_CACHE_KEY_VERSION.
   const version = process.env.SEMANTIC_CACHE_KEY_VERSION || 'v4';
+  const modelSalt = modelName ? `|m:${modelName}` : '';
   return createHash('sha256')
-    .update(`${version}|${[...sourceKeys].sort().join(',')}|acl:${aclEpoch}|kb:${knowledgeEpoch}`)
+    .update(`${version}|${[...sourceKeys].sort().join(',')}|acl:${aclEpoch}|kb:${knowledgeEpoch}${modelSalt}`)
     .digest('hex')
     .slice(0, 32);
 }
@@ -326,8 +377,62 @@ export class ChatService {
           : scope.map((kbId) => `gbrain://source/${sourceKeyForKnowledgeBase(kbId)}`)
     ).filter(Boolean);
 
-    // 1. Fast-Path: Query PostgreSQL chunks concurrently (<10ms)
-    const fallbackChunksPromise = this.searchChunksFallback(scope, query, limit).catch(() => []);
+    // 1. Fast-Path: Query PostgreSQL chunks concurrently (<10ms) with subquery decomposition & bridge entity recall
+    const subQueries = this.decomposeComplexQuery(query);
+    const rel = this.extractRelationFromQuery(query);
+    const fallbackChunksPromise = (async () => {
+      const base = await this.searchChunksFallback(scope, query, limit).catch(() => []);
+      if (subQueries.length > 0) {
+        try {
+          const subChunks = await Promise.all(
+            subQueries.slice(0, 4).map((sub) =>
+              this.searchChunksFallback(scope, sub, Math.max(3, Math.floor(limit / 2)))
+                .then((hits) => {
+                  for (const h of hits) (h as any).subQueryOrigin = (h as any).subQueryOrigin || sub;
+                  return hits;
+                })
+                .catch(() => [])
+            )
+          );
+          const seen = new Set(base.map((b) => b.documentId ? `${b.documentId}:${b.pageNo || 0}` : b.evidence.slice(0, 30)));
+          for (const hits of subChunks) {
+            for (const h of hits) {
+              const key = h.documentId ? `${h.documentId}:${h.pageNo || 0}` : h.evidence.slice(0, 30);
+              const existing = base.find((b) => (b.documentId ? `${b.documentId}:${b.pageNo || 0}` : b.evidence.slice(0, 30)) === key);
+              if (existing) {
+                (existing as any).subQueryOrigin = (existing as any).subQueryOrigin || (h as any).subQueryOrigin;
+                if (typeof h.score === 'number' && h.score > (existing.score || 0)) {
+                  existing.score = h.score;
+                }
+              } else {
+                seen.add(key);
+                base.push(h);
+              }
+            }
+          }
+        } catch (e) {
+          this.logger.warn(`searchKnowledgeForAgent subquery search error: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+
+      // Fast-path bridge entity extraction from top evidence
+      if (rel && base.length > 0) {
+        try {
+          const topEvidence = base.slice(0, 3).map((b) => b.evidence).join('\n');
+          const bridge = this.extractBridgeEntityFromEvidence(topEvidence, rel);
+          if (bridge && !base.some((b) => (b.title || '').toLowerCase().includes(bridge.toLowerCase()))) {
+            const bridgeHits = await this.searchChunksFallback(scope, bridge, 3).catch(() => []);
+            for (const bh of bridgeHits) {
+              (bh as any).subQueryOrigin = bridge;
+              base.push(bh);
+            }
+          }
+        } catch (e) {
+          this.logger.warn(`searchKnowledgeForAgent bridge error: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      return base;
+    })();
 
     // 2. Query GBrain federated search concurrently
     const agentGbrainAbort = new AbortController();
@@ -370,12 +475,12 @@ export class ChatService {
             evidence: fb.evidence,
             snippet: fb.evidence,
             context: fb.evidence,
-            score: Math.max(0.70, 0.95 - idx * 0.02),
+            score: fb.score ?? Math.max(0.70, 0.95 - idx * 0.02),
             docTitle: fb.title,
             sectionGroup: (fb as any).sectionGroup,
-          subQueryOrigin: (fb as any).subQueryOrigin,
-          bbox: fb.bbox,
-          previewUrl: fb.previewUrl,
+            subQueryOrigin: (fb as any).subQueryOrigin,
+            bbox: fb.bbox,
+            previewUrl: fb.previewUrl,
           })),
           reranked: true,
         };
@@ -510,7 +615,63 @@ export class ChatService {
       subQueries.add(subject ? `${subject} 第一章 第二章` : "第一章 第二章");
     }
 
-    // 5. Chinese compound noun & interrogative stripping pattern (run when no prior pattern matched)
+    // 5. English multi-hop, comparison, and conjunction patterns
+    if (subQueries.size === 0 && !/[\u4e00-\u9fa5]/.test(raw)) {
+      // 5.1 Bridge comparison: e.g. "Which film has the director who died later, The More The Merrier or Sleep, My Love?"
+      const compMatch = raw.match(/(?:which|who|what)\s+([a-z\s]+?)\s+(?:has the|whose|with)\s+([a-z\s]+?)\s+(?:who|that|which)?\s*(?:is|was|died|born)?\s*(?:earlier|later|older|younger|more|less|first|after|before)[^,]*,\s*([^,]+?)\s+or\s+([^?]+)/i);
+      if (compMatch) {
+        const rel = compMatch[2].trim();
+        const item1 = compMatch[3].trim().replace(/^["']|["']$/g, "").trim();
+        const item2 = compMatch[4].trim().replace(/^["']|["']$/g, "").trim();
+        if (item1 && item2) {
+          subQueries.add(`${item1} ${rel}`);
+          subQueries.add(`${item2} ${rel}`);
+          subQueries.add(item1);
+          subQueries.add(item2);
+        }
+      }
+
+      // 5.2 Direct comparison: "Which of X and Y ...", "Did X and Y have the same ..."
+      if (subQueries.size === 0) {
+        const whichOfMatch = raw.match(/(?:which of|did)\s+([A-Z][a-zA-Z0-9\s'(),.-]+?)\s+(?:and|or)\s+([A-Z][a-zA-Z0-9\s'(),.-]+?)(?:\s+(?:have|has|are|were|been|both|share))?/i);
+        if (whichOfMatch) {
+          const item1 = whichOfMatch[1].trim().replace(/^["']|["']$/g, "");
+          const item2 = whichOfMatch[2].trim().replace(/^["']|["']$/g, "");
+          if (item1 && item2) {
+            subQueries.add(item1);
+            subQueries.add(item2);
+          }
+        }
+      }
+
+      // 5.3 Compositional possessive: e.g. "Where was the place of burial of Charles Mathew's father?"
+      if (subQueries.size === 0) {
+        const possMatch = raw.match(/(?:(?:where|what|when|who)\s+(?:is|was|are|were)\s+(?:the\s+)?(?:place of (?:birth|death|burial)\s+of\s+)?)?([A-Z][a-zA-Z0-9\s'(),.-]+?)'s\s+([a-z\s]+?)(?:\s+(?:born|die|died|buried|burial|birth|death|located|married|graduated))?(?:\?|$)/i);
+        if (possMatch) {
+          const entity = possMatch[1].trim();
+          const rel = possMatch[2].trim();
+          if (entity.length >= 3 && rel.length >= 2) {
+            subQueries.add(`${entity} ${rel}`);
+            subQueries.add(entity);
+          }
+        }
+      }
+
+      // 5.4 Compositional "of": e.g. "Where was the husband of Octavie Coudreau born?"
+      if (subQueries.size === 0) {
+        const ofMatch = raw.match(/(?:where|what|when|who)\s+(?:is|was|are|were|did)\s+(?:the\s+)?(?:place of (?:birth|death|burial)\s+of\s+)?([a-z\s]+?)\s+of\s+(?:film\s+|movie\s+|book\s+|the\s+)?([A-Z][a-zA-Z0-9\s'(),.-]+?)(?:\s+(?:born|die|died|live|lived|directed|written|created|founded|located|married|graduated))?(?:\?|$)/i);
+        if (ofMatch) {
+          const rel = ofMatch[1].trim();
+          const entity = ofMatch[2].trim();
+          if (entity.length >= 3 && rel.length >= 2) {
+            subQueries.add(`${entity} ${rel}`);
+            subQueries.add(entity);
+          }
+        }
+      }
+    }
+
+    // 6. Chinese compound noun & interrogative stripping pattern (run when no prior pattern matched)
     if (subQueries.size === 0) {
       const cleaned = this.cleanRetrievalQuery(raw);
       if (cleaned && cleaned !== raw && cleaned.length >= 4) {
@@ -521,6 +682,32 @@ export class ChatService {
     }
 
     return Array.from(subQueries).filter((q) => q.length >= 2).slice(0, 6);
+  }
+
+  extractRelationFromQuery(query: string): string | null {
+    if (!query) return null;
+    const m = query.match(/\b(husband|wife|spouse|father|mother|parents|son|daughter|child|director|author|writer|creator|founder|composer|producer)\b/i);
+    return m ? m[1].toLowerCase() : null;
+  }
+
+  extractBridgeEntityFromEvidence(text: string, rel: string): string | null {
+    if (!text || !rel) return null;
+    const directRe = new RegExp(`(?:${rel})(?:\\s+(?:is|was|named|called|of|,))*?(?:\\s+(?:the|a|an)?\\s*(?:[A-Za-z-]+\\s+){0,6})?([A-Z][a-zA-Z0-9\x27-]+(?:\\s+[A-Z][a-zA-Z0-9\x27-]+){1,3})`);
+    let m = text.match(directRe);
+    if (m && m[1]) return m[1].replace(/^(?:Sir|Lord|Lady|Dame|Baron|Prince|Queen|King)\s+/i, "").trim();
+
+    if (/father|mother|parents/i.test(rel)) {
+      const invRe = /(?:son|daughter|child)\s+of\s+(?:the\s+)?(?:[A-Za-z-]+\s+){0,4}?([A-Z][a-zA-Z0-9\x27-]+(?:\s+[A-Z][a-zA-Z0-9\x27-]+){1,3})/;
+      m = text.match(invRe);
+      if (m && m[1]) return m[1].replace(/^(?:Sir|Lord|Lady|Dame|Baron|Prince|Queen|King)\s+/i, "").trim();
+    }
+
+    if (/director/i.test(rel)) {
+      const invRe = /directed\s+by\s+(?:the\s+)?([A-Z][a-zA-Z0-9\x27-]+(?:\s+[A-Z][a-zA-Z0-9\x27-]+){1,3})/;
+      m = text.match(invRe);
+      if (m && m[1]) return m[1].replace(/^(?:Sir|Lord|Lady|Dame|Baron|Prince|Queen|King)\s+/i, "").trim();
+    }
+    return null;
   }
 
   /**
@@ -1204,78 +1391,79 @@ export class ChatService {
         ? buildBm25Pool(allFound.map((c: any) => ({ id: c.id, text: `${c.content || ''}\n${c.document?.title || ''}` })), keywords)
         : null;
       const bm25 = bm25Index ? bm25Scores(bm25Index) : null;
-      const bm25Scale = Number(process.env.LEXICAL_BM25_SCALE || 2.0);
 
-      const scored = allFound.map((c: any) => {
-        let score = 0;
-        const text = (c.content || "").toLowerCase();
-        const docTitle = (c.document?.title || "").toLowerCase();
-        const baseTitle = docTitle.replace(/\.[a-z0-9]+$/i, "").trim();
-
-        // Exact high-priority token matches get massive boost
-        for (const tok of highPriorityTokens) {
-          if (text.includes(tok.toLowerCase())) {
-            score += 25.0;
-          }
-        }
-
-        // Exact or base document title mentioned directly in user query
-        if (baseTitle.length >= 2 && lowQuery.includes(baseTitle)) {
-          score += 30.0;
-        }
-
-        if (bm25) {
-          const lexical = bm25.get(c.id) || 0;
-          score += lexical * bm25Scale;
-          // Title affinity stays outside BM25: the document title is not part
-          // of the chunk text statistics.
-          for (const kw of keywords) {
-            if (docTitle.includes(kw.toLowerCase())) {
-              score += primaryKeywords.has(kw) ? 5.0 : 2.0;
-            }
-          }
-        } else {
-          // Keywords scoring: differentiated weighting between primary user query keywords and expanded recall terms
+      // Channel 1: Lexical Ranking
+      const lexicalRankMap = new Map<string, number>();
+      if (bm25) {
+        const sortedLexical = [...allFound]
+          .map((c) => ({ id: c.id, score: bm25.get(c.id) || 0 }))
+          .filter((x) => x.score > 0)
+          .sort((a, b) => b.score - a.score);
+        sortedLexical.forEach((x, idx) => lexicalRankMap.set(x.id, idx + 1));
+      } else {
+        const sortedKw = [...allFound].map((c) => {
+          let kwScore = 0;
+          const text = (c.content || "").toLowerCase();
           for (const kw of keywords) {
             const lowKw = kw.toLowerCase();
             const isPrimary = primaryKeywords.has(kw);
             const weightMultiplier = isPrimary ? 1.5 : 0.7;
-
-            if (/第[一二三四五六七八九十百0-9]+[章节条款]/.test(kw) && text.includes(lowKw)) {
-              score += 12.0 * weightMultiplier;
-            } else if (text.includes(lowKw)) {
-              score += (kw.length >= 4 ? 3.0 : 1.5) * weightMultiplier;
-            }
-            if (docTitle.includes(lowKw)) {
-              score += 5.0 * weightMultiplier;
-            }
+            if (text.includes(lowKw)) kwScore += (kw.length >= 4 ? 3.0 : 1.5) * weightMultiplier;
           }
+          return { id: c.id, score: kwScore };
+        }).filter((x) => x.score > 0).sort((a, b) => b.score - a.score);
+        sortedKw.forEach((x, idx) => lexicalRankMap.set(x.id, idx + 1));
+      }
+
+      // Channel 2: Vector Ranking
+      const vectorRankMap = new Map<string, number>();
+      const sortedVector = [...allFound]
+        .map((c) => ({ id: c.id, score: vectorScoreById.get(c.id) || 0 }))
+        .filter((x) => x.score > 0)
+        .sort((a, b) => b.score - a.score);
+      sortedVector.forEach((x, idx) => vectorRankMap.set(x.id, idx + 1));
+
+      // Reciprocal Rank Fusion (RRF, k=60) with structural multipliers
+      const rrfK = Number(process.env.RETRIEVAL_RRF_K || 60);
+      const scored = allFound.map((c: any) => {
+        let rrfScore = 0;
+        const lRank = lexicalRankMap.get(c.id);
+        if (lRank) rrfScore += 1 / (rrfK + lRank);
+        const vRank = vectorRankMap.get(c.id);
+        if (vRank) rrfScore += 1 / (rrfK + vRank);
+
+        let boost = 1.0;
+        const text = (c.content || "").toLowerCase();
+        const docTitle = (c.document?.title || "").toLowerCase();
+        const baseTitle = docTitle.replace(/\.[a-z0-9]+$/i, "").trim();
+
+        // Exact high-priority token matches (specific IDs / numbers)
+        for (const tok of highPriorityTokens) {
+          if (text.includes(tok.toLowerCase())) boost += 0.8;
         }
 
-        // Semantic arm contribution: a high cosine similarity can surface a
-        // chunk that shares no literal keyword with the question.
-        const vectorSim = vectorScoreById.get(c.id);
-        if (typeof vectorSim === "number") {
-          score += vectorSim * Number(process.env.VECTOR_SCORE_WEIGHT || 30);
+        // Exact or base document title mentioned directly in user query
+        if (baseTitle.length >= 2 && lowQuery.includes(baseTitle)) {
+          boost += 1.0;
         }
 
-        // KB-configured domain terms act as high-priority anchors only when
-        // relevant to the active user query or decomposed keywords.
+        // Domain terms
         for (const term of activeDomainTerms) {
           const normalized = String(term || "").toLowerCase();
-          if (normalized && text.includes(normalized)) score += 25.0;
+          if (normalized && text.includes(normalized)) boost += 0.5;
         }
 
         if (isChapterListing && /(?:##\s*第[一二三四五六七八九十百0-9]+章|##\s*附则)/.test(c.content)) {
-          score += 100.0;
+          boost += 3.0;
         }
 
         if (isArticleCountQuery && baseTitle.length >= 2 && lowQuery.includes(baseTitle)) {
           if (c.ord === 0 || /(?:##\s*第[一二三四五六七八九十百0-9]+章|##\s*附则|\*\*第[一二三四五六七八九十百0-9]+条\*\*)/.test(c.content)) {
-            score += 35.0;
+            boost += 1.2;
           }
         }
 
+        const score = (rrfScore > 0 ? rrfScore : 0.0005) * boost;
         return { chunk: c, score };
       }).filter((item) => item.score > 0);
 
@@ -1307,7 +1495,7 @@ export class ChatService {
         for (const item of scored) {
           const docKey = item.chunk.documentId || "unknown";
           const count = perDocCount.get(docKey) || 0;
-          const allowedForThisDoc = item.score >= 20 ? maxPerDoc + 2 : maxPerDoc;
+          const allowedForThisDoc = item.score >= 0.03 ? maxPerDoc + 2 : maxPerDoc;
           if (count >= allowedForThisDoc) continue;
           perDocCount.set(docKey, count + 1);
           topSelected.push(item);
@@ -1369,7 +1557,7 @@ export class ChatService {
                 if (!expandedChunkIds.has(sib.id)) {
                   expandedChunkIds.add(sib.id);
                   expandedChunks.push(sib);
-                  chunkScores.set(sib.id, Math.max(1, itemScore - 0.5));
+                  chunkScores.set(sib.id, itemScore * 0.85);
                 }
               });
           }
@@ -1378,7 +1566,7 @@ export class ChatService {
             if (next && !expandedChunkIds.has(next.id)) {
               expandedChunkIds.add(next.id);
               expandedChunks.push(next);
-              chunkScores.set(next.id, Math.max(1, itemScore - 0.5));
+              chunkScores.set(next.id, itemScore * 0.85);
             }
           }
           if (typeof meta.prev_chunk_ord === "number") {
@@ -1386,7 +1574,7 @@ export class ChatService {
             if (prev && !expandedChunkIds.has(prev.id)) {
               expandedChunkIds.add(prev.id);
               expandedChunks.push(prev);
-              chunkScores.set(prev.id, Math.max(1, itemScore - 0.5));
+              chunkScores.set(prev.id, itemScore * 0.85);
             }
           }
         }
@@ -1442,7 +1630,7 @@ export class ChatService {
           if (!expandedChunkIds.has(member.id)) {
             expandedChunkIds.add(member.id);
             expandedChunks.push(member);
-            chunkScores.set(member.id, Math.max(1, (selected.score || 1) * 0.6));
+            chunkScores.set(member.id, (selected.score || 0.01) * 0.7);
             regionBudget -= 1;
           }
         }
@@ -1452,6 +1640,7 @@ export class ChatService {
         if (g) (c as any).sectionGroup = g;
       }
 
+      const maxRrfScore = Math.max(...Array.from(chunkScores.values()), 0.0001);
       const chnNums = ["", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"];
       const results = expandedChunks.map((c: any) => {
         const meta = c.metadata || {};
@@ -1459,8 +1648,9 @@ export class ChatService {
         const chPrefix = chn ? `【第${chn}章】` : "";
         const artPrefix = meta.article_no ? `【第${meta.article_no}条】` : "";
         const evidence = `${chPrefix}${artPrefix} ${c.content}`.trim();
-        const rawScore = chunkScores.get(c.id) || 1;
-        const normalizedScore = Math.min(0.99, Math.max(0.70, 0.85 + rawScore * 0.005));
+        const rawScore = chunkScores.get(c.id) || 0;
+        const relRatio = Math.max(0, rawScore / maxRrfScore);
+        const normalizedScore = Number(Math.min(0.99, Math.max(0.05, relRatio * 0.95)).toFixed(3));
 
         return {
           documentId: c.documentId,
@@ -1642,10 +1832,16 @@ export class ChatService {
       selectedSourceKeys.every((key, index) => key === userScopeSourceKeys.slice().sort()[index]);
     const forceQueryRefresh = Boolean(sourceFreshness?.rebuilt);
 
+    const llmReqEarly = this.modelConfigService
+      ? await this.modelConfigService.getLlmChatConfig(`llmwiki-${userId}`).catch(() => null)
+      : null;
+    const currentModelName = llmReqEarly?.modelName || "";
+
     const cacheScopeKey = semanticCacheScopeKey(
       selectedSourceKeys,
       userScope.aclEpoch,
       userScope.knowledgeEpoch,
+      currentModelName,
     );
     if (this.semanticCacheService && !forceQueryRefresh) {
       try {
@@ -1922,11 +2118,67 @@ export class ChatService {
         breadth: retrieval.breadth,
       });
 
-      // 1. Fast-Path: Query PostgreSQL chunks concurrently (<10ms)
-      const fallbackChunksPromise = this.searchChunksFallback(scope, question, 15, recallVariants).catch((err) => {
-        this.logger.warn(`searchChunksFallback early promise error: ${err.message}`);
-        return [];
-      });
+      // 1. Fast-Path: Query PostgreSQL chunks concurrently (<10ms) for main query and decomposed sub-queries
+      const effectiveSubQueries = agenticSubQueries.length > 0
+        ? agenticSubQueries
+        : this.decomposeComplexQuery(retrieval.query || question);
+      const fallbackChunksPromise = (async () => {
+        const base = await this.searchChunksFallback(scope, question, 15, recallVariants).catch((err) => {
+          this.logger.warn(`searchChunksFallback early promise error: ${err.message}`);
+          return [];
+        });
+        if (effectiveSubQueries.length > 0) {
+          try {
+            const subChunks = await Promise.all(
+              effectiveSubQueries.slice(0, 4).map((sub) =>
+                this.searchChunksFallback(scope, sub, 5)
+                  .then((hits) => {
+                    for (const h of hits) (h as any).subQueryOrigin = (h as any).subQueryOrigin || sub;
+                    return hits;
+                  })
+                  .catch(() => [])
+              )
+            );
+            const seen = new Set(base.map((b) => b.documentId ? `${b.documentId}:${b.pageNo || 0}` : b.evidence.slice(0, 30)));
+            for (const hits of subChunks) {
+              for (const h of hits) {
+                const key = h.documentId ? `${h.documentId}:${h.pageNo || 0}` : h.evidence.slice(0, 30);
+                const existing = base.find((b) => (b.documentId ? `${b.documentId}:${b.pageNo || 0}` : b.evidence.slice(0, 30)) === key);
+                if (existing) {
+                  (existing as any).subQueryOrigin = (existing as any).subQueryOrigin || (h as any).subQueryOrigin;
+                  if (typeof h.score === 'number' && h.score > (existing.score || 0)) {
+                    existing.score = h.score;
+                  }
+                } else {
+                  seen.add(key);
+                  base.push(h);
+                }
+              }
+            }
+          } catch (e) {
+            this.logger.warn(`subquery fallbackChunks error: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
+
+        // Fast-path bridge entity extraction from top evidence
+        const rel = this.extractRelationFromQuery(retrieval.query || question);
+        if (rel && base.length > 0) {
+          try {
+            const topEvidence = base.slice(0, 3).map((b) => b.evidence).join('\n');
+            const bridge = this.extractBridgeEntityFromEvidence(topEvidence, rel);
+            if (bridge && !base.some((b) => (b.title || '').toLowerCase().includes(bridge.toLowerCase()))) {
+              const bridgeHits = await this.searchChunksFallback(scope, bridge, 5).catch(() => []);
+              for (const bh of bridgeHits) {
+                (bh as any).subQueryOrigin = bridge;
+                base.push(bh);
+              }
+            }
+          } catch (e) {
+            this.logger.warn(`fast-path bridge error: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
+        return base;
+      })();
 
       // 2. Query GBrain federated search concurrently
       const gbrainQueryOnce = (q: string) =>
@@ -1951,12 +2203,12 @@ export class ChatService {
       // for them afterwards adds little latency). Each hop of a compound
       // question gets an independent recall chance.
       // Sub-query probes use their OWN abort controller: the main-query race
-      // aborts gbrainAbort at 2500ms which would also kill these probes before
-      // they return; they stay bounded by their own hard timeout instead.
+      // aborts gbrainAbort at 2500ms which would kill these probes before
+      // they return; they stay bounded by their own hard timeout or client cancel.
       const subProbeAbort = new AbortController();
       const subProbeAbortLink = () => subProbeAbort.abort();
-      if (gbrainAbort.signal.aborted) subProbeAbort.abort();
-      else gbrainAbort.signal.addEventListener("abort", subProbeAbortLink, { once: true });
+      if (signal?.aborted) subProbeAbort.abort();
+      else if (signal) signal.addEventListener("abort", subProbeAbortLink, { once: true });
       const subProbeTimer = setTimeout(
         () => subProbeAbort.abort(),
         Number(process.env.GBRAIN_SUBPROBE_TIMEOUT_MS || 12000),
@@ -1987,7 +2239,7 @@ export class ChatService {
         : [];
       const gbrainSubsAll = Promise.allSettled(gbrainSubPromises).finally(() => {
         clearTimeout(subProbeTimer);
-        gbrainAbort.signal.removeEventListener("abort", subProbeAbortLink);
+        if (signal) signal.removeEventListener("abort", subProbeAbortLink);
       });
 
       const fallbackChunks = await fallbackChunksPromise;
@@ -2021,7 +2273,7 @@ export class ChatService {
                 evidence: fb.evidence,
                 snippet: fb.evidence,
                 context: fb.evidence,
-                score: typeof fb.score === "number" ? fb.score : 0.95,
+                score: typeof fb.score === "number" && fb.score > 0.5 ? fb.score : 0.88,
                 docTitle: fb.title,
                 sectionGroup: (fb as any).sectionGroup,
           subQueryOrigin: (fb as any).subQueryOrigin,
@@ -2522,6 +2774,7 @@ export class ChatService {
     // Agentic Multi-Hop ReAct Loop:
     // Evaluate retrieval sufficiency for comparative and multi-hop queries.
     // Automatically executes 2-Hop / 3-Hop sub-query iterations when entity coverage or reasoning steps are missing.
+    const allHopProbes: string[] = [...agenticSubQueries];
     if (this.agenticRagService && (agenticComplexity === 'multi_hop' || agenticComplexity === 'comparative' || agenticSubQueries.length > 0)) {
       const executedProbes = new Set<string>([
         (retrieval.query || question).trim().toLowerCase(),
@@ -2583,7 +2836,10 @@ export class ChatService {
           break;
         }
 
-        for (const p of nextProbes) executedProbes.add(p.toLowerCase());
+        for (const p of nextProbes) {
+          executedProbes.add(p.toLowerCase());
+          allHopProbes.push(p);
+        }
         currentHop++;
 
         trace.start(
@@ -2597,7 +2853,7 @@ export class ChatService {
           sourceRefs,
           brainRepo?.gitRepoUrl,
           nextProbes,
-          gbrainAbort.signal,
+          signal || undefined,
           userScope,
           selectedSourceKeys,
           currentHop,
@@ -2621,13 +2877,9 @@ export class ChatService {
           `agentic_hop_${currentHop}`,
           mergedHopCount > 0 ? 'success' : 'warning',
           mergedHopCount > 0
-            ? `Hop ${currentHop} 定向追问补充召回 ${mergedHopCount} 条有效证据`
-            : `Hop ${currentHop} 未发现额外增量证据`,
-          {
-            hop: currentHop,
-            probes: nextProbes,
-            mergedCitations: mergedHopCount,
-          },
+            ? `Hop ${currentHop} 检索完成，追回 ${mergedHopCount} 条定向证据`
+            : `Hop ${currentHop} 未追回额外有效证据`,
+          { hop: currentHop, probes: nextProbes, hitsFound: mergedHopCount },
         );
 
         if (mergedHopCount === 0) {
@@ -2651,7 +2903,7 @@ export class ChatService {
     queryResult = this.selectEvidence(queryResult, {
       breadth: retrieval.breadth,
       tokenBudget: Number(process.env.RETRIEVAL_CONTEXT_TOKEN_BUDGET || (retrieval.breadth ? 8000 : 4500)),
-      subQueries: agenticSubQueries,
+      subQueries: allHopProbes,
     });
     const afterSelect = queryResult.citations?.length || 0;
     trace.finish(
@@ -2950,16 +3202,19 @@ export class ChatService {
     trace.start("answer_context", "回答上下文组装", "从授权证据页组装可引用的回答上下文");
     const orderedCitations = citations.length > 3 ? this.reorderLostInTheMiddle(citations) : citations;
     queryResult.citations = orderedCitations;
+    this.logger.warn('[PROMPT_SOURCES] ' + orderedCitations.map((c: any, i: number) => `[${i + 1}] ${c.docTitle}`).join(' | '));
+    const isEnglishQuery = !/[\u4e00-\u9fa5]/.test(question);
     let compiledTruthContext = orderedCitations.length > 0
       ? orderedCitations
           .map((cit: any, idx: number) => {
-            const title = cit.docTitle || cit.topic || `参考文档 ${idx + 1}`;
-            const kbName = cit.kbName ? ` (所属知识库: ${cit.kbName})` : "";
-            const pageInfo = typeof cit.pageNo === "number" ? ` [第${cit.pageNo}页]` : "";
-            const articleInfo = cit.articleNo ? ` [第${cit.articleNo}条]` : "";
-            const section = cit.section ? `\n定位：${cit.section}` : "";
-            const content = (cit.context || cit.snippet || "").trim();
-            return `【来源 ${idx + 1}】《${title}》${kbName}${pageInfo}${articleInfo}${section}\n${content}`;
+            const title = cit.docTitle || cit.topic || (isEnglishQuery ? `Reference Document ${idx + 1}` : `参考文档 ${idx + 1}`);
+            const kbName = cit.kbName ? (isEnglishQuery ? ` (Knowledge Base: ${cit.kbName})` : ` (所属知识库: ${cit.kbName})`) : "";
+            const pageInfo = typeof cit.pageNo === "number" ? (isEnglishQuery ? ` [Page ${cit.pageNo}]` : ` [第${cit.pageNo}页]`) : "";
+            const articleInfo = cit.articleNo ? ` [${cit.articleNo}]` : "";
+            const section = cit.section ? (isEnglishQuery ? `\nSection: ${cit.section}` : `\n定位：${cit.section}`) : "";
+            const content = extractRawChunkText((cit.context || cit.snippet || "").trim());
+            const sourcePrefix = isEnglishQuery ? `【Source ${idx + 1} / 来源 ${idx + 1}】` : `【来源 ${idx + 1}】`;
+            return `${sourcePrefix}《${title}》${kbName}${pageInfo}${articleInfo}${section}\n${content}`;
           })
           .join("\n\n---\n\n")
       : (queryResult.answer || "No truth found for this topic.");
@@ -2990,9 +3245,10 @@ export class ChatService {
     );
 
     this.logger.debug(
-      "Prompting real external LLM API with Compiled Truth context...",
+      `Truth context compiled from ${citations.length} citations (preview: ${compiledTruthContext.slice(0, 120)}...)`,
     );
 
+    // 6. 流式调用 LLM 并进行事实角标校验
     try {
       // 从数据库中获取用户在后台页面配置的大模型信息
       trace.start("llm_generation", "大模型流式生成", "基于授权证据生成回答并要求逐项引用");
@@ -3046,7 +3302,16 @@ export class ChatService {
         ? `个人长期记忆（仅当前用户可见，优先级低于当前知识库原文；不能把它冒充为公共制度证据）：\n${personalMemory.text}\n\n`
         : "";
 
-      const staticSystemRules = `你是一个专业的企业级知识库智能助手。请严格基于下方给出的【参考知识库资料】回答用户的问题。
+      const staticSystemRules = isEnglishQuery
+        ? `You are an expert enterprise knowledge-base AI assistant. You MUST strictly base your answer on the provided [Reference Knowledge Base Materials] below.
+
+[Important Guidelines]:
+1. [Citation Tags Required]: In your answer, every factual statement, entity relationship, metric, or core conclusion MUST end with citation tags like [1], [2], corresponding strictly to the provided sources (e.g. [1] for [Source 1], [2] for [Source 2]).
+2. [Language Consistency]: The user asked in English, so you MUST respond entirely in English. Preserve original entity names. Do NOT use Chinese.
+3. [Grounded & Layered Answers]:
+- If the reference materials contain partial or related facts (e.g. entity background, relationships, birth place, or known attributes), prioritize presenting all confirmed facts with citations. Clearly state what is confirmed. If a specific sub-attribute (e.g. exact burial place) is not mentioned in the text, state what IS known from the materials (e.g. the person's birth place or career) and note that the specific sub-detail is not explicitly recorded. Never refuse when relevant facts exist.
+- Only if the reference materials contain completely zero relevant information, reply: "Based on the provided reference materials, the relevant information is not available."`
+        : `你是一个专业的企业级知识库智能助手。请严格基于下方给出的【参考知识库资料】回答用户的问题。
 
 【重要回答规范】：
 1. 【必须标注引用角标】：在回答正文中，每一处陈述具体事实、业务范围、规章制度、技术指标、数据或核心结论时，必须在对应陈述的末尾标注对应的引用角标，格式为 [1]、[2] 等（严格与提供的【来源 1】、【来源 2】编号对应）。例如：“中通服节能的核心业务包括数据中心绿色化与液冷技术应用[1]。”
@@ -3055,11 +3320,14 @@ export class ChatService {
 4. 【表格行记录与关键锚点事实并存处理】：若参考资料中同时存在表格行记录与关键锚点事实说明（例如表格行中某员工绩效记录为B或设备周期为7天，而关键事实/锚点事实注明该员工绩效为A或设备周期为30天），必须在回答中完整陈述这两种事实（例如明确指出：花名册表格行记录显示绩效为B，但关键锚点事实说明其绩效为A），严禁漏提任一事实。
 5. 【多源对比与完整呈现】：只有当多份资料都直接涉及当前问题时，才分别列出各份文件的规定，并说明版本差异、适用条件或生效背景。
 6. 【多源合并】：若多个来源共同支持某一相同结论，可合并标注如 [1][2]。严禁捏造未在参考资料中提供的引用编号；可用编号严格限制在参考资料实际提供的来源序号范围内。
-7. 【客观真实与合规拒答】：如果参考资料不足以回答用户的问题，请统一且直接回复：“已知知识库资料中未包含相关信息，无法回答该问题。”严禁在拒答或未找到信息时复述、回显用户问题中的代号、机密编号或专有名词（例如切勿提及关于“某某代号”未包含等）。${queryResult?.diagnostics?.mode === "inventory" ? `\n8. 【全景统计规范】：本次是知识库/文档盘点类问题，参考资料按知识库逐一给出文档清单。请分知识库逐项呈现统计结果，并在每个知识库的统计陈述末尾标注它对应的引用角标（如 [1]、[2]），让用户可逐库核对。` : ""}`;
+7. 【客观真实与分层回答】：
+- 若参考资料完全不包含与问题相关的信息，请统一回复：“已知知识库资料中未包含相关信息，无法回答该问题。”严禁在拒答或未找到信息时复述、回显用户问题中的代号、机密编号或专有名词。
+- 若参考资料包含部分相关事实（如包含实体背景、前置步骤或部分已知条件），请优先陈述已证实的客观事实并标注对应角标，并明确指出参考资料未涵盖的具体维度或后续信息，严禁在已知部分确凿事实的情况下全盘拒答。
+8. 【语言一致性】：如果用户使用英文提问，请务必使用英文作答（如无法回答时使用 'Based on the provided reference materials, the relevant information is not available.'），并保留原实体英文名称。${queryResult?.diagnostics?.mode === "inventory" ? `\n9. 【全景统计规范】：本次是知识库/文档盘点类问题，参考资料按知识库逐一给出文档清单。请分知识库逐项呈现统计结果，并在每个知识库的统计陈述末尾标注它对应的引用角标（如 [1]、[2]），让用户可逐库核对。` : ""}`;
 
       const contextMessage = `${staticSystemRules}
 
-${priorConversation ? `历史对话参考（仅供消歧，以当前知识库资料为准）：\n${priorConversation}\n\n` : ""}${personalMemoryBlock}【参考知识库资料】：
+${priorConversation ? `历史对话参考（仅供消歧，以当前知识库资料为准）：\n${priorConversation}\n\n` : ""}${personalMemoryBlock}${isEnglishQuery ? "【Reference Knowledge Base Materials】" : "【参考知识库资料】"}：
 ${compiledTruthContext}`;
 
       const headers: Record<string, string> = llmRequest?.headers || {
@@ -3119,7 +3387,7 @@ ${compiledTruthContext}`;
         };
       };
       const isRefusalSentence = (sentence: string) =>
-        /(未包含相关信息|无法(?:根据知识库)?回答|不知道|无法提供(?:该信息)?)/.test(sentence);
+        /(未包含相关信息|无法(?:根据知识库)?回答|不知道|无法提供(?:该信息)?|not available|cannot answer|not provided|no information|insufficient information|does not contain)/i.test(sentence);
       const heldSentences: string[] = [];
       let gateVerifiedCount = 0;
       const emitVerified = (sentence: string) => {
@@ -3237,8 +3505,8 @@ ${compiledTruthContext}`;
       // cannot support from the evidence is dropped and never shown.
       if (heldSentences.length > 0) {
         trace.start('grounding_gate', '证据核验门控', '对暂扣语句执行证据蕴含复核');
-        const toJudge = heldSentences.slice(0, 6);
-        const evidenceText = allEvidenceTexts().join('\n\n').slice(0, 6000);
+        const toJudge = heldSentences.slice(0, 12);
+        const evidenceText = allEvidenceTexts().join('\n\n').slice(0, 8000);
         const entailed = evidenceText
           ? await this.judgeEntailment(toJudge, evidenceText)
           : new Set<number>();
@@ -3747,8 +4015,13 @@ ${compiledTruthContext}`;
         .map((item) => {
           const idx = Number(item.index);
           const cit = citations[idx];
-          const score = typeof item.relevance_score === "number" ? item.relevance_score
+          const rawCrossScore = typeof item.relevance_score === "number" ? item.relevance_score
             : typeof item.score === "number" ? item.score : 0;
+          // Multi-hop / bridge candidates recalled by a specific subquery probe should not be
+          // destroyed by cross-encoder comparing them against the original (hop-1) question.
+          const score = (cit?.subQueryOrigin && rawCrossScore < 0.70)
+            ? Math.max(rawCrossScore, typeof cit.score === "number" ? cit.score : 0.85)
+            : rawCrossScore;
           return { idx, citation: cit, score };
         })
         .filter((item) => Boolean(item.citation) && Number.isInteger(item.idx));
@@ -3828,9 +4101,12 @@ ${compiledTruthContext}`;
     // genuinely relevant groups. Raw cross-encoder scores share one scale.
     const rawBest = Math.max(...[...groups.values()].map((g) => g.best));
     const relFloor = Math.max(0, Number(process.env.RETRIEVAL_RELEVANCE_FLOOR_RATIO || 0.35));
-    const maxGroups = opts.breadth
-      ? Math.max(8, Number(process.env.RETRIEVAL_MAX_GROUPS_BREADTH || 16))
-      : Math.max(2, Number(process.env.RETRIEVAL_MAX_GROUPS || 8));
+    const hasSubQueries = (opts.subQueries || []).length > 0;
+    const maxGroups = hasSubQueries
+      ? Math.max(4, Math.min(8, Number(process.env.RETRIEVAL_MAX_GROUPS_MULTIHOP || (opts.subQueries!.length * 2 + 2))))
+      : opts.breadth
+        ? Math.max(8, Number(process.env.RETRIEVAL_MAX_GROUPS_BREADTH || 16))
+        : Math.max(2, Number(process.env.RETRIEVAL_MAX_GROUPS || 8));
 
     const allEntries = [...groups.entries()].map(([key, g]) => ({ key, ...g }));
     const entries = allEntries
@@ -3853,7 +4129,13 @@ ${compiledTruthContext}`;
     let usedTokens = 0;
     const pool = entries.slice();
     const docCounts = new Map<string, number>();
-    const docIdOf = (g: any) => String(g.members?.[0]?.docId || g.members?.[0]?.documentId || g.members?.[0]?.docTitle || g.key);
+    const normalizeDocId = (doc: any) => {
+      const rawId = doc?.docId || doc?.documentId;
+      if (rawId) return String(rawId);
+      const title = String(doc?.docTitle || doc?.topic || "").replace(/\s*·\s*全文摘要|\s*·\s*章节摘要|【宏观摘要[^】]*】/g, "").trim();
+      return title || String(doc?.key || "unknown");
+    };
+    const docIdOf = (g: any) => normalizeDocId(g.members?.[0] || g);
     const totalDistinctDocs = new Set(pool.map(docIdOf)).size;
     const maxPerDoc = totalDistinctDocs > 1 ? Math.max(2, Math.floor(maxGroups * 0.55)) : maxGroups;
 
@@ -3899,56 +4181,82 @@ ${compiledTruthContext}`;
     // decomposed sub-query, if no already-selected group covers it, inject its
     // best-overlapping group (floor-eligible pool, budget permitting, immune
     // to the MMR redundancy penalty).
-    // Sub-question affinity uses character 2-grams: greedy 4-char word chunks
-    // rarely align between a colloquial sub-question and formal policy text.
-    const bigrams = (text: string): Set<string> => {
-      const chars = String(text).toLowerCase().match(/[\p{L}\p{N}]/gu) || [];
-      const set = new Set<string>();
-      for (let i = 0; i < chars.length - 1; i++) set.add(chars[i] + chars[i + 1]);
-      return set;
+    // Sub-question affinity uses content-word containment to prevent dilution from large chunks
+    const extractContentTerms = (text: string): string[] => {
+      const str = String(text).toLowerCase();
+      const hasLatin = /[a-z]/i.test(str);
+      if (hasLatin) {
+        const stops = new Set(["who", "what", "where", "when", "why", "how", "was", "were", "is", "are", "the", "a", "an", "of", "in", "on", "at", "to", "for", "and", "or", "her", "his", "their", "its", "details"]);
+        return (str.match(/[a-z0-9]+/g) || []).filter((w) => w.length >= 3 && !stops.has(w));
+      }
+      return (str.match(/[\p{L}\p{N}]{2,}/gu) || []);
     };
-    const subQueries = (opts.subQueries || []).filter((q) => typeof q === "string" && q.trim().length >= 4).slice(0, 3);
+
+    const queryCoverageOf = (queryTerms: string[], targetText: string): number => {
+      if (!queryTerms.length) return 0;
+      const targetLower = String(targetText || "").toLowerCase();
+      let hit = 0;
+      for (const t of queryTerms) {
+        if (targetLower.includes(t)) hit++;
+      }
+      return hit / queryTerms.length;
+    };
+
+    const subQueries = (opts.subQueries || []).filter((q) => typeof q === "string" && q.trim().length >= 3).slice(0, 5);
     let subQueryCovered = 0;
     let subQueryInjected = 0;
     if (subQueries.length && selected.length) {
       const selectedIds = new Set(selected.map((c: any) => c.id || `${c.docId}:${c.ord}`));
       for (const sq of subQueries) {
-        const sqTokens = bigrams(sq);
+        const sqTerms = extractContentTerms(sq);
         // Primary signal — provenance: candidates recalled BY this sub-query's
         // own probes carry subQueryOrigin. If such a group survived selection,
         // the hop is covered.
         const originMatches = (origin: unknown) => {
           if (typeof origin !== "string" || !origin.trim()) return false;
-          if (origin.trim() === sq.trim()) return true;
-          return jaccard(bigrams(origin), sqTokens) >= 0.25;
+          if (origin.trim().toLowerCase() === sq.trim().toLowerCase()) return true;
+          return queryCoverageOf(sqTerms, origin) >= 0.5;
         };
         const originCovered = selected.some((c: any) => originMatches(c.subQueryOrigin));
         if (originCovered) { subQueryCovered += 1; continue; }
-        // Secondary signal — lexical affinity (2-gram), for untagged candidates
-        const lexicallyCovered = sqTokens.size > 0 && selectedSets.some((s) => {
-          const sBigrams = new Set<string>();
-          for (const tok of s) for (let i = 0; i < tok.length - 1; i++) sBigrams.add(tok[i] + tok[i + 1]);
-          return jaccard(sBigrams, sqTokens) >= 0.08;
+        // Secondary signal — lexical/content affinity in already selected candidates
+        const contentCovered = sqTerms.length > 0 && selected.some((c: any) => {
+          const text = String(c.context || c.snippet || c.evidence || "");
+          return queryCoverageOf(sqTerms, text) >= 0.90;
         });
-        if (lexicallyCovered) { subQueryCovered += 1; continue; }
+        if (contentCovered) { subQueryCovered += 1; continue; }
         // Inject the best group for this hop: prefer provenance-tagged groups,
-        // then the highest-overlap group.
+        // then the highest term-coverage group.
         let bestGroup: (typeof allEntries)[number] | null = null;
         let bestScore = 0;
         for (const g of allEntries) {
           const fullySelected = g.members.every((m: any) => selectedIds.has(m.id || `${m.docId}:${m.ord}`));
           if (fullySelected) continue;
           const tagged = g.members.some((m: any) => originMatches(m.subQueryOrigin));
-          const overlap = sqTokens.size ? jaccard(bigrams(g.repText), sqTokens) : 0;
-          const score = tagged ? 1 + g.best : overlap; // tagged always wins
+          const cov = sqTerms.length ? queryCoverageOf(sqTerms, g.repText) : 0;
+          const score = tagged ? 2 + g.best : (cov >= 0.33 ? 1 + cov : 0);
           if (score > bestScore) { bestScore = score; bestGroup = g; }
         }
-        const taggedPick = Boolean(bestGroup && bestScore >= 1);
-        if (!bestGroup || (!taggedPick && bestScore < Number(process.env.RETRIEVAL_SUBQUERY_MIN_OVERLAP || 0.10))) continue;
+        if (!bestGroup || bestScore < 1.0) continue;
         const groupTokens = bestGroup.members.reduce((sum, m) => sum + costOf(m), 0);
-        if (usedTokens + groupTokens > opts.tokenBudget * 1.2) continue; // small overshoot allowance
+        if (usedTokens + groupTokens > opts.tokenBudget * 1.2) {
+          // Guaranteed per-hop representation: if the whole group exceeds budget,
+          // still inject at least the top chunk so this reasoning hop is never starved
+          const topMember = bestGroup.members[0];
+          if (topMember && !selectedIds.has(topMember.id || `${topMember.docId}:${topMember.ord}`)) {
+            selected.push(topMember);
+            selectedIds.add(topMember.id || `${topMember.docId}:${topMember.ord}`);
+            usedTokens += costOf(topMember);
+            subQueryInjected += 1;
+            subQueryCovered += 1;
+          }
+          continue;
+        }
         for (const m of bestGroup.members) {
-          if (!selectedIds.has(m.id || `${m.docId}:${m.ord}`)) selected.push(m);
+          if (!selectedIds.has(m.id || `${m.docId}:${m.ord}`)) {
+            selected.push(m);
+            selectedIds.add(m.id || `${m.docId}:${m.ord}`);
+          }
         }
         selectedSets.push(tokenize(bestGroup.repText));
         usedTokens += groupTokens;
@@ -4382,17 +4690,21 @@ ${compiledTruthContext}`;
    * prompt, avoiding the attention decay in the middle.
    */
   private reorderLostInTheMiddle<T>(items: T[]): T[] {
-    if (!items || items.length <= 2) return items ? [...items] : [];
-    const result: T[] = new Array(items.length);
+    if (!items || items.length <= 4) return items ? [...items] : [];
+    // Keep the top 2 primary hop/evidence chunks anchored at the front so multi-hop reasoning
+    // is never severed by intervening distractors.
+    const topAnchors = items.slice(0, 2);
+    const rest = items.slice(2);
+    const result: T[] = new Array(rest.length);
     let left = 0;
-    let right = items.length - 1;
-    for (let i = 0; i < items.length; i++) {
+    let right = rest.length - 1;
+    for (let i = 0; i < rest.length; i++) {
       if (i % 2 === 0) {
-        result[left++] = items[i];
+        result[left++] = rest[i];
       } else {
-        result[right--] = items[i];
+        result[right--] = rest[i];
       }
     }
-    return result;
+    return [...topAnchors, ...result];
   }
 }

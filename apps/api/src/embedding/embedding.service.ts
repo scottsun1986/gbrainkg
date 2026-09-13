@@ -23,6 +23,7 @@ export class EmbeddingService {
   private readonly cache = new Map<string, { vector: number[]; expiresAt: number }>();
   private readonly maxCacheEntries = Math.max(100, Number(process.env.EMBEDDING_CACHE_MAX_ENTRIES || 5000));
   private readonly cacheTtlMs = Math.max(60000, Number(process.env.EMBEDDING_CACHE_TTL_MS || 3600000));
+  private readonly inFlight = new Map<string, Promise<number[] | null>>();
 
   constructor(@Optional() private readonly modelConfigService?: ModelConfigService) {}
 
@@ -48,10 +49,33 @@ export class EmbeddingService {
     }
   }
 
-  /** Embed a single text. Returns null on any failure (fail-open). */
+  /** Embed a single text with Singleflight deduplication and client-side caching. Returns null on any failure (fail-open). */
   async embedOne(text: string): Promise<number[] | null> {
-    const [result] = await this.embed([text]);
-    return result ?? null;
+    const config = await this.getConfig();
+    if (!config) return null;
+    const cacheKey = `${config.modelName}:${createHash('sha256').update(String(text || '')).digest('hex').slice(0, 32)}`;
+    const now = Date.now();
+    const cached = this.cache.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+      return cached.vector;
+    }
+
+    const existingFlight = this.inFlight.get(cacheKey);
+    if (existingFlight) {
+      return existingFlight;
+    }
+
+    const flightPromise = (async () => {
+      try {
+        const [result] = await this.embed([text]);
+        return result ?? null;
+      } finally {
+        this.inFlight.delete(cacheKey);
+      }
+    })();
+
+    this.inFlight.set(cacheKey, flightPromise);
+    return flightPromise;
   }
 
   /**
