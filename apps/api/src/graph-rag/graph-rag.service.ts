@@ -731,6 +731,65 @@ ${chunkContent.slice(0, 4000)}
   }
 
   /**
+   * Universal token extraction for GraphRAG query matching.
+   * Works across Chinese, English and multi-lingual phrases without hardcoded dictionaries.
+   */
+  private extractQueryTerms(query: string): string[] {
+    const stopWords = new Set([
+      '什么', '怎么', '如何', '哪些', '请问', '是否', '要求', '规范', '规定',
+      '情况', '一下', '这个', '那个', '因为', '所以', '以及', '或者', '关系', '是什么', '有哪些', '包括哪些',
+      'what', 'which', 'when', 'where', 'who', 'whom', 'whose', 'why', 'how', 'does', 'with', 'from', 'about',
+    ]);
+
+    const meaningfulWords: string[] = [];
+
+    // 1. Intl.Segmenter word segmentation (standard in modern Node.js / V8)
+    if (typeof Intl !== 'undefined' && (Intl as any).Segmenter) {
+      try {
+        const segmenter = new (Intl as any).Segmenter('zh-CN', { granularity: 'word' });
+        const segments = [...segmenter.segment(query)].filter((s: any) => s.isWordLike).map((s: any) => s.segment);
+        for (let i = 0; i < segments.length; i++) {
+          const w = segments[i];
+          if (w.length >= 2 && !stopWords.has(w.toLowerCase())) {
+            meaningfulWords.push(w);
+          }
+          if (i + 1 < segments.length) {
+            const combined = w + segments[i + 1];
+            if (combined.length >= 2 && combined.length <= 8 && !stopWords.has(combined.toLowerCase())) {
+              meaningfulWords.push(combined);
+            }
+          }
+        }
+      } catch {
+        // Fallback to punctuation splitting
+      }
+    }
+
+    // 2. Standard punctuation & delimiter split
+    for (const t of query.split(/[\s,，、。！？?；;:：()（）《》「」“”"']+/u)) {
+      if (t.length >= 2 && t.length <= 20 && !stopWords.has(t.toLowerCase())) {
+        meaningfulWords.push(t);
+      }
+    }
+
+    // 3. Sliding 2-4 grams for compact phrases
+    const clean = query.replace(/[^\p{L}\p{N}]/gu, '');
+    if (clean.length <= 20) {
+      for (let len = 4; len >= 2; len--) {
+        for (let i = 0; i <= clean.length - len; i++) {
+          const gram = clean.slice(i, i + len);
+          if (!stopWords.has(gram.toLowerCase())) {
+            meaningfulWords.push(gram);
+          }
+        }
+      }
+    }
+
+    const unique = Array.from(new Set(meaningfulWords));
+    return unique.slice(0, 15);
+  }
+
+  /**
    * GraphRAG Local Search: matches question entities, expands 1-hop / 2-hop relations.
    */
   async searchLocalGraph(
@@ -743,9 +802,7 @@ ${chunkContent.slice(0, 4000)}
     }
 
     // 1. Identify entities mentioned in the query
-    const terms = query
-      .split(/[\s,，、。！？?；;:：()（）《》「」“”"']+/u)
-      .filter((t) => t.length >= 2);
+    const terms = this.extractQueryTerms(query);
 
     if (!terms.length) {
       return { entities: [], relations: [], formattedContext: '' };
