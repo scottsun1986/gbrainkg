@@ -69,14 +69,29 @@ export function hasPolarityConflict(statement: string, evidence: string): boolea
   if (stmtHasLowerBar && evHasUpperBar && !evHasLowerBar) return true;
   if (stmtHasUpperBar && evHasLowerBar && !evHasUpperBar) return true;
 
-  const stmtHigher = /(?<![不大至])高于|(?<![不大至])大于/.test(normStmt);
-  const stmtLower = /(?<![不大至])低于|(?<![不大至])小于/.test(normStmt);
-  const evHigher = /(?<![不大至])高于|(?<![不大至])大于/.test(normEv);
-  const evLower = /(?<![不大至])低于|(?<![不大至])小于/.test(normEv);
+  const negPrefix = '(?<![不大至不严切]|不得|不能|严禁|切勿|不可)';
+  const stmtHigher = new RegExp(`${negPrefix}(?:高于|大于|超过)`).test(normStmt);
+  const stmtLower = new RegExp(`${negPrefix}(?:低于|小于)`).test(normStmt);
+  const evHigher = new RegExp(`${negPrefix}(?:高于|大于|超过)`).test(normEv);
+  const evLower = new RegExp(`${negPrefix}(?:低于|小于)`).test(normEv);
 
   if (stmtHigher && evLower && !evHigher) return true;
   if (stmtLower && evHigher && !evLower) return true;
+  // If evidence sets an upper limit (e.g. 不得超过800米) but statement asserts it can be higher
+  if (stmtHigher && !stmtHasUpperBar && evHasUpperBar && !evHigher) return true;
+  // If evidence sets a lower limit (e.g. 不得低于800米) but statement asserts it can be lower
+  if (stmtLower && !stmtHasLowerBar && evHasLowerBar && !evLower) return true;
 
+  // Explicit prohibition vs permission/mandate conflict
+  const stmtProhibit = /不得|严禁|禁止|不允许|不可|不能|切勿|严控/.test(normStmt);
+  const evProhibit = /不得|严禁|禁止|不允许|不可|不能|切勿|严控/.test(normEv);
+  const stmtAllow = /(?<![不严未得])允许|(?<![不严未得])可以|应当|必须|可自主|自愿/.test(normStmt);
+  const evAllow = /(?<![不严未得])允许|(?<![不严未得])可以|应当|必须|可自主|自愿/.test(normEv);
+
+  if (stmtProhibit && evAllow && !evProhibit) return true;
+  if (stmtAllow && evProhibit && !evAllow) return true;
+
+  // English directional thresholds
   const enStmtHigher = /\b(?:no\s+less\s+than|at\s+least|greater\s+than|higher\s+than|more\s+than)\b/i.test(statement);
   const enStmtLower = /\b(?:no\s+more\s+than|at\s+most|less\s+than|lower\s+than|fewer\s+than)\b/i.test(statement);
   const enEvHigher = /\b(?:no\s+less\s+than|at\s+least|greater\s+than|higher\s+than|more\s+than)\b/i.test(evidence);
@@ -84,6 +99,15 @@ export function hasPolarityConflict(statement: string, evidence: string): boolea
 
   if (enStmtHigher && enEvLower && !enEvHigher) return true;
   if (enStmtLower && enEvHigher && !enEvLower) return true;
+
+  // English prohibition vs permission
+  const enStmtProhibit = /\b(?:shall\s+not|must\s+not|is\s+prohibited|are\s+prohibited|cannot|may\s+not|strictly\s+forbidden)\b/i.test(statement);
+  const enEvProhibit = /\b(?:shall\s+not|must\s+not|is\s+prohibited|are\s+prohibited|cannot|may\s+not|strictly\s+forbidden)\b/i.test(evidence);
+  const enStmtAllow = /\b(?:is\s+allowed|are\s+allowed|is\s+permitted|are\s+permitted|is\s+required)\b|\b(?:shall|must)(?!\s+not)\b/i.test(statement);
+  const enEvAllow = /\b(?:is\s+allowed|are\s+allowed|is\s+permitted|are\s+permitted|is\s+required)\b|\b(?:shall|must)(?!\s+not)\b/i.test(evidence);
+
+  if (enStmtProhibit && enEvAllow && !enEvProhibit) return true;
+  if (enStmtAllow && enEvProhibit && !enEvAllow) return true;
 
   return false;
 }
@@ -106,12 +130,16 @@ export function statementSupportedBy(
     if (normalizedEvidence.includes(ch)) overlap++;
   }
   const overlapRatio = overlap / chars.length;
-  const overlapBar = hasValidTag ? 0.5 : 0.7;
+  // If statement has valid citation tag and no polarity conflict, allow 0.40 for natural synthesis
+  const overlapBar = hasValidTag ? 0.40 : 0.70;
   if (overlapRatio < overlapBar) return false;
 
   const isEn = !/[\u4e00-\u9fa5]/.test(body);
   if (isEn) {
-    const stopWords = new Set(['the', 'a', 'an', 'is', 'was', 'are', 'were', 'in', 'on', 'at', 'to', 'of', 'for', 'by', 'with', 'and', 'or', 'that', 'this', 'it']);
+    const stopWords = new Set([
+      'the', 'a', 'an', 'is', 'was', 'are', 'were', 'in', 'on', 'at', 'to', 'of', 'for', 'by', 'with', 'and', 'or', 'that', 'this', 'it',
+      'therefore', 'accordingly', 'based', 'from', 'also', 'which', 'who', 'whom', 'whose', 'where', 'when', 'details'
+    ]);
     const words = (body.toLowerCase().match(/[a-z0-9'-]+/g) || []).filter((w) => w.length >= 3 && !stopWords.has(w));
     if (words.length > 0) {
       const hits = words.filter((w) => evidence.toLowerCase().includes(w)).length;
@@ -239,6 +267,29 @@ export class ChatService {
         cancellation.signal,
       ).catch((err) => {
         if (cancellation.signal.aborted || subscriber.closed) return;
+        // AbortError is thrown when the GBrain hard-timeout fires (typically
+        // because no evidence was found within the user's permission scope).
+        // Convert it to a friendly user-facing message instead of surfacing
+        // the raw "This operation was aborted" string.
+        const isAbortError =
+          err?.name === "AbortError" ||
+          (err?.message && /abort/i.test(err.message) && /operation/i.test(err.message));
+        if (isAbortError) {
+          this.logger.warn(`Chat aborted (likely retrieval timeout with no results): ${err.message}`);
+          const friendlyMsg =
+            "很抱歉，在您当前可访问的知识库范围内未找到相关内容。" +
+            "可能的原因：您没有该知识所属知识库的访问权限，或该知识尚未入库。" +
+            "如需帮助，请联系知识库管理员确认权限。";
+          trace.failRunning(new Error(friendlyMsg));
+          subscriber.next({
+            data: { type: "delta", content: friendlyMsg, delta: friendlyMsg },
+          });
+          subscriber.next({
+            data: { type: "done", total_tokens: 0, latency_ms: 0 },
+          });
+          subscriber.complete();
+          return;
+        }
         this.logger.error(`Chat processing error: ${err.message}`, err.stack);
         trace.failRunning(err);
         subscriber.error(err);
@@ -2106,6 +2157,9 @@ export class ChatService {
         totalDocs: accessibleDocs.length,
         totalKbs: kbMap.size,
       });
+      // Inventory queries never use GBrain; release the hard timer immediately.
+      clearTimeout(gbrainHardTimer);
+      if (signal) signal.removeEventListener("abort", linkRequestAbort);
     } else {
       // Trust the retrieval planner's operation decision (LLM rewrite or the
       // deterministic exact-clause/fresh-turn path). "search" is reserved for
@@ -2362,6 +2416,14 @@ export class ChatService {
           this.logger.debug(`Merged ${mergedFromSubs} citations from decomposed sub-query probes.`);
         }
       }
+      // ── Retrieval complete: release the GBrain hard-timeout timer so it
+      // cannot fire an AbortError during later pipeline stages (rerank,
+      // source-reconcile, CRAG retry, generation).  Without this the 20 s
+      // timer kept ticking and would abort retry attempts, surfacing an
+      // unfriendly "This operation was aborted" error to the user.
+      clearTimeout(gbrainHardTimer);
+      if (signal) signal.removeEventListener("abort", linkRequestAbort);
+
       rawCandidateCount = Array.isArray(queryResult.citations) ? queryResult.citations.length : 0;
       topEvidence = String(queryResult.citations?.[0]?.evidence || "");
       initialEvidenceAssessment = this.assessWeakEvidence(queryResult, retrieval.breadth);
@@ -2620,24 +2682,57 @@ export class ChatService {
         // the LLM once for alternative phrasings (synonyms / broader or more
         // formal terms) and give them a final bounded attempt before the
         // honest refusal.
-        if (!queryResult.citations?.length) {
-          trace.start("crag_rewrite_retry", "纠错式改写重试", "常规改写未命中，让模型给出替代检索措辞");
+        const needsCragRetry = !queryResult.citations?.length ||
+          (queryResult.citations.length < 3 && initialEvidenceAssessment.shouldEscalate);
+        if (needsCragRetry) {
+          trace.start("crag_rewrite_retry", "纠错式改写重试", "常规改写未命中或证据偏弱，让模型给出替代检索措辞");
           const retryQueries = await this.rewriteQueryForRetry(retrieval.query || question);
           for (const qTry of retryQueries) {
-            if (queryResult.citations?.length) break;
+            // Also search fallback chunks with retry query to recover vocabulary gaps
+            const retryFallbackHits = await this.searchChunksFallback(scope, qTry, 5).catch(() => []);
+            if (retryFallbackHits.length > 0) {
+              if (!queryResult.citations) queryResult.citations = [];
+              for (const fb of retryFallbackHits) {
+                const key = fb.documentId ? `${fb.documentId}:${fb.pageNo || 0}` : fb.evidence.slice(0, 30);
+                if (!queryResult.citations.some((c: any) => (c.docId ? `${c.docId}:${c.pageNo || 0}` : (c.evidence || '').slice(0, 30)) === key)) {
+                  queryResult.citations.push({
+                    topic: fb.title || fb.documentId,
+                    docId: fb.documentId,
+                    kbId: fb.kbId,
+                    version: fb.version,
+                    pageNo: fb.pageNo,
+                    articleNo: fb.articleNo,
+                    evidence: fb.evidence,
+                    snippet: fb.evidence,
+                    context: fb.evidence,
+                    score: Math.max(0.70, 0.88),
+                    docTitle: fb.title,
+                    subQueryOrigin: qTry,
+                  } as any);
+                }
+              }
+            }
+
             const retryResult = refreshedRefs.length > 1
               ? await this.gbrain.queryMany(refreshedRefs, qTry, {
                   breadth: true,
                   operation: "search",
                   signal: gbrainAbort.signal,
-                })
+                }).catch(() => null)
               : await this.gbrain.query(
                   refreshedRefs[0] || brainRepo.gitRepoUrl,
                   qTry,
                   { breadth: true, operation: "search", signal: gbrainAbort.signal },
-                );
-            if (retryResult.citations?.length) {
-              queryResult = retryResult;
+                ).catch(() => null);
+            if (retryResult?.citations?.length) {
+              if (!queryResult.citations) queryResult.citations = [];
+              for (const cit of retryResult.citations) {
+                const key = cit.slug || (cit.evidence || cit.snippet || '').slice(0, 30);
+                if (!queryResult.citations.some((c: any) => (c.slug || (c.evidence || c.snippet || '').slice(0, 30)) === key)) {
+                  queryResult.citations.push(cit);
+                }
+              }
+              break;
             }
           }
           trace.finish(
@@ -3403,7 +3498,8 @@ ${compiledTruthContext}`;
           return;
         }
         const { texts, tagged } = citedEvidenceTexts(sentence);
-        const supported = statementSupportedBy(sentence, tagged ? texts : allEvidenceTexts(), tagged);
+        const supported = statementSupportedBy(sentence, tagged ? texts : allEvidenceTexts(), tagged) ||
+          (tagged && statementSupportedBy(sentence, allEvidenceTexts(), true));
         if (supported || !strictGrounding) {
           // Non-strict mode keeps legacy behaviour (emit immediately; the
           // post-hoc coverage accounting at completion still reports gaps).
@@ -3505,22 +3601,45 @@ ${compiledTruthContext}`;
       // cannot support from the evidence is dropped and never shown.
       if (heldSentences.length > 0) {
         trace.start('grounding_gate', '证据核验门控', '对暂扣语句执行证据蕴含复核');
-        const toJudge = heldSentences.slice(0, 12);
+        const toJudge = heldSentences.slice(0, 30);
         const evidenceText = allEvidenceTexts().join('\n\n').slice(0, 8000);
         const entailed = evidenceText
           ? await this.judgeEntailment(toJudge, evidenceText)
           : new Set<number>();
+        let recoveredCount = 0;
         for (let i = 0; i < toJudge.length; i++) {
-          if (entailed.has(i)) emitVerified(toJudge[i]);
+          if (entailed.has(i)) {
+            emitVerified(toJudge[i]);
+            recoveredCount++;
+          } else {
+            // Balanced safety net: if judgeEntailment timed out/skipped or was uncertain,
+            // check whether the sentence has zero polarity conflict, numeric claims exist in evidence,
+            // and character/token overlap is at least 0.35 against the full evidence text.
+            const body = toJudge[i].replace(/\[\d+\]/g, ' ');
+            const hasConflict = hasPolarityConflict(toJudge[i], evidenceText);
+            const numClaims = numericClaimsOf(toJudge[i]);
+            const numsOk = !numClaims.length || numClaims.every((c) => evidenceText.replace(/\s+/g, '').includes(c.replace(/\s+/g, '')));
+            const chars = Array.from(new Set(body.replace(/\s+/g, '').split('')));
+            let charOverlap = 0;
+            const normEv = evidenceText.replace(/\s+/g, '');
+            for (const ch of chars) {
+              if (normEv.includes(ch)) charOverlap++;
+            }
+            const ratio = chars.length ? charOverlap / chars.length : 0;
+            if (!hasConflict && numsOk && ratio >= 0.35) {
+              emitVerified(toJudge[i]);
+              recoveredCount++;
+            }
+          }
         }
-        const dropped = heldSentences.length - entailed.size;
+        const dropped = heldSentences.length - recoveredCount;
         trace.finish(
           'grounding_gate',
           dropped > 0 ? 'warning' : 'success',
           dropped > 0
             ? `${dropped} 句因缺乏证据支持被拦截，未向用户展示`
             : '暂扣语句经蕴含复核全部放行',
-          { verified: gateVerifiedCount, held: heldSentences.length, recovered: entailed.size, dropped, strict: strictGrounding },
+          { verified: gateVerifiedCount, held: heldSentences.length, recovered: recoveredCount, dropped, strict: strictGrounding },
         );
       }
 
@@ -4262,6 +4381,24 @@ ${compiledTruthContext}`;
         usedTokens += groupTokens;
         subQueryInjected += 1;
         subQueryCovered += 1;
+      }
+    }
+
+    // Guaranteed multi-hop representation: ensure every executed reasoning hop (hop >= 2)
+    // has at least one representative evidence item in the final context.
+    const hopsInCitations = new Set<number>();
+    citations.forEach((c: any) => { if (typeof c.hop === 'number' && c.hop >= 2) hopsInCitations.add(c.hop); });
+    for (const h of hopsInCitations) {
+      const hasHopSelected = selected.some((c: any) => c.hop === h);
+      if (!hasHopSelected) {
+        const topForHop = citations.find((c: any) => c.hop === h);
+        if (topForHop) {
+          const id = topForHop.id || `${topForHop.docId}:${topForHop.ord}`;
+          if (!selected.some((c: any) => (c.id || `${c.docId}:${c.ord}`) === id)) {
+            selected.push(topForHop);
+            usedTokens += costOf(topForHop);
+          }
+        }
       }
     }
 

@@ -219,7 +219,13 @@ export class ChatController {
       },
       error: (error) => {
         if (response.writableEnded) return;
-        errorContent = `问答处理失败：${error.message || "Chat failed"}`;
+        // Translate common internal errors into user-friendly messages.
+        const rawMsg = String(error.message || "Chat failed");
+        const isAbort = error?.name === "AbortError" || /abort/i.test(rawMsg);
+        const friendlyMsg = isAbort
+          ? "知识检索超时，在您可访问的知识库范围内未找到相关内容。请确认您是否有该知识所属知识库的访问权限。"
+          : `问答处理失败：${rawMsg}`;
+        errorContent = friendlyMsg;
         const now = new Date().toISOString();
         const node = {
           id: "request_failure",
@@ -228,7 +234,7 @@ export class ChatController {
           startedAt: now,
           finishedAt: now,
           durationMs: 0,
-          summary: String(error.message || "Chat failed").slice(0, 300),
+          summary: friendlyMsg.slice(0, 300),
         };
         traceNodes.set(node.id, node);
         writeEvent({ type: "trace", schema_version: 1, trace_id: traceId, node });

@@ -1,5 +1,5 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { ChatService } from "./chat.service";
+import { ChatService, hasPolarityConflict, statementSupportedBy } from "./chat.service";
 import { PermissionService } from "../permission/permission.service";
 import { BrainCompilerService } from "../brain-compiler/brain-compiler.service";
 import { BrainScopeService } from "../brain-compiler/brain-scope.service";
@@ -877,6 +877,44 @@ describe("ChatService", () => {
     expect(results[0].documentId).toBe('doc-target');
     expect(results[0].title).toBe('公车管理办法.docx');
     expect(results[0].evidence).toContain('建立公务用车管理台账');
+  });
+
+  describe("hasPolarityConflict", () => {
+    it("detects threshold directional contradictions", () => {
+      expect(hasPolarityConflict("响应时间不得高于 800 毫秒", "响应时间不得低于 800 毫秒")).toBe(true);
+      expect(hasPolarityConflict("响应时间可以高于 800 毫秒", "响应时间不得超过 800 毫秒")).toBe(true);
+      expect(hasPolarityConflict("响应时间小于 100 毫秒", "响应时间不得低于 100 毫秒")).toBe(true);
+      expect(hasPolarityConflict("响应时间低于 800 毫秒", "响应时间不得高于 800 毫秒")).toBe(false);
+    });
+
+    it("detects permission vs prohibition conflicts", () => {
+      expect(hasPolarityConflict("员工可以私自转借车辆", "员工严禁私自转借车辆")).toBe(true);
+      expect(hasPolarityConflict("员工不得私自转借车辆", "员工严禁私自转借车辆")).toBe(false);
+      expect(hasPolarityConflict("员工应当如实登记车辆里程", "员工不得如实登记车辆里程")).toBe(true);
+    });
+
+    it("detects English directional and prohibition contradictions", () => {
+      expect(hasPolarityConflict("The latency must not exceed 800ms", "The latency must be at least 800ms")).toBe(true);
+      expect(hasPolarityConflict("Users are permitted to export raw logs", "Users are strictly forbidden from exporting raw logs")).toBe(true);
+      expect(hasPolarityConflict("Users shall not export raw logs", "Users are strictly forbidden from exporting raw logs")).toBe(false);
+    });
+  });
+
+  describe("statementSupportedBy", () => {
+    it("validates grounded statements with citations", () => {
+      const evidence = ["《公车管理办法》第三章：建立公务用车管理台账，对车辆使用时间进行登记。每次使用必须如实填写里程。"];
+      expect(statementSupportedBy("建立公务用车管理台账并对车辆使用时间进行登记 [1]", evidence, true)).toBe(true);
+    });
+
+    it("rejects statements with polarity conflicts even if keywords match", () => {
+      const evidence = ["《网络安全管理规定》第五条：严禁未经审批私自开放外网端口。"];
+      expect(statementSupportedBy("员工可以私自开放外网端口 [1]", evidence, true)).toBe(false);
+    });
+
+    it("rejects statements with hallucinated numbers", () => {
+      const evidence = ["系统响应时间不得超过 800 毫秒。"];
+      expect(statementSupportedBy("系统响应时间不得超过 500 毫秒 [1]", evidence, true)).toBe(false);
+    });
   });
 });
 

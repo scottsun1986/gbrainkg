@@ -1558,6 +1558,9 @@ export class AdminController {
     }
     await this.brainOutboxService?.dispatchPending();
     await this.scheduleAccessReconciliation();
+    if (typeof this.brainCompilerService?.invalidateUserScope === "function") {
+      await this.brainCompilerService.invalidateUserScope(id).catch(() => undefined);
+    }
     return { user };
   }
 
@@ -1591,6 +1594,9 @@ export class AdminController {
       .catch(() => undefined);
     await this.brainOutboxService?.dispatchPending();
     await this.scheduleAccessReconciliation();
+    if (typeof this.brainCompilerService?.invalidateUserScope === "function") {
+      await this.brainCompilerService.invalidateUserScope(id).catch(() => undefined);
+    }
     return { user };
   }
 
@@ -1916,6 +1922,9 @@ export class AdminController {
       .catch(() => undefined);
     await this.brainOutboxService?.dispatchPending();
     await this.scheduleAccessReconciliation();
+    if (typeof this.brainCompilerService?.invalidateKbScope === "function") {
+      await this.brainCompilerService.invalidateKbScope(kbId, "acl").catch(() => undefined);
+    }
     return { grant };
   }
 
@@ -1949,6 +1958,9 @@ export class AdminController {
       .catch(() => undefined);
     await this.brainOutboxService?.dispatchPending();
     await this.scheduleAccessReconciliation();
+    if (typeof this.brainCompilerService?.invalidateKbScope === "function") {
+      await this.brainCompilerService.invalidateKbScope(grant.kbId, "acl").catch(() => undefined);
+    }
     return { ok: true };
   }
 

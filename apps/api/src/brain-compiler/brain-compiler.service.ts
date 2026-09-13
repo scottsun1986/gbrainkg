@@ -711,18 +711,44 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Mark every materialized permission scope containing a source as stale. */
-  async invalidateScopesForSource(sourceKey: string): Promise<string[]> {
+  async invalidateScopesForSource(sourceKey: string, type: 'acl' | 'knowledge' = 'knowledge'): Promise<string[]> {
     const db: any = this.prisma as any;
-    const scopes = await db.brainScope.findMany({
-      where: { sourceKeys: { array_contains: sourceKey } },
-      select: { id: true },
-    });
+    let scopes: any[] = [];
+    try {
+      scopes = await db.brainScope.findMany({
+        where: { sourceKeys: { array_contains: sourceKey }, status: { not: "archived" } },
+        select: { id: true, sourceKeys: true },
+      });
+    } catch {
+      scopes = [];
+    }
+    if (!scopes.length) {
+      const allActive = await db.brainScope.findMany({
+        where: { status: { not: "archived" } },
+        select: { id: true, sourceKeys: true },
+      }).catch(() => []);
+      scopes = allActive.filter((s: any) => {
+        const keys = Array.isArray(s.sourceKeys) ? s.sourceKeys : [];
+        return keys.includes(sourceKey);
+      });
+    }
     if (!scopes.length) return [];
+    const updateData = type === 'acl'
+      ? { aclEpoch: { increment: 1 }, status: "dirty" }
+      : { knowledgeEpoch: { increment: 1 }, status: "dirty" };
     await db.brainScope.updateMany({
       where: { id: { in: scopes.map((scope: any) => scope.id) } },
-      data: { knowledgeEpoch: { increment: 1 }, status: "dirty" },
+      data: updateData,
     });
     return scopes.map((scope: any) => scope.id);
+  }
+
+  async invalidateKbScope(kbId: string, type: 'acl' | 'knowledge' = 'acl'): Promise<void> {
+    return this.scopeService.invalidateKbScope(kbId, type);
+  }
+
+  async invalidateUserScope(userId: string): Promise<void> {
+    return this.scopeService.invalidateUserScope(userId);
   }
 
   async queueScopeSynthesis(scopeIds: string[], priority = CompilePriority.NORMAL): Promise<void> {
@@ -1095,8 +1121,42 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
+      // === Tier 3: Knowledge Health & Lifecycle Maintenance ===
+      const now = new Date();
+      let expiredDocsCount = 0;
+      let conflictFamiliesCount = 0;
+      try {
+        const expiredUpdate = await this.prisma.document.updateMany({
+          where: {
+            status: "published",
+            effectiveTo: { lte: now },
+            lifecycleStatus: { not: "expired" },
+          },
+          data: { lifecycleStatus: "expired" },
+        });
+        expiredDocsCount = expiredUpdate.count;
+
+        const conflicting = await (this.prisma.document as any).groupBy({
+          by: ['title', 'kbId'],
+          where: { status: "published", lifecycleStatus: "current" },
+          _count: { id: true },
+          having: { id: { _count: { gt: 1 } } },
+        }).catch(() => []);
+        conflictFamiliesCount = conflicting.length;
+
+        sourceResults.push({
+          sourceKey: "system:health",
+          kind: "lifecycle-audit",
+          status: "completed",
+          expiredDocsUpdated: expiredDocsCount,
+          conflictingFamiliesDetected: conflictFamiliesCount,
+        });
+      } catch (healthErr: any) {
+        this.logger.warn(`Health maintenance check partial: ${healthErr.message}`);
+      }
+
       this.logger.log(
-        `Two-Tier Dream Cycle completed: synced ${syncedDocs} doc(s), compiled ${scopesCompiled} scope(s).`,
+        `Two-Tier Dream Cycle completed: synced ${syncedDocs} doc(s), compiled ${scopesCompiled} scope(s), audited ${expiredDocsCount} expired doc(s).`,
       );
       const hasFailed = sourceResults.some((result) => result.status === "failed");
       const hasPartial = sourceResults.some((result) => result.status === "partial");
