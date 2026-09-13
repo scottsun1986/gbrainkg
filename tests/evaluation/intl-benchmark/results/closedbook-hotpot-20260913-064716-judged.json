@@ -1,0 +1,1913 @@
+{
+ "dataset": "hotpot",
+ "n": 100,
+ "errors": 0,
+ "em": 0.36,
+ "f1": 0.4557,
+ "detail": [
+  {
+   "qid": "5a7613c15542994ccc9186bf",
+   "gold": "Gesellschaft mit beschränkter Haftung",
+   "answer": "Video Vision",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5adf2fa35542993344016c11",
+   "gold": "Jonny\" Craig",
+   "answer": "Jonny Craig",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5adfdef9554299025d62a36b",
+   "gold": "Bath, Maine",
+   "answer": "Maine",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.6666666666666666
+  },
+  {
+   "qid": "5a7180205542994082a3e856",
+   "gold": "Creature Comforts",
+   "answer": "Creature Comforts",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a78bc6b554299148911f979",
+   "gold": "fortnightly women interest magazine",
+   "answer": "Women's magazines",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5abdd0f15542991f6610604d",
+   "gold": "a failed coup attempt",
+   "answer": "A fascist coup attempt",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.6666666666666666
+  },
+  {
+   "qid": "5a8e27d45542995a26add46a",
+   "gold": "2004",
+   "answer": "2013",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a881d2355429938390d3eeb",
+   "gold": "Love and Theft",
+   "answer": "Rascal Flatts",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ae4a1ef55429970de88d9e7",
+   "gold": "2 March 1972",
+   "answer": "4 July 1974",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ae6f2a7554299572ea5464a",
+   "gold": "Tybalt",
+   "answer": "Romeo",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a845d735542996488c2e52e",
+   "gold": "Virginia",
+   "answer": "Virginia",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5adf5daf5542995534e8c79d",
+   "gold": "no",
+   "answer": "No",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a7c49dc55429935c91b514f",
+   "gold": "Engineering",
+   "answer": "Physics",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5abe364e5542993f32c2a08e",
+   "gold": "Teen Titans Go!",
+   "answer": "Teen Titans Go!",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ac557975542993e66e8231c",
+   "gold": "Oklahoma Sooners",
+   "answer": "Oregon",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ab28a87554299449642c8ec",
+   "gold": "Pulitzer Prize",
+   "answer": "National Book Award",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5adff056554299603e4183cc",
+   "gold": "1988",
+   "answer": "1988",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5abd578a5542993062266c5d",
+   "gold": "Hawaii County",
+   "answer": "Hawaii County",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a7b537555429927d897bf90",
+   "gold": "German",
+   "answer": "Celtic",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a7dc3275542997cc2c4749c",
+   "gold": "Sam Boyd Stadium",
+   "answer": "Albertsons Stadium",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.4
+  },
+  {
+   "qid": "5ab5487b554299494045ef68",
+   "gold": "1941",
+   "answer": "1941",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ac2758b55429963665199c3",
+   "gold": "10 January 1920",
+   "answer": "January 10, 1920",
+   "error": null,
+   "em": 0.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ab7f97a5542991d322237ef",
+   "gold": "super-regional shopping mall",
+   "answer": "Shopping mall",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.8
+  },
+  {
+   "qid": "5a81e107554299676cceb12a",
+   "gold": "M. Night Shyamalan",
+   "answer": "M. Night Shyamalan",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ab6f7415542991d322236f4",
+   "gold": "1978",
+   "answer": "1978",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ac562985542993e66e823ca",
+   "gold": "London",
+   "answer": "London",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a87bd4e5542994846c1cde0",
+   "gold": "no",
+   "answer": "No",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5aba52e655429939ce03dc94",
+   "gold": "chronological collection of critical quotations",
+   "answer": "Shakespeare",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ab58f9a554299488d4d99da",
+   "gold": "22 November",
+   "answer": "13 February 1751",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ae67def5542991bbc9760f3",
+   "gold": "Dubai International Airport",
+   "answer": "Dallas/Fort Worth International Airport",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.5714285714285715
+  },
+  {
+   "qid": "5adeb78a554299728e26c77a",
+   "gold": "Minnesota",
+   "answer": "Illinois",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ae66d515542992ae0d16346",
+   "gold": "1927",
+   "answer": "1929",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a8e60ca5542995a26add4d9",
+   "gold": "\"Read It and Weep\" (2006)",
+   "answer": "The Ward",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a72a2935542991f9a20c546",
+   "gold": "Velvetpark",
+   "answer": "Velvetpark",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a7f7b3b5542992097ad2f81",
+   "gold": "Papa Gino's",
+   "answer": "Papa Gino's",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a82ebb855429966c78a6a9c",
+   "gold": "Shukratara",
+   "answer": "Misal Pav",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5add596f5542990dbb2f7e4d",
+   "gold": "Captain Hans Geering",
+   "answer": "René Artois",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ac4db1d554299076e296e1a",
+   "gold": "Frederick Alexander",
+   "answer": "Patrick Vallance",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ac532335542994611c8b41c",
+   "gold": "Marktown",
+   "answer": "Marktown",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ae7a8d35542994a481bbdbb",
+   "gold": "The Bad Hemingway Contest",
+   "answer": "Pulitzer Prize",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a8db348554299068b959dc2",
+   "gold": "Vivendi S.A.",
+   "answer": "Cash Money",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5adcbb815542994ed6169bde",
+   "gold": "Stone Brewing",
+   "answer": "Stone Brewing",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ab915ad55429919ba4e239c",
+   "gold": "Jimmy Ellis",
+   "answer": "Jimmy Ellis",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ab94fa25542996be2020474",
+   "gold": "Baudot code",
+   "answer": "A stylized world map",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a7ca0ef55429907fabeefd3",
+   "gold": "Raffaella Reggi",
+   "answer": "Raffaella Reggi",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a7a5b3a5542996c55b2dd71",
+   "gold": "Mark Masons' Hall",
+   "answer": "St James's Palace",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5abbd3ac55429931dba1458b",
+   "gold": "no",
+   "answer": "No",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ac3af895542995ef918c1f0",
+   "gold": "Stedelijk Museum Amsterdam",
+   "answer": "Stedelijk Museum",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.8
+  },
+  {
+   "qid": "5a72dcb45542992359bc31af",
+   "gold": "Aloe Vera of America",
+   "answer": "Forever Living Products",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ae1e22a5542997f29b3c160",
+   "gold": "Sarah Kerrigan",
+   "answer": "Sarah Kerrigan",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ae6316d5542996de7b71b87",
+   "gold": "Ricard Rubio i Vives",
+   "answer": "Ricky Rubio",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.3333333333333333
+  },
+  {
+   "qid": "5ade4801554299728e26c6ab",
+   "gold": "69th Cannes Film Festival",
+   "answer": "Cannes Film Festival",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.8571428571428571
+  },
+  {
+   "qid": "5a9064c755429916514e74a6",
+   "gold": "Lester",
+   "answer": "Jack",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5addc79d5542995b365fab7b",
+   "gold": "To SquarePants or Not to SquarePants",
+   "answer": "To SquarePants or Not to SquarePants",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ac097b05542996f0d89cc18",
+   "gold": "yes",
+   "answer": "Yes",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a79caad5542994f819ef09f",
+   "gold": "Matthew Ryan Kemp",
+   "answer": "Delwyn Young",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a83a31c554299123d8c2179",
+   "gold": "Adam Levine",
+   "answer": "Adam Levine",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a72830e5542994cef4bc2f9",
+   "gold": "San Francisco, California",
+   "answer": "Empire Distribution is based in San Francisco, California.",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.5454545454545454
+  },
+  {
+   "qid": "5abaca935542996606241610",
+   "gold": "Indiana University",
+   "answer": "Brigham Young University",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.4
+  },
+  {
+   "qid": "5ae0a59a55429945ae9593e2",
+   "gold": "Roman",
+   "answer": "Roman Empire",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.6666666666666666
+  },
+  {
+   "qid": "5ab700ca5542991d32223736",
+   "gold": "\"Now and Then\" (1995)",
+   "answer": "You've Got Mail",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a8bd49d5542997f31a41dd7",
+   "gold": "Matt Groening",
+   "answer": "Matt Groening",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ae4d3a55542990ba0bbb164",
+   "gold": "Dewey Lake Monster",
+   "answer": "Mothman",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ab29346554299545a2cf997",
+   "gold": "KXII",
+   "answer": "KTEN",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a776fc15542997042120a3a",
+   "gold": "The Bears",
+   "answer": "Wolves",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ab3ede755429976abd1bcf4",
+   "gold": "John Ford",
+   "answer": "John Ford",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a80071f5542992bc0c4a684",
+   "gold": "Crystal Dynamics",
+   "answer": "Crystal Dynamics",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ae08a0455429924de1b70fc",
+   "gold": "Enigma",
+   "answer": "Frank Farian",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ab484415542990594ba9c44",
+   "gold": "Discovery Zone",
+   "answer": "Discovery Zone",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a811667554299260e20a23d",
+   "gold": "singer, songwriter",
+   "answer": "Singer",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.6666666666666666
+  },
+  {
+   "qid": "5a81c7d15542990a1d231ea9",
+   "gold": "cleaning, catering and security",
+   "answer": "Facility services",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a716ec85542994082a3e82d",
+   "gold": "You're Next",
+   "answer": "You're Next",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ade25ed5542997c77aded70",
+   "gold": "the Cold War (1947–91)",
+   "answer": "World War I",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.3333333333333333
+  },
+  {
+   "qid": "5a89dd4d554299669944a5e3",
+   "gold": "Blue Grass Airport",
+   "answer": "Blue Grass Airport",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5abba3cd554299642a094aee",
+   "gold": "six",
+   "answer": "11",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ac540365542994611c8b470",
+   "gold": "Loughborough University",
+   "answer": "Loughborough University",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ae199305542997b2ef7d20e",
+   "gold": "Lacoste, France",
+   "answer": "Chicago",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ae789615542997ec2727695",
+   "gold": "Martha Coolidge",
+   "answer": "Martha Coolidge",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a75e67d5542992db9473709",
+   "gold": "New York and New Jersey campaign",
+   "answer": "Battle of White Plains",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a8a5a1955429930ff3c0da7",
+   "gold": "1983",
+   "answer": "1969",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a7bc0755542995eb53be9a5",
+   "gold": "The Dark Tower",
+   "answer": "The Dark Tower",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ae7535c5542997b22f6a6d8",
+   "gold": "1998",
+   "answer": "2000",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5adf95745542995534e8c7f8",
+   "gold": "in the village of Aldenham",
+   "answer": "At the Bhaktivedanta College in Radhadesh, Belgium.",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.2
+  },
+  {
+   "qid": "5adf3c155542993a75d2643a",
+   "gold": "Anne Perry",
+   "answer": "Pauline",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ac1a6bf5542991316484b8d",
+   "gold": "California",
+   "answer": "Virginia",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a87b2fc5542996e4f3088d0",
+   "gold": "J. R. R. Tolkien",
+   "answer": "J. R. R. Tolkien",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a807ca5554299485f598613",
+   "gold": "the port of Baltimore west to Sandy Hook",
+   "answer": "New York",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5adf1b8a5542995534e8c750",
+   "gold": "Molly Hatchet",
+   "answer": "Lynyrd Skynyrd",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a87081755429960ec39b6fe",
+   "gold": "Daredevil",
+   "answer": "Daredevil",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ab322b1554299194fa93570",
+   "gold": "fictional character",
+   "answer": "Mary Poppins",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a80721b554299485f5985ef",
+   "gold": "World War II",
+   "answer": "World War II",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a85fb085542994775f606de",
+   "gold": "Ronald Shusett",
+   "answer": "Elliott Kastner",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a79c1335542994bb9457066",
+   "gold": "author",
+   "answer": "Novelists",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a774e9c55429972597f14f3",
+   "gold": "Larnelle Harris",
+   "answer": "Cynthia Clawson",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5adcdea85542992c1e3a2441",
+   "gold": "Chinese Coffee",
+   "answer": "The Last Detail",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ac509e95542994611c8b333",
+   "gold": "the Twist",
+   "answer": "Waltz",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a8b42be55429949d91db515",
+   "gold": "novelist",
+   "answer": "Writer",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ab9b2c7554299743d22ebaf",
+   "gold": "no",
+   "answer": "No",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a7b63eb55429931da12ca7e",
+   "gold": "New York",
+   "answer": "Albany",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a7ea14655429930675135ab",
+   "gold": "Oneida Limited",
+   "answer": "Oneida",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.6666666666666666
+  }
+ ],
+ "generated_at": "2026-09-13T06:47:16+0800",
+ "judge_accuracy": 0.485,
+ "detail_judged": [
+  {
+   "qid": "5a7613c15542994ccc9186bf",
+   "gold": "Gesellschaft mit beschränkter Haftung",
+   "answer": "Video Vision",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "VIVA Media AG changed it's name in 2004. What does their new acronym stand for?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5adf2fa35542993344016c11",
+   "gold": "Jonny\" Craig",
+   "answer": "Jonny Craig",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Which of Jonny Craig and Pete Doherty has been a member of more bands ?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5adfdef9554299025d62a36b",
+   "gold": "Bath, Maine",
+   "answer": "Maine",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.6666666666666666,
+   "question": "Where was the first governor after the The Missouri Compromise from?",
+   "judge_verdict": "partial",
+   "judge_score": 0.5
+  },
+  {
+   "qid": "5a7180205542994082a3e856",
+   "gold": "Creature Comforts",
+   "answer": "Creature Comforts",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "The creator of \"Wallace and Gromit\" also created what animation comedy that matched animated zoo animals with a soundtrack of people talking about their homes? ",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5a78bc6b554299148911f979",
+   "gold": "fortnightly women interest magazine",
+   "answer": "Women's magazines",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Woman's Era and Naj are what kind of magazines?",
+   "judge_verdict": "partial",
+   "judge_score": 0.5
+  },
+  {
+   "qid": "5abdd0f15542991f6610604d",
+   "gold": "a failed coup attempt",
+   "answer": "A fascist coup attempt",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.6666666666666666,
+   "question": "The Rome Protocols were signed by three Prime Ministers one of which was assassinated as part of what?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5a8e27d45542995a26add46a",
+   "gold": "2004",
+   "answer": "2013",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Jaclyn Stapp is married to the former frontman of a band that disbanded in what year?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5a881d2355429938390d3eeb",
+   "gold": "Love and Theft",
+   "answer": "Rascal Flatts",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": " If You Ever Get Lonely was covered by what Lyric Street Records-affiliated band?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5ae4a1ef55429970de88d9e7",
+   "gold": "2 March 1972",
+   "answer": "4 July 1974",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "When was the  Argentine former footballer which  Dutch manager Ronald Koeman replaced in  2014–15 Southampton F.C. season born",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5ae6f2a7554299572ea5464a",
+   "gold": "Tybalt",
+   "answer": "Romeo",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Which character does this protagonist, who secretly loves and marries a member of the rival house, of William Shakespeare's tragedy that has a fictional character Benvolio slay?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5a845d735542996488c2e52e",
+   "gold": "Virginia",
+   "answer": "Virginia",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Stronger Together was used for the campaign comprised of the Vice Presidential candidate who was a Senator from what state?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5adf5daf5542995534e8c79d",
+   "gold": "no",
+   "answer": "No",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Are Darren Benjamin Shepherd and Rémi Lange both American?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5a7c49dc55429935c91b514f",
+   "gold": "Engineering",
+   "answer": "Physics",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "The head of the Foreign Relations Department of the Rastriya Janashakti Party holds a degree that can be abbreviated MS, M.S., or ScM, in what field?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5abe364e5542993f32c2a08e",
+   "gold": "Teen Titans Go!",
+   "answer": "Teen Titans Go!",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Lollipop Chainsaw featured Juliet Starling, who was voiced by a Canadian-American actress who has done voice roles for what Teen Titans spinoff series?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5ac557975542993e66e8231c",
+   "gold": "Oklahoma Sooners",
+   "answer": "Oregon",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What team was led to victory in 1939 by a two-time All-American basketball player nicknamed \"Scat\"?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5ab28a87554299449642c8ec",
+   "gold": "Pulitzer Prize",
+   "answer": "National Book Award",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "This expansion of the 2008 magazine article \"Is Google Making Us Stoopid?\" was a finalist for what award?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5adff056554299603e4183cc",
+   "gold": "1988",
+   "answer": "1988",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "What year did The Chronicle of Philanthropy's publishing overlap with Antic?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5abd578a5542993062266c5d",
+   "gold": "Hawaii County",
+   "answer": "Hawaii County",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "The W. H. Shipman House is in what Hawaii county?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5a7b537555429927d897bf90",
+   "gold": "German",
+   "answer": "Celtic",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "The trophy given to the winner of the college football game between University of Idaho Vandals and University of Montana Grizzlies is derived from which European culture?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5a7dc3275542997cc2c4749c",
+   "gold": "Sam Boyd Stadium",
+   "answer": "Albertsons Stadium",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.4,
+   "question": "What stadium does the team who has Kent Baer as the defensive coordinator play its home games?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5ab5487b554299494045ef68",
+   "gold": "1941",
+   "answer": "1941",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Operation Cold Comfort was a failed raid by a special forces unit founded in what year?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5ac2758b55429963665199c3",
+   "gold": "10 January 1920",
+   "answer": "January 10, 1920",
+   "error": null,
+   "em": 0.0,
+   "f1": 1.0,
+   "question": "The organization that Nicolae Titulescu served two terms as president was founded on what date?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5ab7f97a5542991d322237ef",
+   "gold": "super-regional shopping mall",
+   "answer": "Shopping mall",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.8,
+   "question": "What is Opry Mills in Nashville, Tennessee?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5a81e107554299676cceb12a",
+   "gold": "M. Night Shyamalan",
+   "answer": "M. Night Shyamalan",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Ed Oxenbould plays Tyler in a film directed by which famous director?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5ab6f7415542991d322236f4",
+   "gold": "1978",
+   "answer": "1978",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Sadok Sassi played for a national team that made its first World Cup in what year?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5ac562985542993e66e823ca",
+   "gold": "London",
+   "answer": "London",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Otterington railway station was on a 393 mi major railway that linked Edinburgh to what city?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5a87bd4e5542994846c1cde0",
+   "gold": "no",
+   "answer": "No",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Are both Coldplay and Pierre Bouvier from the same country?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5aba52e655429939ce03dc94",
+   "gold": "chronological collection of critical quotations",
+   "answer": "Shakespeare",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "This term about a playwright who lived from 1564-1616 presented what about his works? ",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5ab58f9a554299488d4d99da",
+   "gold": "22 November",
+   "answer": "13 February 1751",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What is the birthday of this Anglo-Irish actress, courtean, and mistress, who was the mother to the illegitimate daughter of King William IV?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5ae67def5542991bbc9760f3",
+   "gold": "Dubai International Airport",
+   "answer": "Dallas/Fort Worth International Airport",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.5714285714285715,
+   "question": "Kenneth L. Gile is the Chief Operating Officer of an airline with its head office in what airport?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5adeb78a554299728e26c77a",
+   "gold": "Minnesota",
+   "answer": "Illinois",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "In what state is the manufacturer of Bisquick headquartered?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5ae66d515542992ae0d16346",
+   "gold": "1927",
+   "answer": "1929",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "In what year was the singer who popularized \"I'll Keep the Lovelight Burning\" born?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5a8e60ca5542995a26add4d9",
+   "gold": "\"Read It and Weep\" (2006)",
+   "answer": "The Ward",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "In which movie the Stephanie Kay Panabaker was alongside with her elder sister Danielle Nicole Panabaker?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5a72a2935542991f9a20c546",
+   "gold": "Velvetpark",
+   "answer": "Velvetpark",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Is Velvetpark or Shape magazine written more for a lesbian and queer-identified female readership?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5a7f7b3b5542992097ad2f81",
+   "gold": "Papa Gino's",
+   "answer": "Papa Gino's",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Which restaurant chain's headquarters is further north, Pizza Inn or Papa Gino's?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5a82ebb855429966c78a6a9c",
+   "gold": "Shukratara",
+   "answer": "Misal Pav",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "whats the famous bavagheet by arun date?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5add596f5542990dbb2f7e4d",
+   "gold": "Captain Hans Geering",
+   "answer": "René Artois",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Grown-Ups starred the actor who was best known for which role on  \"'Allo 'Allo!\"?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5ac4db1d554299076e296e1a",
+   "gold": "Frederick Alexander",
+   "answer": "Patrick Vallance",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "who is a British physicist  and also a  British government's chief scientific adviser",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5ac532335542994611c8b41c",
+   "gold": "Marktown",
+   "answer": "Marktown",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Howard Van Doren Shaw was the designer of which 1917 Progressive Era community? ",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5ae7a8d35542994a481bbdbb",
+   "gold": "The Bad Hemingway Contest",
+   "answer": "Pulitzer Prize",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Which contest in California pays homage to an American novelist that won the Novel Prize in Literature in 1954?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5a8db348554299068b959dc2",
+   "gold": "Vivendi S.A.",
+   "answer": "Cash Money",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What is the subsidiary of the record company who released \"Love Incredible?\"",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5adcbb815542994ed6169bde",
+   "gold": "Stone Brewing",
+   "answer": "Stone Brewing",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Beer Wars covers the differences between large corporate breweries, and small breweries, such as what brewery that is headquartered in Escondido, california?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5ab915ad55429919ba4e239c",
+   "gold": "Jimmy Ellis",
+   "answer": "Jimmy Ellis",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Who did Muhummad Ali fight next, in Houston, after the so-called Fight of the Century with Joe Frazier?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5ab94fa25542996be2020474",
+   "gold": "Baudot code",
+   "answer": "A stylized world map",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What is represented on the cover art of the studio album that includes the song \"Speed of Sound\"?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5a7ca0ef55429907fabeefd3",
+   "gold": "Raffaella Reggi",
+   "answer": "Raffaella Reggi",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Which professional tennis player was born first, Lucie Hradecká or Raffaella Reggi?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5a7a5b3a5542996c55b2dd71",
+   "gold": "Mark Masons' Hall",
+   "answer": "St James's Palace",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What building is opposite the ceremonial meeting place of the Accession Council in the United Kingdom?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5abbd3ac55429931dba1458b",
+   "gold": "no",
+   "answer": "No",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Are both Duke Energy and Affiliated Managers Group based in Massachusetts?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5ac3af895542995ef918c1f0",
+   "gold": "Stedelijk Museum Amsterdam",
+   "answer": "Stedelijk Museum",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.8,
+   "question": "Janne Kyttanen has had work exhibited at which modern art museum in Amsterdam?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5a72dcb45542992359bc31af",
+   "gold": "Aloe Vera of America",
+   "answer": "Forever Living Products",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What company did Rex Maughan aquire?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5ae1e22a5542997f29b3c160",
+   "gold": "Sarah Kerrigan",
+   "answer": "Sarah Kerrigan",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "The role of \"Celene\" in the film \"Walk All over Me\" was played by an actress that voices what role in the \"Starcraft 2\" triolgy?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5ae6316d5542996de7b71b87",
+   "gold": "Ricard Rubio i Vives",
+   "answer": "Ricky Rubio",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.3333333333333333,
+   "question": "Which FC Barcelona signee was a contender for the Rookie of the Year Award when he played for the Timberwolves?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5ade4801554299728e26c6ab",
+   "gold": "69th Cannes Film Festival",
+   "answer": "Cannes Film Festival",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.8571428571428571,
+   "question": "Wolf and Sheep was screened at which 2016 film festival?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5a9064c755429916514e74a6",
+   "gold": "Lester",
+   "answer": "Jack",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What is the first name of Jack Benny Binion's father?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5addc79d5542995b365fab7b",
+   "gold": "To SquarePants or Not to SquarePants",
+   "answer": "To SquarePants or Not to SquarePants",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Which episode of SpongeBob SquarePants aired first, The Clash of Triton or To SquarePants or Not to SquarePants?\"",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5ac097b05542996f0d89cc18",
+   "gold": "yes",
+   "answer": "Yes",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Are Ruggero Deodato from Italy, and Mexican Alejandro Springall, both film directors?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5a79caad5542994f819ef09f",
+   "gold": "Matthew Ryan Kemp",
+   "answer": "Delwyn Young",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Which professional baseball player was born in 1984 and played as a rookie for the Los Angeles Dogers in 2007?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5a83a31c554299123d8c2179",
+   "gold": "Adam Levine",
+   "answer": "Adam Levine",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Who is the lead vocalist for Maroon 5's sixth studio album?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5a72830e5542994cef4bc2f9",
+   "gold": "San Francisco, California",
+   "answer": "Empire Distribution is based in San Francisco, California.",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.5454545454545454,
+   "question": "Where is the company that distributed XXXTentacion's single \"Revenge\" based?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5abaca935542996606241610",
+   "gold": "Indiana University",
+   "answer": "Brigham Young University",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.4,
+   "question": "\"Text Me Merry Christmas\" is a song performed by Kristen Bell and a group that originated at what univeristy?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5ae0a59a55429945ae9593e2",
+   "gold": "Roman",
+   "answer": "Roman Empire",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.6666666666666666,
+   "question": "This Celtic ruler who was born in AD 43 ruled southeastern Britain prior to conquest by which empire?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5ab700ca5542991d32223736",
+   "gold": "\"Now and Then\" (1995)",
+   "answer": "You've Got Mail",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Which other film did one of the supporting cast in \"Sleepless in Seattle\" appear?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5a8bd49d5542997f31a41dd7",
+   "gold": "Matt Groening",
+   "answer": "Matt Groening",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Who is this American cartoonist, writer, producer, animator, and voice actor that worked with this multiple Shuster Award, Harvey Award and Eisner Award nominee and an Eisner Award–winning comic book creator?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5ae4d3a55542990ba0bbb164",
+   "gold": "Dewey Lake Monster",
+   "answer": "Mothman",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What creature of American folklore gained notoriety in 1964?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5ab29346554299545a2cf997",
+   "gold": "KXII",
+   "answer": "KTEN",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What CBS-affiliated station serves Pontotoc County, Oklahoma?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5a776fc15542997042120a3a",
+   "gold": "The Bears",
+   "answer": "Wolves",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What is the mascot of the oldest private university in Georgia?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5ab3ede755429976abd1bcf4",
+   "gold": "John Ford",
+   "answer": "John Ford",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Who directed the 1940 film in which John Arledge appeared?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5a80071f5542992bc0c4a684",
+   "gold": "Crystal Dynamics",
+   "answer": "Crystal Dynamics",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Alice David is the voice of Lara Croft in a video game developed by which company ?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5ae08a0455429924de1b70fc",
+   "gold": "Enigma",
+   "answer": "Frank Farian",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Which German project recorded a song that featured vocals by a duo from Silverdale, England?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5ab484415542990594ba9c44",
+   "gold": "Discovery Zone",
+   "answer": "Discovery Zone",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Which facility was founded in Missouri, Discovery Zone or Valentino's?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5a811667554299260e20a23d",
+   "gold": "singer, songwriter",
+   "answer": "Singer",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.6666666666666666,
+   "question": "What occupations do both Ian Hunter and Rob Thomas have?",
+   "judge_verdict": "partial",
+   "judge_score": 0.5
+  },
+  {
+   "qid": "5a81c7d15542990a1d231ea9",
+   "gold": "cleaning, catering and security",
+   "answer": "Facility services",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Which services did Rock Nominees Ltd and  ISS A/S (Integrated Service Solutions) have in common?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5a716ec85542994082a3e82d",
+   "gold": "You're Next",
+   "answer": "You're Next",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Which movie was filmed first \"The Guest\" or \"You're Next\"?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5ade25ed5542997c77aded70",
+   "gold": "the Cold War (1947–91)",
+   "answer": "World War I",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.3333333333333333,
+   "question": "During what war were the Russia-United Kingdom relations in a state of rivalry after the abdication of Emperor Nicholas II? ",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5a89dd4d554299669944a5e3",
+   "gold": "Blue Grass Airport",
+   "answer": "Blue Grass Airport",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Flower Alley was bred by the trainer who was killed at what Fayette County, Kentucky airport?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5abba3cd554299642a094aee",
+   "gold": "six",
+   "answer": "11",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "How many different schools does the university, in which Andrew J. Elliot is a professor of psychology, have?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5ac540365542994611c8b470",
+   "gold": "Loughborough University",
+   "answer": "Loughborough University",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Loughborough Students' Union serves the students at what public research university that has been a university since 1966, but the institution dates back to 1909?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5ae199305542997b2ef7d20e",
+   "gold": "Lacoste, France",
+   "answer": "Chicago",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "In what european city is a location of the college from which the woman known as Comic Book Girl 19 received her degree?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5ae789615542997ec2727695",
+   "gold": "Martha Coolidge",
+   "answer": "Martha Coolidge",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Kam Heskin plays Paige Morgan in a 2004 film directed by who?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5a75e67d5542992db9473709",
+   "gold": "New York and New Jersey campaign",
+   "answer": "Battle of White Plains",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What was a series of battles during the Revolutionary War, for control of New York City and the state of New Jersey, fought on October 28, 1776 near White Plains, New York?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5a8a5a1955429930ff3c0da7",
+   "gold": "1983",
+   "answer": "1969",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "In what year was the Sayrevill, New Jersey rock band that Frankie LaRocka played drums for formed?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5a7bc0755542995eb53be9a5",
+   "gold": "The Dark Tower",
+   "answer": "The Dark Tower",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "The series of novels that reference numerous locations and incorporates themes from multiple genres is titled what?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5ae7535c5542997b22f6a6d8",
+   "gold": "1998",
+   "answer": "2000",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "The 53rd National Hockey League All-Star Game took place at the indoor arena that was completed in what year?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5adf95745542995534e8c7f8",
+   "gold": "in the village of Aldenham",
+   "answer": "At the Bhaktivedanta College in Radhadesh, Belgium.",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.2,
+   "question": "Where does Śivarāma Swami conduct courses on Vaishnava Theology?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5adf3c155542993a75d2643a",
+   "gold": "Anne Perry",
+   "answer": "Pauline",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What is the given name of the character depicted as Juliet Hulme in Heavenly Creatures?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5ac1a6bf5542991316484b8d",
+   "gold": "California",
+   "answer": "Virginia",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "In what state did this band form that is an American metalcore band, founded in mid-2009, and whose lead vocalist was Jerry Roush?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5a87b2fc5542996e4f3088d0",
+   "gold": "J. R. R. Tolkien",
+   "answer": "J. R. R. Tolkien",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Who wrote the book that inspired the name of the CD/DVD \"Here at the End of All Things\"?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5a807ca5554299485f598613",
+   "gold": "the port of Baltimore west to Sandy Hook",
+   "answer": "New York",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Where was the original line of the railroad William Howard worked for?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5adf1b8a5542995534e8c750",
+   "gold": "Molly Hatchet",
+   "answer": "Lynyrd Skynyrd",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What band did Gator Country guitarist that co-wrote Bloody Reunion come from?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5a87081755429960ec39b6fe",
+   "gold": "Daredevil",
+   "answer": "Daredevil",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Jessica Jones is a television series created for Netflix, the second in the series of the shows that lead to \"The Defenders\" miniseries after what show released on Netflix earlier?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5ab322b1554299194fa93570",
+   "gold": "fictional character",
+   "answer": "Mary Poppins",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Which type of character is featured by the P.L. Travers's third book and last novel in the \"Mary Poppins\" series?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5a80721b554299485f5985ef",
+   "gold": "World War II",
+   "answer": "World War II",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "The Livesey Hal War Memorial commemorates the fallen of which war, that had over 60 million casualties?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5a85fb085542994775f606de",
+   "gold": "Ronald Shusett",
+   "answer": "Elliott Kastner",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What is the name of the executive producer of the film that has a score composed by Jerry Goldsmith?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5a79c1335542994bb9457066",
+   "gold": "author",
+   "answer": "Novelists",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Eric Ambler and Carol Shields are both best Known for what profession?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5a774e9c55429972597f14f3",
+   "gold": "Larnelle Harris",
+   "answer": "Cynthia Clawson",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "David Huntsinger has worked with this gospel singer born in the month of July?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5adcdea85542992c1e3a2441",
+   "gold": "Chinese Coffee",
+   "answer": "The Last Detail",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What film adaptation do both Jerome Bernard and Ira Lewis have in common?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5ac509e95542994611c8b333",
+   "gold": "the Twist",
+   "answer": "Waltz",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "The chicken is a type of dance pattern that is a change of pace of what dance?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5a8b42be55429949d91db515",
+   "gold": "novelist",
+   "answer": "Writer",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What profession does John Lanchester and Alan Dean Foster have in common?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5ab9b2c7554299743d22ebaf",
+   "gold": "no",
+   "answer": "No",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Are both Lygodium or Maxillaria a genus of orchids?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "5a7b63eb55429931da12ca7e",
+   "gold": "New York",
+   "answer": "Albany",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What city does Paul Clyne and David Soares have in common?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "5a7ea14655429930675135ab",
+   "gold": "Oneida Limited",
+   "answer": "Oneida",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.6666666666666666,
+   "question": "What giant silverware company was started as a religious Utopian group and was for many years run by Pierrepont Noyes?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  }
+ ]
+}

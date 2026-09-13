@@ -1,0 +1,1913 @@
+{
+ "dataset": "musique",
+ "n": 100,
+ "errors": 0,
+ "em": 0.08,
+ "f1": 0.1623,
+ "detail": [
+  {
+   "qid": "2hop__67660_81007",
+   "gold": "Tracy McConnell",
+   "answer": "Robin",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__92051_827343",
+   "gold": "Lana Wood",
+   "answer": "Mara Wilson",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__144150_82341",
+   "gold": "in Northern Florida",
+   "answer": "Panhandle",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__83938_5666",
+   "gold": "Yeltsin",
+   "answer": "Boris Yeltsin",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.6666666666666666
+  },
+  {
+   "qid": "2hop__167577_31122",
+   "gold": "18th",
+   "answer": "18th",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "2hop__9238_9237",
+   "gold": "September 2012",
+   "answer": "2000",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__107905_110222",
+   "gold": "10 June 1819",
+   "answer": "June 10, 1819",
+   "error": null,
+   "em": 0.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "2hop__145203_34088",
+   "gold": "Tucson Raceway Park",
+   "answer": "Daytona Beach",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__498061_88622",
+   "gold": "ADM Michael S. Rogers",
+   "answer": "I don't know.",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "3hop1__33845_42197_18397",
+   "gold": "the Politburo",
+   "answer": "Taiwan",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__822965_165304",
+   "gold": "Kim Braden",
+   "answer": "I don't know",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__286093_361551",
+   "gold": "Bay County",
+   "answer": "Kent",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__580231_162399",
+   "gold": "15 December 1950",
+   "answer": "1943",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__461639_83837",
+   "gold": "Karen Fairchild",
+   "answer": "Luke Bryan",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__83785_461854",
+   "gold": "Laurence Olivier",
+   "answer": "Vivien Leigh",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "4hop1__802394_153080_159767_81096",
+   "gold": "Mario Andretti",
+   "answer": "Hélio Castroneves",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__485221_544917",
+   "gold": "Lake Superior",
+   "answer": "Atlantic Ocean",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__38229_84500",
+   "gold": "North Atlantic Treaty Organization",
+   "answer": "I don't know",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__822113_91104",
+   "gold": "ATS - 6 (Applications Technology Satellite - 6)",
+   "answer": "GSAT-2",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__106864_80460",
+   "gold": "207.77 million people",
+   "answer": "Pakistan",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "3hop1__67704_237521_291682",
+   "gold": "Liza Minnelli",
+   "answer": "Lisa Marie Presley",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__525242_52835",
+   "gold": "John D. Loudermilk",
+   "answer": "Norah Jones",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "4hop1__860115_798482_131926_13165",
+   "gold": "Treaty of Paris",
+   "answer": "Treaty of Paris (1783)",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.8571428571428571
+  },
+  {
+   "qid": "3hop2__101809_30152_20999",
+   "gold": "The dynasty regrouped and defeated the Portuguese",
+   "answer": "They were demonetized.",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__444265_82341",
+   "gold": "in Northern Florida",
+   "answer": "Panhandle",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__647996_551681",
+   "gold": "Emilia Galotti",
+   "answer": "Nathan the Wise",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__58168_38663",
+   "gold": "54.7%",
+   "answer": "24.6",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "3hop1__28527_42197_18397",
+   "gold": "the Politburo",
+   "answer": "United Nations",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "3hop1__307152_400692_51423",
+   "gold": "Casa Loma",
+   "answer": "Edinburgh Castle",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__704217_82341",
+   "gold": "in Northern Florida",
+   "answer": "Miami",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__808562_72813",
+   "gold": "a Western District uniformed officer",
+   "answer": "Bobby Brown",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__94629_1110",
+   "gold": "2005",
+   "answer": "2005",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "3hop1__274148_792411_51423",
+   "gold": "Casa Loma",
+   "answer": "Chateau",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__123545_47134",
+   "gold": "Benny Beaver",
+   "answer": "Smokey",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__754753_57816",
+   "gold": "100",
+   "answer": "University of Miami",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "3hop1__398232_326948_78782",
+   "gold": "General Edward Pakenham",
+   "answer": "Cornwallis",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__332453_139339",
+   "gold": "Academy Award for Best Live Action Short Film",
+   "answer": "Academy Award",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.4
+  },
+  {
+   "qid": "3hop2__668732_223623_162182",
+   "gold": "South Central Coast",
+   "answer": "Southeast",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "3hop2__89854_92991_76291",
+   "gold": "January 2015",
+   "answer": "January 3, 2019",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.4
+  },
+  {
+   "qid": "2hop__223823_29898",
+   "gold": "CFJC-TV in Kamloops",
+   "answer": "Global",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__109131_343058",
+   "gold": "Adrian Edmondson",
+   "answer": "Ruby Wax",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "4hop1__88342_75218_128008_67954",
+   "gold": "Alex Bregman",
+   "answer": "Shohei Ohtani",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "4hop3__312119_132409_371500_35031",
+   "gold": "third-largest",
+   "answer": "Fourth",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__424294_19033",
+   "gold": "Great American Bash",
+   "answer": "WWE",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "3hop2__90098_19639_10557",
+   "gold": "Medieval Latin",
+   "answer": "Old French",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__37097_53663",
+   "gold": "northeastern Africa",
+   "answer": "Northeast Africa",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.5
+  },
+  {
+   "qid": "2hop__80070_89752",
+   "gold": "Maine",
+   "answer": "California",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "3hop1__488744_443779_52195",
+   "gold": "Francisco Guterres",
+   "answer": "José Ramos-Horta",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "3hop2__655849_223623_162182",
+   "gold": "South Central Coast",
+   "answer": "South Central Coast",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "3hop1__49236_89752_54221",
+   "gold": "5am",
+   "answer": "6:00 AM",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__159903_154896",
+   "gold": "27 April 2009",
+   "answer": "2003",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__73717_653666",
+   "gold": "Lucy Mack Smith",
+   "answer": "Lucy Mack Smith",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "2hop__398344_85513",
+   "gold": "TBD",
+   "answer": "I don't know.",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__87053_319330",
+   "gold": "Jessie Woodrow Wilson",
+   "answer": "Woodrow Wilson",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.8
+  },
+  {
+   "qid": "3hop1__145212_443779_52195",
+   "gold": "Francisco Guterres",
+   "answer": "Susilo Bambang Yudhoyono",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__678516_179720",
+   "gold": "Harold Knight",
+   "answer": "Laura Knight",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.5
+  },
+  {
+   "qid": "2hop__135336_461854",
+   "gold": "Laurence Olivier",
+   "answer": "Laurence Olivier",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "2hop__144317_120065",
+   "gold": "1738",
+   "answer": "1945",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "4hop2__103790_14670_8987_8529",
+   "gold": "1943–1992",
+   "answer": "1991",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "3hop1__140345_2053_52946",
+   "gold": "February 7, 2018",
+   "answer": "2018",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.5
+  },
+  {
+   "qid": "2hop__37656_160040",
+   "gold": "Josh McDowell",
+   "answer": "Martin Luther",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "3hop1__584774_131926_87157",
+   "gold": "rises in northern Minnesota and meanders slowly southwards",
+   "answer": "South",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "3hop2__132957_132968_40768",
+   "gold": "1981",
+   "answer": "1980s",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__711639_110949",
+   "gold": "11 September 1962",
+   "answer": "September 12, 1962",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.6666666666666666
+  },
+  {
+   "qid": "2hop__543050_245420",
+   "gold": "Citrus Heights",
+   "answer": "Fair Oaks",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__598467_68489",
+   "gold": "Snapper Foster",
+   "answer": "Danny Romalotti",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__80673_510545",
+   "gold": "Jennifer Connelly",
+   "answer": "Jennifer Connelly",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "4hop3__668721_132409_146285_35031",
+   "gold": "third-largest",
+   "answer": "4th",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__24697_578772",
+   "gold": "Chinese surname",
+   "answer": "Chang'an",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__22885_36240",
+   "gold": "Genesis 3:15",
+   "answer": "The Torah",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "4hop1__199362_765799_282674_759393",
+   "gold": "Green Bay",
+   "answer": "Wausau",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "3hop1__305282_282081_73772",
+   "gold": "December 14, 1814",
+   "answer": "1976",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__31326_31270",
+   "gold": "45",
+   "answer": "500",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__31995_8583",
+   "gold": "Iranic Sarmatians and the Germanic Goths",
+   "answer": "Ukrainians",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__166820_52835",
+   "gold": "John D. Loudermilk",
+   "answer": "Norah Jones",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "3hop1__198276_709625_84283",
+   "gold": "Warner Music Group",
+   "answer": "Rodney Crowell",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__46550_85990",
+   "gold": "anti-slavery activists, modernizers, ex Whigs and ex Free Soilers",
+   "answer": "Nancy Pelosi and Tom Daschle",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.14285714285714285
+  },
+  {
+   "qid": "2hop__804417_126089",
+   "gold": "Johan Remkes",
+   "answer": "The King of Norway",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__156085_436709",
+   "gold": "Walt Disney",
+   "answer": "Walt Disney",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "3hop1__418091_15840_36014",
+   "gold": "five",
+   "answer": "5",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "3hop1__796649_720914_27537",
+   "gold": "for the conclave in Rome",
+   "answer": "To become pope",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__32441_522949",
+   "gold": "Edith Roosevelt",
+   "answer": "Eleanor Roosevelt",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.5
+  },
+  {
+   "qid": "2hop__68590_27628",
+   "gold": "Vitor Constâncio",
+   "answer": "Luis de Guindos",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__6827_86319",
+   "gold": "Brian Thomas Moynihan",
+   "answer": "Ken Lewis",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "3hop1__103890_10659_83548",
+   "gold": "Lech Wałęsa",
+   "answer": "Hitler",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "3hop1__831162_831637_91775",
+   "gold": "Sea, Air, and Land",
+   "answer": "Sea, Air, and Land",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "2hop__450608_373421",
+   "gold": "counties of Lithuania",
+   "answer": "Lithuania",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.5
+  },
+  {
+   "qid": "4hop2__9988_158985_70784_61381",
+   "gold": "1932",
+   "answer": "Israel",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "3hop1__857_846_7794",
+   "gold": "8.005 million",
+   "answer": "Beijing",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "4hop1__88342_75218_128008_80286",
+   "gold": "Pete Rose",
+   "answer": "LeBron James",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__38030_23241",
+   "gold": "48.8 percent",
+   "answer": "38",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__434218_29898",
+   "gold": "CFJC-TV in Kamloops",
+   "answer": "BCTV",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__739909_807845",
+   "gold": "Digital First Media",
+   "answer": "Tribune Publishing",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__7855_7794",
+   "gold": "8.005 million",
+   "answer": "I don't know which city you mean.",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "4hop1__58323_375563_161848_61344",
+   "gold": "submerged continent of Zealandia",
+   "answer": "Europe",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "2hop__46213_494136",
+   "gold": "Meg Ryan",
+   "answer": "Jenna Fischer",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "3hop2__159979_30587_44003",
+   "gold": "through the Florida Straits",
+   "answer": "Atlantic Ocean",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "3hop1__136129_87694_64412",
+   "gold": "11 February 1929",
+   "answer": "2006",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "3hop2__67618_30587_44003",
+   "gold": "through the Florida Straits",
+   "answer": "Florida Straits",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.8
+  },
+  {
+   "qid": "3hop1__844109_720914_27537",
+   "gold": "for the conclave in Rome",
+   "answer": "To become Pope",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  }
+ ],
+ "generated_at": "2026-09-13T06:47:56+0800",
+ "judge_accuracy": 0.18,
+ "detail_judged": [
+  {
+   "qid": "2hop__67660_81007",
+   "gold": "Tracy McConnell",
+   "answer": "Robin",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Who does the narrator on How I Met Your Mother end up with?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__92051_827343",
+   "gold": "Lana Wood",
+   "answer": "Mara Wilson",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Who is the sibling of the actress who played Susan Walker in Miracle on 34th street?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__144150_82341",
+   "gold": "in Northern Florida",
+   "answer": "Panhandle",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "In what part of Florida is Tom Denney's birthplace located?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__83938_5666",
+   "gold": "Yeltsin",
+   "answer": "Boris Yeltsin",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.6666666666666666,
+   "question": "Who was the first president in the country where the Kamchatka Peninsula is located?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "2hop__167577_31122",
+   "gold": "18th",
+   "answer": "18th",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "What century did the author of A Treatise Concerning the Principles of Human Knowledge live in?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "2hop__9238_9237",
+   "gold": "September 2012",
+   "answer": "2000",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "When did the first mosque in the place where Marshall Islands International Airport is located open?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__107905_110222",
+   "gold": "10 June 1819",
+   "answer": "June 10, 1819",
+   "error": null,
+   "em": 0.0,
+   "f1": 1.0,
+   "question": "When is the date of birth of the creator of A Burial at Ornans?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "2hop__145203_34088",
+   "gold": "Tucson Raceway Park",
+   "answer": "Daytona Beach",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Where does Ulysses Kay's birth city hold NASCAR races?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__498061_88622",
+   "gold": "ADM Michael S. Rogers",
+   "answer": "I don't know.",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Who's the head of the owner of ThinThread?",
+   "judge_verdict": "refusal",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "3hop1__33845_42197_18397",
+   "gold": "the Politburo",
+   "answer": "Taiwan",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Where did the arguer that the country Directive 10/2 called for actions against had become an imperialist power declare he would intervene in the Korean conflict?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__822965_165304",
+   "gold": "Kim Braden",
+   "answer": "I don't know",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Who is the child of the actor who is a cast member of Love in Pawn?",
+   "judge_verdict": "refusal",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__286093_361551",
+   "gold": "Bay County",
+   "answer": "Kent",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "In which county was James Finch born?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__580231_162399",
+   "gold": "15 December 1950",
+   "answer": "1943",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "When did the father of Dahyabhai Patel die?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__461639_83837",
+   "gold": "Karen Fairchild",
+   "answer": "Luke Bryan",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Who sing \"Home Alone Tonight\" with the performer of \"country Man\"?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__83785_461854",
+   "gold": "Laurence Olivier",
+   "answer": "Vivien Leigh",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Who was the spouse of the leading lady in Gone With the wind?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "4hop1__802394_153080_159767_81096",
+   "gold": "Mario Andretti",
+   "answer": "Hélio Castroneves",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "An Indy car race was held in the capital of the state where the performer of Mingus Plays Piano was born. Who won the race?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__485221_544917",
+   "gold": "Lake Superior",
+   "answer": "Atlantic Ocean",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What body of water includes the terrain feature where Coffee Swamp is located?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__38229_84500",
+   "gold": "North Atlantic Treaty Organization",
+   "answer": "I don't know",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What does the name of the topic that Eisenhower didn't discuss during the campaign stand for?",
+   "judge_verdict": "refusal",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__822113_91104",
+   "gold": "ATS - 6 (Applications Technology Satellite - 6)",
+   "answer": "GSAT-2",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What is the experimental satellite which was the forerunner to the communication satellite of the operator of GSAT-7 called?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__106864_80460",
+   "gold": "207.77 million people",
+   "answer": "Pakistan",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What was the 2017 population of the country where Bedari was made?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "3hop1__67704_237521_291682",
+   "gold": "Liza Minnelli",
+   "answer": "Lisa Marie Presley",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Who is the wife of the man who produced the documentary of the pop star who sings I Want to Rock With You?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__525242_52835",
+   "gold": "John D. Loudermilk",
+   "answer": "Norah Jones",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Who wrote \"Turn Me On\" by performer of \"Happy Pills\"?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "4hop1__860115_798482_131926_13165",
+   "gold": "Treaty of Paris",
+   "answer": "Treaty of Paris (1783)",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.8571428571428571,
+   "question": "What treaty ceded territory to the US extending west to the river by the city sharing a border with Elizabeth Berg's birthplace?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "3hop2__101809_30152_20999",
+   "gold": "The dynasty regrouped and defeated the Portuguese",
+   "answer": "They were demonetized.",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "How were those people defied by the use of new coins later removed from where Myint Myint Aye is from?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__444265_82341",
+   "gold": "in Northern Florida",
+   "answer": "Panhandle",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "In what part of Florida is Tom Denney's birthplace located?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__647996_551681",
+   "gold": "Emilia Galotti",
+   "answer": "Nathan the Wise",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What is another notable work made by the author of Miss Sara Sampson?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__58168_38663",
+   "gold": "54.7%",
+   "answer": "24.6",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What was the percentage that the Dow Jones fell when the US had the highest unemployment rate?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "3hop1__28527_42197_18397",
+   "gold": "the Politburo",
+   "answer": "United Nations",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Where did the arguer that the country in control of Estonia before the Germans had become an imperialist power declare he would intervene in the Korean conflict?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "3hop1__307152_400692_51423",
+   "gold": "Casa Loma",
+   "answer": "Edinburgh Castle",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What is the name of the castle in the city where the performer of Fall was born?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__704217_82341",
+   "gold": "in Northern Florida",
+   "answer": "Miami",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Where is Sean Hampton's birth place in the state of Florida?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__808562_72813",
+   "gold": "a Western District uniformed officer",
+   "answer": "Bobby Brown",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Who does the performer of Don't Be Cruel play in the wire?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__94629_1110",
+   "gold": "2005",
+   "answer": "2005",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "In what year was Twilight Princess from the game series on which The Legend of Neil was based originally planned for release?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "3hop1__274148_792411_51423",
+   "gold": "Casa Loma",
+   "answer": "Chateau",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What is the name of the castle in the birthplace of the performer of Bound by the Beauty?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__123545_47134",
+   "gold": "Benny Beaver",
+   "answer": "Smokey",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Who is the mascot of the university related to Randy Conrads?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__754753_57816",
+   "gold": "100",
+   "answer": "University of Miami",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What is the U.S. News ranking of the law school at Carlos Alvarez's employer?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "3hop1__398232_326948_78782",
+   "gold": "General Edward Pakenham",
+   "answer": "Cornwallis",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Who was the British general in the battle named after the birth city of the person who recorded Mother-in-Law?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__332453_139339",
+   "gold": "Academy Award for Best Live Action Short Film",
+   "answer": "Academy Award",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.4,
+   "question": "What was the director of The Accidental Husband nominated for?",
+   "judge_verdict": "partial",
+   "judge_score": 0.5
+  },
+  {
+   "qid": "3hop2__668732_223623_162182",
+   "gold": "South Central Coast",
+   "answer": "Southeast",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "In what region of the country where An Phu is located is John Phan's birthplace?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "3hop2__89854_92991_76291",
+   "gold": "January 2015",
+   "answer": "January 3, 2019",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.4,
+   "question": "When did the majority party in the House of Representatives gain control of the body which determines rules of the US House and US Senate?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__223823_29898",
+   "gold": "CFJC-TV in Kamloops",
+   "answer": "Global",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Which affiliate left the owner of Canadian Broadcasting Centre due to an agreement with CHBC?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__109131_343058",
+   "gold": "Adrian Edmondson",
+   "answer": "Ruby Wax",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Who is the spouse of the creator of Absolutely Fabulous?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "4hop1__88342_75218_128008_67954",
+   "gold": "Alex Bregman",
+   "answer": "Shohei Ohtani",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Who won the All-Star MVP for the league that the team that has attended the competition where they give out the MLB MVP award after the most?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "4hop3__312119_132409_371500_35031",
+   "gold": "third-largest",
+   "answer": "Fourth",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Among the top five largest urban areas in the state where Getting Away with Murder's performer was formed, where does Veoh's headquarters city rank?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__424294_19033",
+   "gold": "Great American Bash",
+   "answer": "WWE",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Where did the author of A Lion's Tale: Around the World in Spandex win in 2008?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "3hop2__90098_19639_10557",
+   "gold": "Medieval Latin",
+   "answer": "Old French",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What was the form of the language that the last name Sylvester comes from, used in the era of the king who united the 9th century tribes, later known as?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__37097_53663",
+   "gold": "northeastern Africa",
+   "answer": "Northeast Africa",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.5,
+   "question": "Where is the river where the majority of Egyptians lived located in the world?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "2hop__80070_89752",
+   "gold": "Maine",
+   "answer": "California",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What is the largest state in the region where the Handmaid's Tale takes place?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "3hop1__488744_443779_52195",
+   "gold": "Francisco Guterres",
+   "answer": "José Ramos-Horta",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Who is the president of the newly declared independent country that is part of the Commission of Truth and Friendship with the country where Jenggawah is located?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "3hop2__655849_223623_162182",
+   "gold": "South Central Coast",
+   "answer": "South Central Coast",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "In what region of the country containing A Lưới is the birthplace of John Phan located?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "3hop1__49236_89752_54221",
+   "gold": "5am",
+   "answer": "6:00 AM",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What time do alcohol sales begin in the largest state of the region where the fictional Gilead is located in The Handmaid's Tale?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__159903_154896",
+   "gold": "27 April 2009",
+   "answer": "2003",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "In what year did the insurgency start in the part of the country it is about?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__73717_653666",
+   "gold": "Lucy Mack Smith",
+   "answer": "Lucy Mack Smith",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Who was the mother of the person who found the sacred writings that became the Book of Mormon?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "2hop__398344_85513",
+   "gold": "TBD",
+   "answer": "I don't know.",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "When is the next episode of the series that Steven the Sword Fighter is a part of being released?",
+   "judge_verdict": "refusal",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__87053_319330",
+   "gold": "Jessie Woodrow Wilson",
+   "answer": "Woodrow Wilson",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.8,
+   "question": "Who was the child of the 28th U.S. president?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "3hop1__145212_443779_52195",
+   "gold": "Francisco Guterres",
+   "answer": "Susilo Bambang Yudhoyono",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Arie Supriyatna's birth country was one participant in a Commission of Truth and Friendship. Who is the president of the other country that participated?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__678516_179720",
+   "gold": "Harold Knight",
+   "answer": "Laura Knight",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.5,
+   "question": "Who was married to the creator of Ruby Loftus Screwing a Breech Ring?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__135336_461854",
+   "gold": "Laurence Olivier",
+   "answer": "Laurence Olivier",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Who was Suzanne Farrington's mother's spouse?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "2hop__144317_120065",
+   "gold": "1738",
+   "answer": "1945",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What year did the city were Hans-Joachim Merker was born end?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "4hop2__103790_14670_8987_8529",
+   "gold": "1943–1992",
+   "answer": "1991",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "A country's military branch, the equivalent of which in the US contains the Air Defense Artillery, was unprepared for the invasion of Ivo Werner's country. When was the word \"Slavs\" used in the national anthem of the unprepared country?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "3hop1__140345_2053_52946",
+   "gold": "February 7, 2018",
+   "answer": "2018",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.5,
+   "question": "When is Celebrity Big Brother coming to the network which, along with ABC and the network which aired Law of the Plainsman, is the other major broadcaster based in NY?",
+   "judge_verdict": "partial",
+   "judge_score": 0.5
+  },
+  {
+   "qid": "2hop__37656_160040",
+   "gold": "Josh McDowell",
+   "answer": "Martin Luther",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Who is the guy defending this stuff from the highest authority in Protestantism for morals?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "3hop1__584774_131926_87157",
+   "gold": "rises in northern Minnesota and meanders slowly southwards",
+   "answer": "South",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What is the direction of flow of the body of water by the city where Uni-Systems is headquartered?",
+   "judge_verdict": "partial",
+   "judge_score": 0.5
+  },
+  {
+   "qid": "3hop2__132957_132968_40768",
+   "gold": "1981",
+   "answer": "1980s",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "When did the maker of Acura Legend, the company that makes Daihatsu Charmant, and Nissan open US assembly plants?",
+   "judge_verdict": "partial",
+   "judge_score": 0.5
+  },
+  {
+   "qid": "2hop__711639_110949",
+   "gold": "11 September 1962",
+   "answer": "September 12, 1962",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.6666666666666666,
+   "question": "What is the Sarah performer's birth date?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__543050_245420",
+   "gold": "Citrus Heights",
+   "answer": "Fair Oaks",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Which city shares border with the area having Bella Vista High School?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__598467_68489",
+   "gold": "Snapper Foster",
+   "answer": "Danny Romalotti",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Who did the performer from Night Rocker play on Young and Restless?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__80673_510545",
+   "gold": "Jennifer Connelly",
+   "answer": "Jennifer Connelly",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Who is the spouse of the actor who plays Vision in the new Avengers movie?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "4hop3__668721_132409_146285_35031",
+   "gold": "third-largest",
+   "answer": "4th",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "In the top five largest urban areas in the state where the performer of The Paramour Sessions was from, where does the place of death for Alexander Golitzen rank?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__24697_578772",
+   "gold": "Chinese surname",
+   "answer": "Chang'an",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "The name of the Chinese capitol Kanmu modeled his government after is an instance of what?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__22885_36240",
+   "gold": "Genesis 3:15",
+   "answer": "The Torah",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What specific part of the religious scripture that can be fit into a large, loose definition of legal literature does this document reference for Mary?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "4hop1__199362_765799_282674_759393",
+   "gold": "Green Bay",
+   "answer": "Wausau",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What is the seat of the county sharing a border with the county whose seat is the city WAPL is licensed to broadcast to?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "3hop1__305282_282081_73772",
+   "gold": "December 14, 1814",
+   "answer": "1976",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "When was the start of the battle of the birthplace of the performer of III?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__31326_31270",
+   "gold": "45",
+   "answer": "500",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What is the distance in miles from Nashville to the place where Hemlock Semiconductor produces electronic components?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__31995_8583",
+   "gold": "Iranic Sarmatians and the Germanic Goths",
+   "answer": "Ukrainians",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Who did the Slavs have contact with in the country that Steven Spielberg's grandparents were from?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__166820_52835",
+   "gold": "John D. Loudermilk",
+   "answer": "Norah Jones",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Who wrote turn me on, which was performed by the person who also performed Chasing Pirates?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "3hop1__198276_709625_84283",
+   "gold": "Warner Music Group",
+   "answer": "Rodney Crowell",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Who is the owner of the record label of the performer of What Kind of Love?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__46550_85990",
+   "gold": "anti-slavery activists, modernizers, ex Whigs and ex Free Soilers",
+   "answer": "Nancy Pelosi and Tom Daschle",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.14285714285714285,
+   "question": "Who were the leaders of the opposition of the party that controlled the house of representatives in 2002?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__804417_126089",
+   "gold": "Johan Remkes",
+   "answer": "The King of Norway",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Who was in charge of the place where Bergen is located?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__156085_436709",
+   "gold": "Walt Disney",
+   "answer": "Walt Disney",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "Who is the creator of Mickey Mouse's spouse?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "3hop1__418091_15840_36014",
+   "gold": "five",
+   "answer": "5",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What was Nintendo's limit on games per developer per year on the gaming platform with a three letter abbreviation that the game Bigfoot was on?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "3hop1__796649_720914_27537",
+   "gold": "for the conclave in Rome",
+   "answer": "To become pope",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Why did Roncalli leave the city where the creator of Flora died?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "2hop__32441_522949",
+   "gold": "Edith Roosevelt",
+   "answer": "Eleanor Roosevelt",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.5,
+   "question": "Who is the spouse of the other president Jenkins Orphanage played for that wasn't Taft?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__68590_27628",
+   "gold": "Vitor Constâncio",
+   "answer": "Luis de Guindos",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Who is the Vice-President of the organization that controls the monetary policy of the EU?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__6827_86319",
+   "gold": "Brian Thomas Moynihan",
+   "answer": "Ken Lewis",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Who is the CEO of FleetBoston Financial's purchaser?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "3hop1__103890_10659_83548",
+   "gold": "Lech Wałęsa",
+   "answer": "Hitler",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Who led the movement against communism, in the country where, along with the nation that Ágnes Konkoly is from, many expelled French Jews relocated to?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "3hop1__831162_831637_91775",
+   "gold": "Sea, Air, and Land",
+   "answer": "Sea, Air, and Land",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0,
+   "question": "What does SEAL stand for in the military group that is part of the military branch that operates USS Dour?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "2hop__450608_373421",
+   "gold": "counties of Lithuania",
+   "answer": "Lithuania",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.5,
+   "question": "What is the county where Ukmergė District Municipality is located one of?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "4hop2__9988_158985_70784_61381",
+   "gold": "1932",
+   "answer": "Israel",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "When was the region immediately north of the region prevailing with the disgrace of the Near East and the site of the most growth in desalination for agricultural use established?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "3hop1__857_846_7794",
+   "gold": "8.005 million",
+   "answer": "Beijing",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "In 2010, what was the population of the city where the Yongle emperor greeted the person to whom the edict was addressed?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "4hop1__88342_75218_128008_80286",
+   "gold": "Pete Rose",
+   "answer": "LeBron James",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "who has had the most hits in the league that includes the team that has played the most games of the type played just before the league MVP is awarded?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__38030_23241",
+   "gold": "48.8 percent",
+   "answer": "38",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "According to Pew, in 2010, what percent of Nigeria's population practiced the religion dominant in the countries surrounding Armenia?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__434218_29898",
+   "gold": "CFJC-TV in Kamloops",
+   "answer": "BCTV",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Which affiliate left the employer of Don Newman due to an agreement with CHBC?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__739909_807845",
+   "gold": "Digital First Media",
+   "answer": "Tribune Publishing",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What publisher was formed from the owner of the The Daily News?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__7855_7794",
+   "gold": "8.005 million",
+   "answer": "I don't know which city you mean.",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What is the population in 2010 of they city popular with tourists?",
+   "judge_verdict": "refusal",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "4hop1__58323_375563_161848_61344",
+   "gold": "submerged continent of Zealandia",
+   "answer": "Europe",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "What continent is the country located near the country of citizenship of The Book Thief's author part of?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "2hop__46213_494136",
+   "gold": "Meg Ryan",
+   "answer": "Jenna Fischer",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "The actor who plays the father in I Can Only Imagine has a wife played by who in another film?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "3hop2__159979_30587_44003",
+   "gold": "through the Florida Straits",
+   "answer": "Atlantic Ocean",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Where does the ocean adjacent to Miami meet the ocean basin at where the tropical Storm Allison ended up?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "3hop1__136129_87694_64412",
+   "gold": "11 February 1929",
+   "answer": "2006",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "When did the place where the head of the catholic region named after the same saint as the Dakovo Cathedral become its own country?",
+   "judge_verdict": "incorrect",
+   "judge_score": 0.0
+  },
+  {
+   "qid": "3hop2__67618_30587_44003",
+   "gold": "through the Florida Straits",
+   "answer": "Florida Straits",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.8,
+   "question": "Where does the ocean adjacent to Miami meet the body of water where the Mississippi River empties into the sea?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  },
+  {
+   "qid": "3hop1__844109_720914_27537",
+   "gold": "for the conclave in Rome",
+   "answer": "To become Pope",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0,
+   "question": "Why did Roncalli leave the city where the creator of The Entombment died?",
+   "judge_verdict": "correct",
+   "judge_score": 1.0
+  }
+ ]
+}

@@ -1,0 +1,810 @@
+{
+ "dataset": "hotpot",
+ "n": 100,
+ "errors": 0,
+ "em": 0.36,
+ "f1": 0.4557,
+ "detail": [
+  {
+   "qid": "5a7613c15542994ccc9186bf",
+   "gold": "Gesellschaft mit beschränkter Haftung",
+   "answer": "Video Vision",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5adf2fa35542993344016c11",
+   "gold": "Jonny\" Craig",
+   "answer": "Jonny Craig",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5adfdef9554299025d62a36b",
+   "gold": "Bath, Maine",
+   "answer": "Maine",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.6666666666666666
+  },
+  {
+   "qid": "5a7180205542994082a3e856",
+   "gold": "Creature Comforts",
+   "answer": "Creature Comforts",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a78bc6b554299148911f979",
+   "gold": "fortnightly women interest magazine",
+   "answer": "Women's magazines",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5abdd0f15542991f6610604d",
+   "gold": "a failed coup attempt",
+   "answer": "A fascist coup attempt",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.6666666666666666
+  },
+  {
+   "qid": "5a8e27d45542995a26add46a",
+   "gold": "2004",
+   "answer": "2013",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a881d2355429938390d3eeb",
+   "gold": "Love and Theft",
+   "answer": "Rascal Flatts",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ae4a1ef55429970de88d9e7",
+   "gold": "2 March 1972",
+   "answer": "4 July 1974",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ae6f2a7554299572ea5464a",
+   "gold": "Tybalt",
+   "answer": "Romeo",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a845d735542996488c2e52e",
+   "gold": "Virginia",
+   "answer": "Virginia",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5adf5daf5542995534e8c79d",
+   "gold": "no",
+   "answer": "No",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a7c49dc55429935c91b514f",
+   "gold": "Engineering",
+   "answer": "Physics",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5abe364e5542993f32c2a08e",
+   "gold": "Teen Titans Go!",
+   "answer": "Teen Titans Go!",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ac557975542993e66e8231c",
+   "gold": "Oklahoma Sooners",
+   "answer": "Oregon",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ab28a87554299449642c8ec",
+   "gold": "Pulitzer Prize",
+   "answer": "National Book Award",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5adff056554299603e4183cc",
+   "gold": "1988",
+   "answer": "1988",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5abd578a5542993062266c5d",
+   "gold": "Hawaii County",
+   "answer": "Hawaii County",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a7b537555429927d897bf90",
+   "gold": "German",
+   "answer": "Celtic",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a7dc3275542997cc2c4749c",
+   "gold": "Sam Boyd Stadium",
+   "answer": "Albertsons Stadium",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.4
+  },
+  {
+   "qid": "5ab5487b554299494045ef68",
+   "gold": "1941",
+   "answer": "1941",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ac2758b55429963665199c3",
+   "gold": "10 January 1920",
+   "answer": "January 10, 1920",
+   "error": null,
+   "em": 0.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ab7f97a5542991d322237ef",
+   "gold": "super-regional shopping mall",
+   "answer": "Shopping mall",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.8
+  },
+  {
+   "qid": "5a81e107554299676cceb12a",
+   "gold": "M. Night Shyamalan",
+   "answer": "M. Night Shyamalan",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ab6f7415542991d322236f4",
+   "gold": "1978",
+   "answer": "1978",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ac562985542993e66e823ca",
+   "gold": "London",
+   "answer": "London",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a87bd4e5542994846c1cde0",
+   "gold": "no",
+   "answer": "No",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5aba52e655429939ce03dc94",
+   "gold": "chronological collection of critical quotations",
+   "answer": "Shakespeare",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ab58f9a554299488d4d99da",
+   "gold": "22 November",
+   "answer": "13 February 1751",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ae67def5542991bbc9760f3",
+   "gold": "Dubai International Airport",
+   "answer": "Dallas/Fort Worth International Airport",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.5714285714285715
+  },
+  {
+   "qid": "5adeb78a554299728e26c77a",
+   "gold": "Minnesota",
+   "answer": "Illinois",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ae66d515542992ae0d16346",
+   "gold": "1927",
+   "answer": "1929",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a8e60ca5542995a26add4d9",
+   "gold": "\"Read It and Weep\" (2006)",
+   "answer": "The Ward",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a72a2935542991f9a20c546",
+   "gold": "Velvetpark",
+   "answer": "Velvetpark",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a7f7b3b5542992097ad2f81",
+   "gold": "Papa Gino's",
+   "answer": "Papa Gino's",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a82ebb855429966c78a6a9c",
+   "gold": "Shukratara",
+   "answer": "Misal Pav",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5add596f5542990dbb2f7e4d",
+   "gold": "Captain Hans Geering",
+   "answer": "René Artois",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ac4db1d554299076e296e1a",
+   "gold": "Frederick Alexander",
+   "answer": "Patrick Vallance",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ac532335542994611c8b41c",
+   "gold": "Marktown",
+   "answer": "Marktown",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ae7a8d35542994a481bbdbb",
+   "gold": "The Bad Hemingway Contest",
+   "answer": "Pulitzer Prize",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a8db348554299068b959dc2",
+   "gold": "Vivendi S.A.",
+   "answer": "Cash Money",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5adcbb815542994ed6169bde",
+   "gold": "Stone Brewing",
+   "answer": "Stone Brewing",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ab915ad55429919ba4e239c",
+   "gold": "Jimmy Ellis",
+   "answer": "Jimmy Ellis",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ab94fa25542996be2020474",
+   "gold": "Baudot code",
+   "answer": "A stylized world map",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a7ca0ef55429907fabeefd3",
+   "gold": "Raffaella Reggi",
+   "answer": "Raffaella Reggi",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a7a5b3a5542996c55b2dd71",
+   "gold": "Mark Masons' Hall",
+   "answer": "St James's Palace",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5abbd3ac55429931dba1458b",
+   "gold": "no",
+   "answer": "No",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ac3af895542995ef918c1f0",
+   "gold": "Stedelijk Museum Amsterdam",
+   "answer": "Stedelijk Museum",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.8
+  },
+  {
+   "qid": "5a72dcb45542992359bc31af",
+   "gold": "Aloe Vera of America",
+   "answer": "Forever Living Products",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ae1e22a5542997f29b3c160",
+   "gold": "Sarah Kerrigan",
+   "answer": "Sarah Kerrigan",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ae6316d5542996de7b71b87",
+   "gold": "Ricard Rubio i Vives",
+   "answer": "Ricky Rubio",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.3333333333333333
+  },
+  {
+   "qid": "5ade4801554299728e26c6ab",
+   "gold": "69th Cannes Film Festival",
+   "answer": "Cannes Film Festival",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.8571428571428571
+  },
+  {
+   "qid": "5a9064c755429916514e74a6",
+   "gold": "Lester",
+   "answer": "Jack",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5addc79d5542995b365fab7b",
+   "gold": "To SquarePants or Not to SquarePants",
+   "answer": "To SquarePants or Not to SquarePants",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ac097b05542996f0d89cc18",
+   "gold": "yes",
+   "answer": "Yes",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a79caad5542994f819ef09f",
+   "gold": "Matthew Ryan Kemp",
+   "answer": "Delwyn Young",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a83a31c554299123d8c2179",
+   "gold": "Adam Levine",
+   "answer": "Adam Levine",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a72830e5542994cef4bc2f9",
+   "gold": "San Francisco, California",
+   "answer": "Empire Distribution is based in San Francisco, California.",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.5454545454545454
+  },
+  {
+   "qid": "5abaca935542996606241610",
+   "gold": "Indiana University",
+   "answer": "Brigham Young University",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.4
+  },
+  {
+   "qid": "5ae0a59a55429945ae9593e2",
+   "gold": "Roman",
+   "answer": "Roman Empire",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.6666666666666666
+  },
+  {
+   "qid": "5ab700ca5542991d32223736",
+   "gold": "\"Now and Then\" (1995)",
+   "answer": "You've Got Mail",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a8bd49d5542997f31a41dd7",
+   "gold": "Matt Groening",
+   "answer": "Matt Groening",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ae4d3a55542990ba0bbb164",
+   "gold": "Dewey Lake Monster",
+   "answer": "Mothman",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ab29346554299545a2cf997",
+   "gold": "KXII",
+   "answer": "KTEN",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a776fc15542997042120a3a",
+   "gold": "The Bears",
+   "answer": "Wolves",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ab3ede755429976abd1bcf4",
+   "gold": "John Ford",
+   "answer": "John Ford",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a80071f5542992bc0c4a684",
+   "gold": "Crystal Dynamics",
+   "answer": "Crystal Dynamics",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ae08a0455429924de1b70fc",
+   "gold": "Enigma",
+   "answer": "Frank Farian",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ab484415542990594ba9c44",
+   "gold": "Discovery Zone",
+   "answer": "Discovery Zone",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a811667554299260e20a23d",
+   "gold": "singer, songwriter",
+   "answer": "Singer",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.6666666666666666
+  },
+  {
+   "qid": "5a81c7d15542990a1d231ea9",
+   "gold": "cleaning, catering and security",
+   "answer": "Facility services",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a716ec85542994082a3e82d",
+   "gold": "You're Next",
+   "answer": "You're Next",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ade25ed5542997c77aded70",
+   "gold": "the Cold War (1947–91)",
+   "answer": "World War I",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.3333333333333333
+  },
+  {
+   "qid": "5a89dd4d554299669944a5e3",
+   "gold": "Blue Grass Airport",
+   "answer": "Blue Grass Airport",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5abba3cd554299642a094aee",
+   "gold": "six",
+   "answer": "11",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ac540365542994611c8b470",
+   "gold": "Loughborough University",
+   "answer": "Loughborough University",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ae199305542997b2ef7d20e",
+   "gold": "Lacoste, France",
+   "answer": "Chicago",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ae789615542997ec2727695",
+   "gold": "Martha Coolidge",
+   "answer": "Martha Coolidge",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a75e67d5542992db9473709",
+   "gold": "New York and New Jersey campaign",
+   "answer": "Battle of White Plains",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a8a5a1955429930ff3c0da7",
+   "gold": "1983",
+   "answer": "1969",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a7bc0755542995eb53be9a5",
+   "gold": "The Dark Tower",
+   "answer": "The Dark Tower",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ae7535c5542997b22f6a6d8",
+   "gold": "1998",
+   "answer": "2000",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5adf95745542995534e8c7f8",
+   "gold": "in the village of Aldenham",
+   "answer": "At the Bhaktivedanta College in Radhadesh, Belgium.",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.2
+  },
+  {
+   "qid": "5adf3c155542993a75d2643a",
+   "gold": "Anne Perry",
+   "answer": "Pauline",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ac1a6bf5542991316484b8d",
+   "gold": "California",
+   "answer": "Virginia",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a87b2fc5542996e4f3088d0",
+   "gold": "J. R. R. Tolkien",
+   "answer": "J. R. R. Tolkien",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a807ca5554299485f598613",
+   "gold": "the port of Baltimore west to Sandy Hook",
+   "answer": "New York",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5adf1b8a5542995534e8c750",
+   "gold": "Molly Hatchet",
+   "answer": "Lynyrd Skynyrd",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a87081755429960ec39b6fe",
+   "gold": "Daredevil",
+   "answer": "Daredevil",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5ab322b1554299194fa93570",
+   "gold": "fictional character",
+   "answer": "Mary Poppins",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a80721b554299485f5985ef",
+   "gold": "World War II",
+   "answer": "World War II",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a85fb085542994775f606de",
+   "gold": "Ronald Shusett",
+   "answer": "Elliott Kastner",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a79c1335542994bb9457066",
+   "gold": "author",
+   "answer": "Novelists",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a774e9c55429972597f14f3",
+   "gold": "Larnelle Harris",
+   "answer": "Cynthia Clawson",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5adcdea85542992c1e3a2441",
+   "gold": "Chinese Coffee",
+   "answer": "The Last Detail",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ac509e95542994611c8b333",
+   "gold": "the Twist",
+   "answer": "Waltz",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a8b42be55429949d91db515",
+   "gold": "novelist",
+   "answer": "Writer",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5ab9b2c7554299743d22ebaf",
+   "gold": "no",
+   "answer": "No",
+   "error": null,
+   "em": 1.0,
+   "f1": 1.0
+  },
+  {
+   "qid": "5a7b63eb55429931da12ca7e",
+   "gold": "New York",
+   "answer": "Albany",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.0
+  },
+  {
+   "qid": "5a7ea14655429930675135ab",
+   "gold": "Oneida Limited",
+   "answer": "Oneida",
+   "error": null,
+   "em": 0.0,
+   "f1": 0.6666666666666666
+  }
+ ],
+ "generated_at": "2026-09-13T06:47:16+0800"
+}
