@@ -16,7 +16,11 @@
     "gate": "bash tests/evaluation/ci-gate.sh",
     "ci": "bash scripts/ci.sh",
     "evaluate:paraphrase": "npx --yes tsx@4.23.13 tests/evaluation/paraphrase-eval.ts",
-    "evaluate:human": "npx --yes tsx@4.23.13 tests/evaluation/export-human-review.ts"
+    "evaluate:human": "npx --yes tsx@4.23.13 tests/evaluation/export-human-review.ts",
+    "benchmark:intl": "python3 tests/evaluation/intl-benchmark/benchmark_suite.py all",
+    "benchmark:intl:retrieval": "python3 tests/evaluation/intl-benchmark/benchmark_suite.py all --mode retrieval",
+    "benchmark:intl:gate": "python3 tests/evaluation/intl-benchmark/benchmark_suite.py all --gate",
+    "benchmark:intl:smoke": "python3 tests/evaluation/intl-benchmark/benchmark_suite.py all --limit 5 --mode retrieval"
   },
   "devDependencies": {
     "turbo": "^2.0.0",

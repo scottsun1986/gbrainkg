@@ -1,0 +1,83 @@
+{
+  "version": "v14.0",
+  "generated_at": "2026-09-13T13:48:00+0800",
+  "git_commit": "43ccd01",
+  "description": "v14.0 Official Golden Baseline across 2WikiMultiHopQA, HotpotQA, and MuSiQue (100 questions each, total 300 questions)",
+  "datasets": {
+    "2wiki": {
+      "kb_id": "83bd0133-643b-4a02-978a-f0015f7aac0c",
+      "n": 100,
+      "retrieval": {
+        "recall@2": 1.0,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "full_evidence": 0.72,
+        "mrr@10": 0.985,
+        "ndcg@10": 0.752
+      },
+      "qa": {
+        "containment": 0.62,
+        "citation_hit": 1.0,
+        "refusal_rate_on_answerable": 0.0,
+        "em": 0.0,
+        "f1": 0.0865
+      },
+      "gates": {
+        "recall@10_min": 0.95,
+        "full_evidence_min": 0.68,
+        "refusal_rate_max": 0.05,
+        "containment_min": 0.55
+      }
+    },
+    "hotpot": {
+      "kb_id": "eb0dfea7-29b9-4566-ba7a-c20f3b76ae2d",
+      "n": 100,
+      "retrieval": {
+        "recall@2": 0.93,
+        "recall@5": 0.99,
+        "recall@10": 1.0,
+        "full_evidence": 0.97,
+        "mrr@10": 0.9006,
+        "ndcg@10": 0.8635
+      },
+      "qa": {
+        "containment": 0.81,
+        "citation_hit": 0.99,
+        "refusal_rate_on_answerable": 0.0,
+        "em": 0.0,
+        "f1": 0.0905
+      },
+      "gates": {
+        "recall@10_min": 0.95,
+        "full_evidence_min": 0.90,
+        "refusal_rate_max": 0.05,
+        "containment_min": 0.75
+      }
+    },
+    "musique": {
+      "kb_id": "c6b50c14-f357-45aa-a3ae-34ae58d2258f",
+      "n": 100,
+      "retrieval": {
+        "recall@2": 0.94,
+        "recall@5": 0.98,
+        "recall@10": 0.99,
+        "full_evidence": 0.8,
+        "mrr@10": 0.9193,
+        "ndcg@10": 0.7071
+      },
+      "qa": {
+        "containment": 0.36,
+        "citation_hit": 0.96,
+        "refusal_rate_on_answerable": 0.0,
+        "em": 0.0,
+        "f1": 0.0547
+      },
+      "gates": {
+        "recall@10_min": 0.95,
+        "full_evidence_min": 0.75,
+        "refusal_rate_max": 0.05,
+        "containment_min": 0.30
+      }
+    }
+  }
+}

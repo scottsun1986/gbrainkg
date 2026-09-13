@@ -41,6 +41,15 @@ EXIT_CODE=$?
 if [ $EXIT_CODE -eq 0 ]; then
   echo ""
   echo "✅ QUALITY GATE PASSED"
+
+  if [ "${CHECK_INTL:-0}" = "1" ]; then
+    echo ""
+    echo "========================================"
+    echo "  International Benchmark Quality Gate"
+    echo "========================================"
+    python3 tests/evaluation/intl-benchmark/benchmark_suite.py all --mode retrieval --gate
+    EXIT_CODE=$?
+  fi
 else
   echo ""
   echo "❌ QUALITY GATE FAILED"
