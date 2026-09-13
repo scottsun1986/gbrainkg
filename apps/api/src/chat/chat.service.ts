@@ -1020,6 +1020,91 @@ export class ChatService {
     }
   }
 
+  private async augmentWithBrainDerivedIntelligence(
+    queryResult: any,
+    userScope: any,
+    question: string,
+    agenticComplexity: string,
+    trace?: any,
+  ): Promise<any> {
+    if (!userScope?.scopeId) return queryResult;
+    const isEnglishQuery = !/[\u4e00-\u9fa5]/.test(question);
+    const isMacroOrInventory =
+      agenticComplexity !== "simple" ||
+      /(?:总结|概述|全景|历程|演进|架构|体系|全库|全局|所有.*有哪些|主要.*有哪些|一共.*多少|共有.*几|多少条|几条|多少章|几章|清单|统计|列表|目录|关系|架构|层级|制度)/u.test(question);
+
+    const existingCitations = Array.isArray(queryResult?.citations) ? [...queryResult.citations] : [];
+    const needDerived = isMacroOrInventory || existingCitations.length === 0;
+    if (!needDerived) return queryResult;
+
+    try {
+      const dbClient = this.prisma as any;
+      if (!dbClient.brainDerivedPage?.findMany) return queryResult;
+
+      const derivedPages = await dbClient.brainDerivedPage.findMany({
+        where: {
+          scopeId: userScope.scopeId,
+          aclEpoch: userScope.aclEpoch,
+        },
+        take: 2,
+        orderBy: { updatedAt: "desc" },
+      });
+
+      if (!derivedPages || derivedPages.length === 0) return queryResult;
+
+      trace?.start?.(
+        "brain_derived_intelligence",
+        "编译派生智库直通",
+        "加载当前权限 Scope 专属离线编译综述与资产全景",
+      );
+
+      let added = 0;
+      for (const page of derivedPages) {
+        if (!page.content) continue;
+        const alreadyIncluded = existingCitations.some((c: any) => c.slug === page.slug || c.topic === page.title);
+        if (alreadyIncluded) continue;
+
+        const snippet = page.content.slice(0, 400);
+        const context = page.content.length > 2000 ? page.content.slice(0, 2000) + "\n..." : page.content;
+
+        existingCitations.unshift({
+          topic: page.title,
+          docTitle: page.title,
+          slug: page.slug,
+          kbId: "derived",
+          kbName: isEnglishQuery ? "Scope Derived Intelligence" : "Scope 编译派生智库",
+          section: "scope-derived-summary",
+          snippet,
+          context,
+          score: 0.96,
+          isCompiledDerived: true,
+          scopeId: page.scopeId,
+          aclEpoch: page.aclEpoch,
+          evidence: `[编译派生智库] 《${page.title}》 (Epoch: ${page.aclEpoch})`,
+        });
+        added++;
+      }
+
+      if (added > 0) {
+        trace?.finish?.(
+          "brain_derived_intelligence",
+          "success",
+          `成功直通注入 ${added} 篇权限 Scope 编译派生全景综述`,
+          { injectedCount: added },
+        );
+        return { ...queryResult, citations: existingCitations };
+      }
+      return queryResult;
+    } catch (err) {
+      trace?.finish?.(
+        "brain_derived_intelligence",
+        "warning",
+        `Scope 派生智库直通忽略: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return queryResult;
+    }
+  }
+
   private async retrieveHopProbes(
     scope: string[],
     sourceRefs: string[],
@@ -2030,10 +2115,24 @@ export class ChatService {
         { matchedFacts: 0, reason: "not_memory_relevant" },
       );
     }
+    const isInventoryQuery =
+      /(有多少|有哪些|几篇|几本|几份|清单|统计|全景|列表|目录).*(知识文档|知识库|文档库|制度文档|全部文档|所有文档)/.test(question) ||
+      /(知识文档|知识库|文档库|制度文档|全部文档|所有文档).*(有多少|有哪些|几篇|几本|几份|清单|统计|全景|列表|目录)/.test(question) ||
+      /^(?:搜索)?(?:有多少|查看有哪些|列出所有|统计)\s*(?:知识文档|知识库|制度文档|文档)/.test(question);
+
     // A derived page is valid only for the exact permission/source set from
     // which it was built. Never add a full-scope summary to a user-selected
-    // subset of knowledge bases or to a focused fact lookup.
-    if (retrieval.breadth && wholeScopeSelected) {
+    // subset of knowledge bases. For whole-scope queries, mount it whenever
+    // the query is broad, multi-hop, macro, or an inventory/landscape query.
+    const shouldMountScopeDerived =
+      wholeScopeSelected &&
+      (retrieval.breadth ||
+        agenticComplexity !== "simple" ||
+        isInventoryQuery ||
+        /(?:总结|概述|全景|历程|演进|架构|体系|全库|全局|所有.*有哪些|主要.*有哪些|一共.*多少|共有.*几|多少条|几条|多少章|几章|清单|统计|列表|目录|关系|架构|层级|制度)/u.test(question) ||
+        process.env.GBRAIN_ALWAYS_MOUNT_DERIVED === "true");
+
+    if (shouldMountScopeDerived) {
       trace.start("scope_synthesis", "权限范围派生综述", "检查当前权限快照对应的跨 Source 综述");
       let isMaterialized = await this.gbrain.isSourceMaterialized(derivedRef).catch(() => false);
       if (isMaterialized) {
@@ -2049,17 +2148,13 @@ export class ChatService {
       trace.skip(
         "scope_synthesis",
         "权限范围派生综述",
-        retrieval.breadth ? "用户选择了部分知识库，不使用全范围综述" : "聚焦问题优先使用原始文档证据",
+        !wholeScopeSelected ? "用户选择了部分知识库，不使用全范围综述" : "聚焦问题优先使用原始文档证据",
       );
     }
 
     this.logger.debug(
       `Querying brain for "${question}" in scope ${scope.join(",")} (Scope fingerprint: ${userScope.fingerprint})...`,
     );
-    const isInventoryQuery =
-      /(有多少|有哪些|几篇|几本|几份|清单|统计|全景|列表|目录).*(知识文档|知识库|文档库|制度文档|全部文档|所有文档)/.test(question) ||
-      /(知识文档|知识库|文档库|制度文档|全部文档|所有文档).*(有多少|有哪些|几篇|几本|几份|清单|统计|全景|列表|目录)/.test(question) ||
-      /^(?:搜索)?(?:有多少|查看有哪些|列出所有|统计)\s*(?:知识文档|知识库|制度文档|文档)/.test(question);
 
     let retrievalEscalated = false;
     let queryResult: BrainQueryResult;
@@ -2455,6 +2550,13 @@ export class ChatService {
     queryResult = await this.augmentWithRaptorGlobalTree(
       queryResult,
       scope,
+      retrieval.query || question,
+      agenticComplexity,
+      trace,
+    );
+    queryResult = await this.augmentWithBrainDerivedIntelligence(
+      queryResult,
+      userScope,
       retrieval.query || question,
       agenticComplexity,
       trace,
@@ -3051,11 +3153,15 @@ export class ChatService {
       status: queryResult.answer ? "success" : "warning",
     });
     const hitTopics = queryResult.topics || [];
-
     subscriber.next({ data: { type: "meta", brain_topics_hit: hitTopics } });
+
+    const citations = Array.isArray(queryResult.citations)
+      ? queryResult.citations
+      : [];
 
     trace.start("lazy_compile", "主题页惰性编译", "检查命中主题页是否存在待编译变更");
     let lazyCompiled = 0;
+    const freshlyCompiledCards: any[] = [];
     for (const topicSlug of hitTopics) {
       const topicInfo = await this.prisma.brainTopic.findUnique({
         where: {
@@ -3068,18 +3174,61 @@ export class ChatService {
         );
         await this.compilerService.triggerLazyCompileAndWait(userId, topicSlug);
         lazyCompiled += 1;
+
+        // Compile-and-Inject: Fetch newly compiled documents for this topic and inject into current citations
+        try {
+          const compiledDocs = await this.prisma.document.findMany({
+            where: {
+              kbId: { in: visibleKbs },
+              status: "published",
+              OR: [
+                { title: { contains: topicSlug, mode: "insensitive" } },
+                { chunks: { some: { content: { contains: topicSlug, mode: "insensitive" } } } },
+              ],
+            },
+            include: {
+              kb: { select: { name: true } },
+              chunks: { orderBy: { ord: "asc" }, take: 2 },
+            },
+            take: 2,
+          });
+          for (const cd of compiledDocs) {
+            if (cd.chunks.length > 0 && !citations.some((c: any) => c.docId === cd.id)) {
+              freshlyCompiledCards.push({
+                topic: cd.title,
+                docId: cd.id,
+                docTitle: cd.title,
+                kbName: cd.kb?.name,
+                section: "compiled-truth",
+                snippet: cd.chunks[0].content.slice(0, 300),
+                context: cd.chunks.map((c: any) => c.content).join("\n\n"),
+                score: 0.999,
+                isCompiledTruth: true,
+                evidence: `[编译真理/即时直通] 《${cd.title}》已于当次会话完成最新编译并回填`,
+              });
+            }
+          }
+        } catch (compileInjectErr) {
+          this.logger.debug(
+            `Compile-and-Inject retrieval error: ${compileInjectErr instanceof Error ? compileInjectErr.message : String(compileInjectErr)}`,
+          );
+        }
       }
+    }
+    if (freshlyCompiledCards.length > 0) {
+      citations.unshift(...freshlyCompiledCards);
+      this.logger.log(
+        `Compile-and-Inject: Pre-pended ${freshlyCompiledCards.length} freshly compiled cards into citations.`,
+      );
     }
     trace.finish(
       "lazy_compile",
       "success",
-      lazyCompiled > 0 ? `已即时编译 ${lazyCompiled} 个脏主题页` : "命中主题页均无需即时重编译",
-      { checked: hitTopics.length, compiled: lazyCompiled },
+      lazyCompiled > 0
+        ? `已即时编译 ${lazyCompiled} 个脏主题页${freshlyCompiledCards.length > 0 ? `，并直通回填 ${freshlyCompiledCards.length} 条编译真理卡片` : ""}`
+        : "命中主题页均无需即时重编译",
+      { checked: hitTopics.length, compiled: lazyCompiled, injected: freshlyCompiledCards.length },
     );
-
-    const citations = Array.isArray(queryResult.citations)
-      ? queryResult.citations
-      : [];
 
     trace.start("version_conflict_check", "时序效力与版本裁决", "检测多版本并裁决现行有效标准");
     let versionConflictNote = "";
@@ -3308,8 +3457,13 @@ export class ChatService {
             const articleInfo = cit.articleNo ? ` [${cit.articleNo}]` : "";
             const section = cit.section ? (isEnglishQuery ? `\nSection: ${cit.section}` : `\n定位：${cit.section}`) : "";
             const content = extractRawChunkText((cit.context || cit.snippet || "").trim());
+            const truthTag = cit.isCompiledTruth
+              ? (isEnglishQuery ? " [Compiled Truth / 编译真理]" : " 【编译真理·高优先】")
+              : (cit.isCompiledDerived
+                  ? (isEnglishQuery ? " [Scope Intelligence / 派生智库]" : " 【Scope派生智库】")
+                  : "");
             const sourcePrefix = isEnglishQuery ? `【Source ${idx + 1} / 来源 ${idx + 1}】` : `【来源 ${idx + 1}】`;
-            return `${sourcePrefix}《${title}》${kbName}${pageInfo}${articleInfo}${section}\n${content}`;
+            return `${sourcePrefix}${truthTag}《${title}》${kbName}${pageInfo}${articleInfo}${section}\n${content}`;
           })
           .join("\n\n---\n\n")
       : (queryResult.answer || "No truth found for this topic.");
@@ -3418,7 +3572,7 @@ export class ChatService {
 7. 【客观真实与分层回答】：
 - 若参考资料完全不包含与问题相关的信息，请统一回复：“已知知识库资料中未包含相关信息，无法回答该问题。”严禁在拒答或未找到信息时复述、回显用户问题中的代号、机密编号或专有名词。
 - 若参考资料包含部分相关事实（如包含实体背景、前置步骤或部分已知条件），请优先陈述已证实的客观事实并标注对应角标，并明确指出参考资料未涵盖的具体维度或后续信息，严禁在已知部分确凿事实的情况下全盘拒答。
-8. 【语言一致性】：如果用户使用英文提问，请务必使用英文作答（如无法回答时使用 'Based on the provided reference materials, the relevant information is not available.'），并保留原实体英文名称。${queryResult?.diagnostics?.mode === "inventory" ? `\n9. 【全景统计规范】：本次是知识库/文档盘点类问题，参考资料按知识库逐一给出文档清单。请分知识库逐项呈现统计结果，并在每个知识库的统计陈述末尾标注它对应的引用角标（如 [1]、[2]），让用户可逐库核对。` : ""}`;
+8. 【语言一致性】：如果用户使用英文提问，请务必使用英文作答（如无法回答时使用 'Based on the provided reference materials, the relevant information is not available.'），并保留原实体英文名称。${queryResult?.diagnostics?.mode === "inventory" ? `\n9. 【全景统计规范】：本次是知识库/文档盘点类问题，参考资料按知识库逐一给出文档清单。请分知识库逐项呈现统计结果，并在每个知识库的统计陈述末尾标注它对应的引用角标（如 [1]、[2]），让用户可逐库核对。` : ""}${orderedCitations.some((c: any) => c.isCompiledTruth || c.isCompiledDerived) ? `\n10. 【编译真理优先采信】：参考资料中带有【编译真理·高优先】或【Scope派生智库】标记的来源，是经过系统编译消歧与对账的高置信度权威事实。若其与普通未编译的碎片化分块存在局部表述差异，请优先采信编译真理。` : ""}`;
 
       const contextMessage = `${staticSystemRules}
 
@@ -3961,6 +4115,13 @@ ${compiledTruthContext}`;
           // this branch the permission guard deleted every Level-2 node and
           // the global-recall arm contributed nothing to answers.
           if (citation.raptor && citation.kbId && visibleKbIds.includes(citation.kbId)) {
+            return citation;
+          }
+          if (
+            citation.isCompiledDerived &&
+            citation.scopeId === derivedGuard.scopeId &&
+            citation.aclEpoch === derivedGuard.aclEpoch
+          ) {
             return citation;
           }
           return citation.slug && validDerived.has(citation.slug) ? citation : null;

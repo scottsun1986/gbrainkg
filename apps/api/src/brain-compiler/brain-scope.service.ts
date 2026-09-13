@@ -309,6 +309,36 @@ export class BrainScopeService {
         : ['_Scope synthesis 已由配置关闭。_']),
     ];
 
+    // 3. Pre-compiled validity and version matrix across documents in this Scope
+    const versionFamilies = new Map<string, any[]>();
+    for (const d of docs) {
+      const normTitle = String(d.title || '').replace(/\(V\d+.*?\)/i, '').replace(/\s+/g, '').trim();
+      const key = d.supersedesDocumentId || normTitle;
+      const list = versionFamilies.get(key) || [];
+      list.push(d);
+      versionFamilies.set(key, list);
+    }
+    const validityEntries: string[] = [];
+    for (const [, famDocs] of versionFamilies.entries()) {
+      if (famDocs.length > 1) {
+        const familyName = famDocs[0].title.replace(/\(V\d+.*?\)/i, '').trim();
+        validityEntries.push(`- **规范族系「${familyName}」**：`);
+        famDocs.sort((a, b) => (b.version || 1) - (a.version || 1));
+        for (let i = 0; i < famDocs.length; i++) {
+          const fd = famDocs[i];
+          const isEffective = i === 0 && fd.lifecycleStatus !== 'expired' && fd.lifecycleStatus !== 'repealed';
+          validityEntries.push(`  * 《${fd.title}》(版本: V${fd.version || 1}) -> ${isEffective ? '【现行有效】' : '【已废止/被替代】'}`);
+        }
+      }
+    }
+    if (validityEntries.length > 0) {
+      summaryLines.push(
+        '',
+        '## 五、 现行效力与版本替代裁决对照表 (Pre-compiled Validity Matrix)',
+        ...validityEntries,
+      );
+    }
+
     const summaryContent = summaryLines.join('\n');
 
     await db.brainDerivedPage.upsert({

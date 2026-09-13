@@ -54,6 +54,9 @@ const mockPrisma = {
   message: {
     findMany: jest.fn(),
   },
+  brainDerivedPage: {
+    findMany: jest.fn().mockResolvedValue([]),
+  },
 };
 
 jest.mock("@prisma/client", () => ({
@@ -914,6 +917,45 @@ describe("ChatService", () => {
     it("rejects statements with hallucinated numbers", () => {
       const evidence = ["系统响应时间不得超过 800 毫秒。"];
       expect(statementSupportedBy("系统响应时间不得超过 500 毫秒 [1]", evidence, true)).toBe(false);
+    });
+  });
+
+  describe("Brain Scope Derived Intelligence", () => {
+    it("injects scope derived intelligence for macro questions", async () => {
+      mockPrisma.brainDerivedPage.findMany.mockResolvedValueOnce([
+        {
+          id: "derived-1",
+          slug: "derived/scope-summary",
+          title: "Scope 知识资产综合全景",
+          content: "这是当前权限 Scope 下的综合知识资产概览与制度全景。",
+          aclEpoch: 2,
+        },
+      ]);
+
+      const result = await (service as any).augmentWithBrainDerivedIntelligence(
+        { citations: [] },
+        { scopeId: "scope-1", aclEpoch: 2 },
+        "请概述全部制度资产与全景目录",
+        "global_synthesis",
+      );
+
+      expect(result.citations).toHaveLength(1);
+      expect(result.citations[0].isCompiledDerived).toBe(true);
+      expect(result.citations[0].docTitle).toBe("Scope 知识资产综合全景");
+      expect(result.citations[0].aclEpoch).toBe(2);
+    });
+
+    it("skips scope derived intelligence when citations exist for simple questions", async () => {
+      const existingCitations = [{ docId: "doc-1", snippet: "具体内容" }];
+      const result = await (service as any).augmentWithBrainDerivedIntelligence(
+        { citations: existingCitations },
+        { scopeId: "scope-1", aclEpoch: 2 },
+        "差旅费标准是多少",
+        "simple",
+      );
+
+      expect(result.citations).toEqual(existingCitations);
+      expect(mockPrisma.brainDerivedPage.findMany).not.toHaveBeenCalled();
     });
   });
 });
