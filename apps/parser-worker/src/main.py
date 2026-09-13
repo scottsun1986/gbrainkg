@@ -475,32 +475,43 @@ def extract_pptx_native(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
     presentation = Presentation(str(path))
     slide_blocks: list[str] = []
     image_parts: list[dict[str, Any]] = []
+
+    def _collect_from_shape(shape: Any, slide_num: int, shape_id: Any, parts_acc: list[str]):
+        if getattr(shape, "has_text_frame", False):
+            text = "\n".join(
+                paragraph.text.strip()
+                for paragraph in shape.text_frame.paragraphs
+                if paragraph.text.strip()
+            ).strip()
+            if text:
+                parts_acc.append(text)
+        if getattr(shape, "has_table", False):
+            table_md = _pptx_table_markdown(shape.table)
+            if table_md:
+                parts_acc.append(table_md)
+        if getattr(shape, "shape_type", None) == 13:  # MSO_SHAPE_TYPE.PICTURE
+            try:
+                image = shape.image
+                image_parts.append({
+                    "slide": slide_num,
+                    "shape": shape_id,
+                    "ext": str(image.ext or "png"),
+                    "blob": image.blob,
+                })
+            except Exception as image_error:
+                logger.warning("Unable to extract PPTX image on slide %s: %s", slide_num, image_error)
+        elif getattr(shape, "shape_type", None) == 6 and hasattr(shape, "shapes"):  # MSO_SHAPE_TYPE.GROUP
+            for sub_idx, sub_shape in enumerate(shape.shapes, start=1):
+                _collect_from_shape(sub_shape, slide_num, f"{shape_id}_{sub_idx}", parts_acc)
+
     for slide_number, slide in enumerate(presentation.slides, start=1):
         parts: list[str] = []
         for shape_number, shape in enumerate(slide.shapes, start=1):
-            if getattr(shape, "has_text_frame", False):
-                text = "\n".join(
-                    paragraph.text.strip()
-                    for paragraph in shape.text_frame.paragraphs
-                    if paragraph.text.strip()
-                ).strip()
-                if text:
-                    parts.append(text)
-            if getattr(shape, "has_table", False):
-                table_md = _pptx_table_markdown(shape.table)
-                if table_md:
-                    parts.append(table_md)
-            if getattr(shape, "shape_type", None) == 13:  # MSO_SHAPE_TYPE.PICTURE
-                try:
-                    image = shape.image
-                    image_parts.append({
-                        "slide": slide_number,
-                        "shape": shape_number,
-                        "ext": str(image.ext or "png"),
-                        "blob": image.blob,
-                    })
-                except Exception as image_error:
-                    logger.warning("Unable to extract PPTX image on slide %s: %s", slide_number, image_error)
+            _collect_from_shape(shape, slide_number, shape_number, parts)
+        if getattr(slide, "has_notes_slide", False) and getattr(slide.notes_slide, "notes_text_frame", None):
+            note_text = slide.notes_slide.notes_text_frame.text.strip()
+            if note_text:
+                parts.append(f"> **演讲备注**：{note_text}")
         slide_blocks.append("\n\n".join(parts).strip())
     return slide_blocks, image_parts
 
@@ -997,25 +1008,30 @@ async def process_file(
                 task["markdown"] = md
                 task["engine"] = "docling"
         elif suffix == ".pptx":
-            if LOCAL_DOCLING_ENABLED:
-                try:
-                    md = await convert_with_docling(path)
-                    if re.search(r"<!--\s*(?:image|picture|figure)\s*-->", md, flags=re.IGNORECASE):
-                        raise RuntimeError("Docling returned image placeholders; OCR is required for complete PPTX ingestion")
-                    task["markdown"] = md
-                    task["engine"] = "docling-local"
-                except Exception as docling_error:
-                    logger.warning("Local Docling PPTX conversion failed for %s: %s", path.name, docling_error)
-                    task["docling_error"] = str(docling_error)
-                    md, engine, parser_metadata = await convert_pptx_without_docling(path, ocr_config, doc_title=task.get("filename"))
+            try:
+                md, engine, parser_metadata = await convert_pptx_without_docling(
+                    path, ocr_config, doc_title=task.get("filename")
+                )
+                if md and md.strip():
                     task["markdown"] = md
                     task["engine"] = engine
                     task.update(parser_metadata)
-            else:
-                md, engine, parser_metadata = await convert_pptx_without_docling(path, ocr_config, doc_title=task.get("filename"))
-                task["markdown"] = md
-                task["engine"] = engine
-                task.update(parser_metadata)
+                elif LOCAL_DOCLING_ENABLED:
+                    md = await convert_with_docling(path)
+                    task["markdown"] = md
+                    task["engine"] = "docling-local"
+                else:
+                    task["markdown"] = md
+                    task["engine"] = engine
+                    task.update(parser_metadata)
+            except Exception as pptx_err:
+                if LOCAL_DOCLING_ENABLED:
+                    logger.warning("Native PPTX conversion failed for %s: %s, falling back to Docling", path.name, pptx_err)
+                    md = await convert_with_docling(path)
+                    task["markdown"] = md
+                    task["engine"] = "docling-local"
+                else:
+                    raise
         elif suffix == ".pdf":
             pdf_info = await asyncio.to_thread(inspect_pdf_native, path)
             native_md = str(pdf_info.get("markdown", ""))

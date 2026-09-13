@@ -17,8 +17,8 @@ import { GraphRagModule } from './graph-rag/graph-rag.module';
 import { RaptorModule } from './raptor/raptor.module';
 import { EmbeddingModule } from './embedding/embedding.module';
 import { OpenApiModule } from './open-api/open-api.module';
-
-
+import { McpModule } from './mcp/mcp.module';
+import { SystemReprocessService } from './system-reprocess.service';
 
 @Module({
   imports: [
@@ -45,10 +45,12 @@ import { OpenApiModule } from './open-api/open-api.module';
     RaptorModule,
     EmbeddingModule,
     OpenApiModule,
+    McpModule,
   ],
   controllers: [AppController, AdminController, KnowledgeGraphController],
   providers: [
     AppService,
+    SystemReprocessService,
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,

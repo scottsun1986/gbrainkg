@@ -32,6 +32,7 @@ import { execSync } from "node:child_process";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
 import { Inject, Optional } from "@nestjs/common";
+import { SystemReprocessService } from "./system-reprocess.service";
 
 function normalizeServiceBaseUrl(value: unknown): string {
   const raw = String(value || "").trim();
@@ -82,7 +83,62 @@ export class AdminController {
     private readonly brainOutboxService?: BrainOutboxService,
     private readonly chunkEmbeddingService?: ChunkEmbeddingService,
     @Optional() @InjectQueue("enrichment-queue") private readonly enrichmentQueue?: Queue,
+    @Optional() private readonly systemReprocessService?: SystemReprocessService,
   ) {}
+
+  @Get("system/reprocess/status")
+  async getSystemReprocessStatus(@Req() req: any) {
+    const adminId = await this.authService.userIdFromRequest(req);
+    const capabilities = await this.permissionService.getCapabilities(adminId);
+    if (!capabilities.includes("*") && !capabilities.includes("system.settings.manage") && !capabilities.includes("system.settings.read")) {
+      throw new ForbiddenException("您没有查看系统数据维护状态的权限。");
+    }
+    if (!this.systemReprocessService) {
+      throw new BadRequestException("系统重处理服务未就绪。");
+    }
+    const [status, corpusStats] = await Promise.all([
+      this.systemReprocessService.getStatus(),
+      this.systemReprocessService.getCorpusStatistics(),
+    ]);
+    return {
+      status,
+      corpusStats,
+    };
+  }
+
+  @Post("system/reprocess/start")
+  async startSystemReprocess(@Req() req: any, @Body() body: any) {
+    const adminId = await this.authService.userIdFromRequest(req);
+    const capabilities = await this.permissionService.getCapabilities(adminId);
+    if (!capabilities.includes("*") && !capabilities.includes("system.settings.manage")) {
+      throw new ForbiddenException("只有系统管理员具备执行全系统数据重处理的权限。");
+    }
+    if (!this.systemReprocessService) {
+      throw new BadRequestException("系统重处理服务未就绪。");
+    }
+    await this.auditService.log({
+      userId: adminId,
+      action: "system.data.reprocess",
+      details: {
+        options: body,
+        initiatedBy: adminId,
+      },
+    }).catch(() => undefined);
+    return this.systemReprocessService.startReprocess(body || {});
+  }
+
+  @Post("system/reprocess/cancel")
+  async cancelSystemReprocess(@Req() req: any) {
+    const adminId = await this.authService.userIdFromRequest(req);
+    const capabilities = await this.permissionService.getCapabilities(adminId);
+    if (!capabilities.includes("*") && !capabilities.includes("system.settings.manage")) {
+      throw new ForbiddenException("只有系统管理员具备取消全系统数据重处理的权限。");
+    }
+    if (!this.systemReprocessService) {
+      throw new BadRequestException("系统重处理服务未就绪。");
+    }
+    return this.systemReprocessService.cancelReprocess();
+  }
 
   @Get("embeddings/coverage")
   async getEmbeddingCoverage() {

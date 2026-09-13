@@ -307,6 +307,7 @@ Output valid JSON format:
   }
 
   private readonly expansionCache = new Map<string, { terms: string[]; expiresAt: number }>();
+  private readonly planCache = new Map<string, { plan: { subQueries: string[]; expansions: string[]; reasoning: string }; expiresAt: number }>();
 
   /**
    * Unified query planner: combines sub-query decomposition and canonical
@@ -319,6 +320,12 @@ Output valid JSON format:
   ): Promise<{ subQueries: string[]; expansions: string[]; reasoning: string }> {
     if (!this.enabled || complexity === 'simple') {
       return { subQueries: [query], expansions: [], reasoning: '' };
+    }
+
+    const cacheKey = `${complexity}:${query.trim().toLowerCase()}`;
+    const cached = this.planCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.plan;
     }
 
     try {
@@ -388,11 +395,13 @@ Output valid JSON:
         ? parsed.expansions.filter((t: any) => typeof t === 'string' && t.trim().length > 0 && t.trim().length <= 30).slice(0, 6)
         : [];
 
-      return {
+      const res = {
         subQueries: subQueries.length > 0 ? subQueries : [query],
         expansions,
         reasoning: parsed.reasoning || '',
       };
+      this.planCache.set(cacheKey, { plan: res, expiresAt: Date.now() + 3600 * 1000 });
+      return res;
     } catch (err) {
       this.logger.warn(`Unified query planning failed: ${err instanceof Error ? err.message : String(err)}`);
       return { subQueries: [query], expansions: [], reasoning: '' };
@@ -441,23 +450,30 @@ Output valid JSON:
         .map((q) => String(q || '').trim())
         .filter((q) => q.length >= 4 && q !== query.trim());
 
-      let deterministicSubs = llmSubs;
-      if (deterministicSubs.length === 0) {
-        const ofMatch = query.match(/(?:husband|wife|spouse|father|mother|son|daughter|brother|sister|parent|child|director|author|producer|performer|composer|creator|founder|inventor|place of birth|birthplace)\s+of\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i);
-        const possMatch = query.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)'s\s+(?:husband|wife|spouse|father|mother|son|daughter|brother|sister|parent|child|director|author|producer|performer|composer|creator|founder|inventor|place of birth|birthplace)/);
-        const bridgeEntity = ofMatch
-          ? ofMatch[1].split(/\s+/).filter((w) => /^[A-Z][a-z]+/.test(w)).join(' ')
-          : possMatch ? possMatch[1] : null;
-        if (bridgeEntity && bridgeEntity.length >= 3) {
-          deterministicSubs = [bridgeEntity, query];
-        } else {
-          deterministicSubs = query
-            .split(/[,，?？;；。]|并且|另外|以及|同时|还有|再加上/)
-            .map((part) => part.trim())
-            .filter((part) => part.length >= 4 && part !== query.trim())
-            .slice(0, 3);
+      const ofMatch = query.match(/(?:husband|wife|spouse|father|mother|son|daughter|brother|sister|parent|child|director|author|producer|performer|composer|creator|founder|inventor|place of birth|birthplace)\s+of\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i);
+      const possMatch = query.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)'s\s+(?:husband|wife|spouse|father|mother|son|daughter|brother|sister|parent|child|director|author|producer|performer|composer|creator|founder|inventor|place of birth|birthplace)/);
+      const bridgeEntity = ofMatch
+        ? ofMatch[1].split(/\s+/).filter((w) => /^[A-Z][a-z]+/.test(w)).join(' ')
+        : possMatch ? possMatch[1] : null;
+
+      const combinedSet = new Set<string>();
+      if (bridgeEntity && bridgeEntity.length >= 3) {
+        combinedSet.add(bridgeEntity);
+      }
+      for (const q of llmSubs) {
+        if (q && q.length >= 4 && q !== query.trim()) {
+          combinedSet.add(q);
         }
       }
+      if (combinedSet.size === 0) {
+        const parts = query
+          .split(/[,，?？;；。]|并且|另外|以及|同时|还有|再加上/)
+          .map((part) => part.trim())
+          .filter((part) => part.length >= 4 && part !== query.trim())
+          .slice(0, 3);
+        for (const p of parts) combinedSet.add(p);
+      }
+      const deterministicSubs = Array.from(combinedSet);
 
       return {
         complexity,
@@ -531,9 +547,10 @@ Output valid JSON:
     const heuristicGaps = this.analyzeHeuristicCoverage(query, retrievedContext, options);
 
     // ── Fast-Pass Heuristic: skip LLM when evidence is demonstrably complete ──
-    if (heuristicGaps.missingAspects.length === 0) {
+    if (heuristicGaps.missingAspects.length === 0 && retrievedContext.length >= 20) {
       const docTitles = new Set((retrievedContext.match(/《([^》]+)》/g) || []).map((t) => t.replace(/[《》]/g, '').trim()));
-      if (options?.complexity === 'comparative' && docTitles.size >= 2) {
+      const hasMultipleDocs = docTitles.size >= 2 || (retrievedContext.match(/(?:Source \d+|【来源 \d+】|^[A-Z0-9\s'-]{2,30}:)/gim) || []).length >= 2;
+      if (options?.complexity === 'comparative' && (hasMultipleDocs || docTitles.size >= 2)) {
         this.logger.debug('Sufficiency Fast-Pass: comparative entities and multi-doc evidence fully covered by heuristic.');
         return {
           status: 'sufficient',
@@ -541,6 +558,17 @@ Output valid JSON:
           suggestedFollowUp: [],
           confidence: 0.95,
           reasoning: '启发式验证已完整覆盖对比双方文档与全部关键维度',
+          hopNumber: iterationCount,
+        };
+      }
+      if (options?.complexity === 'multi_hop' && (options?.subQueries || []).length >= 2) {
+        this.logger.debug('Sufficiency Fast-Pass: multi-hop subquery evidence fully covered by heuristic.');
+        return {
+          status: 'sufficient',
+          missingAspects: [],
+          suggestedFollowUp: [],
+          confidence: 0.95,
+          reasoning: '启发式验证已完整覆盖多跳子问题推演关键证据',
           hopNumber: iterationCount,
         };
       }

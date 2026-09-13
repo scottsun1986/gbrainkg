@@ -231,7 +231,93 @@ export function PersonalSettingsScreen({
     }
   };
 
+  const [mcpFormat, setMcpFormat] = useState<'cursor' | 'claude' | 'generic'>('cursor');
+  const [selectedMcpAppId, setSelectedMcpAppId] = useState<string>('');
+  const PRODUCTION_DOMAIN = process.env.NEXT_PUBLIC_MCP_URL?.trim() || 'https://knowledge.5gsailor.com';
+  const [domainMode, setDomainMode] = useState<'production' | 'current'>(() => {
+    if (typeof window !== 'undefined') {
+      const h = window.location.hostname;
+      // 本地回环IP调试默认当前地址，其余公网IP或生产环境一律默认生产域名
+      if (h === 'localhost' || h === '127.0.0.1') return 'current';
+    }
+    return 'production';
+  });
+
   const sampleAppId = credentials.find((c) => c.status === 'active')?.appId || 'app_demo_example';
+  const effectiveMcpAppId = selectedMcpAppId || sampleAppId;
+  const currentOrigin = typeof window !== 'undefined' && window.location.origin ? window.location.origin : (apiBaseUrl || 'http://127.0.0.1:3200');
+
+  const getOrigin = () => {
+    if (domainMode === 'production') {
+      return PRODUCTION_DOMAIN;
+    }
+    if (typeof window !== 'undefined' && window.location.origin) return window.location.origin;
+    return apiBaseUrl || 'http://127.0.0.1:3202';
+  };
+
+  const getMcpJson = (format: 'cursor' | 'claude' | 'generic', appId: string, secret = 'YOUR_APP_SECRET') => {
+    const origin = getOrigin();
+    if (format === 'cursor') {
+      return JSON.stringify(
+        {
+          mcpServers: {
+            gbrainkg: {
+              url: `${origin}/mcp/sse`,
+              headers: {
+                'X-App-Id': appId,
+                'X-App-Secret': secret,
+              },
+            },
+          },
+        },
+        null,
+        2,
+      );
+    }
+    if (format === 'claude') {
+      return JSON.stringify(
+        {
+          mcpServers: {
+            gbrainkg: {
+              command: 'npx',
+              args: [
+                '-y',
+                'mcp-remote',
+                `${origin}/mcp/sse`,
+                '--header',
+                `X-App-Id: ${appId}`,
+                '--header',
+                `X-App-Secret: ${secret}`,
+              ],
+            },
+          },
+        },
+        null,
+        2,
+      );
+    }
+    return JSON.stringify(
+      {
+        server_name: 'gbrainkg-mcp',
+        protocol_version: '2024-11-05',
+        sse_endpoint: `${origin}/mcp/sse`,
+        messages_endpoint: `${origin}/mcp/messages`,
+        direct_rpc_endpoint: `${origin}/mcp`,
+        headers: {
+          'X-App-Id': appId,
+          'X-App-Secret': secret,
+        },
+      },
+      null,
+      2,
+    );
+  };
+
+  const mcpLabels: Record<'cursor' | 'claude' | 'generic', string> = {
+    cursor: 'Cursor / Windsurf / VSCode (SSE 格式)',
+    claude: 'Claude Desktop (mcp-remote 命令行格式)',
+    generic: '通用直连 JSON-RPC / API 格式',
+  };
 
   return (
     <div className="settings-page">
@@ -251,8 +337,8 @@ export function PersonalSettingsScreen({
               borderRadius: 6,
               border: 'none',
               background: activeTab === 'credentials' ? '#fff' : 'transparent',
-              color: activeTab === 'credentials' ? 'var(--primary)' : 'var(--ink-2)',
-              fontWeight: 500,
+              color: activeTab === 'credentials' ? 'var(--ink)' : 'var(--ink-2)',
+              fontWeight: 600,
               cursor: 'pointer',
               boxShadow: activeTab === 'credentials' ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
               display: 'flex',
@@ -261,7 +347,7 @@ export function PersonalSettingsScreen({
             }}
           >
             <Icon name="key" size={14} />
-            <span>API 凭证 (OpenAPI)</span>
+            <span>API 凭证 (OpenAPI / MCP)</span>
           </button>
           <button
             onClick={() => setActiveTab('security')}
@@ -270,8 +356,8 @@ export function PersonalSettingsScreen({
               borderRadius: 6,
               border: 'none',
               background: activeTab === 'security' ? '#fff' : 'transparent',
-              color: activeTab === 'security' ? 'var(--primary)' : 'var(--ink-2)',
-              fontWeight: 500,
+              color: activeTab === 'security' ? 'var(--ink)' : 'var(--ink-2)',
+              fontWeight: 600,
               cursor: 'pointer',
               boxShadow: activeTab === 'security' ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
               display: 'flex',
@@ -289,8 +375,8 @@ export function PersonalSettingsScreen({
               borderRadius: 6,
               border: 'none',
               background: activeTab === 'docs' ? '#fff' : 'transparent',
-              color: activeTab === 'docs' ? 'var(--primary)' : 'var(--ink-2)',
-              fontWeight: 500,
+              color: activeTab === 'docs' ? 'var(--ink)' : 'var(--ink-2)',
+              fontWeight: 600,
               cursor: 'pointer',
               boxShadow: activeTab === 'docs' ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
               display: 'flex',
@@ -443,6 +529,18 @@ export function PersonalSettingsScreen({
                         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                           <button
                             className="btn btn-secondary"
+                            onClick={() => {
+                              setSelectedMcpAppId(c.appId);
+                              copyToClipboard(getMcpJson(mcpFormat, c.appId), `[${c.name || c.appId}] MCP 配置`);
+                            }}
+                            style={{ padding: '4px 8px', fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}
+                            title="一键复制该凭证的 MCP 配置 JSON"
+                          >
+                            <Icon name="copy" size={12} />
+                            <span>复制 MCP</span>
+                          </button>
+                          <button
+                            className="btn btn-secondary"
                             onClick={() => handleToggleStatus(c)}
                             style={{ padding: '4px 8px', fontSize: 12 }}
                           >
@@ -473,6 +571,191 @@ export function PersonalSettingsScreen({
             )}
           </div>
 
+          {/* MCP 服务配置与一键导出卡片 */}
+          <div
+            style={{
+              marginTop: 24,
+              background: 'var(--surface)',
+              border: '1px solid var(--border)',
+              borderRadius: 8,
+              padding: '20px',
+              boxShadow: '0 1px 4px rgba(0,0,0,0.03)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Icon name="share" size={16} color="var(--ink)" />
+                <span style={{ fontWeight: 600, fontSize: 15, color: 'var(--ink)' }}>Model Context Protocol (MCP) 服务配置</span>
+                <span
+                  style={{
+                    fontSize: 11,
+                    padding: '2px 8px',
+                    borderRadius: 12,
+                    background: 'rgba(99, 102, 241, 0.1)',
+                    color: '#6366f1',
+                    fontWeight: 500,
+                  }}
+                >
+                  Cursor · Windsurf · Claude Desktop · VSCode
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                {credentials.length > 0 && (
+                  <select
+                    value={effectiveMcpAppId}
+                    onChange={(e) => setSelectedMcpAppId(e.target.value)}
+                    style={{
+                      padding: '5px 10px',
+                      borderRadius: 6,
+                      border: '1px solid var(--border)',
+                      background: 'var(--surface)',
+                      fontSize: 12,
+                      color: 'var(--ink)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {credentials.map((c) => (
+                      <option key={c.appId} value={c.appId}>
+                        绑定凭证: {c.name || c.appId} ({c.appId.slice(0, 14)}...)
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <button
+                  className="btn btn-primary"
+                  onClick={() =>
+                    copyToClipboard(
+                      getMcpJson(mcpFormat, effectiveMcpAppId),
+                      `${mcpLabels[mcpFormat]} 脚本 JSON`,
+                    )
+                  }
+                  style={{ padding: '6px 14px', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}
+                >
+                  <Icon name="copy" size={13} />
+                  <span>一键复制 MCP 配置脚本 JSON</span>
+                </button>
+              </div>
+            </div>
+
+            <p style={{ margin: '0 0 14px 0', fontSize: 12.5, color: 'var(--ink-3)', lineHeight: 1.6 }}>
+              本知识库原生提供符合 Anthropic MCP (2024-11-05 标准) 的服务端支持，与 OpenAPI 共享统一的{' '}
+              <code style={{ background: 'var(--bg-2)', padding: '1px 5px', borderRadius: 4 }}>X-App-Id</code> 与{' '}
+              <code style={{ background: 'var(--bg-2)', padding: '1px 5px', borderRadius: 4 }}>X-App-Secret</code> 鉴权。
+              在 Cursor、Claude Desktop 等外部大模型助手配置该脚本后，大模型即可自主调用您权限内的知识检索与智能多跳问答工具。
+            </p>
+
+            {/* 格式切换 Tabs 与接入域名配置 */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                marginBottom: 12,
+                flexWrap: 'wrap',
+              }}
+            >
+              {/* Agent 格式 Tabs */}
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {(['cursor', 'claude', 'generic'] as const).map((fmt) => {
+                  const isActive = mcpFormat === fmt;
+                  return (
+                    <button
+                      key={fmt}
+                      onClick={() => setMcpFormat(fmt)}
+                      style={{
+                        padding: '6px 14px',
+                        borderRadius: 6,
+                        border: isActive ? '1px solid var(--ink)' : '1px solid var(--line)',
+                        background: isActive ? 'var(--ink)' : 'var(--surface-2, #FAF8F3)',
+                        color: isActive ? 'var(--on-ink, #ffffff)' : 'var(--ink-2)',
+                        fontSize: 12,
+                        cursor: 'pointer',
+                        fontWeight: isActive ? 600 : 500,
+                        boxShadow: isActive ? '0 1px 3px rgba(0,0,0,0.12)' : 'none',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      {mcpLabels[fmt]}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* 接入地址域名选择器 */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  fontSize: 12,
+                  background: 'var(--surface-2, #FAF8F3)',
+                  padding: '3px 4px',
+                  borderRadius: 6,
+                  border: '1px solid var(--line)',
+                }}
+              >
+                <span style={{ color: 'var(--ink-3)', fontSize: 11.5, paddingLeft: 4 }}>服务域名:</span>
+                <button
+                  type="button"
+                  onClick={() => setDomainMode('production')}
+                  style={{
+                    padding: '3px 10px',
+                    borderRadius: 4,
+                    border: 'none',
+                    background: domainMode === 'production' ? 'var(--ink)' : 'transparent',
+                    color: domainMode === 'production' ? 'var(--on-ink, #ffffff)' : 'var(--ink-2)',
+                    fontSize: 11.5,
+                    fontWeight: domainMode === 'production' ? 600 : 400,
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
+                  }}
+                  title="使用生产规范域名（https://knowledge.5gsailor.com）"
+                >
+                  生产域名 (knowledge.5gsailor.com)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDomainMode('current')}
+                  style={{
+                    padding: '3px 10px',
+                    borderRadius: 4,
+                    border: 'none',
+                    background: domainMode === 'current' ? 'var(--ink)' : 'transparent',
+                    color: domainMode === 'current' ? 'var(--on-ink, #ffffff)' : 'var(--ink-2)',
+                    fontSize: 11.5,
+                    fontWeight: domainMode === 'current' ? 600 : 400,
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
+                  }}
+                  title={`使用当前服务地址（${currentOrigin}）`}
+                >
+                  当前地址/IP
+                </button>
+              </div>
+            </div>
+
+            <pre
+              style={{
+                margin: 0,
+                padding: '12px 16px',
+                background: 'var(--bg-2)',
+                borderRadius: 6,
+                fontSize: 12,
+                color: 'var(--ink)',
+                fontFamily: 'monospace',
+                overflowX: 'auto',
+                lineHeight: 1.5,
+              }}
+            >
+              {getMcpJson(mcpFormat, effectiveMcpAppId)}
+            </pre>
+            <div style={{ marginTop: 8, fontSize: 11.5, color: 'var(--ink-4)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Icon name="info" size={12} />
+              <span>提示：粘贴至编辑器配置文件后，若密钥字段为 <code>YOUR_APP_SECRET</code>，请填入您创建凭证时保存的 AppSecret。</span>
+            </div>
+          </div>
+
           {/* 快速调用示例 */}
           <div
             style={{
@@ -485,7 +768,7 @@ export function PersonalSettingsScreen({
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Icon name="spark" size={16} color="var(--primary)" />
+                <Icon name="spark" size={16} color="var(--ink)" />
                 <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--ink)' }}>快速测试调用 (cURL 示例)</span>
               </div>
               <button
@@ -697,6 +980,65 @@ export function PersonalSettingsScreen({
                 </tr>
               </tbody>
             </table>
+
+            {/* MCP 协议与工具说明 */}
+            <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Icon name="share" size={16} color="var(--ink)" />
+                  <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: 'var(--ink)' }}>Model Context Protocol (MCP) 服务</h3>
+                </div>
+                <a
+                  href={`${apiBaseUrl}/mcp/spec`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn btn-secondary"
+                  style={{ fontSize: 12, padding: '4px 10px', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}
+                >
+                  <Icon name="doc" size={13} />
+                  <span>查看 MCP Spec JSON</span>
+                </a>
+              </div>
+              <p style={{ margin: '0 0 12px 0', fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.6 }}>
+                本系统支持 Anthropic MCP 标准（2024-11-05 协议规范），可通过 SSE 长连接或直连 JSON-RPC 2.0 供各类大模型客户端直接调用：
+              </p>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 12, marginBottom: 16 }}>
+                <thead>
+                  <tr style={{ background: 'var(--bg-2)', borderBottom: '1px solid var(--border)' }}>
+                    <th style={{ padding: '8px 12px' }}>工具名称 (Tool Name)</th>
+                    <th style={{ padding: '8px 12px' }}>参数说明</th>
+                    <th style={{ padding: '8px 12px' }}>功能描述与返回内容</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '8px 12px' }}><code>search_knowledge</code></td>
+                    <td style={{ padding: '8px 12px' }}><code>query</code> (必填), <code>kb_ids</code>, <code>top_k</code></td>
+                    <td style={{ padding: '8px 12px' }}>多路召回与混合精排检索，返回高匹配度证据文本、分值与溯源元数据</td>
+                  </tr>
+                  <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '8px 12px' }}><code>chat_knowledge</code></td>
+                    <td style={{ padding: '8px 12px' }}><code>prompt</code> (必填), <code>conversation_id</code>, <code>kb_ids</code></td>
+                    <td style={{ padding: '8px 12px' }}>企业知识库智能问答与多跳推理，返回严谨的事实裁决回答与引文出处</td>
+                  </tr>
+                  <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '8px 12px' }}><code>list_knowledge_bases</code></td>
+                    <td style={{ padding: '8px 12px' }}><code>type</code> (可选: personal/org/industry)</td>
+                    <td style={{ padding: '8px 12px' }}>列出当前凭证有权限访问的所有知识库及文档统计</td>
+                  </tr>
+                  <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '8px 12px' }}><code>get_document_status</code></td>
+                    <td style={{ padding: '8px 12px' }}><code>doc_id</code> (必填)</td>
+                    <td style={{ padding: '8px 12px' }}>查询文档的解析状态、分块数量及解析质检得分</td>
+                  </tr>
+                  <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '8px 12px' }}><code>get_user_info</code></td>
+                    <td style={{ padding: '8px 12px' }}>无参数</td>
+                    <td style={{ padding: '8px 12px' }}>查询当前 AppId/AppSecret 绑定的用户信息、所属组织与角色权限</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
@@ -849,6 +1191,43 @@ export function PersonalSettingsScreen({
                     onClick={() => copyToClipboard(createdResult.appSecret, 'AppSecret')}
                   >
                     复制 Secret
+                  </button>
+                </div>
+              </div>
+
+              {/* 一键复制包含完整新密钥的 MCP 配置 */}
+              <div style={{ marginTop: 6, paddingTop: 12, borderTop: '1px dashed var(--border)' }}>
+                <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--ink)', display: 'block', marginBottom: 8 }}>
+                  快速配置 AI 编辑器 (自动带入本次生成的完整 AppSecret):
+                </span>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() =>
+                      copyToClipboard(
+                        getMcpJson('cursor', createdResult.appId, createdResult.appSecret),
+                        '已填入密钥的 Cursor MCP JSON',
+                      )
+                    }
+                    style={{ padding: '8px 12px', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                  >
+                    <Icon name="copy" size={13} />
+                    <span>复制 Cursor 配置 (含密钥)</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() =>
+                      copyToClipboard(
+                        getMcpJson('claude', createdResult.appId, createdResult.appSecret),
+                        '已填入密钥的 Claude Desktop MCP JSON',
+                      )
+                    }
+                    style={{ padding: '8px 12px', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                  >
+                    <Icon name="copy" size={13} />
+                    <span>复制 Claude 配置 (含密钥)</span>
                   </button>
                 </div>
               </div>

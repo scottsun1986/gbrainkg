@@ -12,8 +12,9 @@ export function runForceLayout(nodes: any[], edges: any[], options?: any) {
   const height = opts.height ?? 600;
   const chargeStrength = opts.chargeStrength ?? -380;
   const linkDistance = opts.linkDistance ?? 60;
-  const iterations = opts.iterations ?? 600;
   const N = nodes.length;
+  const iterations = opts.iterations ?? (N > 500 ? 50 : N > 200 ? 80 : 150);
+  const step = N > 300 ? Math.ceil(N / 150) : 1;
   const cx = width / 2;
   const cy = height / 2;
   const radiusFor = (n: any) => (n.type === 'knowledge_base' ? 18 : n.type === 'document' ? 12 : 8);
@@ -38,17 +39,17 @@ export function runForceLayout(nodes: any[], edges: any[], options?: any) {
     }
     for (let i = 0; i < N; i++) {
       const a = pos[i]; const aNode = nodes[i];
-      for (let j = i + 1; j < N; j++) {
+      for (let j = i + 1; j < N; j += step) {
         const b = pos[j]; const bNode = nodes[j];
         let dx = a.x - b.x; let dy = a.y - b.y;
         let dist2 = dx * dx + dy * dy; if (dist2 < 1) { dist2 = 1; dx = (Math.random() - 0.5); dy = (Math.random() - 0.5); }
         const dist = Math.max(Math.sqrt(dist2), 0.1);
-        const repulseForce = (Math.abs(chargeStrength) / (dist2 + 40)) * alpha;
+        const repulseForce = (Math.abs(chargeStrength) / (dist2 + 40)) * alpha * step;
         const fx = (dx / dist) * repulseForce; const fy = (dy / dist) * repulseForce;
         a.fx += fx; a.fy += fy; b.fx -= fx; b.fy -= fy;
         const minDist = radiusFor(aNode) + radiusFor(bNode) + 12;
         if (dist < minDist) {
-          const push = (minDist - dist) / dist * 0.4 * alpha;
+          const push = (minDist - dist) / dist * 0.4 * alpha * step;
           a.fx += (dx / dist) * push * 10;
           a.fy += (dy / dist) * push * 10;
           b.fx -= (dx / dist) * push * 10;
@@ -82,7 +83,7 @@ export function runForceLayout(nodes: any[], edges: any[], options?: any) {
 
 export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
   const [graph, setGraph] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
@@ -93,6 +94,7 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
   const [localRoot, setLocalRoot] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [params, setParams] = useState({ charge: -320, link: 60, showLabels: 'auto' });
+  const [reloadToken, setReloadToken] = useState(0);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<any>(null);
@@ -101,20 +103,34 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
 
   // 多屏常驻挂载下 display:none 也 mounted；图谱构建是重接口（冷调用秒级），
   // 必须等首次可见再拉取，避免拖慢其它页面。
-  const [hasBeenActive, setHasBeenActive] = useState(false);
+  const [hasBeenActive, setHasBeenActive] = useState(Boolean(active));
   useEffect(() => { if (active) setHasBeenActive(true); }, [active]);
 
   useEffect(() => {
     if (!hasBeenActive) return;
-    let active = true;
+    let isMounted = true;
     setLoading(true);
+    setError('');
     fetch(`${API_BASE_URL}/api/v1/knowledge-graph`, {headers: apiHeaders()})
-      .then(async response => { const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload.message || `API ${response.status}`); return payload; })
-      .then(payload => { if (active) { setGraph(payload); setError(''); } })
-      .catch(reason => { if (active) setError(reason.message || '知识图谱加载失败'); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, []);
+      .then(async response => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.message || `API ${response.status}`);
+        return payload;
+      })
+      .then(payload => {
+        if (isMounted) {
+          setGraph(payload);
+          setError('');
+        }
+      })
+      .catch(reason => {
+        if (isMounted) setError(reason.message || '知识图谱加载失败');
+      })
+      .finally(() => {
+        if (isMounted) setLoading(false);
+      });
+    return () => { isMounted = false; };
+  }, [hasBeenActive, reloadToken]);
 
   const allNodes = graph?.nodes || [];
   const allEdges = graph?.edges || [];
@@ -128,38 +144,58 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
   const filteredNodes = useMemo(() => allNodes.filter((n: any) => visibleIds.has(n.id)), [allNodes, visibleIds]);
   const filteredEdges = useMemo(() => allEdges.filter((e: any) => visibleIds.has(e.source) && visibleIds.has(e.target)), [allEdges, visibleIds]);
 
-  const focusNodes = useMemo(() => {
-    if (!localRoot) return filteredNodes;
-    const depthMap = new Map([[localRoot, 0]]);
-    const adj = new Map();
+  const degreeMap = useMemo(() => {
+    const m = new Map<string, number>();
     for (const e of filteredEdges) {
-      if (!adj.has(e.source)) adj.set(e.source, []);
-      if (!adj.has(e.target)) adj.set(e.target, []);
-      adj.get(e.source).push(e.target);
-      adj.get(e.target).push(e.source);
+      m.set(e.source, (m.get(e.source) || 0) + 1);
+      m.set(e.target, (m.get(e.target) || 0) + 1);
     }
-    const queue = [localRoot];
-    while (queue.length) {
-      const cur = queue.shift();
-      const d = depthMap.get(cur) || 0;
-      if (d >= 2) continue;
-      for (const next of adj.get(cur) || []) {
-        if (!depthMap.has(next)) { depthMap.set(next, d + 1); queue.push(next); }
+    return m;
+  }, [filteredEdges]);
+
+  const focusNodes = useMemo(() => {
+    if (localRoot) {
+      const depthMap = new Map([[localRoot, 0]]);
+      const adj = new Map<string, string[]>();
+      for (const e of filteredEdges) {
+        if (!adj.has(e.source)) adj.set(e.source, []);
+        if (!adj.has(e.target)) adj.set(e.target, []);
+        adj.get(e.source)!.push(e.target);
+        adj.get(e.target)!.push(e.source);
       }
+      const queue = [localRoot];
+      while (queue.length) {
+        const cur = queue.shift()!;
+        const d = depthMap.get(cur) || 0;
+        if (d >= 2) continue;
+        for (const next of adj.get(cur) || []) {
+          if (!depthMap.has(next)) {
+            depthMap.set(next, d + 1);
+            queue.push(next);
+          }
+        }
+      }
+      return filteredNodes.filter((n: any) => depthMap.has(n.id));
     }
-    return filteredNodes.filter((n: any) => depthMap.has(n.id));
-  }, [filteredNodes, filteredEdges, localRoot]);
+
+    if (filteredNodes.length > 350) {
+      const sorted = [...filteredNodes].sort((a: any, b: any) => {
+        if (a.type === 'knowledge_base' && b.type !== 'knowledge_base') return -1;
+        if (b.type === 'knowledge_base' && a.type !== 'knowledge_base') return 1;
+        const degA = degreeMap.get(a.id) || 0;
+        const degB = degreeMap.get(b.id) || 0;
+        return degB - degA;
+      });
+      return sorted.slice(0, 350);
+    }
+
+    return filteredNodes;
+  }, [filteredNodes, filteredEdges, localRoot, degreeMap]);
 
   const focusEdges = useMemo(() => {
     const ids = new Set(focusNodes.map((n: any) => n.id));
     return filteredEdges.filter((e: any) => ids.has(e.source) && ids.has(e.target));
   }, [focusNodes, filteredEdges]);
-
-  const degreeMap = useMemo(() => {
-    const m = new Map();
-    for (const e of filteredEdges) { m.set(e.source, (m.get(e.source) || 0) + 1); m.set(e.target, (m.get(e.target) || 0) + 1); }
-    return m;
-  }, [filteredEdges]);
 
   useEffect(() => {
     const canvas = svgRef.current?.parentElement;
@@ -347,8 +383,21 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
     return c;
   }, [filteredNodes]);
 
-  if (loading) return <div className="graph-page"><div className="graph-state">正在构建你的知识图谱…</div></div>;
-  if (error) return <div className="graph-page"><div className="graph-state error">{error}</div></div>;
+  if (loading && !graph) return <div className="graph-page"><div className="graph-state">正在构建你的知识图谱…</div></div>;
+  if (error && !graph) return (
+    <div className="graph-page">
+      <div className="graph-state error">
+        <div style={{ marginBottom: 12 }}>{error}</div>
+        <button
+          type="button"
+          style={{ padding: '6px 16px', fontSize: 13, cursor: 'pointer', borderRadius: 6, border: '1px solid var(--line, #ccc)', background: 'var(--surface-2, #f5f5f5)' }}
+          onClick={() => setReloadToken((t) => t + 1)}
+        >
+          重新加载
+        </button>
+      </div>
+    </div>
+  );
 
   return (
     <div className="graph-page">
@@ -361,6 +410,9 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
           <span>{graph?.stats?.documents || 0} 文档</span>
           <span>{graph?.stats?.concepts || 0} 个主题</span>
           <span>{graph?.stats?.relations || 0} 条关系</span>
+          {filteredNodes.length > 350 && !localRoot && (
+            <span style={{ color: '#b45309', fontSize: 11.5 }}>（展示前 350 个核心节点，搜索可定位任意节点）</span>
+          )}
         </div>
       </div>
 

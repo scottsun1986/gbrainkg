@@ -12,6 +12,9 @@ const configuredApiOrigin = (() => {
 const nextConfig = {
   ...(process.env.OUTPUT_STANDALONE === 'true' ? { output: 'standalone' } : {}),
   allowedDevOrigins: ['127.0.0.1', 'localhost', '10.0.185.143', '45.42.214.20', '0.0.0.0'],
+  experimental: {
+    proxyClientMaxBodySize: '200mb',
+  },
   async rewrites() {
     const apiTarget = process.env.INTERNAL_API_URL || 'http://127.0.0.1:3000';
     return [
@@ -22,6 +25,10 @@ const nextConfig = {
       {
         source: '/open-api/:path*',
         destination: `${apiTarget}/open-api/:path*`,
+      },
+      {
+        source: '/mcp/:path*',
+        destination: `${apiTarget}/mcp/:path*`,
       },
     ];
   },

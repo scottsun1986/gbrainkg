@@ -3469,7 +3469,9 @@ export class ChatService {
             const pageInfo = typeof cit.pageNo === "number" ? (isEnglishQuery ? ` [Page ${cit.pageNo}]` : ` [第${cit.pageNo}页]`) : "";
             const articleInfo = cit.articleNo ? ` [${cit.articleNo}]` : "";
             const section = cit.section ? (isEnglishQuery ? `\nSection: ${cit.section}` : `\n定位：${cit.section}`) : "";
-            const content = extractRawChunkText((cit.context || cit.snippet || "").trim());
+            const rawText = extractRawChunkText((cit.context || cit.snippet || "").trim());
+            const maxChunkLen = Number(process.env.CHAT_CHUNK_MAX_CHARS || 1000);
+            const content = rawText.length > maxChunkLen ? `${rawText.slice(0, maxChunkLen)}...` : rawText;
             const truthTag = cit.isCompiledTruth
               ? (isEnglishQuery ? " [Compiled Truth / 编译真理]" : " 【编译真理·高优先】")
               : (cit.isCompiledDerived
