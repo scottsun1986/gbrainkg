@@ -412,32 +412,21 @@ Output valid JSON:
     hyde: string | null;
   }> {
     const complexity = await this.classifyQuery(query);
-    const deterministicExpansions: string[] = [];
-    if (/夏[天季令]?/.test(query)) {
-      deterministicExpansions.push('夏令时', '夏季作息', '作息安排', '作息时间');
-    }
-    if (/冬[天季令]?/.test(query)) {
-      deterministicExpansions.push('冬令时', '冬季作息', '作息安排', '作息时间');
-    }
-    if (/上下班|上班|下班|工时|作息|考勤|打卡/.test(query)) {
-      deterministicExpansions.push('上下班', '工作时间', '作息时间', '标准工时制', '打卡制度', '考勤制度');
-    }
-
     if (complexity === 'simple') {
       // Direct pass for exact clauses (e.g. 第十条) to avoid unnecessary LLM expansion
       const isExactClause = /第\s*[\d一二三四五六七八九十百千万〇零两]+\s*[章节条款项]|附件/u.test(query);
       if (isExactClause) {
-        return { complexity, expansions: deterministicExpansions, subQueries: [query], hyde: null };
+        return { complexity, expansions: [], subQueries: [query], hyde: null };
       }
       // Plain factual questions skip the LLM expansion round trip entirely:
       // the hybrid recall arms (vector + keyword + rerank) already cover them,
       // and the planning call only delays the first token. Restore the old
       // behaviour with AGENTIC_SIMPLE_EXPANSION=true.
       if (process.env.AGENTIC_SIMPLE_EXPANSION !== 'true') {
-        return { complexity, expansions: deterministicExpansions, subQueries: [query], hyde: null };
+        return { complexity, expansions: [], subQueries: [query], hyde: null };
       }
       const expansions = await this.expandQuery(query);
-      return { complexity, expansions: Array.from(new Set([...deterministicExpansions, ...expansions])), subQueries: [query], hyde: null };
+      return { complexity, expansions, subQueries: [query], hyde: null };
     }
 
     const useUnified = process.env.AGENTIC_UNIFIED_PLAN !== 'false';

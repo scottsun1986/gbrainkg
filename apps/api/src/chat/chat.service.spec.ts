@@ -959,22 +959,23 @@ describe("ChatService", () => {
     });
   });
 
-  describe("Attendance & Schedule Semantic Vocabulary Alignment", () => {
-    it("extracts夏令时 and作息安排 from colloquial summer queries", () => {
+  describe("General Stride-1 N-gram Tokenizer", () => {
+    it("extracts all continuous n-grams (4, 3, 2) without skipping odd-offset characters", () => {
       const kws = (service as any).extractSearchKeywords("员工夏天上下班的时间要求是什么。");
-      expect(kws).toContain("夏令时");
-      expect(kws).toContain("作息安排");
       expect(kws).toContain("上下班");
-      expect(kws).toContain("工作时间");
-      expect(kws).toContain("标准工时制");
+      expect(kws).toContain("下班");
+      expect(kws).toContain("员工");
+      expect(kws).toContain("夏天");
+      expect(kws).toContain("时间");
+      expect(kws).toContain("要求");
     });
 
-    it("extracts comprehensive schedule terms for specific work hours queries", () => {
+    it("extracts odd-offset compounds from specific queries", () => {
       const kws = (service as any).extractSearchKeywords("具体上下班时间。");
       expect(kws).toContain("上下班");
-      expect(kws).toContain("工作时间");
-      expect(kws).toContain("作息时间");
-      expect(kws).toContain("标准工时制");
+      expect(kws).toContain("下班");
+      expect(kws).toContain("时间");
+      expect(kws).toContain("具体");
     });
   });
 });

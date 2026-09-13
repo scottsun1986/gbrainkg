@@ -861,42 +861,11 @@ export class ChatService {
       const parts = filteredText.split(delimiterRegex).map((s) => s.trim()).filter((s) => s.length >= 2);
       for (const p of parts) {
         if (p.length >= 2 && p.length <= 30) set.add(p);
-        // Stride 1 n-gram extraction (4-grams, 3-grams, 2-grams) so words starting on odd indices or 3-char words (上下班, 夏令时, 冬令时) are never skipped
+        // Stride 1 n-gram extraction (4-grams, 3-grams, 2-grams) so words starting on odd indices or 3-char words are never skipped
         for (let len = Math.min(4, p.length); len >= 2; len--) {
           for (let i = 0; i <= p.length - len; i++) {
             set.add(p.slice(i, i + len));
           }
-        }
-        // Domain synonym & vocabulary gap bridging (attendance, seasons, working hours)
-        if (/夏[天季令]?/.test(p)) {
-          set.add("夏令时");
-          set.add("夏季");
-          set.add("夏令");
-          set.add("夏季作息");
-          set.add("作息安排");
-          set.add("作息时间");
-        }
-        if (/冬[天季令]?/.test(p)) {
-          set.add("冬令时");
-          set.add("冬季");
-          set.add("冬令");
-          set.add("冬季作息");
-          set.add("作息安排");
-          set.add("作息时间");
-        }
-        if (/上下班|上班|下班|工时|作息|考勤|出勤|打卡/.test(p)) {
-          set.add("上下班");
-          set.add("上班");
-          set.add("下班");
-          set.add("工时制度");
-          set.add("工作时间");
-          set.add("作息时间");
-          set.add("作息安排");
-          set.add("标准工时制");
-          set.add("标准工时");
-          set.add("打卡制度");
-          set.add("考勤制度");
-          set.add("考勤");
         }
       }
     }
@@ -1626,10 +1595,6 @@ export class ChatService {
           if (c.ord === 0 || /(?:##\s*第[一二三四五六七八九十百0-9]+章|##\s*附则|\*\*第[一二三四五六七八九十百0-9]+条\*\*)/.test(c.content)) {
             boost += 1.2;
           }
-        }
-
-        if (/(?:上下班|作息|工时|考勤|夏令|冬令|夏天|冬天)/.test(lowQuery) && /(?:作息安排|工时制度|标准工时|夏令时|冬令时|工作时间|打卡制度)/.test(text)) {
-          boost += 1.5;
         }
 
         const score = (rrfScore > 0 ? rrfScore : 0.0005) * boost;
