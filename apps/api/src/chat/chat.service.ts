@@ -861,13 +861,42 @@ export class ChatService {
       const parts = filteredText.split(delimiterRegex).map((s) => s.trim()).filter((s) => s.length >= 2);
       for (const p of parts) {
         if (p.length >= 2 && p.length <= 30) set.add(p);
-        if (p.length >= 4) {
-          for (let i = 0; i <= p.length - 4; i += 2) {
-            set.add(p.slice(i, i + 4));
+        // Stride 1 n-gram extraction (4-grams, 3-grams, 2-grams) so words starting on odd indices or 3-char words (上下班, 夏令时, 冬令时) are never skipped
+        for (let len = Math.min(4, p.length); len >= 2; len--) {
+          for (let i = 0; i <= p.length - len; i++) {
+            set.add(p.slice(i, i + len));
           }
-          for (let i = 0; i <= p.length - 2; i += 2) {
-            set.add(p.slice(i, i + 2));
-          }
+        }
+        // Domain synonym & vocabulary gap bridging (attendance, seasons, working hours)
+        if (/夏[天季令]?/.test(p)) {
+          set.add("夏令时");
+          set.add("夏季");
+          set.add("夏令");
+          set.add("夏季作息");
+          set.add("作息安排");
+          set.add("作息时间");
+        }
+        if (/冬[天季令]?/.test(p)) {
+          set.add("冬令时");
+          set.add("冬季");
+          set.add("冬令");
+          set.add("冬季作息");
+          set.add("作息安排");
+          set.add("作息时间");
+        }
+        if (/上下班|上班|下班|工时|作息|考勤|出勤|打卡/.test(p)) {
+          set.add("上下班");
+          set.add("上班");
+          set.add("下班");
+          set.add("工时制度");
+          set.add("工作时间");
+          set.add("作息时间");
+          set.add("作息安排");
+          set.add("标准工时制");
+          set.add("标准工时");
+          set.add("打卡制度");
+          set.add("考勤制度");
+          set.add("考勤");
         }
       }
     }
@@ -1597,6 +1626,10 @@ export class ChatService {
           if (c.ord === 0 || /(?:##\s*第[一二三四五六七八九十百0-9]+章|##\s*附则|\*\*第[一二三四五六七八九十百0-9]+条\*\*)/.test(c.content)) {
             boost += 1.2;
           }
+        }
+
+        if (/(?:上下班|作息|工时|考勤|夏令|冬令|夏天|冬天)/.test(lowQuery) && /(?:作息安排|工时制度|标准工时|夏令时|冬令时|工作时间|打卡制度)/.test(text)) {
+          boost += 1.5;
         }
 
         const score = (rrfScore > 0 ? rrfScore : 0.0005) * boost;
@@ -3314,15 +3347,18 @@ export class ChatService {
               : typeof meta.effectiveDate === "string"
                 ? meta.effectiveDate
                 : undefined;
+          const titleVersionMatch = String(pd.title || "").match(/[vV](\d+)(?:\.\d+)?/);
+          const explicitVersion = titleVersionMatch ? parseInt(titleVersionMatch[1], 10) : undefined;
+          const detectedVersion = (explicitVersion && explicitVersion > 1) ? explicitVersion : (pd.version || 1);
           const familyKey = familyRootOf(pd);
           familyKeyByDocId.set(pd.id, familyKey);
           if (!familyKeyByTitle.has(pd.title)) familyKeyByTitle.set(pd.title, familyKey);
           const list = versionsByFamily.get(familyKey) || [];
-          if (!list.some((entry) => entry.version === (pd.version || 1))) {
+          if (!list.some((entry) => entry.version === detectedVersion)) {
             const updatedAt = pd.updatedAt ? new Date(pd.updatedAt) : new Date(0);
             list.push({
               title: pd.title,
-              version: pd.version || 1,
+              version: detectedVersion,
               updatedAt: Number.isNaN(updatedAt.getTime()) ? new Date(0) : updatedAt,
               effectiveDate,
               current: lifecycle === "current",
@@ -3348,7 +3384,15 @@ export class ChatService {
         };
         const familiesByNormTitle = new Map<string, Set<string>>();
         for (const pd of docsById.values()) {
-          const normTitle = String(pd.title || "").replace(/\(V\d+.*?\)/i, "").replace(/\s+/g, "").trim();
+          const normTitle = String(pd.title || "")
+            .replace(/\.[a-z0-9]+$/i, "")
+            .replace(/[\(_\-\s]*[vV]\d+(?:\.\d+)*[\)\]_\-\s]*/g, "")
+            .replace(/第[一二三四五六七八九十0-9]+版/g, "")
+            .replace(/（修订版）|\(修订版\)|修订版|最终版|最新版|征求意见稿|试行|初稿/g, "")
+            .replace(/详细手册|手册/g, "制度")
+            .replace(/管理制度/g, "制度")
+            .replace(/\s+/g, "")
+            .trim();
           if (!normTitle) continue;
           const set = familiesByNormTitle.get(normTitle) || new Set<string>();
           set.add(resolveFamily(familyRootOf(pd)));
@@ -3390,6 +3434,11 @@ export class ChatService {
         };
         const conflictTitles: string[] = [];
         for (const cit of citations as any[]) {
+          const citTitleVersion = String(cit.docTitle || "").match(/[vV](\d+)(?:\.\d+)?/);
+          const citDetectedVersion = (citTitleVersion && parseInt(citTitleVersion[1], 10) > 1)
+            ? parseInt(citTitleVersion[1], 10)
+            : (cit.version ?? 1);
+          cit.version = citDetectedVersion;
           const familyKey = familyKeyOfCitation(cit);
           const allEntries = familyKey ? versionsByFamily.get(familyKey) || [] : [];
           if (allEntries.length <= 1) continue;
@@ -3404,28 +3453,27 @@ export class ChatService {
           const latest = sorted[0];
           const latestDateLabel = latest.effectiveDate
             || (latest.updatedAt.getTime() > 0 ? latest.updatedAt.toISOString().slice(0, 10) : "未知");
-          const matchingEntry = allEntries.find((entry) => entry.version === (cit.version ?? 1));
+          const matchingEntry = allEntries.find((entry) => entry.version === citDetectedVersion);
           const isSuperseded = (matchingEntry?.repealed ?? false)
-            || (!latest.current ? false : (cit.version ?? 1) < latest.version);
+            || (!latest.current ? false : citDetectedVersion < latest.version);
           cit.versionConflict = {
             hasConflict: true,
-            currentVersion: cit.version ?? 1,
+            currentVersion: citDetectedVersion,
             latestVersion: latest.version,
             allVersions: allEntries.map((entry) => entry.version).sort((a, b) => b - a),
             latestEffectiveDate: latestDateLabel,
           };
-          // Demote superseded editions so the effective standard dominates the
-          // evidence ranking while the old clause is still available and
-          // explicitly labelled as repealed/revised.
+          // Do not slash superseded scores to avoid dropping conflicting evidence from prompt context;
+          // instead mark superseded flag and apply light weight calibration.
           if (isSuperseded) {
             cit.superseded = true;
-            if (typeof cit.score === "number") cit.score = Number((cit.score * 0.5).toFixed(4));
-            if (typeof cit.rerankScore === "number") cit.rerankScore = Number((cit.rerankScore * 0.5).toFixed(4));
+            if (typeof cit.score === "number") cit.score = Number((cit.score * 0.88).toFixed(4));
+            if (typeof cit.rerankScore === "number") cit.rerankScore = Number((cit.rerankScore * 0.88).toFixed(4));
           }
           if (!conflictTitles.includes(cit.docTitle)) {
             conflictTitles.push(cit.docTitle);
             const effective = latestDateLabel;
-            versionConflictNote += `\n【时序效力裁决】《${cit.docTitle}》存在多版本（库中: v${cit.versionConflict.allVersions.join(', v')}），现行有效版本为 v${latest.version}（生效/更新于 ${effective}${latest.title !== cit.docTitle ? `，现行版标题：《${latest.title}》` : ""}）。请以现行有效版本为准，并明确说明旧版已废止或被修订。`;
+            versionConflictNote += `\n【多版本/制度冲突比对指示】检测到关于该事项存在多版本/多份制度（库中包含: v${cit.versionConflict.allVersions.join(', v')}，现行有效版为 v${latest.version}《${latest.title}》）。在回答中，请务必同时完整陈述各版本/各制度的具体规定（包括各版本各自规定的具体上下班时间、作息安排或相关条款），并清晰对比其条文差异，同时说明各自的版本号、生效/废止状态与适用关系。切勿只展示单一版本而遗漏另一版本的具体规定。`;
           }
         }
         trace.finish(
@@ -3567,7 +3615,7 @@ export class ChatService {
 2. 【证据收敛与指标完整性】：参考资料是候选证据，只使用直接支持当前问题的来源。在回答技术指标、响应时间、性能参数、数值或处罚标准时，若资料在同一规定或句子中说明了多项关联指标或条件（例如伴随的可用性百分比、阈值、连带责任等），必须完整列出全部关联指标和要求（如“响应时间800毫秒，可用性不低于99.95%”），严禁遗漏任何并列参数。
 3. 【章节目录全景列举】：当用户询问有哪些章、全部章名或结构目录时，请务必根据参考资料中出现的各章标题，完整列出全部章节序号与名称，直接给出明确清单，严禁使用“无法提供”、“未提供完整章名”等推脱或拒答词汇。
 4. 【表格行记录与关键锚点事实并存处理】：若参考资料中同时存在表格行记录与关键锚点事实说明（例如表格行中某员工绩效记录为B或设备周期为7天，而关键事实/锚点事实注明该员工绩效为A或设备周期为30天），必须在回答中完整陈述这两种事实（例如明确指出：花名册表格行记录显示绩效为B，但关键锚点事实说明其绩效为A），严禁漏提任一事实。
-5. 【多源对比与完整呈现】：只有当多份资料都直接涉及当前问题时，才分别列出各份文件的规定，并说明版本差异、适用条件或生效背景。
+5. 【多源对比与冲突完整呈现】：当参考资料中存在多份文件、不同版本或多项制度对同一事项（如上下班时间、作息安排、工时标准、审批权限、考勤规定等）存在不同规定或潜在冲突时，必须同时且完整列出各份文件的具体规定内容（包括具体时间、数值、标准与文档名称），并清晰对比其条文差异与适用背景（例如说明新旧版本差异、生效日期与适用范围）。严禁只选择其中一份而忽略另一份。
 6. 【多源合并】：若多个来源共同支持某一相同结论，可合并标注如 [1][2]。严禁捏造未在参考资料中提供的引用编号；可用编号严格限制在参考资料实际提供的来源序号范围内。
 7. 【客观真实与分层回答】：
 - 若参考资料完全不包含与问题相关的信息，请统一回复：“已知知识库资料中未包含相关信息，无法回答该问题。”严禁在拒答或未找到信息时复述、回显用户问题中的代号、机密编号或专有名词。

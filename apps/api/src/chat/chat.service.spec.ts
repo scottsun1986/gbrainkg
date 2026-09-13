@@ -958,5 +958,25 @@ describe("ChatService", () => {
       expect(mockPrisma.brainDerivedPage.findMany).not.toHaveBeenCalled();
     });
   });
+
+  describe("Attendance & Schedule Semantic Vocabulary Alignment", () => {
+    it("extracts夏令时 and作息安排 from colloquial summer queries", () => {
+      const kws = (service as any).extractSearchKeywords("员工夏天上下班的时间要求是什么。");
+      expect(kws).toContain("夏令时");
+      expect(kws).toContain("作息安排");
+      expect(kws).toContain("上下班");
+      expect(kws).toContain("工作时间");
+      expect(kws).toContain("标准工时制");
+    });
+
+    it("extracts comprehensive schedule terms for specific work hours queries", () => {
+      const kws = (service as any).extractSearchKeywords("具体上下班时间。");
+      expect(kws).toContain("上下班");
+      expect(kws).toContain("工作时间");
+      expect(kws).toContain("作息时间");
+      expect(kws).toContain("标准工时制");
+    });
+  });
 });
+
 
