@@ -65,13 +65,14 @@ describe('McpService', () => {
 
   it('should list all available tools', () => {
     const tools = mcpService.getTools();
-    expect(tools.length).toBe(5);
+    expect(tools.length).toBe(6);
     const names = tools.map((t) => t.name);
     expect(names).toContain('search_knowledge');
     expect(names).toContain('chat_knowledge');
     expect(names).toContain('list_knowledge_bases');
     expect(names).toContain('get_document_status');
     expect(names).toContain('get_user_info');
+    expect(names).toContain('get_file_upload_guide');
   });
 
   describe('handleJsonRpc', () => {
@@ -112,7 +113,7 @@ describe('McpService', () => {
       expect(res.jsonrpc).toBe('2.0');
       expect(res.id).toBe(3);
       expect(Array.isArray(res.result.tools)).toBe(true);
-      expect(res.result.tools.length).toBe(5);
+      expect(res.result.tools.length).toBe(6);
     });
 
     it('should handle tools/call search_knowledge', async () => {
@@ -154,6 +155,34 @@ describe('McpService', () => {
       expect(user.displayName).toBe('测试用户');
       expect(user.roles).toContain('管理员');
       expect(user.orgs).toContain('研发部');
+    });
+
+    it('should handle tools/call get_file_upload_guide', async () => {
+      mockPrisma.knowledgeBase.findMany = jest.fn().mockResolvedValue([
+        { id: 'kb-1', name: '测试库', type: 'personal', description: '描述' },
+      ]);
+      mockPrisma.userCredential = {
+        findFirst: jest.fn().mockResolvedValue({ appId: 'app_test_123' }),
+      };
+
+      const res = await mcpService.handleJsonRpc(mockUser, {
+        jsonrpc: '2.0',
+        id: 6,
+        method: 'tools/call',
+        params: {
+          name: 'get_file_upload_guide',
+          arguments: { kb_id: 'kb-1', file_path: '/Users/test/report.pdf' },
+        },
+      });
+
+      expect(res.jsonrpc).toBe('2.0');
+      expect(res.id).toBe(6);
+      expect(res.result.isError).toBe(false);
+      const parsed = JSON.parse(res.result.content[0].text);
+      expect(parsed.app_id).toBe('app_test_123');
+      expect(parsed.target_kb.id).toBe('kb-1');
+      expect(parsed.suggested_curl_command).toContain('/Users/test/report.pdf');
+      expect(parsed.guide).toContain('POST /mcp/upload');
     });
 
     it('should return -32601 on unknown method', async () => {

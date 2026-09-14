@@ -124,6 +124,30 @@ export class McpService {
           properties: {},
         },
       },
+      {
+        name: 'get_file_upload_guide',
+        description:
+          '获取向 GBrain 知识库直接上传本地大文件（PDF/Word/PPTX/Excel/Markdown/TXT等原始文件）的一键终端上传命令与操作指引。当用户询问如何上传文件、需要向知识库导入本地文档、或者想要上传大文件时，优先调用此工具引导用户或直接在后台执行上传。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            kb_id: {
+              type: 'string',
+              description:
+                '目标知识库唯一 ID (UUID)。若用户未指定可留空，系统将自动列出所有可用知识库供选择。',
+            },
+            file_path: {
+              type: 'string',
+              description:
+                '用户在对话中提及的本地文件路径或文件名（如 "/Users/username/report.pdf" 或 "D:\\docs\\方案.docx"），工具将自动拼装入终端上传命令中。',
+            },
+            title: {
+              type: 'string',
+              description: '文档标题（可选，默认使用文件名）',
+            },
+          },
+        },
+      },
     ];
   }
 
@@ -541,6 +565,98 @@ export class McpService {
           email: user.email,
           roles: user.roles?.map((r: any) => r.role?.name || r.roleName) || [],
           orgs: user.orgs?.map((o: any) => o.orgNode?.name || o.orgNodeId) || [],
+        };
+      }
+
+      case 'get_file_upload_guide': {
+        const targetKbId = String(args?.kb_id || '').trim();
+        const rawFilePath = String(args?.file_path || '').trim();
+        const customTitle = String(args?.title || '').trim();
+
+        const visibleIds = await this.permissionService.getVisibleKnowledgeBases(userId);
+        const kbs = await this.prisma.knowledgeBase.findMany({
+          where: { id: { in: visibleIds }, status: 'active' },
+          select: { id: true, name: true, type: true, description: true },
+          orderBy: { createdAt: 'desc' },
+        });
+
+        let selectedKb = targetKbId ? kbs.find((k) => k.id === targetKbId) : undefined;
+        if (!selectedKb && kbs.length === 1) {
+          selectedKb = kbs[0];
+        }
+
+        const cred = await this.prisma.userCredential.findFirst({
+          where: { userId, status: 'active' },
+          select: { appId: true },
+          orderBy: { createdAt: 'desc' },
+        });
+        const effectiveAppId = cred?.appId || (user as any)?.appId || 'YOUR_APP_ID';
+
+        const baseUrl = (process.env.NEXT_PUBLIC_MCP_URL?.trim() || 'https://knowledge.5gsailor.com:20080').replace(/\/+$/, '');
+        const uploadEndpoint = `${baseUrl}/mcp/upload`;
+
+        const sampleFilePath = rawFilePath || '@/path/to/your-file.pdf';
+        const sampleFileArg = sampleFilePath.startsWith('@') ? sampleFilePath : `@${sampleFilePath}`;
+        const kbIdArg = selectedKb ? selectedKb.id : 'TARGET_KB_ID';
+        const titlePart = customTitle ? ` \\\n  -F "title=${customTitle}"` : '';
+
+        const curlCmd = `curl -X POST "${uploadEndpoint}" \\
+  -H "X-App-Id: ${effectiveAppId}" \\
+  -H "X-App-Secret: YOUR_APP_SECRET" \\
+  -F "file=${sampleFileArg}" \\
+  -F "kb_id=${kbIdArg}"${titlePart}`;
+
+        const psCmd = `$headers = @{ "X-App-Id" = "${effectiveAppId}"; "X-App-Secret" = "YOUR_APP_SECRET" }
+$form = @{
+    file = Get-Item "${rawFilePath || 'C:\\path\\to\\your-file.pdf'}"
+    kb_id = "${kbIdArg}"
+}
+Invoke-RestMethod -Uri "${uploadEndpoint}" -Method Post -Headers $headers -Form $form`;
+
+        const kbListText = kbs.length > 0
+          ? kbs.map((k) => `  • 【${k.name}】 ID: ${k.id} (${k.type})`).join('\n')
+          : '  （当前暂无可访问知识库，请先在系统内创建知识库）';
+
+        const guideText = [
+          `# 📄 GBrain 知识库文件直接上传指南 (免 Base64 / 原生支持最大 200MB)`,
+          ``,
+          `由于 MCP 协议基于纯文本传输，大文件（PDF/Word/PPTX/Excel 等）若强行转为 Base64 会极大消耗模型上下文 Token。`,
+          `因此，GBrainKG 提供独立的高性能二进制直传通道：\`POST /mcp/upload\`。`,
+          ``,
+          `---`,
+          `### 🤖 给 Agent（助手）的执行指示：`,
+          `1. **如果您拥有系统终端（Terminal / Bash）执行权限**（如 Cursor Composer、Cline、本地开发助手等）：`,
+          `   您可以直接在后台为用户执行下方的 \`curl\` 命令，完成本地文件秒级直传！`,
+          `2. **如果您是纯文本聊天窗口**（如 Claude Desktop）：`,
+          `   请将下方的上传命令与操作步骤清晰地展示给用户，引导用户在电脑终端中执行。`,
+          `3. **上传完成后**：`,
+          `   接口会返回 \`document_id\`。您可以随即调用 \`get_document_status(doc_id)\` 工具为用户追踪后台解析与知识图谱构建状态！`,
+          ``,
+          `---`,
+          `### 🚀 一键上传命令 (Bash / macOS / Linux)：`,
+          `\`\`\`bash`,
+          curlCmd,
+          `\`\`\``,
+          ``,
+          `### 🪟 Windows PowerShell 备选命令：`,
+          `\`\`\`powershell`,
+          psCmd,
+          `\`\`\``,
+          ``,
+          selectedKb
+            ? `> **当前目标知识库**：【${selectedKb.name}】(\`${selectedKb.id}\`)`
+            : `> **当前可用知识库列表**（请将命令中的 \`TARGET_KB_ID\` 替换为您要上传的目标库 ID）：\n${kbListText}`,
+          ``,
+          `> 💡 **安全提示**：请将命令中的 \`YOUR_APP_SECRET\` 替换为您在系统【个人设置 -> API 凭证】中保存的实际密钥。`,
+        ].join('\n');
+
+        return {
+          upload_endpoint: uploadEndpoint,
+          app_id: effectiveAppId,
+          target_kb: selectedKb ? { id: selectedKb.id, name: selectedKb.name } : null,
+          available_knowledge_bases: kbs.map((k) => ({ id: k.id, name: k.name, type: k.type })),
+          suggested_curl_command: curlCmd,
+          guide: guideText,
         };
       }
 

@@ -678,7 +678,7 @@ export function PersonalSettingsScreen({
               本知识库原生提供符合 Anthropic MCP (2024-11-05 标准) 的服务端支持，与 OpenAPI 共享统一的{' '}
               <code style={{ background: 'var(--bg-2)', padding: '1px 5px', borderRadius: 4 }}>X-App-Id</code> 与{' '}
               <code style={{ background: 'var(--bg-2)', padding: '1px 5px', borderRadius: 4 }}>X-App-Secret</code> 鉴权。
-              在 Cursor、Claude Desktop 等外部大模型助手配置该脚本后，大模型即可自主调用您权限内的知识检索与智能多跳问答工具。
+              在 Cursor、Claude Desktop 等外部大模型助手配置该脚本后，大模型即可自主调用您权限内的知识检索与智能多跳问答工具，并在您需要上传文件时自动调用 <code>get_file_upload_guide</code> 工具引导使用高性能二进制直传通道（免 Base64、支持最大 200MB）。
             </p>
 
             {/* 格式切换 Tabs 与接入域名配置 */}
@@ -812,7 +812,7 @@ export function PersonalSettingsScreen({
                 className="btn btn-secondary"
                 onClick={() =>
                   copyToClipboard(
-                    `# 1. MCP Streamable HTTP 获取工具列表\ncurl -X POST ${getOrigin()}/mcp \\\n  -H "X-App-Id: ${sampleAppId}" \\\n  -H "X-App-Secret: YOUR_APP_SECRET" \\\n  -H "Content-Type: application/json" \\\n  -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}'\n\n# 2. 直接上传文件（multipart，免 Base64，推荐）\ncurl -X POST ${getOrigin()}/mcp/upload \\\n  -H "X-App-Id: ${sampleAppId}" \\\n  -H "X-App-Secret: YOUR_APP_SECRET" \\\n  -F "file=@/path/to/report.pdf" \\\n  -F "kb_id=TARGET_KB_ID"`,
+                    `# 1. MCP Streamable HTTP 获取工具列表\ncurl -X POST ${getOrigin()}/mcp \\\n  -H "X-App-Id: ${sampleAppId}" \\\n  -H "X-App-Secret: YOUR_APP_SECRET" \\\n  -H "Content-Type: application/json" \\\n  -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}'\n\n# 2. 调用 MCP 文件上传指引工具 (Agent 获取一键上传命令)\ncurl -X POST ${getOrigin()}/mcp \\\n  -H "X-App-Id: ${sampleAppId}" \\\n  -H "X-App-Secret: YOUR_APP_SECRET" \\\n  -H "Content-Type: application/json" \\\n  -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "get_file_upload_guide", "arguments": {"kb_id": "TARGET_KB_ID"}}}'\n\n# 3. 独立文件直接上传接口 (multipart，免 Base64，推荐)\ncurl -X POST ${getOrigin()}/mcp/upload \\\n  -H "X-App-Id: ${sampleAppId}" \\\n  -H "X-App-Secret: YOUR_APP_SECRET" \\\n  -F "file=@/path/to/report.pdf" \\\n  -F "kb_id=TARGET_KB_ID"`,
                     '调用示例',
                   )
                 }
@@ -842,14 +842,21 @@ curl -X POST ${getOrigin()}/mcp \\
   -H "Content-Type: application/json" \\
   -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}'
 
-# 2. 直接上传文件（multipart/form-data，免 Base64，最大 200MB，推荐）
+# 2. 调用 MCP 文件上传指引工具 (Agent 自动感知并生成专属上传命令)
+curl -X POST ${getOrigin()}/mcp \\
+  -H "X-App-Id: ${sampleAppId}" \\
+  -H "X-App-Secret: YOUR_APP_SECRET" \\
+  -H "Content-Type: application/json" \\
+  -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "get_file_upload_guide", "arguments": {"kb_id": "TARGET_KB_ID"}}}'
+
+# 3. 独立文件直接上传端点 (multipart/form-data，免 Base64，最大 200MB，推荐)
 curl -X POST ${getOrigin()}/mcp/upload \\
   -H "X-App-Id: ${sampleAppId}" \\
   -H "X-App-Secret: YOUR_APP_SECRET" \\
   -F "file=@/path/to/report.pdf" \\
   -F "kb_id=TARGET_KB_ID"
 
-# 3. OpenAPI 传统问答对话
+# 4. OpenAPI 传统问答对话
 curl -X POST ${getOrigin()}/open-api/v1/chat/completions \\
   -H "X-App-Id: ${sampleAppId}" \\
   -H "X-App-Secret: YOUR_APP_SECRET" \\
