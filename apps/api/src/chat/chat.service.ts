@@ -2453,12 +2453,16 @@ export class ChatService {
       const fallbackChunks = await fallbackChunksPromise;
       if (fallbackChunks.length > 0) {
         // High-precision DB chunks are already available in milliseconds.
-        // Adaptive Bulkhead & Evidence Sufficiency Early Exit:
-        // If DB chunks already provide high-confidence direct evidence (top score >= 0.88),
-        // use a tightened bulkhead race window (default 800ms) to avoid blocking on slow CLIs.
-        // Otherwise, allow the full standard window (2500ms) to maximize recall.
+        // Safeguard against missing slow, high-relevance sources:
+        // NEVER early-exit on multi-hop, comparative, global synthesis, or federated multi-source queries,
+        // because the slower engine (e.g. GBrain graph or external source) often holds the decisive cross-doc bridge facts!
+        const isSimpleSingleSource =
+          agenticComplexity === "simple" &&
+          sourceRefs.length <= 1 &&
+          agenticSubQueries.length === 0;
+
         const topScore = typeof fallbackChunks[0]?.score === "number" ? fallbackChunks[0].score : 0;
-        const hasHighConfidenceHits = fallbackChunks.length >= 3 && topScore >= 0.88;
+        const hasHighConfidenceHits = isSimpleSingleSource && fallbackChunks.length >= 3 && topScore >= 0.90;
         const raceTimeoutMs = hasHighConfidenceHits
           ? Math.max(400, Number(process.env.FEDERATED_EARLY_EXIT_MS || 800))
           : 2500;
@@ -4374,10 +4378,30 @@ ${compiledTruthContext}`;
 
       remainingItems.sort((a, b) => (Number(b.cit?.score || 0) - Number(a.cit?.score || 0)));
 
-      const needed = Math.max(0, maxRerankCandidates - priorityItems.length);
-      const chosenRemaining = remainingItems.slice(0, needed);
-      tailCitations = remainingItems.slice(needed);
-      candidatesToRerank = [...priorityItems, ...chosenRemaining];
+      // Diversity Quota: Guarantee every distinct document/source has at least its best candidate
+      // in the Cross-Encoder pool so slow or less frequent documents are never starved out by a dominant doc.
+      const docSeen = new Set<string>();
+      for (const p of priorityItems) {
+        const docKey = p.cit.docId || p.cit.topic || p.cit.kbId;
+        if (docKey) docSeen.add(docKey);
+      }
+      const diversityItems: Array<{ origIdx: number; cit: any }> = [];
+      const nonDiversityItems: Array<{ origIdx: number; cit: any }> = [];
+      for (const item of remainingItems) {
+        const docKey = item.cit.docId || item.cit.topic || item.cit.kbId;
+        if (docKey && !docSeen.has(docKey)) {
+          docSeen.add(docKey);
+          diversityItems.push(item);
+        } else {
+          nonDiversityItems.push(item);
+        }
+      }
+
+      const priorityAndDiversity = [...priorityItems, ...diversityItems];
+      const needed = Math.max(0, maxRerankCandidates - priorityAndDiversity.length);
+      const chosenRemaining = nonDiversityItems.slice(0, needed);
+      tailCitations = nonDiversityItems.slice(needed);
+      candidatesToRerank = [...priorityAndDiversity, ...chosenRemaining];
     }
 
     const documents = candidatesToRerank
