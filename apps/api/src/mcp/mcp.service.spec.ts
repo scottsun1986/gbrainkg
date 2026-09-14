@@ -65,9 +65,8 @@ describe('McpService', () => {
 
   it('should list all available tools', () => {
     const tools = mcpService.getTools();
-    expect(tools.length).toBe(6);
+    expect(tools.length).toBe(5);
     const names = tools.map((t) => t.name);
-    expect(names).toContain('upload_document');
     expect(names).toContain('search_knowledge');
     expect(names).toContain('chat_knowledge');
     expect(names).toContain('list_knowledge_bases');
@@ -113,7 +112,7 @@ describe('McpService', () => {
       expect(res.jsonrpc).toBe('2.0');
       expect(res.id).toBe(3);
       expect(Array.isArray(res.result.tools)).toBe(true);
-      expect(res.result.tools.length).toBe(6);
+      expect(res.result.tools.length).toBe(5);
     });
 
     it('should handle tools/call search_knowledge', async () => {

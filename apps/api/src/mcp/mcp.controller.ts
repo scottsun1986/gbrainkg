@@ -240,7 +240,7 @@ export class McpController implements OnModuleDestroy {
    * 3. Streamable HTTP / JSON-RPC 通用端点 (POST /mcp 与 POST /mcp/stream)
    * 支持标准 MCP Streamable HTTP 协议：
    * - 客户端若提供 Accept: text/event-stream 或 body.stream=true，采用 Transfer-Encoding: chunked / SSE 渐进式流式返回；
-   * - 工具调用（如 chat_knowledge 或 upload_document）可流式推送中间 token/进度，最后推送完整 JSON-RPC 结果；
+   * - 工具调用（如 chat_knowledge）可流式推送中间 token/进度，最后推送完整 JSON-RPC 结果；
    * - 普通 JSON 请求直接返回标准 JSON-RPC 2.0 响应。
    */
   @Post()
@@ -351,7 +351,7 @@ export class McpController implements OnModuleDestroy {
   /**
    * 3b. 文件直传端点 (POST /mcp/upload)
    * 以 multipart/form-data 直接上传原始文件（无需 Base64 编码），
-   * 鉴权、限流、知识库权限校验与 upload_document 工具完全一致，
+   * 鉴权、限流、知识库权限校验与 MCP 工具体系一致，
    * 上传后同样进入后台解析流水线。
    * 表单字段: file(必填, 文件), kb_id(必填), title(可选)
    */

@@ -10,7 +10,7 @@ describe('McpController', () => {
 
   beforeEach(() => {
     mockMcpService = {
-      getTools: jest.fn().mockReturnValue([{ name: 'search_knowledge' }, { name: 'upload_document' }]),
+      getTools: jest.fn().mockReturnValue([{ name: 'search_knowledge' }, { name: 'chat_knowledge' }]),
       handleJsonRpc: jest.fn().mockImplementation((user, body, onProgress) => {
         if (onProgress) {
           onProgress({ type: 'progress', phase: 'uploading', message: 'progress test' });
@@ -193,7 +193,7 @@ describe('McpController', () => {
       jsonrpc: '2.0',
       id: 2,
       method: 'tools/call',
-      params: { name: 'upload_document', arguments: { kb_id: 'kb-1', filename: 'test.md', content: '# Hello' } },
+      params: { name: 'chat_knowledge', arguments: { query: '测试问题', kb_ids: ['kb-1'] } },
     });
 
     expect(mockRes.setHeader).toHaveBeenCalledWith('Content-Type', 'text/event-stream; charset=utf-8');

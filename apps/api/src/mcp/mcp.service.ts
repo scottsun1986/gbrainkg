@@ -32,36 +32,11 @@ export class McpService {
 
   /**
    * 返回支持的 MCP 工具列表定义 (符合 MCP 2024-11-05 协议标准规范)
+   * 注意：上传能力只保留 POST /mcp/upload 原始文件直传端点（multipart），
+   * 不再提供 Base64 文本形式的 upload_document 工具。
    */
   getTools(): McpToolDefinition[] {
     return [
-      {
-        name: 'upload_document',
-        description:
-          '向指定的有权限的知识库上传并提交新文档（支持 PDF、Word/DOCX/DOC、PPTX、Excel/XLSX、Markdown/MD、TXT、CSV 等格式）。支持传入 Base64 编码文件内容或纯文本字符串；如需直接上传原始文件（免 Base64），可调用 POST /mcp/upload 端点（multipart/form-data，字段 file + kb_id）。上传后系统自动提交后台流水线完成高保真解析、切块与向量入库。',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            kb_id: {
-              type: 'string',
-              description: '目标知识库唯一 ID (UUID)，当前凭证对该库必须具有上传或维护权限',
-            },
-            filename: {
-              type: 'string',
-              description: '文件名，必须包含文件扩展名（如 report.docx, plan.pdf, slides.pptx, data.xlsx, notes.md 等）',
-            },
-            content: {
-              type: 'string',
-              description: '文件内容：二进制文件（PDF/Word/PPTX/Excel等）请提供 Base64 编码字符串；纯文本文件（MD/TXT/CSV等）可提供原始文本字符串或 Base64 字符串',
-            },
-            title: {
-              type: 'string',
-              description: '文档标题（可选，默认使用文件名）',
-            },
-          },
-          required: ['kb_id', 'filename', 'content'],
-        },
-      },
       {
         name: 'search_knowledge',
         description:
@@ -281,9 +256,7 @@ export class McpService {
 
   /**
    * 共享上传管线：权限校验 → 落盘 → 建档 → 入队解析。
-   * 供两处复用：
-   *  1. MCP 工具 upload_document（JSON-RPC，content 为 Base64/文本）
-   *  2. POST /mcp/upload 文件直传端点（multipart/form-data，原始二进制）
+   * 由 POST /mcp/upload 文件直传端点（multipart/form-data，原始二进制）调用。
    */
   async saveUploadAndEnqueue(
     userId: string,
@@ -369,85 +342,8 @@ export class McpService {
     }
 
     switch (name) {
-      case 'upload_document': {
-        const kbId = String(args?.kb_id || args?.kbId || '').trim();
-        if (!kbId) throw new Error('kb_id 参数为必填项（目标知识库 ID）');
-        const filename = String(args?.filename || '').trim();
-        if (!filename) throw new Error('filename 参数为必填项（文件名及扩展名）');
-        const content = String(args?.content || '');
-        if (!content) throw new Error('content 参数为必填项（文档内容或 Base64 编码字符串）');
-        const title = String(args?.title || '').trim() || undefined;
-
-        onProgress?.({
-          type: 'progress',
-          phase: 'validating',
-          message: `正在验证知识库 ${kbId} 权限与文件信息...`,
-        });
-
-        let fileBuffer: Buffer;
-        let rawContent = content.trim();
-        if (rawContent.startsWith('data:')) {
-          const commaIdx = rawContent.indexOf(',');
-          if (commaIdx !== -1) {
-            rawContent = rawContent.slice(commaIdx + 1);
-          }
-        }
-
-        const textExtensions = ['.md', '.markdown', '.txt', '.csv', '.json', '.xml', '.html'];
-        if (textExtensions.includes(extname(filename).toLowerCase())) {
-          const isBase64Like =
-            /^[A-Za-z0-9+/=\s]+$/.test(rawContent) &&
-            rawContent.length > 20 &&
-            !rawContent.includes('\n') &&
-            rawContent.length % 4 === 0;
-
-          if (isBase64Like) {
-            try {
-              const decoded = Buffer.from(rawContent, 'base64');
-              if (decoded.length > 0 && !decoded.includes(0)) {
-                fileBuffer = decoded;
-              } else {
-                fileBuffer = Buffer.from(content, 'utf-8');
-              }
-            } catch {
-              fileBuffer = Buffer.from(content, 'utf-8');
-            }
-          } else {
-            fileBuffer = Buffer.from(content, 'utf-8');
-          }
-        } else {
-          fileBuffer = Buffer.from(rawContent, 'base64');
-          if (fileBuffer.length === 0) {
-            throw new Error(`文件 ${filename} 的 Base64 内容解码为空，请检查传参`);
-          }
-        }
-
-        onProgress?.({
-          type: 'progress',
-          phase: 'writing_file',
-          message: `正在写入本地存储: ${filename}...`,
-        });
-
-        const result = await this.saveUploadAndEnqueue(userId, {
-          kbId,
-          filename,
-          fileBuffer,
-          title,
-        });
-
-        onProgress?.({
-          type: 'progress',
-          phase: 'creating_record',
-          message: `已写入本地文件，正在创建数据库记录...`,
-        });
-        onProgress?.({
-          type: 'progress',
-          phase: 'enqueued',
-          message: `文档已成功入队后台解析队列`,
-        });
-
-        return result;
-      }
+      // upload_document（Base64/文本上传）已按产品决策移除：
+      // 上传能力统一走 POST /mcp/upload 原始文件直传端点。
 
       case 'search_knowledge': {
         const query = String(args?.query || '').trim();
