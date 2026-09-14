@@ -46,7 +46,7 @@ function normalizeServiceBaseUrl(value: unknown): string {
     throw new BadRequestException("Provider base URL must use HTTP(S) and cannot contain credentials.");
   }
   parsed.hash = '';
-  return parsed.toString().replace(/\/$/, '');
+  return parsed.toString().replace(/\/$/, '').replace(/\/chat\/completions$/i, '');
 }
 
 function boundedInteger(value: unknown, field: string, min: number, max: number): number {
