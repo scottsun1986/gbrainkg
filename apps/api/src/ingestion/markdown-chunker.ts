@@ -91,7 +91,21 @@ function chooseBoundary(markdown: string, start: number, targetEnd: number): num
   const paragraph = markdown.lastIndexOf('\n\n', targetEnd);
   if (paragraph > start + Math.floor(MAX_CHARS * 0.55)) return paragraph;
   const line = markdown.lastIndexOf('\n', targetEnd);
-  return line > start + Math.floor(MAX_CHARS * 0.55) ? line : targetEnd;
+  if (line > start + Math.floor(MAX_CHARS * 0.55)) return line;
+
+  // Adaptive Semantic Boundary: search for sentence punctuation (。！？； or .!? followed by space)
+  const minPos = start + Math.floor(MAX_CHARS * 0.50);
+  const slice = markdown.slice(minPos, targetEnd);
+  const sentenceMatches = Array.from(slice.matchAll(/[。！？；]|(?<=[.!?])\s+/gu));
+  if (sentenceMatches.length > 0) {
+    const lastMatch = sentenceMatches[sentenceMatches.length - 1];
+    const sentenceEnd = minPos + (lastMatch.index ?? 0) + lastMatch[0].length;
+    if (sentenceEnd > minPos && sentenceEnd <= targetEnd) {
+      return sentenceEnd;
+    }
+  }
+
+  return targetEnd;
 }
 
 function extractTableHeader(text: string): string | null {

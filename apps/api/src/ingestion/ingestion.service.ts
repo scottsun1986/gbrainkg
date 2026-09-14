@@ -3,6 +3,7 @@ import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
 import { getPrismaClient } from "../prisma";
 import { readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { extname, join } from "node:path";
 import { BrainCompilerService } from "../brain-compiler/brain-compiler.service";
 import { ModelConfigService } from "../model-config.service";
@@ -33,6 +34,7 @@ export class IngestionService implements OnModuleInit {
   private readonly parserUrl = (
     process.env.PARSER_WORKER_URL || "http://127.0.0.1:8100"
   ).replace(/\/$/, "");
+  private static readonly parseCache = new Map<string, { parsed: any; conversionMetadata: Record<string, unknown> }>();
 
   constructor(
     @InjectQueue("ingestion-queue") private readonly ingestionQueue: Queue,
@@ -161,17 +163,22 @@ export class IngestionService implements OnModuleInit {
     if (!document.rawFileOid)
       throw new Error("Original upload is no longer available.");
     const content = await readFile(document.rawFileOid);
+    const contentHash = createHash("sha256").update(content).digest("hex");
     await this.prisma.document.update({
       where: { id: documentId },
       data: { status: "parsing" },
     });
 
     let parsed: any = null;
-    const conversionMetadata: Record<string, unknown> = {};
-    // The stored file carries the true extension (.txt for text ingest, the
-    // original filename for uploads); the display title may contain dots
-    // ("Mrs. Washington") that must never decide the parser route.
+    let conversionMetadata: Record<string, unknown> = {};
     const ext = extname(document.rawFileOid).toLowerCase();
+
+    const cachedParse = IngestionService.parseCache.get(contentHash);
+    if (cachedParse && cachedParse.parsed) {
+      this.logger.log(`Document ${documentId} hit parse cache (hash ${contentHash.slice(0, 10)}); reusing parsed Markdown.`);
+      parsed = { ...cachedParse.parsed };
+      conversionMetadata = { ...cachedParse.conversionMetadata };
+    }
 
     // L1 Fast-Path: Plaintext files (.txt, .md) read directly in zero milliseconds
     if ([".txt", ".md"].includes(ext)) {
@@ -267,6 +274,16 @@ export class IngestionService implements OnModuleInit {
       .replace(/\u0000/g, "")
       .trim();
     if (!markdown) throw new Error("Parser returned empty Markdown.");
+    if (parsed && parsed.markdown && !cachedParse) {
+      IngestionService.parseCache.set(contentHash, {
+        parsed: { ...parsed },
+        conversionMetadata: { ...conversionMetadata },
+      });
+      if (IngestionService.parseCache.size > 200) {
+        const oldest = IngestionService.parseCache.keys().next().value;
+        if (oldest) IngestionService.parseCache.delete(oldest);
+      }
+    }
     const chunks = splitMarkdownIntoChunks(markdown);
     if (!chunks.length)
       throw new Error("Parser returned no indexable content.");

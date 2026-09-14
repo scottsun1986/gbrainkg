@@ -635,7 +635,7 @@ ${chunkContent.slice(0, 4000)}
   /**
    * Builds communities and global summaries for a Knowledge Base (WeKnora GraphRAG Global Search).
    */
-  async buildCommunitiesForKb(kbId: string): Promise<number> {
+  async buildCommunitiesForKb(kbId: string, options?: { incremental?: boolean }): Promise<number> {
     const entities = await (this.prisma as any).graphEntity.findMany({
       where: { kbId },
       include: {
@@ -677,6 +677,85 @@ ${chunkContent.slice(0, 4000)}
       }
     }
 
+    if (options?.incremental) {
+      // Incremental Community Self-Healing:
+      // Compare newly computed clusters against existing communities in database.
+      // Re-use intact communities to avoid duplicate LLM/Embedding calls and DB thrashing.
+      const existing = await (this.prisma as any).graphCommunity.findMany({ where: { kbId } });
+      const existingMap = new Map<string, any>();
+      for (const comm of existing || []) {
+        const key = Array.isArray(comm.entityIds) ? [...comm.entityIds].sort().join(",") : "";
+        if (key) existingMap.set(key, comm);
+      }
+
+      const keptCommunityIds = new Set<string>();
+      const clustersToCreate: Array<typeof entities> = [];
+
+      for (const cluster of communities) {
+        const key = cluster.map((e: any) => e.id).sort().join(",");
+        const matched = existingMap.get(key);
+        if (matched) {
+          keptCommunityIds.add(matched.id);
+        } else {
+          clustersToCreate.push(cluster);
+        }
+      }
+
+      // Delete only obsolete communities that were modified or merged
+      const toDelete = (existing || []).filter((c: any) => !keptCommunityIds.has(c.id)).map((c: any) => c.id);
+      if (toDelete.length > 0) {
+        await (this.prisma as any).graphCommunity.deleteMany({
+          where: { id: { in: toDelete } },
+        });
+      }
+
+      let created = keptCommunityIds.size;
+      const createdCommunities: Array<{ id: string; text: string }> = [];
+      for (let i = 0; i < clustersToCreate.length; i++) {
+        const cluster = clustersToCreate[i];
+        const titles = cluster.map((e: any) => e.name);
+        const types = [...new Set(cluster.map((e: any) => e.type))];
+        const mainTitle = titles.slice(0, 3).join(" / ") + ` (增量社区 ${created + 1})`;
+        const summary = `本知识社区涵盖了以下核心实体：${titles.slice(0, 10).join("、")}。涵盖领域类别：${types.join("、")}。涉及制度引用与系统实体间的相互协作、归属与管理关系。`;
+
+        const comm = await (this.prisma as any).graphCommunity.create({
+          data: {
+            kbId,
+            title: mainTitle,
+            level: 0,
+            summary,
+            entityIds: cluster.map((e: any) => e.id),
+            findings: [
+              `核心实体：${titles.slice(0, 5).join(", ")}`,
+              `实体总数：${cluster.length} 个`,
+            ],
+          },
+        });
+        createdCommunities.push({ id: comm.id, text: `${mainTitle}\n${summary}` });
+        created++;
+      }
+
+      if (this.embeddingService?.isEnabled() && createdCommunities.length) {
+        try {
+          const vectors = await this.embeddingService.embed(createdCommunities.map((c) => c.text.slice(0, 4000)));
+          for (let i = 0; i < createdCommunities.length; i++) {
+            const vector = vectors[i];
+            if (!vector) continue;
+            await (this.prisma as any).$executeRaw`
+              UPDATE "GraphCommunity" SET embedding = ${`[${vector.join(",")}]`}::vector
+              WHERE id = ${createdCommunities[i].id}::uuid
+            `;
+          }
+        } catch (err) {
+          this.logger.debug(`Community embedding skipped: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
+      this.logger.log(`Incrementally healed ${created} GraphRAG communities for KB ${kbId} (created ${clustersToCreate.length}, pruned ${toDelete.length})`);
+      return created;
+    }
+
+    // Default full rebuild mode (100% backward compatible with unit tests)
     // Clean old communities for this KB
     await (this.prisma as any).graphCommunity.deleteMany({ where: { kbId } });
 

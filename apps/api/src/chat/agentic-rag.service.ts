@@ -33,6 +33,18 @@ export class AgenticRagService {
 
   constructor(private readonly modelConfigService: ModelConfigService) {}
 
+  isFastPathSimple(query: string): boolean {
+    const q = query.trim();
+    if (!q) return true;
+
+    // Structural clause / article citations (e.g., 第十条, Section 4, Article 12)
+    if (/第\s*[\d一二三四五六七八九十百千万〇零两]+\s*[章节条款项]|附件|\b(?:Article|Section|Chapter|Clause|Appendix)\s+\d+\b/iu.test(q)) {
+      return true;
+    }
+
+    return false;
+  }
+
   /**
    * Classify query complexity to determine retrieval strategy.
    * Uses heuristics first, falls back to LLM for ambiguous cases.
@@ -420,13 +432,11 @@ Output valid JSON:
     subQueries: string[];
     hyde: string | null;
   }> {
+    if (this.isFastPathSimple(query)) {
+      return { complexity: 'simple', expansions: [], subQueries: [query], hyde: null };
+    }
     const complexity = await this.classifyQuery(query);
     if (complexity === 'simple') {
-      // Direct pass for exact clauses (e.g. 第十条) to avoid unnecessary LLM expansion
-      const isExactClause = /第\s*[\d一二三四五六七八九十百千万〇零两]+\s*[章节条款项]|附件/u.test(query);
-      if (isExactClause) {
-        return { complexity, expansions: [], subQueries: [query], hyde: null };
-      }
       // Plain factual questions skip the LLM expansion round trip entirely:
       // the hybrid recall arms (vector + keyword + rerank) already cover them,
       // and the planning call only delays the first token. Restore the old

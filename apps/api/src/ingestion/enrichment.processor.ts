@@ -169,7 +169,7 @@ export class EnrichmentProcessor extends WorkerHost {
     );
     const result = await this.graphRagService.persistGraphElements(kbId, elements);
     if (result.entityCount > 0) {
-      await this.graphRagService.buildCommunitiesForKb(kbId).catch(() => undefined);
+      await this.graphRagService.buildCommunitiesForKb(kbId, { incremental: true }).catch(() => undefined);
     }
     this.logger.log(
       `Graph extraction for ${documentId}: ${result.entityCount} entities, ${result.relationCount} relations.`,

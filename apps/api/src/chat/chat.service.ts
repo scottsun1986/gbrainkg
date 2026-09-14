@@ -879,6 +879,7 @@ export class ChatService {
    * window to avoid a KB query on every retrieval.
    */
   private scopeDomainTermsCache = new Map<string, { terms: string[]; expiresAt: number }>();
+  private readonly subQueryChunkCache = new Map<string, { hits: any[]; expiresAt: number }>();
 
   private async loadScopeDomainTerms(scope: string[]): Promise<string[]> {
     if (!scope.length || !this.prisma || !(this.prisma as any).knowledgeBase?.findMany) return [];
@@ -1215,18 +1216,31 @@ export class ChatService {
     const literal = `[${vector.join(',')}]`;
     const minScore = Number(process.env.VECTOR_MIN_SCORE || 0.30);
     try {
-      const rows = await this.prisma.$queryRaw<any[]>`
-        SELECT c.id, c."documentId", c."kbId", c.ord, c.content, c.metadata,
-               d.title AS "docTitle", d.version AS "docVersion",
-               (1 - (c.embedding <=> ${literal}::vector)) AS similarity
-        FROM "Chunk" c
-        JOIN "Document" d ON d.id = c."documentId"
-        WHERE c."kbId" = ANY(${scope}::uuid[])
-          AND c.embedding IS NOT NULL
-          AND d.status = 'published'
-        ORDER BY c.embedding <=> ${literal}::vector
-        LIMIT ${limit}
-      `;
+      const rows = scope.length === 1
+        ? await this.prisma.$queryRaw<any[]>`
+            SELECT c.id, c."documentId", c."kbId", c.ord, c.content, c.metadata,
+                   d.title AS "docTitle", d.version AS "docVersion",
+                   (1 - (c.embedding <=> ${literal}::vector)) AS similarity
+            FROM "Chunk" c
+            JOIN "Document" d ON d.id = c."documentId"
+            WHERE c."kbId" = ${scope[0]}::uuid
+              AND c.embedding IS NOT NULL
+              AND d.status = 'published'
+            ORDER BY c.embedding <=> ${literal}::vector
+            LIMIT ${limit}
+          `
+        : await this.prisma.$queryRaw<any[]>`
+            SELECT c.id, c."documentId", c."kbId", c.ord, c.content, c.metadata,
+                   d.title AS "docTitle", d.version AS "docVersion",
+                   (1 - (c.embedding <=> ${literal}::vector)) AS similarity
+            FROM "Chunk" c
+            JOIN "Document" d ON d.id = c."documentId"
+            WHERE c."kbId" = ANY(${scope}::uuid[])
+              AND c.embedding IS NOT NULL
+              AND d.status = 'published'
+            ORDER BY c.embedding <=> ${literal}::vector
+            LIMIT ${limit}
+          `;
       return rows
         .map((row) => ({
           id: String(row.id),
@@ -1268,6 +1282,16 @@ export class ChatService {
   > {
     if (!scope.length || !this.prisma || !(this.prisma as any).chunk?.findMany) {
       return [];
+    }
+
+    const subQueryCacheKey = extraQueries.length === 0
+      ? `${scope.slice().sort().join(",")}:${query.trim().toLowerCase()}:${limit}`
+      : null;
+    if (subQueryCacheKey) {
+      const cached = this.subQueryChunkCache.get(subQueryCacheKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        return cached.hits.map((h) => ({ ...h }));
+      }
     }
 
     const domainTerms = await this.loadScopeDomainTerms(scope);
@@ -1833,6 +1857,16 @@ export class ChatService {
           }
         } catch (raptorErr) {
           this.logger.debug(`RAPTOR arm omitted: ${raptorErr instanceof Error ? raptorErr.message : String(raptorErr)}`);
+        }
+      }
+      if (subQueryCacheKey) {
+        this.subQueryChunkCache.set(subQueryCacheKey, {
+          hits: results.map((r) => ({ ...r })),
+          expiresAt: Date.now() + Number(process.env.SUBQUERY_CACHE_TTL_MS || 120_000),
+        });
+        if (this.subQueryChunkCache.size > 500) {
+          const oldest = this.subQueryChunkCache.keys().next().value;
+          if (oldest) this.subQueryChunkCache.delete(oldest);
         }
       }
       return results;
@@ -2419,12 +2453,19 @@ export class ChatService {
       const fallbackChunks = await fallbackChunksPromise;
       if (fallbackChunks.length > 0) {
         // High-precision DB chunks are already available in milliseconds.
-        // Race GBrain with a bounded 2500ms window and genuinely abort the CLI
-        // subprocess if it loses, so the process-pool slot is released.
-        const raceTimer = setTimeout(() => gbrainAbort.abort(), 2500);
+        // Adaptive Bulkhead & Evidence Sufficiency Early Exit:
+        // If DB chunks already provide high-confidence direct evidence (top score >= 0.88),
+        // use a tightened bulkhead race window (default 800ms) to avoid blocking on slow CLIs.
+        // Otherwise, allow the full standard window (2500ms) to maximize recall.
+        const topScore = typeof fallbackChunks[0]?.score === "number" ? fallbackChunks[0].score : 0;
+        const hasHighConfidenceHits = fallbackChunks.length >= 3 && topScore >= 0.88;
+        const raceTimeoutMs = hasHighConfidenceHits
+          ? Math.max(400, Number(process.env.FEDERATED_EARLY_EXIT_MS || 800))
+          : 2500;
+        const raceTimer = setTimeout(() => gbrainAbort.abort(), raceTimeoutMs);
         const racedGBrain = await Promise.race([
           gbrainSearchPromise,
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), raceTimeoutMs)),
         ]);
         clearTimeout(raceTimer);
 
