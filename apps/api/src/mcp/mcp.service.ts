@@ -38,7 +38,7 @@ export class McpService {
       {
         name: 'upload_document',
         description:
-          '向指定的有权限的知识库上传并提交新文档（支持 PDF、Word/DOCX/DOC、PPTX、Excel/XLSX、Markdown/MD、TXT、CSV 等格式）。支持传入 Base64 编码文件内容或纯文本字符串。上传后系统自动提交后台流水线完成高保真解析、切块与向量入库。',
+          '向指定的有权限的知识库上传并提交新文档（支持 PDF、Word/DOCX/DOC、PPTX、Excel/XLSX、Markdown/MD、TXT、CSV 等格式）。支持传入 Base64 编码文件内容或纯文本字符串；如需直接上传原始文件（免 Base64），可调用 POST /mcp/upload 端点（multipart/form-data，字段 file + kb_id）。上传后系统自动提交后台流水线完成高保真解析、切块与向量入库。',
         inputSchema: {
           type: 'object',
           properties: {
@@ -280,6 +280,81 @@ export class McpService {
   }
 
   /**
+   * 共享上传管线：权限校验 → 落盘 → 建档 → 入队解析。
+   * 供两处复用：
+   *  1. MCP 工具 upload_document（JSON-RPC，content 为 Base64/文本）
+   *  2. POST /mcp/upload 文件直传端点（multipart/form-data，原始二进制）
+   */
+  async saveUploadAndEnqueue(
+    userId: string,
+    input: { kbId: string; filename: string; fileBuffer: Buffer; title?: string },
+  ) {
+    const kbId = String(input.kbId || '').trim();
+    if (!kbId) throw new Error('kb_id 参数为必填项（目标知识库 ID）');
+    const filename = String(input.filename || '').trim();
+    if (!filename) throw new Error('filename 参数为必填项（文件名及扩展名）');
+    const fileBuffer = input.fileBuffer;
+    if (!fileBuffer || !fileBuffer.length) {
+      throw new Error(`文件 ${filename} 的内容为空，请检查上传数据`);
+    }
+    const title = String(input.title || '').trim() || filename;
+
+    const kb = await this.prisma.knowledgeBase.findUnique({
+      where: { id: kbId },
+      select: { id: true, name: true, type: true, ownerUserId: true, status: true },
+    });
+    if (!kb || kb.status !== 'active') {
+      throw new Error(`目标知识库不存在或已被禁用 (kb_id: ${kbId})`);
+    }
+
+    const canManage = await this.permissionService.canManageKnowledgeBase(userId, kbId);
+    if (!canManage) {
+      throw new Error(`当前凭证对应的用户无权向知识库 "${kb.name}" (${kbId}) 上传或维护文档`);
+    }
+
+    const safeExt = extname(filename).toLowerCase();
+    if (!safeExt) {
+      throw new Error(`文件名必须包含有效扩展名（如 .pdf, .docx, .md, .txt）`);
+    }
+
+    const documentId = randomUUID();
+    const destDir = join(this.uploadRoot, documentId);
+    await fs.mkdir(destDir, { recursive: true });
+    const localFilePath = join(destDir, `raw${safeExt}`);
+    await fs.writeFile(localFilePath, fileBuffer);
+
+    const doc = await this.prisma.document.create({
+      data: {
+        id: documentId,
+        kbId,
+        mdPath: `${documentId}/content.md`,
+        title,
+        sourceType: 'upload',
+        rawFileOid: localFilePath,
+        version: 1,
+        uploadedById: userId,
+        status: 'parsing',
+        qualityStatus: 'pending',
+      },
+    });
+
+    if (this.ingestionService) {
+      await this.ingestionService.enqueue(doc.id, 'upload', doc.version);
+    }
+
+    return {
+      document_id: doc.id,
+      title: doc.title,
+      filename,
+      kb_id: kbId,
+      kb_name: kb.name,
+      size_bytes: fileBuffer.length,
+      status: 'parsing',
+      message: `文档 "${doc.title}" 已成功上传至知识库 "${kb.name}"，并提交至后台智能解析流水线。可通过 get_document_status 工具追踪解析进度与切片质检。`,
+    };
+  }
+
+  /**
    * 执行指定的 MCP 工具调用
    */
   async executeTool(
@@ -301,36 +376,12 @@ export class McpService {
         if (!filename) throw new Error('filename 参数为必填项（文件名及扩展名）');
         const content = String(args?.content || '');
         if (!content) throw new Error('content 参数为必填项（文档内容或 Base64 编码字符串）');
-        const title = String(args?.title || '').trim() || filename;
+        const title = String(args?.title || '').trim() || undefined;
 
         onProgress?.({
           type: 'progress',
           phase: 'validating',
           message: `正在验证知识库 ${kbId} 权限与文件信息...`,
-        });
-
-        const kb = await this.prisma.knowledgeBase.findUnique({
-          where: { id: kbId },
-          select: { id: true, name: true, type: true, ownerUserId: true, status: true },
-        });
-        if (!kb || kb.status !== 'active') {
-          throw new Error(`目标知识库不存在或已被禁用 (kb_id: ${kbId})`);
-        }
-
-        const canManage = await this.permissionService.canManageKnowledgeBase(userId, kbId);
-        if (!canManage) {
-          throw new Error(`当前凭证对应的用户无权向知识库 "${kb.name}" (${kbId}) 上传或维护文档`);
-        }
-
-        const safeExt = extname(filename).toLowerCase();
-        if (!safeExt) {
-          throw new Error(`文件名必须包含有效扩展名（如 .pdf, .docx, .md, .txt）`);
-        }
-
-        onProgress?.({
-          type: 'progress',
-          phase: 'writing_file',
-          message: `正在写入本地存储: ${filename}...`,
         });
 
         let fileBuffer: Buffer;
@@ -343,7 +394,7 @@ export class McpService {
         }
 
         const textExtensions = ['.md', '.markdown', '.txt', '.csv', '.json', '.xml', '.html'];
-        if (textExtensions.includes(safeExt)) {
+        if (textExtensions.includes(extname(filename).toLowerCase())) {
           const isBase64Like =
             /^[A-Za-z0-9+/=\s]+$/.test(rawContent) &&
             rawContent.length > 20 &&
@@ -371,53 +422,31 @@ export class McpService {
           }
         }
 
-        const documentId = randomUUID();
-        const destDir = join(this.uploadRoot, documentId);
-        await fs.mkdir(destDir, { recursive: true });
-        const localFilePath = join(destDir, `raw${safeExt}`);
-        await fs.writeFile(localFilePath, fileBuffer);
+        onProgress?.({
+          type: 'progress',
+          phase: 'writing_file',
+          message: `正在写入本地存储: ${filename}...`,
+        });
+
+        const result = await this.saveUploadAndEnqueue(userId, {
+          kbId,
+          filename,
+          fileBuffer,
+          title,
+        });
 
         onProgress?.({
           type: 'progress',
           phase: 'creating_record',
           message: `已写入本地文件，正在创建数据库记录...`,
         });
-
-        const doc = await this.prisma.document.create({
-          data: {
-            id: documentId,
-            kbId,
-            mdPath: `${documentId}/content.md`,
-            title,
-            sourceType: 'upload',
-            rawFileOid: localFilePath,
-            version: 1,
-            uploadedById: userId,
-            status: 'parsing',
-            qualityStatus: 'pending',
-          },
-        });
-
-        if (this.ingestionService) {
-          await this.ingestionService.enqueue(doc.id, 'upload', doc.version);
-        }
-
         onProgress?.({
           type: 'progress',
           phase: 'enqueued',
           message: `文档已成功入队后台解析队列`,
         });
 
-        return {
-          document_id: doc.id,
-          title: doc.title,
-          filename,
-          kb_id: kbId,
-          kb_name: kb.name,
-          size_bytes: fileBuffer.length,
-          status: 'parsing',
-          message: `文档 "${doc.title}" 已成功上传至知识库 "${kb.name}"，并提交至后台智能解析流水线。可通过 get_document_status 工具追踪解析进度与切片质检。`,
-        };
+        return result;
       }
 
       case 'search_knowledge': {

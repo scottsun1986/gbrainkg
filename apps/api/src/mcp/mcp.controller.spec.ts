@@ -1,5 +1,5 @@
 import { McpController } from './mcp.controller';
-import { UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 
 describe('McpController', () => {
   let controller: McpController;
@@ -66,12 +66,55 @@ describe('McpController', () => {
     // 强制生产域名包含 20080 端口
     expect(spec.endpoints.streamable_http).toBe('https://knowledge.5gsailor.com:20080/mcp');
     expect(spec.endpoints.sse).toBe('https://knowledge.5gsailor.com:20080/mcp/sse');
+    expect(spec.endpoints.upload_file).toBe('https://knowledge.5gsailor.com:20080/mcp/upload');
     expect(spec.transports).toContain('streamable-http');
     expect(spec.clientConfigurations.streamable_http).toBeDefined();
     expect(spec.clientConfigurations.cursor_and_windsurf_sse).toBeDefined();
     expect(spec.clientConfigurations.claude_desktop).toBeDefined();
     expect(spec.clientConfigurations.dify_and_orchestrators).toBeDefined();
     expect(spec.tools).toBeDefined();
+  });
+
+  describe('POST /mcp/upload 文件直传', () => {
+    it('should pass utf8 filename, kb_id and buffer to shared upload pipeline', async () => {
+      const saved = { document_id: 'doc-9', status: 'parsing' };
+      mockMcpService.saveUploadAndEnqueue = jest.fn().mockResolvedValue(saved);
+      const mockReq = {
+        headers: { 'x-app-id': 'app_valid', 'x-app-secret': 'sec_valid' },
+        query: {},
+      } as any;
+      // 模拟 Multer latin1 文件名：UTF-8 字节被逐字节保存
+      const latin1Name = Buffer.from('测试文档.pdf', 'utf8').toString('latin1');
+      const result = await controller.uploadFile(
+        mockReq,
+        undefined,
+        'kb-1',
+        undefined,
+        { originalname: latin1Name, buffer: Buffer.from('binary-content') } as any,
+      );
+      expect(mockMcpService.saveUploadAndEnqueue).toHaveBeenCalledWith(
+        'user-1',
+        expect.objectContaining({ kbId: 'kb-1', filename: '测试文档.pdf' }),
+      );
+      expect(result).toEqual(saved);
+    });
+
+    it('should reject when file field is missing', async () => {
+      const mockReq = {
+        headers: { 'x-app-id': 'app_valid', 'x-app-secret': 'sec_valid' },
+        query: {},
+      } as any;
+      await expect(controller.uploadFile(mockReq, undefined, 'kb-1', undefined, undefined as any)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('should reject without credentials', async () => {
+      const mockReq = { headers: {}, query: {} } as any;
+      await expect(
+        controller.uploadFile(mockReq, undefined, 'kb-1', undefined, { originalname: 'a.md', buffer: Buffer.from('x') } as any),
+      ).rejects.toThrow(UnauthorizedException);
+    });
   });
 
   it('should reject direct rpc without credentials', async () => {

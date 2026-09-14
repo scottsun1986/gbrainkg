@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  ForbiddenException,
   Get,
   HttpCode,
   HttpException,
@@ -10,8 +11,11 @@ import {
   Query,
   Req,
   Res,
+  UploadedFile,
   UnauthorizedException,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { Request, Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { OnModuleDestroy } from '@nestjs/common';
@@ -345,6 +349,59 @@ export class McpController implements OnModuleDestroy {
   }
 
   /**
+   * 3b. 文件直传端点 (POST /mcp/upload)
+   * 以 multipart/form-data 直接上传原始文件（无需 Base64 编码），
+   * 鉴权、限流、知识库权限校验与 upload_document 工具完全一致，
+   * 上传后同样进入后台解析流水线。
+   * 表单字段: file(必填, 文件), kb_id(必填), title(可选)
+   */
+  @Post('upload')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 200 * 1024 * 1024 },
+    }),
+  )
+  async uploadFile(
+    @Req() req: Request,
+    @Query('kb_id') kbIdQuery: string,
+    @Body('kb_id') kbIdBody: string,
+    @Body('title') title: string,
+    @UploadedFile() file: any,
+  ) {
+    const { user } = await this.authenticate(req);
+    if (!file?.buffer?.length) {
+      throw new BadRequestException(
+        '缺少文件：请以 multipart/form-data 提交，文件字段名为 file',
+      );
+    }
+    // kb_id 支持表单字段或 URL 查询参数两种形式，兼容部分代理/客户端
+    // 转发 multipart 文本字段时的丢字段问题。
+    const kbId = String(kbIdBody || kbIdQuery || '').trim();
+    if (!kbId) {
+      throw new BadRequestException('缺少 kb_id（表单字段或 ?kb_id= 均可）');
+    }
+    // Multer 兼容问题：非 ASCII 文件名默认按 latin1 解码，此处还原为 UTF-8
+    const filename = Buffer.from(file.originalname || '', 'latin1').toString('utf8');
+    if (!filename.trim()) {
+      throw new BadRequestException('文件名缺失（文件须包含扩展名）');
+    }
+    try {
+      const result = await this.mcpService.saveUploadAndEnqueue(user.id, {
+        kbId,
+        filename,
+        fileBuffer: file.buffer,
+        title: title ? String(title) : undefined,
+      });
+      return result;
+    } catch (err: any) {
+      const message = String(err?.message || '上传失败');
+      if (message.includes('无权')) throw new ForbiddenException(message);
+      if (message.includes('不存在')) throw new NotFoundException(message);
+      throw new BadRequestException(message);
+    }
+  }
+
+  /**
    * 4. MCP 服务规范与客户端一键配置元数据接口
    */
   @Get('spec')
@@ -370,9 +427,18 @@ export class McpController implements OnModuleDestroy {
       endpoints: {
         streamable_http: `${baseUrl}/mcp`,
         stream: `${baseUrl}/mcp/stream`,
+        upload_file: `${baseUrl}/mcp/upload`,
         sse: `${baseUrl}/mcp/sse`,
         messages: `${baseUrl}/mcp/messages`,
         direct_rpc: `${baseUrl}/mcp`,
+      },
+      upload: {
+        method: 'POST',
+        url: `${baseUrl}/mcp/upload`,
+        contentType: 'multipart/form-data',
+        fields: { file: '(必填) 原始文件二进制', kb_id: '(必填) 目标知识库 ID', title: '(可选) 文档标题' },
+        maxSizeBytes: 200 * 1024 * 1024,
+        curlExample: `curl -X POST ${baseUrl}/mcp/upload -H "X-App-Id: YOUR_APP_ID" -H "X-App-Secret: YOUR_APP_SECRET" -F "file=@report.pdf" -F "kb_id=TARGET_KB_ID"`,
       },
       auth: {
         type: 'apiKey',

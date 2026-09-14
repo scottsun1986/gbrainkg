@@ -1,9 +1,21 @@
 import { McpService } from './mcp.service';
 
+// saveUploadAndEnqueue 依赖共享 Prisma 客户端与文件系统，这里整体打桩；
+// 通过 global 槽位在用例间注入 mock（jest.mock 工厂会被提升到文件顶部）。
+jest.mock('../prisma', () => ({
+  ...jest.requireActual('../prisma'),
+  getPrismaClient: () => (global as any).__mcpServicePrismaMock,
+}));
+jest.mock('node:fs/promises', () => ({
+  mkdir: jest.fn().mockResolvedValue(undefined),
+  writeFile: jest.fn().mockResolvedValue(undefined),
+}));
+
 describe('McpService', () => {
   let mcpService: McpService;
   let mockChatService: any;
   let mockPermissionService: any;
+  let mockPrisma: any;
 
   const mockUser = {
     id: 'user-123',
@@ -33,7 +45,20 @@ describe('McpService', () => {
 
     mockPermissionService = {
       getVisibleKnowledgeBases: jest.fn().mockResolvedValue(['kb-1']),
+      canManageKnowledgeBase: jest.fn().mockResolvedValue(true),
     };
+
+    mockPrisma = {
+      knowledgeBase: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'kb-1', name: '测试库', type: 'personal', ownerUserId: 'user-123', status: 'active',
+        }),
+      },
+      document: {
+        create: jest.fn().mockImplementation(({ data }: any) => Promise.resolve({ id: data.id, title: data.title, version: data.version, status: data.status })),
+      },
+    };
+    (global as any).__mcpServicePrismaMock = mockPrisma;
 
     mcpService = new McpService(mockChatService, mockPermissionService);
   });
@@ -142,6 +167,58 @@ describe('McpService', () => {
       expect(res.jsonrpc).toBe('2.0');
       expect(res.id).toBe(99);
       expect(res.error.code).toBe(-32601);
+    });
+  });
+
+  describe('saveUploadAndEnqueue (共享上传管线)', () => {
+    it('should validate, persist file, create document and enqueue', async () => {
+      const ingestion = { enqueue: jest.fn().mockResolvedValue(undefined) };
+      const svc = new McpService(mockChatService, mockPermissionService, ingestion as any);
+
+      const result = await svc.saveUploadAndEnqueue('user-123', {
+        kbId: 'kb-1',
+        filename: 'report.pdf',
+        fileBuffer: Buffer.from('%PDF-1.4 fake'),
+        title: '季度报告',
+      });
+
+      expect(mockPermissionService.canManageKnowledgeBase).toHaveBeenCalledWith('user-123', 'kb-1');
+      expect(mockPrisma.document.create).toHaveBeenCalledTimes(1);
+      expect(ingestion.enqueue).toHaveBeenCalledWith(expect.any(String), 'upload', 1);
+      expect(result.document_id).toBeDefined();
+      expect(result.kb_name).toBe('测试库');
+      expect(result.size_bytes).toBe(Buffer.from('%PDF-1.4 fake').length);
+      expect(result.status).toBe('parsing');
+    });
+
+    it('should reject when user lacks permission on the kb', async () => {
+      mockPermissionService.canManageKnowledgeBase = jest.fn().mockResolvedValue(false);
+      const svc = new McpService(mockChatService, mockPermissionService);
+      await expect(
+        svc.saveUploadAndEnqueue('user-123', {
+          kbId: 'kb-1', filename: 'a.pdf', fileBuffer: Buffer.from('x'),
+        }),
+      ).rejects.toThrow('无权');
+    });
+
+    it('should reject when kb does not exist', async () => {
+      mockPrisma.knowledgeBase.findUnique = jest.fn().mockResolvedValue(null);
+      const svc = new McpService(mockChatService, mockPermissionService);
+      await expect(
+        svc.saveUploadAndEnqueue('user-123', {
+          kbId: 'kb-404', filename: 'a.pdf', fileBuffer: Buffer.from('x'),
+        }),
+      ).rejects.toThrow('不存在');
+    });
+
+    it('should reject empty buffer and missing extension', async () => {
+      const svc = new McpService(mockChatService, mockPermissionService);
+      await expect(
+        svc.saveUploadAndEnqueue('user-123', { kbId: 'kb-1', filename: 'a.pdf', fileBuffer: Buffer.alloc(0) }),
+      ).rejects.toThrow('内容为空');
+      await expect(
+        svc.saveUploadAndEnqueue('user-123', { kbId: 'kb-1', filename: 'noext', fileBuffer: Buffer.from('x') }),
+      ).rejects.toThrow('扩展名');
     });
   });
 });

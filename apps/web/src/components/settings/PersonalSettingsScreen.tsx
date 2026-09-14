@@ -812,7 +812,7 @@ export function PersonalSettingsScreen({
                 className="btn btn-secondary"
                 onClick={() =>
                   copyToClipboard(
-                    `# 1. MCP Streamable HTTP 获取工具列表\ncurl -X POST ${getOrigin()}/mcp \\\n  -H "X-App-Id: ${sampleAppId}" \\\n  -H "X-App-Secret: YOUR_APP_SECRET" \\\n  -H "Content-Type: application/json" \\\n  -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}'\n\n# 2. MCP 上传文档工具 (upload_document)\ncurl -X POST ${getOrigin()}/mcp \\\n  -H "X-App-Id: ${sampleAppId}" \\\n  -H "X-App-Secret: YOUR_APP_SECRET" \\\n  -H "Content-Type: application/json" \\\n  -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "upload_document", "arguments": {"kb_id": "TARGET_KB_ID", "filename": "example.md", "content": "# 文档标题\\n文档内容..."}}}'`,
+                    `# 1. MCP Streamable HTTP 获取工具列表\ncurl -X POST ${getOrigin()}/mcp \\\n  -H "X-App-Id: ${sampleAppId}" \\\n  -H "X-App-Secret: YOUR_APP_SECRET" \\\n  -H "Content-Type: application/json" \\\n  -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}'\n\n# 2. 直接上传文件（multipart，免 Base64，推荐）\ncurl -X POST ${getOrigin()}/mcp/upload \\\n  -H "X-App-Id: ${sampleAppId}" \\\n  -H "X-App-Secret: YOUR_APP_SECRET" \\\n  -F "file=@/path/to/report.pdf" \\\n  -F "kb_id=TARGET_KB_ID"\n\n# 3. MCP 上传文档工具 (upload_document, Base64 内容)\ncurl -X POST ${getOrigin()}/mcp \\\n  -H "X-App-Id: ${sampleAppId}" \\\n  -H "X-App-Secret: YOUR_APP_SECRET" \\\n  -H "Content-Type: application/json" \\\n  -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "upload_document", "arguments": {"kb_id": "TARGET_KB_ID", "filename": "example.md", "content": "# 文档标题\\n文档内容..."}}}'`,
                     '调用示例',
                   )
                 }
@@ -842,14 +842,21 @@ curl -X POST ${getOrigin()}/mcp \\
   -H "Content-Type: application/json" \\
   -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}'
 
-# 2. 调用 MCP 知识库上传工具 (upload_document)
+# 2. 直接上传文件（multipart/form-data，免 Base64，最大 200MB，推荐）
+curl -X POST ${getOrigin()}/mcp/upload \\
+  -H "X-App-Id: ${sampleAppId}" \\
+  -H "X-App-Secret: YOUR_APP_SECRET" \\
+  -F "file=@/path/to/report.pdf" \\
+  -F "kb_id=TARGET_KB_ID"
+
+# 3. 调用 MCP 知识库上传工具 (upload_document，Base64/文本内容)
 curl -X POST ${getOrigin()}/mcp \\
   -H "X-App-Id: ${sampleAppId}" \\
   -H "X-App-Secret: YOUR_APP_SECRET" \\
   -H "Content-Type: application/json" \\
   -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "upload_document", "arguments": {"kb_id": "TARGET_KB_ID", "filename": "example.md", "content": "# 文档标题\\n文档内容..."}}}'
 
-# 3. OpenAPI 传统问答对话
+# 4. OpenAPI 传统问答对话
 curl -X POST ${getOrigin()}/open-api/v1/chat/completions \\
   -H "X-App-Id: ${sampleAppId}" \\
   -H "X-App-Secret: YOUR_APP_SECRET" \\
