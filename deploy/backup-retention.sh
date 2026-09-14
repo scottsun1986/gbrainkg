@@ -8,6 +8,8 @@
 # 用法：
 #   ./backup-retention.sh                 # 清理当前用户全部默认位置
 #   systemd timer / cron 每日执行
+# 生产（meetings2）布局：备份实体位于 /data/backups/{deploy-backups,home-backups}，
+# 原路径 ~/deploy-backups、~/backups 为符号链接，本脚本按默认 HOME 路径即可命中。
 set -euo pipefail
 
 KEEP_CODE="${BACKUP_KEEP_CODE:-2}"
