@@ -383,7 +383,22 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
     return c;
   }, [filteredNodes]);
 
-  if (loading && !graph) return <div className="graph-page"><div className="graph-state">正在构建你的知识图谱…</div></div>;
+  if (loading && !graph) return (
+    <div className="graph-page">
+      <div className="graph-state">
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+          <div className="graph-skeleton-orb">
+            <span className="graph-orbit g1" />
+            <span className="graph-orbit g2" />
+            <span className="graph-orbit g3" />
+            <span className="graph-orbit-core" />
+          </div>
+          <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--ink-2)' }}>正在构建你的知识图谱…</div>
+          <div style={{ fontSize: 12.5, color: 'var(--ink-4)' }}>聚合可见知识库的实体与关系，通常需要几秒钟</div>
+        </div>
+      </div>
+    </div>
+  );
   if (error && !graph) return (
     <div className="graph-page">
       <div className="graph-state error">

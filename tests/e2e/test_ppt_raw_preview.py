@@ -3,13 +3,20 @@ import os
 from pathlib import Path
 from playwright.async_api import async_playwright
 
-BASE_URL = os.environ.get("BASE_URL", "http://localhost:3200")
+os.environ["http_proxy"] = ""
+os.environ["https_proxy"] = ""
+os.environ["all_proxy"] = ""
+
+BASE_URL = os.environ.get("BASE_URL", "http://127.0.0.1:3200")
 SCREENSHOT_DIR = Path("/home/scottsun/gbrainkg/docs/test-reports")
 SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
 
 async def test_ppt_preview():
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await p.chromium.launch(
+            headless=True,
+            proxy={"server": "direct://"},
+        )
         context = await browser.new_context(
             viewport={"width": 1440, "height": 900},
             device_scale_factor=1.5,
@@ -20,7 +27,8 @@ async def test_ppt_preview():
         page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
 
         print("1. 访问系统首页...")
-        await page.goto(BASE_URL, wait_until="networkidle")
+        await page.goto(BASE_URL, wait_until="domcontentloaded")
+        await page.wait_for_selector("#root", timeout=10000)
         await page.wait_for_timeout(1000)
 
         # 检查是否需要登录

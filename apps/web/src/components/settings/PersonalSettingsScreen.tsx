@@ -373,7 +373,7 @@ export function PersonalSettingsScreen({
               padding: '6px 14px',
               borderRadius: 6,
               border: 'none',
-              background: activeTab === 'credentials' ? '#fff' : 'transparent',
+              background: activeTab === 'credentials' ? 'var(--surface)' : 'transparent',
               color: activeTab === 'credentials' ? 'var(--ink)' : 'var(--ink-2)',
               fontWeight: 600,
               cursor: 'pointer',
@@ -392,7 +392,7 @@ export function PersonalSettingsScreen({
               padding: '6px 14px',
               borderRadius: 6,
               border: 'none',
-              background: activeTab === 'security' ? '#fff' : 'transparent',
+              background: activeTab === 'security' ? 'var(--surface)' : 'transparent',
               color: activeTab === 'security' ? 'var(--ink)' : 'var(--ink-2)',
               fontWeight: 600,
               cursor: 'pointer',
@@ -411,7 +411,7 @@ export function PersonalSettingsScreen({
               padding: '6px 14px',
               borderRadius: 6,
               border: 'none',
-              background: activeTab === 'docs' ? '#fff' : 'transparent',
+              background: activeTab === 'docs' ? 'var(--surface)' : 'transparent',
               color: activeTab === 'docs' ? 'var(--ink)' : 'var(--ink-2)',
               fontWeight: 600,
               cursor: 'pointer',
@@ -552,8 +552,9 @@ export function PersonalSettingsScreen({
                             borderRadius: 12,
                             fontSize: 12,
                             fontWeight: 500,
-                            background: c.status === 'active' ? 'rgba(34, 197, 94, 0.1)' : 'rgba(156, 163, 175, 0.15)',
-                            color: c.status === 'active' ? '#16a34a' : '#6b7280',
+                            whiteSpace: 'nowrap',
+                            background: c.status === 'active' ? 'var(--success-soft)' : 'var(--surface-3)',
+                            color: c.status === 'active' ? 'var(--success)' : 'var(--ink-3)',
                           }}
                         >
                           {c.status === 'active' ? '正常运行' : '已禁用'}

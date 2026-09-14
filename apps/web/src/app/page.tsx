@@ -94,7 +94,7 @@ function PaginationBar({ pagination, onChange, label = '记录' }) {
   );
 }
 
-function SideNav({active, setActive, user, onLogout, kbCount=0, capabilities=[], open=false, onClose=()=>{}}){
+function SideNav({active, setActive, user, onLogout, kbCount=0, capabilities=[], open=false, onClose=()=>{}, collapsed=false, onToggleCollapse=()=>{}}){
   const items = [
     {key:'chat', label:'对话', icon:'chat', badge:null},
     {key:'libs', label:'知识库', icon:'book', badge:kbCount ? String(kbCount) : null},
@@ -109,35 +109,35 @@ function SideNav({active, setActive, user, onLogout, kbCount=0, capabilities=[],
   return (
     <>
       {open && <div className="side-backdrop" onClick={onClose} />}
-      <aside className={`side ${open ? 'open' : ''}`}>
+      <aside className={`side ${open ? 'open' : ''} ${collapsed ? 'collapsed' : ''}`}>
         <div className="brand">
-          <span className="brand-mark">百</span>
-          <span className="brand-name">百纳</span>
-          <span className="brand-sub">企业级知识库</span>
+          <span className="brand-mark" title="百纳知识底座">百</span>
+          {!collapsed && <span className="brand-name">百纳</span>}
+          {!collapsed && <span className="brand-sub">企业级知识库</span>}
           <button type="button" className="side-close-btn" onClick={onClose} title="关闭菜单" aria-label="关闭菜单">
             <Icon name="x" size={16}/>
           </button>
         </div>
         <nav className="nav">
-          <div className="nav-section">工作</div>
+          <div className="nav-section">{collapsed ? '·' : '工作'}</div>
           {items.map(it => (
-            <div key={it.key} className={`nav-item ${active===it.key?'active':''}`} onClick={()=>handleNav(it.key)}>
+            <div key={it.key} className={`nav-item ${active===it.key?'active':''}`} onClick={()=>handleNav(it.key)} title={it.label}>
               <Icon name={it.icon} size={16} className="nav-ic"/>
               <span>{it.label}</span>
               {it.badge && <span className="nav-badge">{it.badge}</span>}
             </div>
           ))}
-          <div className="nav-section">个人</div>
-          <div className={`nav-item ${active==='personal_settings'?'active':''}`} onClick={()=>handleNav('personal_settings')}>
+          <div className="nav-section">{collapsed ? '·' : '个人'}</div>
+          <div className={`nav-item ${active==='personal_settings'?'active':''}`} onClick={()=>handleNav('personal_settings')} title="个人设置">
             <Icon name="key" size={16} className="nav-ic"/>
             <span>个人设置</span>
           </div>
-          <div className="nav-section">管理</div>
-          {canAdmin && <div className={`nav-item ${active==='admin'?'active':''}`} onClick={()=>handleNav('admin')}>
+          <div className="nav-section">{collapsed ? '·' : '管理'}</div>
+          {canAdmin && <div className={`nav-item ${active==='admin'?'active':''}`} onClick={()=>handleNav('admin')} title="管理后台">
             <Icon name="shield" size={16} className="nav-ic"/>
             <span>管理后台</span>
           </div>}
-          {canSettings && <div className={`nav-item ${active==='settings'?'active':''}`} onClick={()=>handleNav('settings')} title="模型、供应商与系统级配置">
+          {canSettings && <div className={`nav-item ${active==='settings'?'active':''}`} onClick={()=>handleNav('settings')} title="系统设置 · 模型、供应商与系统级配置">
             <Icon name="setting" size={16} className="nav-ic"/>
             <span>系统设置</span>
           </div>}
@@ -148,6 +148,15 @@ function SideNav({active, setActive, user, onLogout, kbCount=0, capabilities=[],
             <div className="user-name">{user?.displayName || user?.username || '当前用户'}</div>
             <div className="user-role">{user?.orgs?.map((item:any)=>item.orgNode?.name).filter(Boolean).join('、') || '未分配组织'} · {user?.roles?.[0]?.role?.name || '普通用户'}</div>
           </div>
+          <button
+            type="button"
+            className="collapse-toggle-btn"
+            onClick={onToggleCollapse}
+            title={collapsed ? "展开导航栏 (⌘\\)" : "收起导航栏 (⌘\\)"}
+            aria-label={collapsed ? "展开导航栏" : "收起导航栏"}
+          >
+            <Icon name="sidebar" size={15}/>
+          </button>
           <button className="logout-btn" onClick={onLogout} title="退出登录" aria-label="退出登录">
             <Icon name="logout" size={14} color="var(--ink-3)"/>
             <span>退出</span>
@@ -192,6 +201,7 @@ function UniversalDocumentViewer({ preview, onClose }) {
   const [activeTab, setActiveTab] = useState(preview?.initialTab || (snippet ? 'std_md' : 'raw')); // 'raw' | 'std_md' | 'parsed' | 'chunks' | 'meta'
   const [stdMdMode, setStdMdMode] = useState('rendered'); // 'rendered' | 'source'
   const [fullscreen, setFullscreen] = useState(false);
+  const [docked, setDocked] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [docData, setDocData] = useState(null);
@@ -585,9 +595,9 @@ function UniversalDocumentViewer({ preview, onClose }) {
   const formatBadgeColor = isWord ? '#2563eb' : isPdf ? '#dc2626' : isExcel ? '#16a34a' : isPpt ? '#ea580c' : '#d97706';
 
   return (
-    <div className="modal-mask" onClick={onClose} style={{ zIndex: 9999 }}>
+    <div className={`modal-mask ${docked ? 'docked-mask' : ''}`} onClick={onClose} style={{ zIndex: 9999 }}>
       <div
-        className={`modal preview-modal ${fullscreen ? 'fullscreen' : ''}`}
+        className={`modal preview-modal ${fullscreen ? 'fullscreen' : ''} ${docked ? 'docked' : ''}`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* 顶部标题与导航栏 */}
@@ -611,6 +621,11 @@ function UniversalDocumentViewer({ preview, onClose }) {
             <h3 style={{ margin: 0, fontSize: '14.5px', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={filename}>
               {filename}
             </h3>
+            {docked && (
+              <span className="dock-hint-badge" title="分屏对比模式已启用，左侧页面可照常浏览并操作">
+                ◫ 分屏对照模式
+              </span>
+            )}
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 'auto' }}>
@@ -636,8 +651,23 @@ function UniversalDocumentViewer({ preview, onClose }) {
             </button>
             <button
               type="button"
+              className={`icon-btn ${docked ? 'active' : ''}`}
+              onClick={() => {
+                setDocked((d) => !d);
+                if (fullscreen) setFullscreen(false);
+              }}
+              style={{ width: '28px', height: '28px', fontSize: '13px' }}
+              title={docked ? '还原为居中弹窗' : '靠右分屏对照 (Dual Canvas)'}
+            >
+              ◫
+            </button>
+            <button
+              type="button"
               className="icon-btn"
-              onClick={() => setFullscreen(!fullscreen)}
+              onClick={() => {
+                setFullscreen(!fullscreen);
+                if (docked) setDocked(false);
+              }}
               style={{ width: '28px', height: '28px', fontSize: '13px' }}
               title={fullscreen ? '退出全屏' : '全屏预览'}
             >
@@ -668,7 +698,7 @@ function UniversalDocumentViewer({ preview, onClose }) {
             className={`preview-tab-btn ${activeTab === 'parsed' ? 'active' : ''}`}
             onClick={() => setActiveTab('parsed')}
           >
-            <span>🧠</span> 标准化解析视图
+            <span style={{display:'inline-flex',verticalAlign:'middle',marginRight:6}}><Icon name="share" size={12}/></span>标准化解析视图
           </button>
           <button
             type="button"
@@ -690,7 +720,7 @@ function UniversalDocumentViewer({ preview, onClose }) {
             className={`preview-tab-btn ${activeTab === 'meta' ? 'active' : ''}`}
             onClick={() => setActiveTab('meta')}
           >
-            <span>⚙️</span> 元数据属性
+            <span style={{display:'inline-flex',verticalAlign:'middle',marginRight:6}}><Icon name="setting" size={12}/></span>元数据属性
           </button>
 
           <div style={{ marginLeft: 'auto', fontSize: '11px', color: 'var(--ink-4)' }}>
@@ -1150,11 +1180,20 @@ function ConfirmModal({title, msg, onConfirm, onClose}){
   );
 }
 
-function TopBar({title, sub, theme, onToggleTheme, onOpenPalette, onOpenHelp, onToggleSidebar}){
+function TopBar({title, sub, theme, onToggleTheme, onOpenPalette, onOpenHelp, onToggleSidebar, collapsed=false, onToggleCollapse=()=>{}}){
   return (
     <div className="topbar">
       <button type="button" className="icon-btn sidebar-toggle-btn" onClick={onToggleSidebar} title="打开主菜单" aria-label="打开主菜单">
         <Icon name="menu" size={18}/>
+      </button>
+      <button
+        type="button"
+        className="icon-btn desktop-collapse-btn"
+        onClick={onToggleCollapse}
+        title={collapsed ? "展开侧边栏 (⌘\\)" : "收起侧边栏 (⌘\\)"}
+        aria-label="切换侧边栏"
+      >
+        <Icon name="sidebar" size={16}/>
       </button>
       <div className="crumb"><b>{title}</b>{sub && <> · <span style={{color:'var(--ink-3)'}}>{sub}</span></>}</div>
       <div className="topbar-spacer"/>
@@ -1356,29 +1395,31 @@ function HelpOverlay({open, onClose}){
       <div className="help-overlay" onClick={(e) => e.stopPropagation()} style={{maxWidth: '780px', width: '90vw', maxHeight: '85vh', display: 'flex', flexDirection: 'column'}}>
         <div className="help-head" style={{borderBottom: '1px solid var(--border)', paddingBottom: '12px'}}>
           <div style={{display: 'flex', alignItems: 'center', gap: '16px'}}>
-            <h3 style={{margin: 0, fontSize: '16px', fontWeight: 600}}>📖 平台帮助与使用指南</h3>
+            <h3 style={{margin: 0, fontSize: '16px', fontWeight: 600}}>平台帮助与使用指南</h3>
             <div style={{display: 'flex', background: 'var(--bg-subtle, #f1f5f9)', padding: '2px', borderRadius: '6px'}}>
               <button
                 type="button"
                 onClick={() => setActiveTab('manual')}
                 style={{
                   padding: '4px 12px', fontSize: '12px', borderRadius: '4px', border: 'none', cursor: 'pointer',
-                  background: activeTab === 'manual' ? '#fff' : 'transparent',
+                  background: activeTab === 'manual' ? 'var(--surface)' : 'transparent',
+                  color: activeTab === 'manual' ? 'var(--ink)' : 'var(--ink-2)',
                   fontWeight: activeTab === 'manual' ? 600 : 400,
                   boxShadow: activeTab === 'manual' ? '0 1px 2px rgba(0,0,0,0.05)' : 'none'
                 }}>
-                📘 使用手册
+                使用手册
               </button>
               <button
                 type="button"
                 onClick={() => setActiveTab('shortcuts')}
                 style={{
                   padding: '4px 12px', fontSize: '12px', borderRadius: '4px', border: 'none', cursor: 'pointer',
-                  background: activeTab === 'shortcuts' ? '#fff' : 'transparent',
+                  background: activeTab === 'shortcuts' ? 'var(--surface)' : 'transparent',
+                  color: activeTab === 'shortcuts' ? 'var(--ink)' : 'var(--ink-2)',
                   fontWeight: activeTab === 'shortcuts' ? 600 : 400,
                   boxShadow: activeTab === 'shortcuts' ? '0 1px 2px rgba(0,0,0,0.05)' : 'none'
                 }}>
-                ⌨️ 快捷键速查
+                快捷键速查
               </button>
             </div>
           </div>
@@ -2405,7 +2446,7 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], active 
           {tab==='docs' && <>
           {current.canWrite ? (
             <div
-              className="dropzone"
+              className="compact-dropzone"
               onClick={()=>fileInputRef.current?.click()}
               onDragOver={(e)=>{ e.preventDefault(); e.stopPropagation(); }}
               onDrop={(e)=>{
@@ -2416,26 +2457,117 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], active 
                   Array.from(files).forEach(file=>uploadDocument(file));
                 }
               }}
-              style={{cursor:'pointer'}}
+              title="拖拽文件到此处，或点击上传"
             >
-              <Icon name="upload" size={26} className="ic" color="var(--ink-3)"/>
-              <h5>拖拽文件到此处，或点击选择（支持多选批量上传）</h5>
-              <p>支持 Markdown / Word（含 .doc / .docx）/ PDF / Excel（含 .xls / .xlsx）/ PPTX / 图片 · 单文件最大 200MB · 自动在后台异步解析与多路索引</p>
+              <div className="compact-dropzone-icon">
+                <Icon name="upload" size={18}/>
+              </div>
+              <div className="compact-dropzone-info">
+                <div className="compact-dropzone-title">
+                  <span>拖拽文件到此处快速入库，或点击选择</span>
+                  <span style={{ fontSize: '11px', fontWeight: 500, color: 'var(--ink-4)', background: 'var(--line-2)', padding: '1px 6px', borderRadius: '4px' }}>
+                    PDF · Word · PPT · Excel · Markdown
+                  </span>
+                </div>
+                <div className="compact-dropzone-sub">
+                  支持多选批量上传 · 单文件最大 200MB · 自动触发异步版面解析与知识图谱对齐
+                </div>
+              </div>
+              <button type="button" className="compact-dropzone-btn" onClick={(e)=>{ e.stopPropagation(); fileInputRef.current?.click(); }}>
+                <Icon name="plus" size={12} color="#fff"/> 上传文档
+              </button>
             </div>
           ) : (
-            <div className="dropzone" style={{cursor:'default',opacity:.8}}>
-              <Icon name="lock" size={24} className="ic" color="var(--ink-3)"/>
-              <h5>当前账号仅可阅读</h5>
-              <p>只有知识库所有者或管理员可以上传、删除知识。</p>
+            <div className="compact-dropzone" style={{cursor:'default',opacity:.8}}>
+              <div className="compact-dropzone-icon" style={{color:'var(--ink-4)'}}>
+                <Icon name="lock" size={18}/>
+              </div>
+              <div className="compact-dropzone-info">
+                <div className="compact-dropzone-title">当前账号仅可阅读</div>
+                <div className="compact-dropzone-sub">只有知识库所有者或管理员可以上传、删除知识。</div>
+              </div>
             </div>
           )}
 
           <div className="kpi-row">
-            <div className="kpi"><div className="lbl">总文档</div><div className="val">{docs.length}</div><div className="sub">来自数据库</div></div>
-            <div className="kpi"><div className="lbl">已发布</div><div className="val">{docs.filter(d=>d.status==='published').length}</div><div className="sub">当前库状态</div></div>
-            <div className="kpi"><div className="lbl">处理中</div><div className="val">{docs.filter(d=>d.status==='indexing'||d.status==='parsing').length}</div><div className="sub">解析 / 索引队列</div></div>
-            <div className="kpi"><div className="lbl">待复核</div><div className="val" style={{color: docs.filter(d=>d.status==='needs_review').length? 'var(--amber)':'var(--ink)'}}>{docs.filter(d=>d.status==='needs_review').length}</div><div className="sub">质量门禁暂缓发布</div></div>
-            <div className="kpi"><div className="lbl">解析失败</div><div className="val" style={{color: docs.filter(d=>d.status==='failed').length? 'var(--danger)':'var(--ink)'}}>{docs.filter(d=>d.status==='failed').length}</div><div className="sub">需人工介入</div></div>
+            <div
+              className={`kpi interactive ${docStatusFilter==='all'?'active':''}`}
+              onClick={()=>setDocStatusFilter('all')}
+              title="点击查看全部状态文档"
+              role="button"
+              tabIndex={0}
+            >
+              <div className="lbl">
+                <span>总文档</span>
+                {docStatusFilter==='all' && <span className="kpi-indicator">全部</span>}
+              </div>
+              <div className="val">{docs.length}</div>
+              <div className="sub">全部已收录条目</div>
+            </div>
+
+            <div
+              className={`kpi interactive ${docStatusFilter==='published'?'active':''}`}
+              onClick={()=>setDocStatusFilter(f => f === 'published' ? 'all' : 'published')}
+              title="点击过滤：仅显示已发布文档 (再次点击取消)"
+              role="button"
+              tabIndex={0}
+            >
+              <div className="lbl">
+                <span>已发布</span>
+                {docStatusFilter==='published' && <span className="kpi-indicator">已选</span>}
+              </div>
+              <div className="val" style={{color: 'var(--ink)'}}>{docs.filter(d=>d.status==='published').length}</div>
+              <div className="sub">已完成检索就绪</div>
+            </div>
+
+            <div
+              className={`kpi interactive ${docStatusFilter==='indexing'||docStatusFilter==='parsing'?'active':''}`}
+              onClick={()=>setDocStatusFilter(f => (f === 'indexing' || f === 'parsing') ? 'all' : 'indexing')}
+              title="点击过滤：仅显示处理中任务 (再次点击取消)"
+              role="button"
+              tabIndex={0}
+            >
+              <div className="lbl">
+                <span>处理中</span>
+                {(docStatusFilter==='indexing'||docStatusFilter==='parsing') && <span className="kpi-indicator">已选</span>}
+              </div>
+              <div className="val">{docs.filter(d=>d.status==='indexing'||d.status==='parsing').length}</div>
+              <div className="sub">解析 / 索引队列</div>
+            </div>
+
+            <div
+              className={`kpi interactive ${docStatusFilter==='needs_review'?'active':''}`}
+              onClick={()=>setDocStatusFilter(f => f === 'needs_review' ? 'all' : 'needs_review')}
+              title="点击过滤：仅显示待复核文档 (再次点击取消)"
+              role="button"
+              tabIndex={0}
+            >
+              <div className="lbl">
+                <span>待复核</span>
+                {docStatusFilter==='needs_review' && <span className="kpi-indicator">已选</span>}
+              </div>
+              <div className="val" style={{color: docs.filter(d=>d.status==='needs_review').length? 'var(--amber)':'var(--ink)'}}>
+                {docs.filter(d=>d.status==='needs_review').length}
+              </div>
+              <div className="sub">质量门禁暂缓发布</div>
+            </div>
+
+            <div
+              className={`kpi interactive ${docStatusFilter==='failed'?'active':''}`}
+              onClick={()=>setDocStatusFilter(f => f === 'failed' ? 'all' : 'failed')}
+              title="点击过滤：仅显示解析失败文档 (再次点击取消)"
+              role="button"
+              tabIndex={0}
+            >
+              <div className="lbl">
+                <span>解析失败</span>
+                {docStatusFilter==='failed' && <span className="kpi-indicator">已选</span>}
+              </div>
+              <div className="val" style={{color: docs.filter(d=>d.status==='failed').length? 'var(--danger)':'var(--ink)'}}>
+                {docs.filter(d=>d.status==='failed').length}
+              </div>
+              <div className="sub">需人工介入排查</div>
+            </div>
           </div>
 
           <div className="doc-filter-toolbar">
@@ -2885,7 +3017,7 @@ function UsersPanel({ orgTrees = [], orgTree, orgOptions = [], canManage = false
               title="查看所有组织人员"
             >
               <Icon name="users" size={13} color={!selectedOrg ? 'var(--ink)' : 'var(--ink-3)'} />
-              <span style={{ fontWeight: !selectedOrg ? 600 : 400 }}>🏢 全部组织</span>
+              <span style={{display:'inline-flex',alignItems:'center',gap:6,fontWeight:!selectedOrg?600:400}}><Icon name="users" size={13}/> 全部组织</span>
               <span className="node-badge">{USERS.length} 人</span>
             </div>
 
@@ -2916,7 +3048,7 @@ function UsersPanel({ orgTrees = [], orgTree, orgOptions = [], canManage = false
           {/* 当前组织过滤高亮提示 */}
           {selectedOrg && (
             <div className="org-filter-pill">
-              <span>📁 当前组织筛选：<b>{selectedOrg.path || selectedOrg.name}</b> 及所有下属部门（共匹配 {filteredUsers.length} 人）</span>
+              <span style={{display:'inline-flex',alignItems:'center',gap:6}}><Icon name="folder" size={13}/> 当前组织筛选：<b>{selectedOrg.path || selectedOrg.name}</b> 及所有下属部门（共匹配 {filteredUsers.length} 人）</span>
               <button type="button" className="clear-btn" onClick={() => setSelectedOrg(null)}>
                 ✕ 取消筛选
               </button>
@@ -3351,7 +3483,7 @@ function RolesPanel({canManage = false}){
             {filtered.length === 0 ? (
               <tr>
                 <td colSpan={6} style={{textAlign:'center',padding:'40px 0',color:'var(--ink-4)'}}>
-                  <div style={{fontSize:'28px',marginBottom:'8px'}}>🛡️</div>
+                  <div style={{marginBottom:'8px',color:'var(--ink-3)'}}><Icon name="shield" size={28}/></div>
                   <div>没有匹配的角色模板</div>
                 </td>
               </tr>
@@ -3364,7 +3496,7 @@ function RolesPanel({canManage = false}){
                   <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
                     {r.perms.slice(0, 4).map((p: string, i: number) => (
                       <span key={i} className={getPermBadgeClass(p)}>
-                        {p === '*' ? '⚡ 全部特权 (*)' : p}
+                        {p === '*' ? '全部特权 (*)' : p}
                       </span>
                     ))}
                     {r.perms.length > 4 && (
@@ -3439,7 +3571,7 @@ const ALL_PERMS = [
     ]
   },
   {
-    group: '📚 行业知识库治理',
+    group: '行业知识库治理',
     items: [
       { code: 'kb.industry.read', desc: '进入行业知识库管理面板' },
       { code: 'kb.industry.create', desc: '新建行业知识库' },
@@ -3448,7 +3580,7 @@ const ALL_PERMS = [
     ]
   },
   {
-    group: '👥 组织架构与人员',
+    group: '组织架构与人员',
     items: [
       { code: 'org.read', desc: '查看企业组织架构树' },
       { code: 'org.node.create', desc: '在本层及下级组织创建子组织' },
@@ -3459,12 +3591,12 @@ const ALL_PERMS = [
     ]
   },
   {
-    group: '⚙️ 系统配置与审计',
+    group: '系统配置与审计',
     items: [
       { code: 'system.settings.read', desc: '查看系统设置与基础配置' },
       { code: 'system.settings.manage', desc: '管理大模型与模型供应商参数' },
       { code: 'audit.read', desc: '查阅系统安全与编译审计日志' },
-      { code: '*', desc: '⚡ 超级管理员全局特权（包含系统全部功能）' },
+      { code: '*', desc: '超级管理员全局特权（包含系统全部功能）' },
     ]
   },
 ];
@@ -3661,7 +3793,7 @@ function IndustryKBPanel({onOpenGrant, canCreate = false}){
             {filtered.length === 0 ? (
               <tr>
                 <td colSpan={5} style={{textAlign:'center',padding:'40px 0',color:'var(--ink-4)'}}>
-                  <div style={{fontSize:'28px',marginBottom:'8px'}}>📚</div>
+                  <div style={{marginBottom:'8px',color:'var(--ink-3)'}}><Icon name="book" size={28}/></div>
                   <div>没有匹配的行业知识库</div>
                 </td>
               </tr>
@@ -3712,7 +3844,7 @@ function IndustryKBPanel({onOpenGrant, canCreate = false}){
                     onClick={()=>onOpenGrant(k)}
                     title="点击跳转并查看授权明细"
                   >
-                    👥 {k.grants} 个主体 ↗
+                    {k.grants} 个主体 ↗
                   </button>
                 </td>
                 <td style={{textAlign:'right',whiteSpace:'nowrap'}}>
@@ -4614,7 +4746,7 @@ function ReprocessPanel() {
         {/* Action Button */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid var(--border)', paddingTop: 16 }}>
           <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>
-            ⚠️ 任务将在后台异步执行，不影响前端正常问答与知识库浏览。
+            任务将在后台异步执行，不影响前端正常问答与知识库浏览。
           </div>
           <button
             className="btn primary"
@@ -5146,7 +5278,7 @@ function SystemStatusPanel({ capabilities }){
         </div>
 
         <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, padding: '14px 16px' }}>
-          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 6 }}>🧠 权限 Scope 脑</div>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 6 }}>权限 Scope 脑</div>
           <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--ink)' }}>{scp.scopesCount || 0} <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--ink-3)' }}>个 Scope</span></div>
           <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
             {scp.derivedPagesCount || 0} 篇派生资产 · 100% 溯源
@@ -5154,7 +5286,7 @@ function SystemStatusPanel({ capabilities }){
         </div>
 
         <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, padding: '14px 16px' }}>
-          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 6 }}>⚙️ 双级 Dream 周期</div>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 6 }}>双级 Dream 周期</div>
           <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--ink)' }}>{drm.durationsAvgSec ? `${drm.durationsAvgSec}s` : '30s'} <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--ink-3)' }}>均耗时</span></div>
           <div style={{ fontSize: 11, color: drm.health === 'healthy' ? 'var(--green)' : 'var(--amber)', marginTop: 4 }}>
             每日 {drm.cron || '02:00'} 执行 · {drm.health === 'healthy' ? '状态良好' : '部分降级'}
@@ -5162,7 +5294,7 @@ function SystemStatusPanel({ capabilities }){
         </div>
 
         <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, padding: '14px 16px' }}>
-          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 6 }}>⚡ 事务 Outbox 总线</div>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 6 }}>事务 Outbox 总线</div>
           <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--ink)' }}>{obx.outboxCounts?.completed || 0} <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--ink-3)' }}>/ {obx.outboxCounts?.total || 0} 完成</span></div>
           <div style={{ fontSize: 11, color: obx.outboxCounts?.pending ? 'var(--amber)' : 'var(--green)', marginTop: 4 }}>
             {obx.outboxCounts?.pending || 0} 待处理 · {obx.outboxCounts?.failed || 0} 失败
@@ -5291,7 +5423,7 @@ function SystemStatusPanel({ capabilities }){
                   </td>
                   <td style={{ textAlign: 'right' }}>
                     <span style={{ color: kb.failedDocsCount > 0 ? 'var(--red)' : 'var(--green)', fontSize: 12, fontWeight: 500 }}>
-                      {kb.failedDocsCount > 0 ? '需排查' : '🟢 优良'}
+                      {kb.failedDocsCount > 0 ? '需排查' : '优良'}
                     </span>
                   </td>
                 </tr>
@@ -5341,7 +5473,7 @@ function SystemStatusPanel({ capabilities }){
                     <td><b>{s.documentsCount}</b> 篇</td>
                     <td><b>{s.membersCount}</b> 人</td>
                     <td><span style={{ fontSize: 11, color: 'var(--ink-3)' }}>{fmt(s.lastSyncAt)}</span></td>
-                    <td style={{ textAlign: 'right' }}><span style={{ color: 'var(--green)', fontSize: 12 }}>🟢 活跃</span></td>
+                    <td style={{ textAlign: 'right' }}><span style={{ color: 'var(--green)', fontSize: 12 }}>活跃</span></td>
                   </tr>
                 ))}
               </tbody>
@@ -5366,7 +5498,7 @@ function SystemStatusPanel({ capabilities }){
                 {(scp.scopeList || []).map((sc) => (
                   <tr key={sc.id}>
                     <td><span style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--ink)' }}>{sc.fingerprint}</span></td>
-                    <td><span className={`badge ${sc.strategy === 'eager' ? 'ok' : 'purple'}`}>{sc.strategy === 'eager' ? '⚡ Eager' : '💤 Lazy'}</span></td>
+                    <td><span className={`badge ${sc.strategy === 'eager' ? 'ok' : 'purple'}`}>{sc.strategy === 'eager' ? 'Eager' : 'Lazy'}</span></td>
                     <td>
                       <div style={{ fontSize: 11.5, color: 'var(--ink-2)' }}>
                         {sc.members?.map(m => m.displayName || m.username).join(', ') || `${sc.membersCount} 人`}
@@ -5386,7 +5518,7 @@ function SystemStatusPanel({ capabilities }){
                       )}
                     </td>
                     <td><span style={{ fontSize: 11, color: 'var(--ink-3)' }}>ACL v{sc.aclEpoch} · 知识 v{sc.knowledgeEpoch}</span></td>
-                    <td style={{ textAlign: 'right' }}><span style={{ color: 'var(--green)', fontSize: 12 }}>🟢 运行中</span></td>
+                    <td style={{ textAlign: 'right' }}><span style={{ color: 'var(--green)', fontSize: 12 }}>运行中</span></td>
                   </tr>
                 ))}
               </tbody>
@@ -5559,7 +5691,7 @@ function SystemStatusPanel({ capabilities }){
                     <td>{m.isDefault ? <span className="badge ok" style={{ fontSize: 10 }}>默认</span> : '—'}</td>
                     <td style={{ textAlign: 'right' }}>
                       <span style={{ color: m.testStatus === 'passed' ? 'var(--green)' : 'var(--amber)', fontSize: 12 }}>
-                        {m.testStatus === 'passed' ? '🟢 通过' : '🟡 未测'}
+                        {m.testStatus === 'passed' ? '通过' : '未测'}
                       </span>
                     </td>
                   </tr>
@@ -5573,7 +5705,7 @@ function SystemStatusPanel({ capabilities }){
               <div style={{ color: 'var(--ink-2)' }}>
                 {['llm', 'embedding', 'rerank'].map((kind) => {
                   const route = rag.runtime.routes?.[kind] || {};
-                  return <span key={kind} style={{ marginRight: 16 }}>{kind === 'llm' ? 'LLM' : kind === 'embedding' ? 'Embedding' : 'Reranker'}：{route.modelName || '未配置'} {route.injected ? '🟢 已注入 百纳' : '🔴 未注入'}</span>;
+                  return <span key={kind} style={{ marginRight: 16 }}>{kind === 'llm' ? 'LLM' : kind === 'embedding' ? 'Embedding' : 'Reranker'}：{route.modelName || '未配置'} {route.injected ? '已注入 百纳' : '未注入'}</span>;
                 })}
               </div>
               <div style={{ color: 'var(--ink-3)' }}>连接池 {rag.runtime.gbrain?.poolSize || 2} · Scope Synthesize {rag.runtime.gbrain?.scopeSynthesizeEnabled ? '开启' : '关闭'} · 图谱增量抽取 {rag.runtime.gbrain?.graphExtractEnabled ? '开启' : '关闭'}</div>
@@ -5613,17 +5745,17 @@ function DreamTelemetryPanel({telemetry, onPageChange}){
     {/* 权限 Scope 脑拓扑矩阵 */}
     <div style={{border:'1px solid var(--line)',borderRadius:8,overflow:'hidden',background:'var(--surface)',marginBottom:12}}>
       <div style={{padding:'10px 14px',fontSize:12,fontWeight:600,borderBottom:'1px solid var(--line)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-        <span>🧠 权限 Scope 脑架构（同权限用户组自动复用）</span>
+        <span style={{display:'inline-flex',alignItems:'center',gap:6}}><Icon name="share" size={14}/> 权限 Scope 脑架构（同权限用户组自动复用）</span>
         <span style={{fontSize:11,color:'var(--ink-3)',fontWeight:400}}>共 {scopes.length} 个运行中 Scope</span>
       </div>
       <div style={{maxHeight:180,overflowY:'auto'}}>
         {scopes.map((s)=><div key={s.id} style={{display:'grid',gridTemplateColumns:'160px 80px 100px 120px 1fr 90px',gap:8,padding:'8px 14px',borderBottom:'1px solid var(--line-2)',fontSize:11.5,alignItems:'center'}}>
           <span style={{fontFamily:'monospace',fontWeight:600,color:'var(--ink)'}} title={s.fingerprint}>Scope: {s.fingerprint}</span>
-          <span className={`badge ${s.strategy==='eager'?'ok':'purple'}`} style={{fontSize:10,padding:'1px 5px'}}>{s.strategy==='eager'?'⚡ Eager':'💤 Lazy'}</span>
-          <span>👥 {s.membersCount} 名成员</span>
-          <span>📚 {s.derivedCount} 篇派生页</span>
+          <span className={`badge ${s.strategy==='eager'?'ok':'purple'}`} style={{fontSize:10,padding:'1px 5px'}}>{s.strategy==='eager'?'Eager':'Lazy'}</span>
+          <span>{s.membersCount} 名成员</span>
+          <span>{s.derivedCount} 篇派生页</span>
           <span style={{color:'var(--ink-3)',fontSize:11}}>ACL v{s.aclEpoch} · 知识 v{s.knowledgeEpoch}</span>
-          <span style={{color:s.status==='active'?'var(--green)':'var(--amber)',textAlign:'right'}}>{s.status==='active'?'🟢 运行中':'🟡 待对账'}</span>
+          <span className={`status ${s.status==='active'?'published':'failed'}`} style={{textAlign:'right'}}><span className="d"/>{s.status==='active'?'运行中':'待对账'}</span>
         </div>)}
         {!scopes.length && <div style={{padding:16,color:'var(--ink-3)',fontSize:12}}>暂无 Scope 记录，系统对账后会自动生成。</div>}
       </div>
@@ -5980,21 +6112,21 @@ function GrantPanel({kbId, setKbId}){
                 className={`segmented-btn ${grantTab==='user'?'active':''}`}
                 onClick={()=>{ setGrantTab('user'); setSubjectId(''); }}
               >
-                👤 人员
+                人员
               </button>
               <button
                 type="button"
                 className={`segmented-btn ${grantTab==='role'?'active':''}`}
                 onClick={()=>{ setGrantTab('role'); setSubjectId(''); }}
               >
-                🛡️ 角色
+                角色
               </button>
               <button
                 type="button"
                 className={`segmented-btn ${grantTab==='org'?'active':''}`}
                 onClick={()=>{ setGrantTab('org'); setSubjectId(''); }}
               >
-                🏢 组织
+                组织
               </button>
             </div>
           </div>
@@ -6115,7 +6247,7 @@ function GrantPanel({kbId, setKbId}){
                           borderColor: g.type==='user'?'#BFDBFE':g.type==='role'?'#DDD6FE':'#A7F3D0'
                         }}
                       >
-                        {g.type==='user'?'👤 人员':g.type==='role'?'🛡️ 角色':'🏢 组织'}
+                        {g.type==='user'?'人员':g.type==='role'?'角色':'组织'}
                       </span>
                     </td>
                     <td>
@@ -6247,8 +6379,8 @@ function OrgPanel({
         {/* Left: Interactive Tree Card */}
         <div className="split-card" style={{padding:'16px'}}>
           <div className="split-card-header">
-            <div className="split-card-title">
-              🏢 组织拓扑树
+            <div className="split-card-title" style={{display:'flex',alignItems:'center',gap:6}}>
+              <Icon name="share" size={13}/> 组织拓扑树
             </div>
             <span style={{fontSize:'11.5px',color:'var(--ink-3)'}}>共 {flatNodes.length} 个节点</span>
           </div>
@@ -6288,14 +6420,14 @@ function OrgPanel({
         {selectedNode ? (
           <div className="split-card">
             <div className="split-card-header">
-              <div>
-                <div style={{display:'flex',alignItems:'center',gap:8}}>
-                  <span style={{fontSize:'20px'}}>🏢</span>
+              <div style={{minWidth:0}}>
+                <div style={{display:'flex',alignItems:'center',gap:9}}>
+                  <span style={{width:30,height:30,borderRadius:8,display:'inline-flex',alignItems:'center',justifyContent:'center',background:'var(--evidence-soft)',color:'var(--evidence)',flex:'0 0 auto'}}><Icon name="users" size={16}/></span>
                   <div style={{fontSize:'16px',fontWeight:600,color:'var(--ink)'}}>{selectedNode.name}</div>
                   {selectedNode.kbs && selectedNode.kbs.length > 0 ? (
-                    <span className="badge ok" style={{fontSize:'11px'}}>🟢 部门库已激活</span>
+                    <span className="badge ok" style={{fontSize:'11px'}}>部门库已激活</span>
                   ) : (
-                    <span className="badge" style={{fontSize:'11px'}}>⚪ 未激活部门库</span>
+                    <span className="badge" style={{fontSize:'11px'}}>未激活部门库</span>
                   )}
                 </div>
                 <div style={{fontSize:'11.5px',color:'var(--ink-3)',marginTop:4}}>
@@ -6327,11 +6459,11 @@ function OrgPanel({
             {/* KPI Metrics */}
             <div className="org-kpi-grid">
               <div className="org-kpi-box">
-                <div className="kpi-label">👥 组织穿透总人数</div>
+                <div className="kpi-label"><Icon name="users" size={12}/> 组织穿透总人数</div>
                 <div className="kpi-val">{subtreeUserCount} <span style={{fontSize:'12px',fontWeight:400,color:'var(--ink-3)'}}>人 (直属 {directUsers.length} 人)</span></div>
               </div>
               <div className="org-kpi-box">
-                <div className="kpi-label">📁 下级子部门数</div>
+                <div className="kpi-label"><Icon name="folder" size={12}/> 下级子部门数</div>
                 <div className="kpi-val">{selectedNode.children?.length || 0} <span style={{fontSize:'12px',fontWeight:400,color:'var(--ink-3)'}}>个下属分支</span></div>
               </div>
             </div>
@@ -6339,7 +6471,7 @@ function OrgPanel({
             {/* Department Knowledge Base Section */}
             <div style={{background:'var(--surface-2)',border:'1px solid var(--line-2)',borderRadius:8,padding:'14px 16px',marginBottom:16}}>
               <div style={{fontSize:'13px',fontWeight:600,color:'var(--ink)',marginBottom:6,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-                <span>📚 组织知识库</span>
+                <span style={{display:'inline-flex',alignItems:'center',gap:6}}><Icon name="book" size={13}/> 组织知识库</span>
                 {selectedNode.knowledgeBase && (
                   <span style={{fontSize:'11px',color:'var(--ink-3)'}}>
                     文档数：{selectedNode.knowledgeBase.docCount || 0} 篇
@@ -6381,10 +6513,10 @@ function OrgPanel({
             {/* Department Admins Section */}
             <div style={{background:'var(--surface)',border:'1px solid var(--line)',borderRadius:8,padding:'14px 16px',marginBottom:16}}>
               <div style={{fontSize:'13px',fontWeight:600,color:'var(--ink)',marginBottom:10,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-                <span>👑 组织知识库管理员团队</span>
+                <span style={{display:'inline-flex',alignItems:'center',gap:6}}><Icon name="shield" size={13}/> 组织知识库管理员团队</span>
                 {selectedNode.canSetAdmin && (
                   <button className="btn" style={{padding:'3px 9px',fontSize:'11.5px'}} onClick={()=>onSetAdmin(selectedNode)}>
-                    ⚙️ 设置管理员
+                    设置管理员
                   </button>
                 )}
               </div>
@@ -6448,8 +6580,8 @@ function OrgTreeItem({node, depth, expandedIds, selectedNodeId, onSelect, onTogg
         ) : (
           <span style={{width:16,display:'inline-block'}}/>
         )}
-        <span style={{fontSize:'13px',marginRight:4}}>
-          {depth === 0 ? '🏢' : hasChildren ? '📁' : '📄'}
+        <span style={{fontSize:'13px',marginRight:4,color:'var(--ink-3)',display:'inline-flex',verticalAlign:'middle'}}>
+          {depth === 0 ? <Icon name="users" size={13}/> : hasChildren ? <Icon name="folder" size={13}/> : <Icon name="file" size={13}/>}
         </span>
         <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
           {node.name}
@@ -6760,6 +6892,7 @@ function App(){
 
   const [screen, setScreen] = useState('chat');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sideCollapsed, setSideCollapsed] = useState(false);
   const [adminTab, setAdminTab] = useState('org');
   const [libraryKbId, setLibraryKbId] = useState(null);
   const [toast, setToast] = useState(null);
@@ -6767,6 +6900,21 @@ function App(){
   const [graphOnlinePreview, setGraphOnlinePreview] = useState(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem('llmwiki_side_collapsed');
+      if (saved === 'true') setSideCollapsed(true);
+    } catch {}
+  }, []);
+
+  const toggleSideCollapsed = () => {
+    setSideCollapsed((v) => {
+      const next = !v;
+      try { window.localStorage.setItem('llmwiki_side_collapsed', String(next)); } catch {}
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (window.location.pathname.startsWith('/admin')) setScreen('admin');
@@ -6826,6 +6974,7 @@ function App(){
       const inEditable = tag === 'input' || tag === 'textarea' || e.target?.isContentEditable;
       const mod = isMac ? e.metaKey : e.ctrlKey;
       if (mod && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); setPaletteOpen((v) => !v); return; }
+      if (mod && (e.key === '\\')) { e.preventDefault(); toggleSideCollapsed(); return; }
       if (e.key === 'Escape') { if (paletteOpen) { setPaletteOpen(false); e.preventDefault(); } return; }
       if (inEditable) return;
       if (e.key === '?' && !mod && !e.altKey) { e.preventDefault(); setHelpOpen(true); return; }
@@ -6867,6 +7016,8 @@ function App(){
         capabilities={CAPABILITIES}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
+        collapsed={sideCollapsed}
+        onToggleCollapse={toggleSideCollapsed}
       />
       <div className="main">
         <TopBar
@@ -6877,6 +7028,8 @@ function App(){
           onOpenPalette={() => setPaletteOpen(true)}
           onOpenHelp={() => { window.location.assign('/help'); }}
           onToggleSidebar={() => setSidebarOpen(v => !v)}
+          collapsed={sideCollapsed}
+          onToggleCollapse={toggleSideCollapsed}
         />
         <div className="content">
           {/* 多屏常驻挂载：跨屏切换不丢会话/表单状态 */}

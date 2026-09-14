@@ -30,14 +30,14 @@ export default function HelpPage() {
 
       <section className="help-hero">
         <div className="help-hero-copy">
-          <p className="help-kicker">G B R A I N  ·  使用指南</p>
+          <p className="help-kicker">百纳 · 使用指南</p>
           <h1>把知识变成<br /><em>可用的答案。</em></h1>
           <p className="help-lead">从上传一份制度文件，到带着原文依据得到答案，这里带你走完百纳的完整使用路径。</p>
           <div className="help-hero-actions"><a className="help-primary" href="#start">开始使用 <Arrow /></a><a className="help-text-link" href="#trouble">遇到问题？</a></div>
         </div>
         <div className="help-hero-visual" aria-label="知识入库到可信问答的流程示意图">
           <div className="orbit orbit-a" /><div className="orbit orbit-b" />
-          <div className="help-node node-main"><span>G</span><b>你的知识</b><small>可检索 · 可追溯</small></div>
+          <div className="help-node node-main"><span>百</span><b>你的知识</b><small>可检索 · 可追溯</small></div>
           <div className="help-node node-doc"><span>▤</span><b>制度文件</b><small>结构化解析</small></div>
           <div className="help-node node-answer"><span>✦</span><b>可信回答</b><small>附来源依据</small></div>
           <div className="help-line line-a" /><div className="help-line line-b" />
