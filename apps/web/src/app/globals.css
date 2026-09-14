@@ -1590,6 +1590,45 @@ ul,ol{list-style:none}
 .pagination-btn:disabled{opacity:0.4;cursor:not-allowed}
 .doc-filter-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
 
+/* === Presentation Deck Viewer (PPT / PPTX) === */
+.ppt-deck-container{display:flex;flex-direction:column;height:100%;min-height:680px;background:var(--surface-2);border-radius:8px;overflow:hidden;position:relative}
+.ppt-deck-container.fullscreen{position:fixed!important;top:0!important;left:0!important;width:100vw!important;height:100vh!important;z-index:99999!important;border-radius:0!important}
+.ppt-deck-toolbar{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:var(--surface);border-bottom:1px solid var(--line);gap:10px;flex-wrap:wrap;z-index:20}
+.ppt-deck-btn{padding:4px 9px;font-size:11.5px;border-radius:5px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer;display:inline-flex;align-items:center;gap:4px;transition:all .15s;font-weight:500}
+.ppt-deck-btn:hover:not(:disabled){background:var(--surface-2);border-color:var(--ink-4)}
+.ppt-deck-btn.active{background:var(--ink);color:#fff;border-color:var(--ink);font-weight:600}
+.ppt-deck-btn.primary{background:#ea580c;color:#fff;border-color:#ea580c;font-weight:600}
+.ppt-deck-btn.primary:hover{background:#c2410c;border-color:#c2410c}
+.ppt-deck-btn:disabled{opacity:0.4;cursor:not-allowed}
+
+.ppt-deck-stage-wrapper{flex:1;display:flex;min-height:0;position:relative;overflow:hidden}
+.ppt-deck-sidebar{width:210px;border-right:1px solid var(--line);background:var(--surface);overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:8px;flex-shrink:0}
+.ppt-thumbnail-card{cursor:pointer;border-radius:6px;border:1.5px solid var(--line);background:var(--surface-2);padding:6px;transition:all .15s;position:relative}
+.ppt-thumbnail-card:hover{border-color:var(--ink-3)}
+.ppt-thumbnail-card.active{border-color:#ea580c;box-shadow:0 0 0 2px rgba(234,88,12,0.25);background:rgba(234,88,12,0.04)}
+.ppt-thumbnail-aspect{width:100%;aspect-ratio:16/9;background:#fff;border-radius:4px;overflow:hidden;display:flex;align-items:center;justify-content:center;position:relative;border:1px solid var(--line-2)}
+.ppt-thumbnail-badge{position:absolute;top:4px;left:4px;background:rgba(0,0,0,0.65);color:#fff;font-size:9.5px;font-weight:700;padding:1px 5px;border-radius:3px;z-index:2}
+
+.ppt-deck-stage{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:18px 24px;overflow:auto;position:relative;background:radial-gradient(ellipse at center, var(--surface-2) 0%, rgba(0,0,0,0.03) 100%)}
+.ppt-slide-canvas{max-width:100%;width:100%;max-height:100%;background:#ffffff;border-radius:10px;box-shadow:0 14px 38px rgba(0,0,0,0.12), 0 3px 10px rgba(0,0,0,0.06);border:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden;position:relative;transition:box-shadow .2s}
+.ppt-stage-nav-arrow{position:absolute;top:50%;transform:translateY(-50%);width:36px;height:48px;background:rgba(0,0,0,0.25);color:#fff;border:none;border-radius:4px;font-size:24px;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .15s;opacity:0.4;z-index:10}
+.ppt-slide-canvas:hover .ppt-stage-nav-arrow{opacity:0.9}
+.ppt-stage-nav-arrow:hover{background:rgba(0,0,0,0.6);opacity:1!important}
+.ppt-stage-nav-arrow.left{left:12px}
+.ppt-stage-nav-arrow.right{right:12px}
+
+.ppt-slide-header{padding:16px 24px 10px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line-2)}
+.ppt-slide-title{font-size:18px;font-weight:700;color:var(--ink);line-height:1.3;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ppt-slide-body{flex:1;padding:18px 24px;overflow-y:auto;display:flex;flex-direction:column;gap:12px;font-size:13.5px;line-height:1.6;color:var(--ink)}
+.ppt-bullet-card{background:var(--surface-2);border:1px solid var(--line-2);border-radius:8px;padding:12px 16px;display:flex;align-items:flex-start;gap:10px}
+.ppt-bullet-dot{width:7px;height:7px;border-radius:50%;background:#ea580c;margin-top:7px;flex-shrink:0}
+.ppt-slide-notes-tray{background:linear-gradient(90deg, #fffbeb 0%, #fef3c7 100%);border-top:1px solid #fde68a;padding:8px 16px;font-size:11.5px;color:#92400e;display:flex;align-items:center;gap:8px}
+
+.ppt-grid-container{flex:1;overflow-y:auto;padding:20px;display:grid;grid-template-columns:repeat(auto-fill, minmax(240px, 1fr));gap:16px}
+.ppt-grid-card{aspect-ratio:16/9;background:#fff;border:1px solid var(--line);border-radius:8px;padding:12px;display:flex;flex-direction:column;cursor:pointer;transition:all .18s ease;position:relative;box-shadow:var(--shadow-sm)}
+.ppt-grid-card:hover{transform:translateY(-2px);box-shadow:var(--shadow-md);border-color:#ea580c}
+.ppt-grid-card.active{border-color:#ea580c;box-shadow:0 0 0 2px rgba(234,88,12,0.3)}
+
 /* === Dark mode component overrides（置于文件末尾以覆盖前面的亮色规则） === */
 :root[data-theme='dark'] .graph-canvas svg{background:radial-gradient(ellipse at center,#23211E 0,#1C1B19 100%)}
 :root[data-theme='dark'] .login-shell{background:radial-gradient(circle at 50% 15%,#262420 0,#191817 52%,#131210 100%)}
@@ -1602,6 +1641,13 @@ ul,ol{list-style:none}
 :root[data-theme='dark'] .doc-type-icon[data-type="ppt"],:root[data-theme='dark'] .doc-type-icon[data-type="pptx"]{background:#3A2C18;color:#E8A85C}
 :root[data-theme='dark'] .graph-node-label{fill:var(--ink-2)}
 :root[data-theme='dark'] .scroll-to-bottom .streaming-dot{background:var(--evidence)}
+:root[data-theme='dark'] .ppt-slide-canvas{background:#1e1e1e;border-color:#333;box-shadow:0 14px 38px rgba(0,0,0,0.4)}
+:root[data-theme='dark'] .ppt-slide-header{border-color:#2a2a2a}
+:root[data-theme='dark'] .ppt-slide-title{color:#f3f1ec}
+:root[data-theme='dark'] .ppt-bullet-card{background:#262522;border-color:#383632}
+:root[data-theme='dark'] .ppt-grid-card{background:#22211e;border-color:#383632}
+:root[data-theme='dark'] .ppt-thumbnail-aspect{background:#1a1a1a;border-color:#333}
+:root[data-theme='dark'] .ppt-slide-notes-tray{background:#2c2415;border-color:#4a3818;color:#e5b869}
 @media (prefers-color-scheme: dark){
   :root:not([data-theme]) .graph-canvas svg{background:radial-gradient(ellipse at center,#23211E 0,#1C1B19 100%)}
   :root:not([data-theme]) .login-shell{background:radial-gradient(circle at 50% 15%,#262420 0,#191817 52%,#131210 100%)}
@@ -1614,4 +1660,11 @@ ul,ol{list-style:none}
   :root:not([data-theme]) .doc-type-icon[data-type="ppt"],:root:not([data-theme]) .doc-type-icon[data-type="pptx"]{background:#3A2C18;color:#E8A85C}
   :root:not([data-theme]) .graph-node-label{fill:var(--ink-2)}
   :root:not([data-theme]) .scroll-to-bottom .streaming-dot{background:var(--evidence)}
+  :root:not([data-theme]) .ppt-slide-canvas{background:#1e1e1e;border-color:#333;box-shadow:0 14px 38px rgba(0,0,0,0.4)}
+  :root:not([data-theme]) .ppt-slide-header{border-color:#2a2a2a}
+  :root:not([data-theme]) .ppt-slide-title{color:#f3f1ec}
+  :root:not([data-theme]) .ppt-bullet-card{background:#262522;border-color:#383632}
+  :root:not([data-theme]) .ppt-grid-card{background:#22211e;border-color:#383632}
+  :root:not([data-theme]) .ppt-thumbnail-aspect{background:#1a1a1a;border-color:#333}
+  :root:not([data-theme]) .ppt-slide-notes-tray{background:#2c2415;border-color:#4a3818;color:#e5b869}
 }

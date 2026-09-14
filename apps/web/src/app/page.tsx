@@ -4,6 +4,7 @@ import { LoginScreen, PasswordChangeScreen } from "@/components/auth/LoginScreen
 import { KnowledgeGraphScreen } from "@/components/knowledge-graph/KnowledgeGraphScreen";
 import { PersonalSettingsScreen } from "@/components/settings/PersonalSettingsScreen";
 import { Icon } from "@/components/common/Icon";
+import { PptDeckViewer } from "@/components/preview/PptDeckViewer";
 /*
  * This file is the migrated interactive prototype.  The prototype was authored
  * as JavaScript and intentionally keeps a number of flexible data shapes while
@@ -212,6 +213,7 @@ function UniversalDocumentViewer({ preview, onClose }) {
   const isWord = ext === 'docx' || ext === 'doc';
   const isPdf = ext === 'pdf';
   const isExcel = ext === 'xlsx' || ext === 'xls' || ext === 'csv';
+  const isPpt = ext === 'pptx' || ext === 'ppt';
   const isImage = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(ext);
   const isText = ['md', 'markdown', 'txt', 'json', 'yaml', 'yml', 'js', 'ts', 'py', 'sql', 'html'].includes(ext);
 
@@ -548,7 +550,7 @@ function UniversalDocumentViewer({ preview, onClose }) {
     document.body.removeChild(a);
   };
 
-  const formatBadgeColor = isWord ? '#2563eb' : isPdf ? '#dc2626' : isExcel ? '#16a34a' : '#d97706';
+  const formatBadgeColor = isWord ? '#2563eb' : isPdf ? '#dc2626' : isExcel ? '#16a34a' : isPpt ? '#ea580c' : '#d97706';
 
   return (
     <div className="modal-mask" onClick={onClose} style={{ zIndex: 9999 }}>
@@ -620,7 +622,7 @@ function UniversalDocumentViewer({ preview, onClose }) {
             className={`preview-tab-btn ${activeTab === 'raw' ? 'active' : ''}`}
             onClick={() => setActiveTab('raw')}
           >
-            <span>📄</span> 原始文件排版 {rawBlob ? '' : '(无原件)'}
+            <span>{isPpt ? '📽️' : '📄'}</span> {isPpt ? '原始幻灯片排版' : '原始文件排版'} {rawBlob ? '' : '(无原件)'}
           </button>
           <button
             type="button"
@@ -804,6 +806,17 @@ function UniversalDocumentViewer({ preview, onClose }) {
                         </table>
                       </div>
                     </div>
+                  ) : isPpt ? (
+                    <PptDeckViewer
+                      rawBlob={rawBlob}
+                      rawBlobUrl={rawBlobUrl}
+                      docData={docData}
+                      filename={filename}
+                      ext={ext}
+                      preview={preview}
+                      highlightPhrases={highlightPhrases}
+                      onSwitchToMd={() => setActiveTab('std_md')}
+                    />
                   ) : isImage && rawBlobUrl ? (
                     <div style={{ textAlign: 'center', padding: '20px' }}>
                       <img src={rawBlobUrl} alt={filename} style={{ maxWidth: '100%', maxHeight: '72vh', borderRadius: '8px', boxShadow: 'var(--shadow-md)' }} />
