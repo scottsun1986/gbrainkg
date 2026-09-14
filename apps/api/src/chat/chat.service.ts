@@ -2453,23 +2453,12 @@ export class ChatService {
       const fallbackChunks = await fallbackChunksPromise;
       if (fallbackChunks.length > 0) {
         // High-precision DB chunks are already available in milliseconds.
-        // Safeguard against missing slow, high-relevance sources:
-        // NEVER early-exit on multi-hop, comparative, global synthesis, or federated multi-source queries,
-        // because the slower engine (e.g. GBrain graph or external source) often holds the decisive cross-doc bridge facts!
-        const isSimpleSingleSource =
-          agenticComplexity === "simple" &&
-          sourceRefs.length <= 1 &&
-          agenticSubQueries.length === 0;
-
-        const topScore = typeof fallbackChunks[0]?.score === "number" ? fallbackChunks[0].score : 0;
-        const hasHighConfidenceHits = isSimpleSingleSource && fallbackChunks.length >= 3 && topScore >= 0.90;
-        const raceTimeoutMs = hasHighConfidenceHits
-          ? Math.max(400, Number(process.env.FEDERATED_EARLY_EXIT_MS || 800))
-          : 2500;
-        const raceTimer = setTimeout(() => gbrainAbort.abort(), raceTimeoutMs);
+        // Race GBrain with a bounded 2500ms window and genuinely abort the CLI
+        // subprocess if it loses, so the process-pool slot is released.
+        const raceTimer = setTimeout(() => gbrainAbort.abort(), 2500);
         const racedGBrain = await Promise.race([
           gbrainSearchPromise,
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), raceTimeoutMs)),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
         ]);
         clearTimeout(raceTimer);
 
@@ -4356,57 +4345,9 @@ ${compiledTruthContext}`;
       return { ...result, citations: reranked, topics: reranked.map((c: any) => c.topic), answer: reranked.map((c: any) => c.context || c.snippet).filter(Boolean).join("\n\n"), reranked: true, platformRerankApplied: true };
     }
 
-    // Two-stage cascade selection:
-    // When candidates exceed maxRerankCandidates (default 24), run Cross-Encoder
-    // only on the top pool while strictly retaining all multi-hop subquery/bridge probes.
-    const maxRerankCandidates = Math.max(12, Number(process.env.RERANK_MAX_CANDIDATES || 24));
-    let candidatesToRerank: Array<{ origIdx: number; cit: any }> = citations.map((cit: any, origIdx: number) => ({ origIdx, cit }));
-    let tailCitations: Array<{ origIdx: number; cit: any }> = [];
-
-    if (citations.length > maxRerankCandidates) {
-      const priorityItems: Array<{ origIdx: number; cit: any }> = [];
-      const remainingItems: Array<{ origIdx: number; cit: any }> = [];
-
-      for (let i = 0; i < citations.length; i++) {
-        const c = citations[i];
-        if (c?.subQueryOrigin) {
-          priorityItems.push({ origIdx: i, cit: c });
-        } else {
-          remainingItems.push({ origIdx: i, cit: c });
-        }
-      }
-
-      remainingItems.sort((a, b) => (Number(b.cit?.score || 0) - Number(a.cit?.score || 0)));
-
-      // Diversity Quota: Guarantee every distinct document/source has at least its best candidate
-      // in the Cross-Encoder pool so slow or less frequent documents are never starved out by a dominant doc.
-      const docSeen = new Set<string>();
-      for (const p of priorityItems) {
-        const docKey = p.cit.docId || p.cit.topic || p.cit.kbId;
-        if (docKey) docSeen.add(docKey);
-      }
-      const diversityItems: Array<{ origIdx: number; cit: any }> = [];
-      const nonDiversityItems: Array<{ origIdx: number; cit: any }> = [];
-      for (const item of remainingItems) {
-        const docKey = item.cit.docId || item.cit.topic || item.cit.kbId;
-        if (docKey && !docSeen.has(docKey)) {
-          docSeen.add(docKey);
-          diversityItems.push(item);
-        } else {
-          nonDiversityItems.push(item);
-        }
-      }
-
-      const priorityAndDiversity = [...priorityItems, ...diversityItems];
-      const needed = Math.max(0, maxRerankCandidates - priorityAndDiversity.length);
-      const chosenRemaining = nonDiversityItems.slice(0, needed);
-      tailCitations = nonDiversityItems.slice(needed);
-      candidatesToRerank = [...priorityAndDiversity, ...chosenRemaining];
-    }
-
-    const documents = candidatesToRerank
-      .map(({ cit }) =>
-        String(cit.snippet || cit.context || cit.docTitle || cit.topic || "").slice(0, 1000).trim(),
+    const documents = citations
+      .map((citation: any) =>
+        String(citation.snippet || citation.context || citation.docTitle || citation.topic || "").slice(0, 1000).trim(),
       )
       .filter(Boolean);
     if (documents.length < 2) return result;
@@ -4429,9 +4370,7 @@ ${compiledTruthContext}`;
       const scoredItems = ranked
         .map((item) => {
           const idx = Number(item.index);
-          const candidate = candidatesToRerank[idx];
-          if (!candidate) return null;
-          const cit = candidate.cit;
+          const cit = citations[idx];
           const rawCrossScore = typeof item.relevance_score === "number" ? item.relevance_score
             : typeof item.score === "number" ? item.score : 0;
           // Multi-hop / bridge candidates recalled by a specific subquery probe should not be
@@ -4439,24 +4378,14 @@ ${compiledTruthContext}`;
           const score = (cit?.subQueryOrigin && rawCrossScore < 0.70)
             ? Math.max(rawCrossScore, typeof cit.score === "number" ? cit.score : 0.85)
             : rawCrossScore;
-          return { origIdx: candidate.origIdx, citation: cit, score };
+          return { idx, citation: cit, score };
         })
-        .filter((item): item is { origIdx: number; citation: any; score: number } => Boolean(item && item.citation));
+        .filter((item) => Boolean(item.citation) && Number.isInteger(item.idx));
       if (!scoredItems.length) return result;
       scoredItems.sort((a, b) => b.score - a.score);
 
-      const tailItems = tailCitations.map((tc) => {
-        const fallbackScore = typeof tc.cit?.score === "number" ? tc.cit.score * 0.5 : 0.2;
-        return {
-          origIdx: tc.origIdx,
-          citation: tc.cit,
-          score: fallbackScore,
-        };
-      });
-
-      const allItems = [...scoredItems, ...tailItems];
-      const order = allItems.map((item) => item.origIdx);
-      const scores = allItems.map((item) => item.score);
+      const order = scoredItems.map((item) => item.idx);
+      const scores = scoredItems.map((item) => item.score);
       this.rerankCache.set(cacheKey, { expiresAt: Date.now() + Number(process.env.RERANK_CACHE_TTL_MS || 300000), order, scores });
       if (this.rerankCache.size > 200) {
         const oldest = this.rerankCache.keys().next().value;
@@ -4465,7 +4394,7 @@ ${compiledTruthContext}`;
 
       // No truncation here: the single evidence-selection stage decides what
       // enters the answer context, using these comparable scores.
-      const reranked = allItems.map((item) => ({ ...item.citation, rerankScore: item.score, relevanceScore: item.score }));
+      const reranked = scoredItems.map((item) => ({ ...item.citation, rerankScore: item.score, relevanceScore: item.score }));
       return {
         ...result,
         citations: reranked,
