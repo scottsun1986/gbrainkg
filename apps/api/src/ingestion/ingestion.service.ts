@@ -118,11 +118,25 @@ export class IngestionService implements OnModuleInit {
         select: { version: true },
       }))?.version;
       if (!version) throw new Error(`Document ${documentId} no longer exists.`);
+      const jobId = `ingest-${documentId}-v${version}`;
+      if (typeof this.ingestionQueue?.getJob === "function") {
+        try {
+          const existing = await this.ingestionQueue.getJob(jobId);
+          if (existing) {
+            const state = await existing.getState().catch(() => "unknown");
+            if (["failed", "completed"].includes(state)) {
+              await existing.remove().catch(() => {});
+            }
+          }
+        } catch {
+          // Non-fatal if queue check fails
+        }
+      }
       await this.ingestionQueue.add(
         "parse-document",
         { documentId, reason, expectedVersion: version },
         {
-          jobId: `ingest-${documentId}-v${version}`,
+          jobId,
           attempts: 3,
           backoff: { type: "exponential", delay: 3_000 },
           removeOnComplete: 200,
@@ -234,11 +248,16 @@ export class IngestionService implements OnModuleInit {
         content.byteOffset,
         content.byteOffset + content.byteLength,
       ) as ArrayBuffer;
-      const titleExt = extname(document.title).toLowerCase();
-      const parseFilename =
+      const rawExt = extname(document.rawFileOid || "").toLowerCase();
+      const titleExt = extname(document.title || "").toLowerCase();
+      const effectiveExt =
         SUPPORTED_UPLOAD_EXTENSIONS.has(titleExt) || ANYDOC_UPLOAD_EXTENSIONS.has(titleExt)
-          ? document.title
-          : `${document.title}.md`;
+          ? titleExt
+          : SUPPORTED_UPLOAD_EXTENSIONS.has(rawExt) || ANYDOC_UPLOAD_EXTENSIONS.has(rawExt)
+            ? rawExt
+            : ".md";
+      const baseTitle = titleExt ? document.title.slice(0, -titleExt.length) : document.title;
+      const parseFilename = `${baseTitle}${effectiveExt}`;
       form.append(
         "file",
         new Blob([fileBytes]),

@@ -1,4 +1,4 @@
-import { Processor, WorkerHost } from "@nestjs/bullmq";
+import { OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
 import { Job } from "bullmq";
 import { IngestionService } from "./ingestion.service";
 
@@ -28,6 +28,21 @@ export class IngestionProcessor extends WorkerHost {
         );
       }
       throw error;
+    }
+  }
+
+  @OnWorkerEvent("failed")
+  async onFailed(
+    job: Job<{ documentId: string; expectedVersion?: number }> | undefined,
+    error: Error,
+  ) {
+    if (job?.data?.documentId) {
+      await this.ingestionService
+        .markFailed(
+          job.data.documentId,
+          error instanceof Error ? error.message : String(error || "Job failed"),
+        )
+        .catch(() => {});
     }
   }
 }

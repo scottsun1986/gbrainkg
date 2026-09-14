@@ -246,9 +246,12 @@ export class IngestionController {
       where: { id: docId, kbId },
     });
     if (!document) throw new NotFoundException("Document not found.");
-    if (!["failed", "needs_review"].includes(document.status))
+    const isStaleParsing =
+      document.status === "parsing" &&
+      Date.now() - new Date(document.updatedAt).getTime() > 3 * 60 * 1000;
+    if (!["failed", "needs_review"].includes(document.status) && !isStaleParsing)
       throw new BadRequestException(
-        "Only failed or review-held documents can be retried.",
+        "Only failed, review-held, or stale parsing documents can be retried.",
       );
     if (!document.rawFileOid)
       throw new BadRequestException("Original upload is no longer available.");

@@ -179,10 +179,11 @@ describe('McpService', () => {
       expect(res.id).toBe(6);
       expect(res.result.isError).toBe(false);
       const parsed = JSON.parse(res.result.content[0].text);
-      expect(parsed.app_id).toBe('app_test_123');
+      expect(parsed.auth.app_id).toBe('app_test_123');
       expect(parsed.target_kb.id).toBe('kb-1');
-      expect(parsed.suggested_curl_command).toContain('/Users/test/report.pdf');
-      expect(parsed.guide).toContain('POST /mcp/upload');
+      expect(parsed.upload_endpoint).toContain('/mcp/upload');
+      expect(parsed.guide).toContain('/mcp/upload');
+      expect(parsed.guide).toContain('X-App-Id');
     });
 
     it('should return -32601 on unknown method', async () => {

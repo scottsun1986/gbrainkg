@@ -127,23 +127,18 @@ export class McpService {
       {
         name: 'get_file_upload_guide',
         description:
-          '获取向 GBrain 知识库直接上传本地大文件（PDF/Word/PPTX/Excel/Markdown/TXT等原始文件）的一键终端上传命令与操作指引。当用户询问如何上传文件、需要向知识库导入本地文档、或者想要上传大文件时，优先调用此工具引导用户或直接在后台执行上传。',
+          '获取向 GBrain 知识库上传本地文件的方法与规范指引。GBrain 不支持将文档转为 Base64 文本上传，必须通过独立二进制直传接口 POST /mcp/upload 提交。上传接口所需的 X-App-Id 与 X-App-Secret 与当前客户端连接此 MCP 服务时配置的凭证（AppId/AppKey/AppSecret）完全一致。AI 模型获取此指引后，应由 AI 自行根据用户的实际文件路径与目标知识库组装完整的上传命令或发起请求，无需用户自行拼装参数。',
         inputSchema: {
           type: 'object',
           properties: {
             kb_id: {
               type: 'string',
               description:
-                '目标知识库唯一 ID (UUID)。若用户未指定可留空，系统将自动列出所有可用知识库供选择。',
-            },
-            file_path: {
-              type: 'string',
-              description:
-                '用户在对话中提及的本地文件路径或文件名（如 "/Users/username/report.pdf" 或 "D:\\docs\\方案.docx"），工具将自动拼装入终端上传命令中。',
+                '目标知识库唯一 ID (UUID)（可选，若用户未指定则返回所有可用知识库供选择）',
             },
             title: {
               type: 'string',
-              description: '文档标题（可选，默认使用文件名）',
+              description: '文档显示标题（可选，默认使用原始文件名）',
             },
           },
         },
@@ -570,7 +565,6 @@ export class McpService {
 
       case 'get_file_upload_guide': {
         const targetKbId = String(args?.kb_id || '').trim();
-        const rawFilePath = String(args?.file_path || '').trim();
         const customTitle = String(args?.title || '').trim();
 
         const visibleIds = await this.permissionService.getVisibleKnowledgeBases(userId);
@@ -595,67 +589,56 @@ export class McpService {
         const baseUrl = (process.env.NEXT_PUBLIC_MCP_URL?.trim() || 'https://knowledge.5gsailor.com:20080').replace(/\/+$/, '');
         const uploadEndpoint = `${baseUrl}/mcp/upload`;
 
-        const sampleFilePath = rawFilePath || '@/path/to/your-file.pdf';
-        const sampleFileArg = sampleFilePath.startsWith('@') ? sampleFilePath : `@${sampleFilePath}`;
-        const kbIdArg = selectedKb ? selectedKb.id : 'TARGET_KB_ID';
-        const titlePart = customTitle ? ` \\\n  -F "title=${customTitle}"` : '';
-
-        const curlCmd = `curl -X POST "${uploadEndpoint}" \\
-  -H "X-App-Id: ${effectiveAppId}" \\
-  -H "X-App-Secret: YOUR_APP_SECRET" \\
-  -F "file=${sampleFileArg}" \\
-  -F "kb_id=${kbIdArg}"${titlePart}`;
-
-        const psCmd = `$headers = @{ "X-App-Id" = "${effectiveAppId}"; "X-App-Secret" = "YOUR_APP_SECRET" }
-$form = @{
-    file = Get-Item "${rawFilePath || 'C:\\path\\to\\your-file.pdf'}"
-    kb_id = "${kbIdArg}"
-}
-Invoke-RestMethod -Uri "${uploadEndpoint}" -Method Post -Headers $headers -Form $form`;
-
         const kbListText = kbs.length > 0
-          ? kbs.map((k) => `  • 【${k.name}】 ID: ${k.id} (${k.type})`).join('\n')
-          : '  （当前暂无可访问知识库，请先在系统内创建知识库）';
+          ? kbs.map((k) => `  • 【${k.name}】 ID: \`${k.id}\` (${k.type})`).join('\n')
+          : '  （当前暂无可访问知识库，请先在知识库页面创建知识库）';
 
         const guideText = [
-          `# 📄 GBrain 知识库文件直接上传指南 (免 Base64 / 原生支持最大 200MB)`,
+          `# 📄 GBrain 知识库文件直接上传指南 (免 Base64 / 原生二进制上传)`,
           ``,
-          `由于 MCP 协议基于纯文本传输，大文件（PDF/Word/PPTX/Excel 等）若强行转为 Base64 会极大消耗模型上下文 Token。`,
-          `因此，GBrainKG 提供独立的高性能二进制直传通道：\`POST /mcp/upload\`。`,
+          `### ⚠️ 核心上传原则`,
+          `1. **严禁使用 Base64 编码上传**：大文件转为 Base64 会极大消耗模型上下文且可能因截断损坏，系统不支持且已彻底关闭 Base64 文本上传。所有文档必须通过独立二进制直传端点进行上传（支持 PDF, DOCX, PPTX, XLSX, TXT, MD 等，最大 200MB）。`,
+          `2. **鉴权凭证一致**：上传所需的 \`X-App-Id\` 和 \`X-App-Secret\` 与您在当前 MCP 客户端（如 Cursor / Claude Desktop / Cline 等）配置连接此 MCP 服务时所使用的凭证（AppId 和 AppKey）**完全一致**，无需单独申请新凭证。`,
           ``,
-          `---`,
-          `### 🤖 给 Agent（助手）的执行指示：`,
-          `1. **如果您拥有系统终端（Terminal / Bash）执行权限**（如 Cursor Composer、Cline、本地开发助手等）：`,
-          `   您可以直接在后台为用户执行下方的 \`curl\` 命令，完成本地文件秒级直传！`,
-          `2. **如果您是纯文本聊天窗口**（如 Claude Desktop）：`,
-          `   请将下方的上传命令与操作步骤清晰地展示给用户，引导用户在电脑终端中执行。`,
-          `3. **上传完成后**：`,
-          `   接口会返回 \`document_id\`。您可以随即调用 \`get_document_status(doc_id)\` 工具为用户追踪后台解析与知识图谱构建状态！`,
+          `### 📡 上传接口与格式规范`,
+          `- **请求端点**: \`POST ${uploadEndpoint}\``,
+          `- **Content-Type**: \`multipart/form-data\``,
+          `- **请求头 (Headers)**:`,
+          `  - \`X-App-Id\`: \`${effectiveAppId}\``,
+          `  - \`X-App-Secret\`: 与当前 MCP 客户端中配置的 AppSecret / AppKey 一致`,
+          `- **表单字段 (Multipart Fields)**:`,
+          `  - \`file\`: 待上传的本地文件原始二进制（必填，必须携带真实扩展名如 .pdf, .docx, .pptx 等）`,
+          `  - \`kb_id\`: 目标知识库 ID（必填）`,
+          `  - \`title\`: 文档显示标题（可选）`,
           ``,
-          `---`,
-          `### 🚀 一键上传命令 (Bash / macOS / Linux)：`,
-          `\`\`\`bash`,
-          curlCmd,
-          `\`\`\``,
-          ``,
-          `### 🪟 Windows PowerShell 备选命令：`,
-          `\`\`\`powershell`,
-          psCmd,
-          `\`\`\``,
+          `### 🤖 给 AI 助手的指示（相关信息由 AI 自行组装）`,
+          `- **无需用户手动拼装参数**：请由 AI 自动结合用户在对话中提及的本地文件路径与目标知识库，自行组装完整的上传命令（如 curl 或 Python 脚本）或发起 HTTP 请求。`,
+          `- **凭据填充**：鉴权 AppId 与 AppKey/AppSecret 即为当前客户端配置 MCP 服务时使用的同一套凭据。`,
+          `- **入库状态跟踪**：上传成功后接口将返回 \`document_id\`，AI 应随即调用 \`get_document_status(doc_id)\` 帮助用户跟踪后台分块解析与质检进度。`,
           ``,
           selectedKb
             ? `> **当前目标知识库**：【${selectedKb.name}】(\`${selectedKb.id}\`)`
-            : `> **当前可用知识库列表**（请将命令中的 \`TARGET_KB_ID\` 替换为您要上传的目标库 ID）：\n${kbListText}`,
-          ``,
-          `> 💡 **安全提示**：请将命令中的 \`YOUR_APP_SECRET\` 替换为您在系统【个人设置 -> API 凭证】中保存的实际密钥。`,
+            : `> **当前可用知识库列表**：\n${kbListText}`,
         ].join('\n');
 
         return {
+          upload_method: 'POST multipart/form-data (仅支持二进制原始文件直传，严禁使用 Base64)',
           upload_endpoint: uploadEndpoint,
-          app_id: effectiveAppId,
+          auth: {
+            header_app_id: 'X-App-Id',
+            app_id: effectiveAppId,
+            header_app_secret: 'X-App-Secret',
+            note: '上传接口鉴权 Header (X-App-Id 与 X-App-Secret) 与当前 MCP 客户端配置完全一致',
+          },
           target_kb: selectedKb ? { id: selectedKb.id, name: selectedKb.name } : null,
           available_knowledge_bases: kbs.map((k) => ({ id: k.id, name: k.name, type: k.type })),
-          suggested_curl_command: curlCmd,
+          form_fields: {
+            file: '本地文件原始二进制（必填，须包含真实文件扩展名）',
+            kb_id: selectedKb ? selectedKb.id : '目标知识库 UUID（必填）',
+            title: customTitle || '文档显示标题（可选）',
+          },
+          ai_assembly_instructions:
+            '由 AI 自动根据用户的本地文件路径和目标知识库，组装上传请求或 curl 终端指令。AppId 与 AppSecret 与当前 MCP 配置一致。禁止转换 Base64。',
           guide: guideText,
         };
       }

@@ -131,4 +131,49 @@ describe('ingestion version fencing', () => {
     expect(result.status).toBe('indexing');
     expect(tx.chunk.createMany).toHaveBeenCalledTimes(1);
   });
+
+  it('derives real file extension from rawFileOid when title lacks extension', async () => {
+    mockPrisma.document.findUnique.mockResolvedValue({
+      id: 'doc-pdf',
+      kbId: 'kb-1',
+      title: 'AI公司产品手册',
+      rawFileOid: '/uploads/doc-pdf/raw.pdf',
+      status: 'uploaded',
+      version: 1,
+    });
+    tx.document.findUnique.mockResolvedValue({ version: 1 });
+    mockReadFile.mockResolvedValue(Buffer.from('%PDF-1.4 dummy pdf bytes'));
+
+    const originalFetch = global.fetch;
+    let interceptedFilename = '';
+    global.fetch = jest.fn().mockImplementation(async (url: any, init: any) => {
+      if (String(url).includes('/parse-execute')) {
+        const formData: FormData = init.body;
+        const fileEntry: any = formData.get('file');
+        interceptedFilename = fileEntry?.name || '';
+        return {
+          ok: true,
+          json: async () => ({
+            status: 'completed',
+            markdown: '# AI公司产品手册\n\n' + '这是关于AI公司产品的详细介绍章节内容，包括技术架构、核心产品功能和应用场景说明。'.repeat(10),
+            engine: 'pypdf-native',
+            classification: 'pdf',
+          }),
+        };
+      }
+      return originalFetch(url, init);
+    });
+
+    try {
+      const service = new IngestionService(
+        queue as any, compiler as any, models as any,
+        undefined, undefined, undefined, enrichQueue as any,
+      );
+      const result = await service.processDocument('doc-pdf', 1);
+      expect(interceptedFilename).toBe('AI公司产品手册.pdf');
+      expect(result.status).toBe('indexing');
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
 });
