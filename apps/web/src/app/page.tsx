@@ -200,6 +200,9 @@ function UniversalDocumentViewer({ preview, onClose }) {
   const [compileTruthError, setCompileTruthError] = useState('');
   const [rawBlob, setRawBlob] = useState(null);
   const [rawBlobUrl, setRawBlobUrl] = useState('');
+  const [pptPdfBlobUrl, setPptPdfBlobUrl] = useState('');
+  const [pptPdfLoading, setPptPdfLoading] = useState(false);
+  const [pptPdfError, setPptPdfError] = useState('');
   const [sheetsData, setSheetsData] = useState({ names: [], active: '', rows: [] });
   const [copied, setCopied] = useState(false);
   const docxContainerRef = useRef(null);
@@ -404,6 +407,34 @@ function UniversalDocumentViewer({ preview, onClose }) {
             console.warn('获取原始文件失败:', e);
           }
         }
+
+        // 3. 如果是 PPT/PPTX，调用后端无损转制原生 PDF 真实版式预览
+        if (isPpt && data.document?.hasRawFile) {
+          setPptPdfLoading(true);
+          setPptPdfError('');
+          fetch(`${API_BASE_URL}/api/v1/kbs/${kbId}/documents/${docId}/pdf-preview`, {
+            headers: apiHeaders(),
+          })
+            .then(async (res) => {
+              if (!res.ok) {
+                const errJson = await res.json().catch(() => ({}));
+                throw new Error(errJson.message || `API ${res.status}`);
+              }
+              return res.blob();
+            })
+            .then((blob) => {
+              if (active) {
+                const url = URL.createObjectURL(blob);
+                setPptPdfBlobUrl(url);
+              }
+            })
+            .catch((err) => {
+              if (active) setPptPdfError(err.message || 'PPT 原件预览生成中');
+            })
+            .finally(() => {
+              if (active) setPptPdfLoading(false);
+            });
+        }
       })
       .catch((err) => {
         if (active) setError(err.message || '加载文档失败');
@@ -415,6 +446,7 @@ function UniversalDocumentViewer({ preview, onClose }) {
     return () => {
       active = false;
       if (rawBlobUrl) URL.revokeObjectURL(rawBlobUrl);
+      if (pptPdfBlobUrl) URL.revokeObjectURL(pptPdfBlobUrl);
     };
   }, [kbId, docId]);
 
@@ -807,16 +839,41 @@ function UniversalDocumentViewer({ preview, onClose }) {
                       </div>
                     </div>
                   ) : isPpt ? (
-                    <PptDeckViewer
-                      rawBlob={rawBlob}
-                      rawBlobUrl={rawBlobUrl}
-                      docData={docData}
-                      filename={filename}
-                      ext={ext}
-                      preview={preview}
-                      highlightPhrases={highlightPhrases}
-                      onSwitchToMd={() => setActiveTab('std_md')}
-                    />
+                    pptPdfBlobUrl ? (
+                      <div style={{ width: '100%', height: '100%', minHeight: '72vh', display: 'flex', flexDirection: 'column', gap: '8px', position: 'relative' }}>
+                        <div style={{ background: 'var(--surface-2)', border: '1px solid var(--line)', borderRadius: '6px', padding: '7px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '12px', color: 'var(--ink-3)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span>📽️</span>
+                            <span><b>PPT 原版演示文稿真实预览</b>{preview?.pageNo ? `（已自动定位至第 ${preview.pageNo} 页）` : '（100% 还原原版排版、母版设计、图表与幻灯片画幅）'}</span>
+                          </div>
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <a href={preview?.pageNo ? `${pptPdfBlobUrl}#page=${preview.pageNo}` : pptPdfBlobUrl} target="_blank" rel="noreferrer" className="btn" style={{ padding: '3px 8px', fontSize: '11px', height: '24px', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>新窗口打开 ↗</a>
+                            <button type="button" className="btn" onClick={() => setActiveTab('std_md')} style={{ padding: '3px 8px', fontSize: '11px', height: '24px' }}>查看结构化 Markdown</button>
+                          </div>
+                        </div>
+                        <iframe
+                          src={preview?.pageNo ? `${pptPdfBlobUrl}#page=${preview.pageNo}&toolbar=1` : `${pptPdfBlobUrl}#toolbar=1`}
+                          title={filename}
+                          style={{ width: '100%', flex: 1, minHeight: '68vh', border: '1px solid var(--line)', borderRadius: '8px', background: '#fff' }}
+                        />
+                      </div>
+                    ) : pptPdfLoading ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', minHeight: '380px', gap: '12px' }}>
+                        <div className="streaming-dot" style={{ width: '14px', height: '14px', background: '#ea580c' }} />
+                        <div style={{ fontSize: '13px', color: 'var(--ink-3)' }}>正在生成 PPT 原版母版排版与幻灯片预览…</div>
+                      </div>
+                    ) : (
+                      <PptDeckViewer
+                        rawBlob={rawBlob}
+                        rawBlobUrl={rawBlobUrl}
+                        docData={docData}
+                        filename={filename}
+                        ext={ext}
+                        preview={preview}
+                        highlightPhrases={highlightPhrases}
+                        onSwitchToMd={() => setActiveTab('std_md')}
+                      />
+                    )
                   ) : isImage && rawBlobUrl ? (
                     <div style={{ textAlign: 'center', padding: '20px' }}>
                       <img src={rawBlobUrl} alt={filename} style={{ maxWidth: '100%', maxHeight: '72vh', borderRadius: '8px', boxShadow: 'var(--shadow-md)' }} />
