@@ -58,7 +58,7 @@ let DOCS: any[] = [];
 let ORG_TREE: any = null;
 let ORG_TREES: any[] = [];
 let GRANTS: any[] = [];
-let MODELS: any = {llm:[], embedding:[], rerank:[]};
+let MODELS: any = {llm:[], fast_llm:[], embedding:[], rerank:[]};
 let AUDIT: any[] = [];
 let AUDIT_META: any = { page: 1, limit: 20, total: 0, totalPages: 1 };
 let DREAM: any = null;
@@ -3799,7 +3799,7 @@ function ModelPanel(){
         </div>
       </div>
       <div className="subtabs">
-        <div className={`subtab ${sub==='models'?'active':''}`} onClick={()=>setSub('models')}>模型配置<span className="n">{MODELS.llm.length+MODELS.embedding.length+MODELS.rerank.length}</span></div>
+        <div className={`subtab ${sub==='models'?'active':''}`} onClick={()=>setSub('models')}>模型配置<span className="n">{MODELS.llm.length+(MODELS.fast_llm?.length||0)+MODELS.embedding.length+MODELS.rerank.length}</span></div>
         <div className={`subtab ${sub==='providers'?'active':''}`} onClick={()=>setSub('providers')}>供应商<span className="n">{PROVIDERS.length}</span></div>
         <div className={`subtab ${sub==='ocr'?'active':''}`} onClick={()=>setSub('ocr')}>PDF OCR<span className="n">{PROVIDERS.some(p=>p.kind==='ocr')?'已配置':'未配置'}</span></div>
       </div>
@@ -3810,7 +3810,7 @@ function ModelPanel(){
             <div className="mc-cat-head">
               <span className="tag">LLM · 生成</span>
               <h4>大语言模型</h4>
-              <span className="hint">用于答案生成与查询改写</span>
+              <span className="hint">用于答案生成与最终推理</span>
               <button className="btn" style={{marginLeft:'auto',padding:'5px 10px',fontSize:11.5}} onClick={()=>setOpenNewM({kind:'llm'})}><Icon name="plus" size={11}/> 新增模型</button>
             </div>
             {MODELS.llm.map(m=>{
@@ -3829,6 +3829,36 @@ function ModelPanel(){
                 </div>
               );
             })}
+          </div>
+
+          <div className="mc-cat fast_llm">
+            <div className="mc-cat-head">
+              <span className="tag">FAST-LLM · 辅助</span>
+              <h4>辅助小模型</h4>
+              <span className="hint">用于查询拆解、入库富化、事实蕴含判定与摘要 · 未配置自动回退大语言模型</span>
+              <button className="btn" style={{marginLeft:'auto',padding:'5px 10px',fontSize:11.5}} onClick={()=>setOpenNewM({kind:'fast_llm'})}><Icon name="plus" size={11}/> 新增模型</button>
+            </div>
+            {(MODELS.fast_llm || []).map(m=>{
+              const state = testStates[m.id] || (m.tested?'ok':'idle');
+              return (
+                <div key={m.id} className={`mc-card ${m.default?'default':''}`}>
+                  <span className="dot"/>
+                  <div className="info">
+                    <div className="nm">{m.name}{m.default && <span style={{marginLeft:8,fontSize:10.5,color:'var(--success)',fontWeight:500}}>· 默认</span>}</div>
+                    <div className="meta"><span className="stamp">{m.provider}</span><span>上下文 {m.ctx}</span></div>
+                  </div>
+                  <button className={`test ${state==='testing'?'testing':''} ${state==='ok'?'ok':''}`} onClick={()=>test(m.id)}>
+                    {state==='testing' ? <><span className="spinner"/> 测试中</> : state==='ok' ? <><Icon name="check" size={11}/> 连接正常</> : '测试连接'}
+                  </button>
+                  <button className="btn" style={{padding:'5px 9px',fontSize:11.5,marginLeft:6}} onClick={()=>setOpenNewM({kind:'fast_llm',target:m})}>编辑</button><button className="btn" style={{padding:'5px 9px',fontSize:11.5,marginLeft:6}} onClick={()=>setConfirmDelM({...m,kind:'fast_llm'})}>删除</button>
+                </div>
+              );
+            })}
+            {(!MODELS.fast_llm || MODELS.fast_llm.length === 0) && (
+              <div style={{padding:'12px 14px',fontSize:12,color:'var(--ink-3)',background:'var(--surface-2)',borderRadius:8,marginTop:6}}>
+                未单独配置辅助小模型，系统将自动复用上方的大语言模型。推荐配置极速轻量模型（如 Qwen-2.5-7B-Instruct / GPT-4o-mini / DeepSeek-Lite）以大幅压降 Token 计费与首字延迟。
+              </div>
+            )}
           </div>
 
           <div className="mc-cat embed">
@@ -4018,7 +4048,7 @@ function NewProviderModal({target, onClose, onSaved}){
 }
 
 function NewModelModal({kind, target, onClose, onSaved}){
-  const label = kind==='llm' ? '大语言模型' : kind==='embedding' ? '嵌入模型' : '重排模型';
+  const label = kind==='llm' ? '大语言模型' : kind==='fast_llm' ? '辅助小模型' : kind==='embedding' ? '嵌入模型' : '重排模型';
   const [modelName, setModelName] = useState(target?.modelName || target?.name || ''); const [providerId, setProviderId] = useState(target?.providerId || ''); const [contextLen, setContextLen] = useState(String(target?.contextLen || 8192)); const [dimensions, setDimensions] = useState(target?.dimensions ? String(target.dimensions) : ''); const [isDefault, setIsDefault] = useState(Boolean(target?.isDefault ?? target?.default)); const [saving, setSaving] = useState(false);
   const save = async () => { if (!modelName.trim() || !providerId) return; setSaving(true); try { const response=await fetch(`${API_BASE_URL}/api/v1/admin/models${target ? `/${target.id}` : ''}`,{method:target?'PATCH':'POST',headers:{'Content-Type':'application/json',...apiHeaders()},body:JSON.stringify({kind,modelName,providerId,contextLen,dimensions,isDefault})}); const result=await response.json().catch(()=>({})); if(!response.ok) throw new Error(result.message||'保存失败'); window.dispatchEvent(new CustomEvent('app-toast',{detail:'模型已保存'})); onSaved?.(); } catch(error){window.dispatchEvent(new CustomEvent('app-toast',{detail:error.message||'保存失败'}));} finally{setSaving(false);} };
   return (
@@ -4028,11 +4058,11 @@ function NewModelModal({kind, target, onClose, onSaved}){
         <button className="btn primary" disabled={saving} onClick={save}>{saving?'保存中…':'保存'}</button>
       </>
     }>
-      <div className="field"><label>模型名称<span className="req">*</span></label><input value={modelName} onChange={e=>setModelName(e.target.value)} placeholder="如：qwen3-max / bge-m3 / bge-reranker-v2-m3"/></div>
+      <div className="field"><label>模型名称<span className="req">*</span></label><input value={modelName} onChange={e=>setModelName(e.target.value)} placeholder={kind==='fast_llm' ? '如：qwen2.5-7b-instruct / gpt-4o-mini' : '如：qwen3-max / bge-m3 / bge-reranker-v2-m3'}/></div>
       <div className="field"><label>供应商<span className="req">*</span></label>
         <select value={providerId} onChange={e=>setProviderId(e.target.value)}><option value="">选择已注册的供应商…</option>{PROVIDERS.filter(p=>p.kind!=='ocr').map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
       </div>
-      {kind==='llm' && (
+      {(kind==='llm' || kind==='fast_llm') && (
         <div className="field-row">
           <div className="field"><label>上下文长度</label><input value={contextLen} onChange={e=>setContextLen(e.target.value)} placeholder="如：8192"/></div>
           <div className="field"><label>最大输出</label><input placeholder="如：8K"/></div>
@@ -6515,9 +6545,9 @@ function App(){
       return { ...grant, subj: subject, type: grant.subjectType, exp: grant.expiresAt ? new Date(grant.expiresAt).toLocaleDateString('zh-CN') : '永久', scope: grant.subjectType };
     });
     PROVIDERS = (d.providers || []).map((provider: any) => ({ ...provider, url: provider.baseUrl, note: provider.defaultParams?.note || '', kind: provider.kind || 'external' }));
-    MODELS = { llm: [], embedding: [], rerank: [] };
+    MODELS = { llm: [], fast_llm: [], embedding: [], rerank: [] };
     (d.models || []).forEach((model: any) => {
-      const kind = ['llm', 'embedding', 'rerank'].includes(model.kind) ? model.kind : 'llm';
+      const kind = ['llm', 'fast_llm', 'embedding', 'rerank'].includes(model.kind) ? model.kind : 'llm';
       (MODELS[kind] ||= []).push({ ...model, name: model.modelName, provider: model.provider?.name || '—', ctx: `${Math.round((model.contextLen || 0) / 1024) || model.contextLen}K`, dim: model.dimensions ? `${model.dimensions} 维` : '', default: model.isDefault, tested: model.testStatus === 'passed' });
     });
     AUDIT = (d.audit || []).map((item: any) => ({ ...item, when: new Date(item.when).toLocaleString('zh-CN'), what: item.action, actor: item.actor }));

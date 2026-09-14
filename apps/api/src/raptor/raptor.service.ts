@@ -838,7 +838,8 @@ export class RaptorService {
 
   private async llmConfig(): Promise<{ baseUrl: string; modelName: string; headers: Record<string, string> } | null> {
     if (process.env.RAPTOR_USE_LLM === 'false') return null;
-    const resolved = await this.modelConfigService?.getLlmChatConfig('llmwiki-raptor');
+    const resolved = (await this.modelConfigService?.getFastLlmChatConfig?.('llmwiki-raptor')) ??
+      (await this.modelConfigService?.getLlmChatConfig?.('llmwiki-raptor'));
     if (!resolved) return null;
     return { baseUrl: resolved.baseUrl, modelName: resolved.modelName, headers: resolved.headers };
   }

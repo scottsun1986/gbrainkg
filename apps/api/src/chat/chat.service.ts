@@ -2053,6 +2053,18 @@ export class ChatService {
       conversationHistory,
       signal,
     );
+
+    // Speculative Parallel Retrieval: Dispatch PostgreSQL chunk retrieval for the rewritten query
+    // concurrently with Agentic query planning / decomposition, hiding DB latency behind LLM time.
+    const speculativeBaseChunksPromise = this.searchChunksFallback(
+      scope,
+      retrieval.query || question,
+      15,
+    ).catch((err) => {
+      this.logger.warn(`searchChunksFallback speculative error: ${err.message}`);
+      return [];
+    });
+
     let agenticComplexity = 'simple';
     let agenticSubQueries: string[] = [];
     let agenticExpansions: string[] = [];
@@ -2270,10 +2282,25 @@ export class ChatService {
         ? agenticSubQueries
         : this.decomposeComplexQuery(retrieval.query || question);
       const fallbackChunksPromise = (async () => {
-        const base = await this.searchChunksFallback(scope, question, 15, recallVariants).catch((err) => {
-          this.logger.warn(`searchChunksFallback early promise error: ${err.message}`);
-          return [];
-        });
+        let base = await speculativeBaseChunksPromise;
+        if (!base || base.length === 0) {
+          base = await this.searchChunksFallback(scope, question, 15, recallVariants).catch((err) => {
+            this.logger.warn(`searchChunksFallback early promise error: ${err.message}`);
+            return [];
+          });
+        } else if (recallVariants.length > 0) {
+          try {
+            const extraHits = await this.searchChunksFallback(scope, question, 10, recallVariants).catch(() => []);
+            const seen = new Set(base.map((b) => b.documentId ? `${b.documentId}:${b.pageNo || 0}` : b.evidence.slice(0, 30)));
+            for (const h of extraHits) {
+              const key = h.documentId ? `${h.documentId}:${h.pageNo || 0}` : h.evidence.slice(0, 30);
+              if (!seen.has(key)) {
+                seen.add(key);
+                base.push(h);
+              }
+            }
+          } catch (e) {}
+        }
         if (effectiveSubQueries.length > 0) {
           try {
             const subChunks = await Promise.all(
@@ -4284,9 +4311,37 @@ ${compiledTruthContext}`;
       return { ...result, citations: reranked, topics: reranked.map((c: any) => c.topic), answer: reranked.map((c: any) => c.context || c.snippet).filter(Boolean).join("\n\n"), reranked: true, platformRerankApplied: true };
     }
 
-    const documents = citations
-      .map((citation: any) =>
-        String(citation.snippet || citation.context || citation.docTitle || citation.topic || "").slice(0, 1000).trim(),
+    // Two-stage cascade selection:
+    // When candidates exceed maxRerankCandidates (default 24), run Cross-Encoder
+    // only on the top pool while strictly retaining all multi-hop subquery/bridge probes.
+    const maxRerankCandidates = Math.max(12, Number(process.env.RERANK_MAX_CANDIDATES || 24));
+    let candidatesToRerank: Array<{ origIdx: number; cit: any }> = citations.map((cit: any, origIdx: number) => ({ origIdx, cit }));
+    let tailCitations: Array<{ origIdx: number; cit: any }> = [];
+
+    if (citations.length > maxRerankCandidates) {
+      const priorityItems: Array<{ origIdx: number; cit: any }> = [];
+      const remainingItems: Array<{ origIdx: number; cit: any }> = [];
+
+      for (let i = 0; i < citations.length; i++) {
+        const c = citations[i];
+        if (c?.subQueryOrigin) {
+          priorityItems.push({ origIdx: i, cit: c });
+        } else {
+          remainingItems.push({ origIdx: i, cit: c });
+        }
+      }
+
+      remainingItems.sort((a, b) => (Number(b.cit?.score || 0) - Number(a.cit?.score || 0)));
+
+      const needed = Math.max(0, maxRerankCandidates - priorityItems.length);
+      const chosenRemaining = remainingItems.slice(0, needed);
+      tailCitations = remainingItems.slice(needed);
+      candidatesToRerank = [...priorityItems, ...chosenRemaining];
+    }
+
+    const documents = candidatesToRerank
+      .map(({ cit }) =>
+        String(cit.snippet || cit.context || cit.docTitle || cit.topic || "").slice(0, 1000).trim(),
       )
       .filter(Boolean);
     if (documents.length < 2) return result;
@@ -4309,7 +4364,9 @@ ${compiledTruthContext}`;
       const scoredItems = ranked
         .map((item) => {
           const idx = Number(item.index);
-          const cit = citations[idx];
+          const candidate = candidatesToRerank[idx];
+          if (!candidate) return null;
+          const cit = candidate.cit;
           const rawCrossScore = typeof item.relevance_score === "number" ? item.relevance_score
             : typeof item.score === "number" ? item.score : 0;
           // Multi-hop / bridge candidates recalled by a specific subquery probe should not be
@@ -4317,14 +4374,24 @@ ${compiledTruthContext}`;
           const score = (cit?.subQueryOrigin && rawCrossScore < 0.70)
             ? Math.max(rawCrossScore, typeof cit.score === "number" ? cit.score : 0.85)
             : rawCrossScore;
-          return { idx, citation: cit, score };
+          return { origIdx: candidate.origIdx, citation: cit, score };
         })
-        .filter((item) => Boolean(item.citation) && Number.isInteger(item.idx));
+        .filter((item): item is { origIdx: number; citation: any; score: number } => Boolean(item && item.citation));
       if (!scoredItems.length) return result;
       scoredItems.sort((a, b) => b.score - a.score);
 
-      const order = scoredItems.map((item) => item.idx);
-      const scores = scoredItems.map((item) => item.score);
+      const tailItems = tailCitations.map((tc) => {
+        const fallbackScore = typeof tc.cit?.score === "number" ? tc.cit.score * 0.5 : 0.2;
+        return {
+          origIdx: tc.origIdx,
+          citation: tc.cit,
+          score: fallbackScore,
+        };
+      });
+
+      const allItems = [...scoredItems, ...tailItems];
+      const order = allItems.map((item) => item.origIdx);
+      const scores = allItems.map((item) => item.score);
       this.rerankCache.set(cacheKey, { expiresAt: Date.now() + Number(process.env.RERANK_CACHE_TTL_MS || 300000), order, scores });
       if (this.rerankCache.size > 200) {
         const oldest = this.rerankCache.keys().next().value;
@@ -4333,7 +4400,7 @@ ${compiledTruthContext}`;
 
       // No truncation here: the single evidence-selection stage decides what
       // enters the answer context, using these comparable scores.
-      const reranked = scoredItems.map((item) => ({ ...item.citation, rerankScore: item.score, relevanceScore: item.score }));
+      const reranked = allItems.map((item) => ({ ...item.citation, rerankScore: item.score, relevanceScore: item.score }));
       return {
         ...result,
         citations: reranked,
@@ -4714,7 +4781,8 @@ ${compiledTruthContext}`;
     if (!statements.length || !evidence.trim()) return supported;
     try {
       const llmRequest = this.modelConfigService
-        ? await this.modelConfigService.getLlmChatConfig('llmwiki-entailment')
+        ? (await this.modelConfigService?.getFastLlmChatConfig?.('llmwiki-entailment')) ??
+          (await this.modelConfigService?.getLlmChatConfig?.('llmwiki-entailment'))
         : null;
       if (!llmRequest) return supported;
       const baseUrl = llmRequest.baseUrl;
@@ -4739,7 +4807,7 @@ ${compiledTruthContext}`;
           max_tokens: Number(process.env.SEMANTIC_COVERAGE_MAX_TOKENS || 1200),
           response_format: { type: 'json_object' },
         }),
-        signal: AbortSignal.timeout(Number(process.env.SEMANTIC_COVERAGE_TIMEOUT_MS || 15000)),
+        signal: AbortSignal.timeout(Number(process.env.SEMANTIC_COVERAGE_TIMEOUT_MS || 6000)),
       });
       if (!response.ok) return supported;
       const payload: any = await response.json();

@@ -126,36 +126,76 @@ export class ChunkEmbeddingService {
     let failed = 0;
     for (let start = 0; start < rows.length; start += this.writeBatchSize) {
       const slice = rows.slice(start, start + this.writeBatchSize);
-      let vectors = await this.embeddingService.embed(slice.map((r) => r.content));
-      // One retry for inputs whose first attempt produced no vector, so a
-      // transient provider blip does not strand chunks until the next job.
-      const missingAfterFirst: number[] = [];
-      for (let i = 0; i < slice.length; i++) {
-        if (!vectors[i] || !vectors[i]!.length) missingAfterFirst.push(i);
-      }
-      if (missingAfterFirst.length) {
-        const retry = await this.embeddingService.embed(missingAfterFirst.map((i) => slice[i].content));
-        missingAfterFirst.forEach((rowIndex, k) => {
-          vectors[rowIndex] = retry[k] ?? vectors[rowIndex];
-        });
-      }
-      for (let i = 0; i < slice.length; i++) {
-        const vector = vectors[i];
-        if (!vector || !vector.length) {
-          failed += 1;
-          continue;
-        }
-        try {
-          const literal = `[${vector.join(',')}]`;
-          await this.prisma.$executeRaw`
-            UPDATE "Chunk" SET embedding = ${literal}::vector WHERE id = ${slice[i].id}::uuid
+
+      // Content-hash deduplication: check if identical text already has an embedding in Chunk table
+      const existingVecByContent = new Map<string, string>();
+      try {
+        const uniqueContents = Array.from(new Set(slice.map((r) => r.content))).filter(Boolean);
+        if (uniqueContents.length > 0) {
+          const cached = await this.prisma.$queryRaw<Array<{ content: string; vec: string }>>`
+            SELECT DISTINCT ON (content) content, embedding::text as vec
+            FROM "Chunk"
+            WHERE content = ANY(${uniqueContents}::text[]) AND embedding IS NOT NULL
           `;
-          stored += 1;
-        } catch (err) {
-          failed += 1;
-          this.logger.warn(
-            `Failed to store embedding for chunk ${slice[i].id}: ${err instanceof Error ? err.message : String(err)}`,
-          );
+          for (const c of cached || []) {
+            if (c.content && c.vec) existingVecByContent.set(c.content, c.vec);
+          }
+        }
+      } catch {
+        // Fall back gracefully to full embedding
+      }
+
+      const neededIndices: number[] = [];
+      const neededTexts: string[] = [];
+      for (let i = 0; i < slice.length; i++) {
+        const existing = existingVecByContent.get(slice[i].content);
+        if (existing) {
+          try {
+            await this.prisma.$executeRaw`
+              UPDATE "Chunk" SET embedding = ${existing}::vector WHERE id = ${slice[i].id}::uuid
+            `;
+            stored += 1;
+          } catch {
+            neededIndices.push(i);
+            neededTexts.push(slice[i].content);
+          }
+        } else {
+          neededIndices.push(i);
+          neededTexts.push(slice[i].content);
+        }
+      }
+
+      if (neededTexts.length > 0) {
+        let vectors = await this.embeddingService.embed(neededTexts);
+        const missingAfterFirst: number[] = [];
+        for (let i = 0; i < neededTexts.length; i++) {
+          if (!vectors[i] || !vectors[i]!.length) missingAfterFirst.push(i);
+        }
+        if (missingAfterFirst.length) {
+          const retry = await this.embeddingService.embed(missingAfterFirst.map((i) => neededTexts[i]));
+          missingAfterFirst.forEach((neededIdx, k) => {
+            vectors[neededIdx] = retry[k] ?? vectors[neededIdx];
+          });
+        }
+        for (let k = 0; k < neededIndices.length; k++) {
+          const origIdx = neededIndices[k];
+          const vector = vectors[k];
+          if (!vector || !vector.length) {
+            failed += 1;
+            continue;
+          }
+          try {
+            const literal = `[${vector.join(',')}]`;
+            await this.prisma.$executeRaw`
+              UPDATE "Chunk" SET embedding = ${literal}::vector WHERE id = ${slice[origIdx].id}::uuid
+            `;
+            stored += 1;
+          } catch (err) {
+            failed += 1;
+            this.logger.warn(
+              `Failed to store embedding for chunk ${slice[origIdx].id}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
         }
       }
     }

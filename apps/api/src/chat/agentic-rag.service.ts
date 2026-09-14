@@ -908,9 +908,9 @@ Output strict JSON:
   }
 
   private async getLlmConfig(): Promise<{ baseUrl: string; modelName: string; headers: Record<string, string> } | null> {
-    // Page-configured default LLM + provider-required headers, via the single
-    // shared resolver (no hardcoded model name).
-    const resolved = await this.modelConfigService.getLlmChatConfig('llmwiki-agentic');
+    // Prefer the fast/auxiliary model configured in settings; fall back to the default LLM.
+    const resolved = (await this.modelConfigService?.getFastLlmChatConfig?.('llmwiki-agentic')) ??
+      (await this.modelConfigService?.getLlmChatConfig?.('llmwiki-agentic'));
     if (!resolved) return null;
     return { baseUrl: resolved.baseUrl, modelName: resolved.modelName, headers: resolved.headers };
   }

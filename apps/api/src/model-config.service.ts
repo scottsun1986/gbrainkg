@@ -7,7 +7,7 @@ import {
   isEncryptedModelCredential,
 } from "./model-credential";
 
-export type ModelKind = "llm" | "embedding" | "rerank";
+export type ModelKind = "llm" | "fast_llm" | "embedding" | "rerank";
 
 export interface ResolvedOcrConfig {
   providerId: string;
@@ -50,6 +50,7 @@ export interface RuntimeModelStatus {
 
 const RECIPES: Record<ModelKind, readonly string[]> = {
   llm: ['deepseek', 'openai', 'openrouter', 'litellm', 'ollama'],
+  fast_llm: ['deepseek', 'openai', 'openrouter', 'litellm', 'ollama'],
   embedding: ['openai', 'voyage', 'ollama', 'llama-server'],
   rerank: ['llama-server-reranker'],
 };
@@ -106,6 +107,30 @@ export class ModelConfigService {
       Authorization: `Bearer ${apiKey}`,
     };
     // OpenCode Zen Go requires a routing session header.
+    if (baseUrl.includes('opencode.ai')) headers['x-opencode-session'] = sessionId;
+    return { baseUrl, apiKey, modelName, headers };
+  }
+
+  /**
+   * Dedicated resolver for auxiliary fast LLM calls (query decomposition,
+   * contextual chunk enrichment, entailment verification, RAPTOR summarization).
+   * Falls back seamlessly to the default 'llm' route if 'fast_llm' is not configured.
+   */
+  async getFastLlmChatConfig(sessionId = 'llmwiki-fast'): Promise<{
+    baseUrl: string;
+    apiKey: string;
+    modelName: string;
+    headers: Record<string, string>;
+  } | null> {
+    const config = (await this.getDefault('fast_llm')) ?? (await this.getDefault('llm'));
+    const baseUrl = (config?.provider.baseUrl || process.env.FAST_LLM_BASE_URL || process.env.LLM_BASE_URL || '').replace(/\/$/, '');
+    const apiKey = config?.provider.apiKey || process.env.FAST_LLM_API_KEY || process.env.DEEPSEEK_API_KEY || '';
+    const modelName = config?.modelName || process.env.FAST_LLM_MODEL || process.env.LLM_MODEL || '';
+    if (!baseUrl || !apiKey || !modelName) return null;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    };
     if (baseUrl.includes('opencode.ai')) headers['x-opencode-session'] = sessionId;
     return { baseUrl, apiKey, modelName, headers };
   }
@@ -248,10 +273,11 @@ export class ModelConfigService {
    * only: credentials are never returned and the CLI itself remains private.
    */
   async getRuntimeStatus(): Promise<RuntimeModelStatus> {
-    const [llm, embedding, rerank] = await Promise.all([
+    const [llm, embedding, rerank, fastLlm] = await Promise.all([
       this.getDefault("llm"),
       this.getDefault("embedding"),
       this.getDefault("rerank"),
+      this.getDefault("fast_llm"),
     ]);
     const routes = {
       llm: {
@@ -259,6 +285,12 @@ export class ModelConfigService {
         injected: Boolean(llm && process.env.LLM_MODEL === llm.modelName && process.env.GBRAIN_CHAT_MODEL === `${modelRecipe(llm, 'deepseek')}:${llm.modelName}`),
         modelName: llm?.modelName || null,
         baseUrl: llm?.provider.baseUrl || null,
+      },
+      fast_llm: {
+        configured: Boolean(fastLlm),
+        injected: Boolean(fastLlm && process.env.FAST_LLM_MODEL === fastLlm.modelName),
+        modelName: fastLlm?.modelName || null,
+        baseUrl: fastLlm?.provider.baseUrl || null,
       },
       embedding: {
         configured: Boolean(embedding),

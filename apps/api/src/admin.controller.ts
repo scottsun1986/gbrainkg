@@ -62,6 +62,7 @@ function assertGbrainRecipe(params: unknown, kind: string): void {
   const recipe = String((params as any).gbrainRecipe).trim().toLowerCase();
   const allowed: Record<string, string[]> = {
     llm: ['deepseek', 'openai', 'openrouter', 'litellm', 'ollama'],
+    fast_llm: ['deepseek', 'openai', 'openrouter', 'litellm', 'ollama'],
     embedding: ['openai', 'voyage', 'ollama', 'llama-server'],
     rerank: ['llama-server-reranker'],
   };
@@ -2195,7 +2196,7 @@ export class AdminController {
       where: { id: providerId },
     });
     if (!provider) throw new NotFoundException("Provider not found.");
-    const kind = ["llm", "embedding", "rerank"].includes(body?.kind)
+    const kind = ["llm", "fast_llm", "embedding", "rerank"].includes(body?.kind)
       ? body.kind
       : "llm";
     assertGbrainRecipe(provider.defaultParams, kind);
@@ -2245,7 +2246,7 @@ export class AdminController {
     });
     if (!existing) throw new NotFoundException("Model not found.");
     const kind = body?.kind !== undefined ? String(body.kind) : existing.kind;
-    if (!["llm", "embedding", "rerank"].includes(kind))
+    if (!["llm", "fast_llm", "embedding", "rerank"].includes(kind))
       throw new BadRequestException("Invalid model kind.");
     const providerId = body?.providerId ? String(body.providerId) : existing.providerId;
     const provider = await this.prisma.modelProvider.findUnique({ where: { id: providerId } });

@@ -276,18 +276,20 @@ export class IngestionService implements OnModuleInit {
     const contextualEnabled = process.env.CONTEXTUAL_RETRIEVAL_ENABLED !== 'false';
     if (contextualEnabled && chunks.length > 1 && markdown.length >= 500) {
       try {
-        const llmConfig = await this.modelConfigService.getDefault('llm');
+        const llmConfig = (await this.modelConfigService.getDefault('fast_llm')) ??
+          (await this.modelConfigService.getDefault('llm'));
         if (llmConfig) {
           enrichedChunks = await enrichChunksWithContext(
             markdown,
             chunks,
             {
-              baseUrl: (llmConfig.provider.baseUrl || process.env.LLM_BASE_URL || '').replace(/\/$/, ''),
-              apiKey: llmConfig.provider.apiKey || process.env.DEEPSEEK_API_KEY || '',
-              modelName: llmConfig.modelName || process.env.LLM_MODEL ,
+              baseUrl: (llmConfig.provider.baseUrl || process.env.FAST_LLM_BASE_URL || process.env.LLM_BASE_URL || '').replace(/\/$/, ''),
+              apiKey: llmConfig.provider.apiKey || process.env.FAST_LLM_API_KEY || process.env.DEEPSEEK_API_KEY || '',
+              modelName: llmConfig.modelName || process.env.FAST_LLM_MODEL || process.env.LLM_MODEL,
             },
             {
               concurrency: Number(process.env.CONTEXTUAL_RETRIEVAL_CONCURRENCY || 5),
+              batchSize: Number(process.env.CONTEXTUAL_RETRIEVAL_BATCH_SIZE || 3),
               documentTitle: document.title,
             },
           );
