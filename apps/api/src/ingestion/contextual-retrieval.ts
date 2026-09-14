@@ -211,6 +211,7 @@ export async function enrichChunksWithContext(
                 { role: 'system', content: systemPromptSingle },
                 { role: 'user', content: userContent }
               ],
+              enable_thinking: false,
               temperature: 0,
               max_tokens: 1200,
             }),
@@ -301,6 +302,7 @@ export async function enrichChunksWithContext(
                 { role: 'system', content: systemPromptBatch },
                 { role: 'user', content: userContent },
               ],
+              enable_thinking: false,
               temperature: 0,
               max_tokens: 1800,
             }),
