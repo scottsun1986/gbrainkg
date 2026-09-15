@@ -30,6 +30,7 @@ import { SystemReprocessService } from './system-reprocess.service';
       connection: {
         host: process.env.REDIS_HOST || 'localhost',
         port: Number(process.env.REDIS_PORT || 6379),
+        db: Number(process.env.REDIS_DB || 0),
         ...(process.env.REDIS_PASS ? { password: process.env.REDIS_PASS } : {}),
       },
     }),
