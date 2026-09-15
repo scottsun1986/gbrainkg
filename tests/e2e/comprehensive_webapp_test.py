@@ -70,8 +70,8 @@ async def run_webapp_testing_suite():
         # Test 3: Valid Superadmin Authentication & Session Bootstrap
         # -----------------------------------------------------------
         t0 = time.time()
-        await inputs.nth(0).fill("CY")
-        await inputs.nth(1).fill("admin123")
+        await inputs.nth(0).fill("admin")
+        await inputs.nth(1).fill("123456")
         await page.locator("button:has-text('登录')").first.click()
         await page.wait_for_load_state("networkidle")
         await page.wait_for_timeout(2000)

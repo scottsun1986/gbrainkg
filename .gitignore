@@ -54,3 +54,8 @@ tests/evaluation/results/
 
 # Video build intermediates (keep final mp4 + storyboard assets only)
 docs/video/build/
+
+# Visual audit intermediate rounds (keep final r3 acceptance only)
+docs/test-reports/visual-audit/r0/
+docs/test-reports/visual-audit/r1/
+docs/test-reports/visual-audit/r2/

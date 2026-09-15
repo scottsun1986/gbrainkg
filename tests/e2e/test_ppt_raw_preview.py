@@ -15,7 +15,7 @@ async def test_ppt_preview():
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
-            proxy={"server": "direct://"},
+            args=["--no-proxy-server", "--disable-gpu", "--no-sandbox"],
         )
         context = await browser.new_context(
             viewport={"width": 1440, "height": 900},

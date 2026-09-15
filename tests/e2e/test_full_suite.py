@@ -34,8 +34,8 @@ async def run_e2e_tests():
         # Fill credentials
         inputs = page.locator("input")
         if await inputs.count() >= 2:
-            await inputs.nth(0).fill("CY")
-            await inputs.nth(1).fill("admin123")
+            await inputs.nth(0).fill("admin")
+            await inputs.nth(1).fill("123456")
             login_btn = page.locator("button:has-text('登录')").first
             await login_btn.click()
             await page.wait_for_timeout(2500)

@@ -134,24 +134,24 @@ async def capture_theme(page, theme):
     # 16 Personal settings
     if await click_nav(page, "个人设置"):
         await shot(page, f"{t}18_personal_settings", 1500)
+        # back to chat for overlay captures
+        await click_nav(page, "对话")
+        await page.wait_for_timeout(600)
 
-    # 17 Help overlay
+    # 17 Command palette (Ctrl+K) — must be captured inside the app shell
+    await page.keyboard.press("Control+k")
+    await shot(page, f"{t}20_cmdk", 900)
+    await page.keyboard.press("Escape")
+    await page.wait_for_timeout(300)
+
+    # 18 Help overlay / page
     help_btn = page.locator("button[title*='帮助'], button[title*='?'], .icon-btn:has-text('?')").first
     if await help_btn.count():
         try:
             await help_btn.click(timeout=2000)
             await shot(page, f"{t}19_help", 1200)
-            close = page.locator("button:has-text('关闭'), [title*='关闭'], .modal button").first
-            if await close.count() and await awaitable_visible(close):
-                await close.click()
-                await page.wait_for_timeout(400)
         except Exception:
             pass
-
-    # 18 Command palette (⌘K / Ctrl+K)
-    await page.keyboard.press("Control+k")
-    await shot(page, f"{t}20_cmdk", 900)
-    await page.keyboard.press("Escape")
 
 
 async def main():

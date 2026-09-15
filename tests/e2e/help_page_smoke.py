@@ -4,7 +4,7 @@ from playwright.sync_api import sync_playwright
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
     page = browser.new_page(viewport={"width": 1440, "height": 1000})
-    page.goto("http://127.0.0.1:3000/help")
+    page.goto("http://127.0.0.1:3200/help")
     page.wait_for_load_state("networkidle")
     assert page.get_by_role("heading", name="把知识变成").is_visible()
     assert page.get_by_text("从上传一份制度文件，到带着原文依据得到答案").is_visible()

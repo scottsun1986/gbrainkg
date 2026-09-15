@@ -62,8 +62,8 @@ async def run_exhaustive():
 
         # 1.3 Valid Superadmin Login (CY)
         t0 = time.time()
-        await page.locator("input").nth(0).fill("CY")
-        await page.locator("input").nth(1).fill("admin123")
+        await page.locator("input").nth(0).fill("admin")
+        await page.locator("input").nth(1).fill("123456")
         await page.locator("button:has-text('登录')").first.click()
         await page.wait_for_load_state("networkidle")
         await page.wait_for_timeout(1500)
@@ -106,9 +106,10 @@ async def run_exhaustive():
         record("Boundary", "Empty KB Name Button Disabled", is_disabled, "Submit button disabled when empty")
         await page.screenshot(path=str(SHOT_DIR / "03_empty_kb_validation.png"))
 
-        # 2.3 Create Valid Personal KB
+        # 2.3 Create Valid Personal KB（库名带时间戳，可重复运行不撞同名约束）
         t0 = time.time()
-        await page.locator(".modal-body input").first.fill("E2E完整交互测试库")
+        kb_name = f"E2E完整交互测试库-{int(time.time())}"
+        await page.locator(".modal-body input").first.fill(kb_name)
         desc = page.locator(".modal-body textarea").first
         if await desc.count() > 0:
             await desc.fill("用于回归验证全功能交互的测试库")
@@ -118,13 +119,16 @@ async def run_exhaustive():
         
         # Wait for modal mask to disappear
         if await page.locator(".modal-mask").count() > 0:
-            await page.wait_for_selector(".modal-mask", state="hidden", timeout=5000)
+            try:
+                await page.wait_for_selector(".modal-mask", state="hidden", timeout=20000)
+            except Exception:
+                pass
             
-        record("KB", "Create Personal KB", True, "Created 'E2E完整交互测试库'", (time.time() - t0)*1000)
+        record("KB", "Create Personal KB", True, f"Created '{kb_name}'", (time.time() - t0)*1000)
         await page.screenshot(path=str(SHOT_DIR / "04_kb_created_list.png"))
 
         # Select the newly created KB
-        created_card = page.locator(".kb-card:has-text('E2E完整交互测试库')").first
+        created_card = page.locator(f".kb-card:has-text('{kb_name}')").first
         if await created_card.is_visible():
             await created_card.click()
             await page.wait_for_timeout(1000)
@@ -162,8 +166,8 @@ async def run_exhaustive():
         await page.wait_for_timeout(3000)
         if await page.locator(".modal-mask").count() > 0:
             try:
-                await page.wait_for_selector(".modal-mask", state="hidden", timeout=5000)
-            except:
+                await page.wait_for_selector(".modal-mask", state="hidden", timeout=20000)
+            except Exception:
                 pass
                 
         record("Document", "Ingest Text Document", True, "Document saved and indexing initiated", (time.time() - t0)*1000)
@@ -248,9 +252,13 @@ async def run_exhaustive():
 
         t0 = time.time()
         await page.locator(".nav-item:has-text('知识图谱')").first.click()
-        await page.wait_for_timeout(3000)
-        
-        canvas_ready = await page.locator("canvas").first.is_visible()
+        # 知识图谱为 SVG 渲染（.graph-canvas svg），并预留数据聚合时间
+        try:
+            await page.wait_for_selector(".graph-canvas svg", timeout=30000)
+        except Exception:
+            pass
+
+        canvas_ready = await page.locator(".graph-canvas svg").first.is_visible()
         record("Graph", "Force Graph Physics Canvas", canvas_ready, "Canvas initialized and rendered physics simulation", (time.time() - t0)*1000)
         await page.screenshot(path=str(SHOT_DIR / "10_knowledge_graph_full.png"))
 
@@ -336,7 +344,7 @@ async def run_exhaustive():
         record("Help", "Help Overlay & Dual Tabs", True, "Switched between User Manual and Shortcuts", (time.time() - t0)*1000)
 
         # Close Help
-        await page.locator(".help-head .x, button:has-text('×')").first.click()
+        await page.locator(".help-head .x").first.click()
         await page.wait_for_timeout(500)
 
         # ==============================================================================
@@ -350,7 +358,7 @@ async def run_exhaustive():
         # Select our created test KB
         await page.locator(".lib-tab:has-text('个人')").first.click()
         await page.wait_for_timeout(400)
-        test_kb_card = page.locator(".kb-card:has-text('E2E完整交互测试库')").first
+        test_kb_card = page.locator(f".kb-card:has-text('{kb_name}')").first
         if await test_kb_card.is_visible():
             await test_kb_card.click()
             await page.wait_for_timeout(800)

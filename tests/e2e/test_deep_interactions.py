@@ -39,8 +39,8 @@ async def run_deep_testing():
         # 1.1 SuperAdmin Login (CY)
         t0 = time.time()
         await page.goto(BASE_URL, wait_until="networkidle")
-        await page.locator("input").nth(0).fill("CY")
-        await page.locator("input").nth(1).fill("admin123")
+        await page.locator("input").nth(0).fill("admin")
+        await page.locator("input").nth(1).fill("123456")
         await page.locator("button:has-text('登录')").first.click()
         await page.wait_for_load_state("networkidle")
         await page.wait_for_timeout(1500)
@@ -87,7 +87,8 @@ async def run_deep_testing():
 
             # Fill details and create
             kb_name_input = page.locator(".modal-body input").first
-            await kb_name_input.fill("E2E深度自动化测试库")
+            kb_name = f"E2E深度自动化测试库-{int(time.time())}"
+            await kb_name_input.fill(kb_name)
             
             desc_input = page.locator(".modal-body textarea").first
             if await desc_input.count() > 0:
@@ -99,9 +100,9 @@ async def run_deep_testing():
             await page.wait_for_timeout(2000)
             
             # Verify newly created KB appears in list
-            created_kb = page.locator(".kb-card:has-text('E2E深度自动化测试库')").first
+            created_kb = page.locator(f".kb-card:has-text('{kb_name}')").first
             is_created = await created_kb.is_visible()
-            log_test("KB Mgmt", "Create & List New KB", is_created, "New KB 'E2E深度自动化测试库' created", (time.time() - t0)*1000)
+            log_test("KB Mgmt", "Create & List New KB", is_created, f"New KB '{kb_name}' created", (time.time() - t0)*1000)
             await page.screenshot(path=str(SHOT_DIR / "04_kb_created_in_sidebar.png"))
 
             # Select the newly created KB
@@ -196,9 +197,9 @@ async def run_deep_testing():
         t0 = time.time()
         chat_box = page.locator("input[placeholder*='输入'], textarea").first
         await chat_box.fill("请说明数据可用性指标和审计日志的保留期限要求？")
-        
-        send_btn = page.locator("button:has-text('发送')").first
-        await send_btn.click()
+
+        # 聊天输入框为图标发送按钮（无文字），使用回车提交
+        await chat_box.press("Enter")
         print("    [Chat] Streaming question submitted, waiting for completion...")
         await page.wait_for_timeout(4500)
         
@@ -225,9 +226,13 @@ async def run_deep_testing():
 
         t0 = time.time()
         await page.locator(".nav-item:has-text('知识图谱')").first.click()
-        await page.wait_for_timeout(3000)
-        
-        canvas = page.locator("canvas").first
+        # 知识图谱为 SVG 渲染（.graph-canvas svg），并预留数据聚合时间
+        try:
+            await page.wait_for_selector(".graph-canvas svg", timeout=30000)
+        except Exception:
+            pass
+
+        canvas = page.locator(".graph-canvas svg").first
         canvas_ready = await canvas.is_visible()
         log_test("Graph", "Force-Directed Canvas Network", canvas_ready, "Canvas initialized and rendered physics simulation", (time.time() - t0)*1000)
         await page.screenshot(path=str(SHOT_DIR / "11_knowledge_graph_full.png"))
@@ -338,11 +343,16 @@ async def run_deep_testing():
             await page.screenshot(path=str(SHOT_DIR / "19_help_manual_tab.png"))
             log_test("Help", "Help & User Manual Tab Switch", True, "Verified tabs switching and rendering", (time.time() - t0)*1000)
 
-        # Close help modal
-        close_help = page.locator(".help-head .x, button:has-text('×')").first
-        if await close_help.is_visible():
-            await close_help.click()
-            await page.wait_for_timeout(500)
+        # Close help modal（精确匹配浮层头部 ×，失败时按 Escape 兜底）
+        close_help = page.locator(".help-head .x").first
+        try:
+            if await close_help.is_visible():
+                await close_help.click()
+            else:
+                await page.keyboard.press("Escape")
+        except Exception:
+            await page.keyboard.press("Escape")
+        await page.wait_for_timeout(500)
 
         # ==============================================================================
         # MODULE 8: Cleanup & KB Delete Modal Confirmation

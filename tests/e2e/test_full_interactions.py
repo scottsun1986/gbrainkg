@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import sys
 import time
@@ -37,8 +38,8 @@ async def run_full_suite():
         print("\n--- 1. Login Authentication & Session ---")
         t0 = time.time()
         await page.goto(BASE_URL, wait_until="networkidle")
-        await page.locator("input").nth(0).fill("CY")
-        await page.locator("input").nth(1).fill("admin123")
+        await page.locator("input").nth(0).fill("admin")
+        await page.locator("input").nth(1).fill("123456")
         await page.locator("button:has-text('登录')").first.click()
         await page.wait_for_load_state("networkidle")
         await page.wait_for_timeout(1500)
@@ -77,14 +78,15 @@ async def run_full_suite():
             await page.screenshot(path=str(SHOT_DIR / "02_new_personal_kb_modal.png"))
 
             # Fill name and description
-            await page.locator(".modal-body input").first.fill("自动化测试专题库")
+            kb_name = f"自动化测试专题库-{int(time.time())}"
+            await page.locator(".modal-body input").first.fill(kb_name)
             desc = page.locator(".modal-body textarea").first
             if await desc.count() > 0:
                 await desc.fill("用于回归测试的独立个人库")
             
             await page.locator(".modal-foot button.primary").first.click()
             await page.wait_for_timeout(2000)
-            log_test("KB", "Create Personal KB", True, "Created '自动化测试专题库'", (time.time() - t0)*1000)
+            log_test("KB", "Create Personal KB", True, f"Created '{kb_name}'", (time.time() - t0)*1000)
             await page.screenshot(path=str(SHOT_DIR / "03_kb_created.png"))
 
         # Select first KB card
@@ -177,9 +179,14 @@ async def run_full_suite():
         print("\n--- 5. Knowledge Graph Exploration ---")
         t0 = time.time()
         await page.locator(".nav-item:has-text('知识图谱')").first.click()
-        await page.wait_for_timeout(3000)
-        
-        canvas = page.locator("canvas").first
+        # 图谱需聚合全部可见知识库数据，首次进入可能需要较长构建时间
+        # 知识图谱为 SVG 渲染（.graph-canvas svg），并非 canvas 元素
+        try:
+            await page.wait_for_selector(".graph-canvas svg", timeout=30000)
+        except Exception:
+            pass
+
+        canvas = page.locator(".graph-canvas svg").first
         has_canvas = await canvas.is_visible()
         log_test("Graph", "Force Graph Canvas", has_canvas, "Physics graph canvas rendered", (time.time() - t0)*1000)
         await page.screenshot(path=str(SHOT_DIR / "09_knowledge_graph_canvas.png"))
@@ -259,7 +266,7 @@ async def run_full_suite():
             log_test("Help", "Help Overlay & Tabs", True, "Verified Help modal with manual and shortcuts tabs", (time.time() - t0)*1000)
 
             # Close help
-            await page.locator(".help-head .x, button:has-text('×')").first.click()
+            await page.locator(".help-head .x").first.click()
             await page.wait_for_timeout(400)
 
         # ------------------------------------------------------------------------------

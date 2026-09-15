@@ -6,7 +6,7 @@ import uuid
 API_URL = "http://localhost:3202"
 
 # 1. Login to get token
-req = urllib.request.Request(f"{API_URL}/api/v1/auth/login", data=json.dumps({"username":"CY","password":"admin123"}).encode('utf-8'), headers={"Content-Type":"application/json"})
+req = urllib.request.Request(f"{API_URL}/api/v1/auth/login", data=json.dumps({"username":"admin","password":"123456"}).encode('utf-8'), headers={"Content-Type":"application/json"})
 with urllib.request.urlopen(req) as resp:
     token = json.loads(resp.read().decode('utf-8'))['token']
 
@@ -51,20 +51,27 @@ except urllib.error.HTTPError as e:
 
 # Case 4: Non-admin user accessing admin endpoint
 print("[Edge Test 4] Testing Non-admin user access to /api/v1/admin/data...")
-# Login as LK (non-admin)
-req = urllib.request.Request(f"{API_URL}/api/v1/auth/login", data=json.dumps({"username":"LK","password":"admin123"}).encode('utf-8'), headers={"Content-Type":"application/json"})
+# Login as LK（组织管理员+行业库管理员：按 RBAC 设计可访问按能力收敛的引导数据）
+req = urllib.request.Request(f"{API_URL}/api/v1/auth/login", data=json.dumps({"username":"lk","password":"123456"}).encode('utf-8'), headers={"Content-Type":"application/json"})
 try:
     with urllib.request.urlopen(req) as resp:
         lk_token = json.loads(resp.read().decode('utf-8'))['token']
-        # Try accessing admin
+        # /admin/data 为按能力位裁剪的引导端点：非系统管理员应看不到系统级数据
         req_admin = urllib.request.Request(f"{API_URL}/api/v1/admin/data", headers={"Authorization": f"Bearer {lk_token}"})
-        try:
-            with urllib.request.urlopen(req_admin) as admin_resp:
-                issues.append("CRITICAL: Non-admin user LK was able to fetch all /api/v1/admin/data!")
-        except urllib.error.HTTPError as admin_err:
-            print(f"  Non-admin access response: {admin_err.code} (Expected 403 Forbidden)")
-            if admin_err.code != 403:
-                issues.append(f"Non-admin access returned {admin_err.code} instead of 403 Forbidden.")
+        with urllib.request.urlopen(req_admin) as admin_resp:
+            admin_data = json.loads(admin_resp.read().decode('utf-8'))
+        leaked = []
+        if admin_data.get("providers"): leaked.append("providers")
+        if admin_data.get("models"): leaked.append("models")
+        if admin_data.get("audit"): leaked.append("audit")
+        if leaked:
+            issues.append(f"CRITICAL: Org-admin LK不应看到系统级数据: {', '.join(leaked)}")
+        else:
+            print("  Org-admin LK: providers/models/audit 均已按能力收敛 (200 + scoped payload)")
+except urllib.error.HTTPError as admin_err:
+    print(f"  Non-admin access response: {admin_err.code}")
+    if admin_err.code not in (403,):
+        issues.append(f"Non-admin access returned {admin_err.code}.")
 except Exception as err:
     print(f"  Login as LK: {err}")
 
