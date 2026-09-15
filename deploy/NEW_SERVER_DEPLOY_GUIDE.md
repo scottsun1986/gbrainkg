@@ -329,10 +329,9 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/gbrainkg/apps/web
 Environment=PORT=3200
-Environment=NODE_ENV=production
-EnvironmentFile=/home/ubuntu/.config/llmwiki/production.env
+Environment=HOSTNAME=127.0.0.1
 Environment=PATH=/home/ubuntu/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/usr/bin/node /home/ubuntu/gbrainkg/node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port 3200
+ExecStart=/usr/bin/npm run start -- --hostname 127.0.0.1
 Restart=always
 RestartSec=5
 TimeoutStopSec=15

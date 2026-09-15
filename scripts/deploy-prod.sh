@@ -163,6 +163,7 @@ deploy_single_instance() {
     set -a
     source '$ENV_FILE'
     set +a
+    npx prisma generate
     npx prisma migrate deploy
 
     # 执行 GBrain 底座迁移，确保 pages / content_chunks 架构同步
@@ -185,8 +186,8 @@ deploy_single_instance() {
   ssh "$PROD_HOST" "
     curl -sf 'http://127.0.0.1:$API_PORT/open-api/spec.json' >/dev/null && echo '  - API (port $API_PORT): OK'
     curl -sf 'http://127.0.0.1:$WEB_PORT/' >/dev/null && echo '  - Web (port $WEB_PORT): OK'
-    domain=\$(grep -E '^WEB_ORIGIN=' '$ENV_FILE' | sed -E 's|^WEB_ORIGIN=https?://([^:/]+).*|\1|' || echo '127.0.0.1')
-    scheme=\$(grep -E '^WEB_ORIGIN=' '$ENV_FILE' | grep -q '^WEB_ORIGIN=https://' && echo 'https' || echo 'http')
+    domain=\$(grep -E '^WEB_ORIGIN=' '$ENV_FILE' | head -1 | sed -E 's|^WEB_ORIGIN=https?://([^:/]+).*|\1|' || echo '127.0.0.1')
+    scheme=\$(grep -E '^WEB_ORIGIN=' '$ENV_FILE' | head -1 | grep -q '^WEB_ORIGIN=https://' && echo 'https' || echo 'http')
     curl -sk --resolve \"\$domain:$PUBLIC_PORT:127.0.0.1\" -o /dev/null -w \"  - Public Gateway (\$PUBLIC_PORT): HTTP %{http_code}\n\" \"\$scheme://\$domain:$PUBLIC_PORT/\" || echo \"  - Public Gateway (\$PUBLIC_PORT): skipped\"
     set -a
     source '$ENV_FILE'

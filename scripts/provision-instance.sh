@@ -141,7 +141,8 @@ EOF'
   sudo bash -c 'cat <<EOF > /etc/systemd/system/$WEB_SERVICE.service
 [Unit]
 Description=LLMWiki Web ($INST_NAME)
-After=network.target
+After=network.target $API_SERVICE.service
+Wants=$API_SERVICE.service
 
 [Service]
 Type=simple
@@ -149,12 +150,12 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=$SYMLINK_DIR/apps/web
 Environment=PORT=$WEB_PORT
-Environment=NODE_ENV=production
-EnvironmentFile=$ENV_FILE
+Environment=HOSTNAME=127.0.0.1
 Environment=PATH=/home/ubuntu/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/home/ubuntu/.hermes/node/bin/next start --hostname 127.0.0.1 --port $WEB_PORT
+ExecStart=/usr/bin/npm run start -- --hostname 127.0.0.1
 Restart=always
 RestartSec=5
+TimeoutStopSec=15
 
 MemoryMax=1G
 StandardOutput=journal
@@ -168,45 +169,100 @@ EOF'
   sudo systemctl enable '$API_SERVICE' '$WEB_SERVICE'
 "
 
-# ---- 5. 输出 Nginx 反向代理配置指南 ----
-log "[5/5] Provisioning completed successfully!"
-echo ""
-echo "================================================================================"
-echo "【下一步：配置 Nginx 端口反向代理】"
-echo "请在服务器 /etc/nginx/sites-available/knowledge.5gsailor.com 中追加如下 server 块："
-echo "================================================================================"
-cat <<EOF
+# ---- 5. 自动配置 Nginx 反向代理并热重载 ----
+log "[5/5] Configuring Nginx reverse proxy for $INST_NAME (port $PUBLIC_PORT)..."
+ssh "$PROD_HOST" "sudo tee /etc/nginx/sites-available/llmwiki-$INST_NAME >/dev/null" <<EOF
+# Host Nginx vhost for LLMWiki $INST_NAME
+limit_req_zone \$binary_remote_addr zone=llmwiki_login_$INST_NAME:10m rate=3r/s;
+limit_req_zone \$binary_remote_addr zone=llmwiki_api_$INST_NAME:10m rate=20r/s;
+
 server {
-    listen $PUBLIC_PORT ssl http2;
-    listen [::]:$PUBLIC_PORT ssl http2;
+    listen $PUBLIC_PORT ssl;
+    listen [::]:$PUBLIC_PORT ssl;
     server_name knowledge.5gsailor.com;
 
     ssl_certificate /etc/letsencrypt/live/knowledge.5gsailor.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/knowledge.5gsailor.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL_LLMWIKI_${INST_NAME^^}:10m;
+    ssl_session_tickets off;
 
-    client_max_body_size 250M;
+    error_page 497 301 =307 https://\$host:$PUBLIC_PORT\$request_uri;
 
-    # API 反向代理
-    location /api/ {
+    client_max_body_size 200m;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    location = /health {
+        proxy_pass http://127.0.0.1:$API_PORT/health;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location = /api/v1/auth/login {
+        limit_req zone=llmwiki_login_$INST_NAME burst=5 nodelay;
         proxy_pass http://127.0.0.1:$API_PORT;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_read_timeout 600s;
+    }
+
+    location /api/ {
+        limit_req zone=llmwiki_api_$INST_NAME burst=40 nodelay;
+        proxy_pass http://127.0.0.1:$API_PORT;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_read_timeout 300s;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location /mcp {
+        limit_req zone=llmwiki_api_$INST_NAME burst=40 nodelay;
+        proxy_pass http://127.0.0.1:$API_PORT;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location /mcp/ {
+        limit_req zone=llmwiki_api_$INST_NAME burst=40 nodelay;
+        proxy_pass http://127.0.0.1:$API_PORT;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
     }
 
     location /open-api/ {
+        limit_req zone=llmwiki_api_$INST_NAME burst=40 nodelay;
         proxy_pass http://127.0.0.1:$API_PORT;
         proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_read_timeout 300s;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
     }
 
-    # 前端 Web 反向代理
     location / {
         proxy_pass http://127.0.0.1:$WEB_PORT;
         proxy_http_version 1.1;
@@ -219,7 +275,20 @@ server {
     }
 }
 EOF
-echo "================================================================================"
-echo "配置完成后执行: sudo nginx -t && sudo nginx -s reload"
-echo "发布代码执行:   bash scripts/deploy-prod.sh --target=$INST_NAME"
+
+ssh "$PROD_HOST" "
+  sudo ln -sfn '/etc/nginx/sites-available/llmwiki-$INST_NAME' '/etc/nginx/sites-enabled/llmwiki-$INST_NAME'
+  sudo nginx -t && sudo systemctl reload nginx
+"
+
+log "================================================================================"
+log "🎉 实例 $INST_NAME 开辟与网关配置完毕！"
+log "  - 后端 API 端口: $API_PORT"
+log "  - 前端 Web 端口: $WEB_PORT"
+log "  - 公网 HTTPS 入口: https://knowledge.5gsailor.com:$PUBLIC_PORT"
+log "  - 数据库: $DB_NAME"
+log "  - Redis DB: $REDIS_DB"
+log "================================================================================"
+echo "下一步：执行代码发布与双引擎迁移："
+echo "  bash scripts/deploy-prod.sh --target=$INST_NAME"
 echo "================================================================================"

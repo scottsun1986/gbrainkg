@@ -359,10 +359,9 @@ User=$REMOTE_USER
 Group=$REMOTE_USER
 WorkingDirectory=/home/$REMOTE_USER/gbrainkg/apps/web
 Environment=PORT=3200
-Environment=NODE_ENV=production
-EnvironmentFile=/home/$REMOTE_USER/.config/llmwiki/production.env
+Environment=HOSTNAME=127.0.0.1
 Environment=PATH=/home/$REMOTE_USER/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/usr/bin/node /home/$REMOTE_USER/gbrainkg/node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port 3200
+ExecStart=/usr/bin/npm run start -- --hostname 127.0.0.1
 Restart=always
 RestartSec=5
 TimeoutStopSec=15
