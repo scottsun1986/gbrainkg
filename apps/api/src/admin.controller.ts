@@ -63,8 +63,8 @@ function assertGbrainRecipe(params: unknown, kind: string): void {
   const allowed: Record<string, string[]> = {
     llm: ['deepseek', 'openai', 'openrouter', 'litellm', 'ollama'],
     fast_llm: ['deepseek', 'openai', 'openrouter', 'litellm', 'ollama'],
-    embedding: ['openai', 'voyage', 'ollama', 'llama-server'],
-    rerank: ['llama-server-reranker'],
+    embedding: ['openai', 'voyage', 'ollama', 'llama-server', 'openrouter', 'litellm'],
+    rerank: ['llama-server-reranker', 'openai', 'deepseek', 'openrouter', 'litellm', 'ollama', 'voyage'],
   };
   if (!allowed[kind]?.includes(recipe)) {
     throw new BadRequestException(`GBrain recipe ${recipe} is not valid for ${kind}.`);
