@@ -167,6 +167,9 @@ deploy_single_instance() {
 
     # 执行 GBrain 底座迁移，确保 pages / content_chunks 架构同步
     gbrain apply-migrations --yes || true
+
+    # 自动初始化基础角色与超级管理员账号（默认密码 123456，若已存在则安全跳过）
+    ADMIN_INITIAL_PASSWORD="${ADMIN_INITIAL_PASSWORD:-123456}" node "$PROD_REPO/apps/api/dist/bootstrap/production-bootstrap.js" || true
   "
 
   # 3.4 重启专属系统服务
@@ -182,7 +185,9 @@ deploy_single_instance() {
   ssh "$PROD_HOST" "
     curl -sf 'http://127.0.0.1:$API_PORT/open-api/spec.json' >/dev/null && echo '  - API (port $API_PORT): OK'
     curl -sf 'http://127.0.0.1:$WEB_PORT/' >/dev/null && echo '  - Web (port $WEB_PORT): OK'
-    curl -sk --resolve knowledge.5gsailor.com:$PUBLIC_PORT:127.0.0.1 -o /dev/null -w '  - Public HTTPS ($PUBLIC_PORT): HTTP %{http_code}\n' 'https://knowledge.5gsailor.com:$PUBLIC_PORT/'
+    domain=\$(grep -E '^WEB_ORIGIN=' '$ENV_FILE' | sed -E 's|^WEB_ORIGIN=https?://([^:/]+).*|\1|' || echo '127.0.0.1')
+    scheme=\$(grep -E '^WEB_ORIGIN=' '$ENV_FILE' | grep -q '^WEB_ORIGIN=https://' && echo 'https' || echo 'http')
+    curl -sk --resolve \"\$domain:$PUBLIC_PORT:127.0.0.1\" -o /dev/null -w \"  - Public Gateway (\$PUBLIC_PORT): HTTP %{http_code}\n\" \"\$scheme://\$domain:$PUBLIC_PORT/\" || echo \"  - Public Gateway (\$PUBLIC_PORT): skipped\"
     set -a
     source '$ENV_FILE'
     set +a

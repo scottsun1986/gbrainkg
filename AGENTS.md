@@ -16,5 +16,6 @@
 - **极简资源共享模式**：所有实例共享全局 PostgreSQL、Redis、Parser-Worker、MinIO 与 Nginx，单机可支撑 10+ 实例，禁止重复拉起重型中间件或 Python 解析服务。
 - **物理隔离防线**：
   - 实例 N 必须分配专属数据库 `llmwiki_instN` 与专属 Redis DB `REDIS_DB=N-1`，严禁多实例共享同一 Redis 库导致任务被跨实例抢占。
-  - 新实例必须通过 `bash scripts/provision-instance.sh <N>` 自动化开辟，确保目录软链在 `/data` 数据盘且配置符合隔离标准。
+  - 新服务器部署实例 1：通过 `bash scripts/bootstrap-new-server.sh` 自动化初始化底座与共享中间件，再通过 `bash scripts/deploy-prod.sh --target=inst1` 完成初次发布。
+  - 新实例扩容必须通过 `bash scripts/provision-instance.sh <N>` 自动化开辟，确保目录软链在 `/data` 数据盘且配置符合隔离标准。
   - 部署发布统一使用 `bash scripts/deploy-prod.sh --target=all` 或 `--target=instN`，脚本内置隔离性、数据库权限（BYPASSRLS）与架构迁移预检门禁。

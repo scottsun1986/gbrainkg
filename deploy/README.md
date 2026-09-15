@@ -1,5 +1,9 @@
 # LLMWiki 生产环境部署 (宿主机原生架构 / Host-Native)
 
+> 📖 **相关指南索引**：
+> - 🚀 **新服务器从零部署实例 1**：参见 [新服务器部署手册 (NEW_SERVER_DEPLOY_GUIDE.md)](file:///home/scottsun/gbrainkg/deploy/NEW_SERVER_DEPLOY_GUIDE.md)
+> - 🏢 **生产多实例极简资源扩容（实例 2、3...）**：参见 [多实例部署指南 (MULTI_INSTANCE_GUIDE.md)](file:///home/scottsun/gbrainkg/deploy/MULTI_INSTANCE_GUIDE.md)
+
 生产环境采用与测试环境一致的**宿主机原生部署模式（Host-Native via Systemd）**，直接运行在 Linux 宿主机上，无需通过 Docker Compose 封装应用容器，提供极佳的性能、直观的日志与便捷的运维体验。
 
 ## 架构说明
