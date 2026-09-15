@@ -59,3 +59,7 @@ docs/video/build/
 docs/test-reports/visual-audit/r0/
 docs/test-reports/visual-audit/r1/
 docs/test-reports/visual-audit/r2/
+
+# misc local artifacts
+docs/video/分析.zip
+bun.lock
