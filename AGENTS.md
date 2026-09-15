@@ -11,3 +11,10 @@
 ## 2. 算法与检索架构原则
 - **拒绝业务硬编码**：检索与语义对齐逻辑必须保持通用（Corpus-Agnostic），严禁针对特定业务场景（如特定部门、考勤、排班等）在代码中硬编码专用同义词表或正则加权分支。
 - **混合检索协同**：统一采用密集向量（pgvector `BAAI/bge-m3`）+ 全文检索（BM25/pg_trgm）+ 知识图谱（GraphRAG）+ 重排序（Reranker）的通用架构支撑语义理解与事实裁决。
+
+## 3. 多实例扩展与隔离守则
+- **极简资源共享模式**：所有实例共享全局 PostgreSQL、Redis、Parser-Worker、MinIO 与 Nginx，单机可支撑 10+ 实例，禁止重复拉起重型中间件或 Python 解析服务。
+- **物理隔离防线**：
+  - 实例 N 必须分配专属数据库 `llmwiki_instN` 与专属 Redis DB `REDIS_DB=N-1`，严禁多实例共享同一 Redis 库导致任务被跨实例抢占。
+  - 新实例必须通过 `bash scripts/provision-instance.sh <N>` 自动化开辟，确保目录软链在 `/data` 数据盘且配置符合隔离标准。
+  - 部署发布统一使用 `bash scripts/deploy-prod.sh --target=all` 或 `--target=instN`，脚本内置隔离性、数据库权限（BYPASSRLS）与架构迁移预检门禁。

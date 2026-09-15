@@ -3,9 +3,10 @@
 # GBrainKG 生产发布与多实例统一运维脚本（本机 → meetings2）
 # ==============================================================================
 # 用法:
-#   bash scripts/deploy-prod.sh --target=all         # 同时发布实例1与实例2（推荐）
+#   bash scripts/deploy-prod.sh --target=all         # 自动发现并批量发布全部生产实例（推荐）
 #   bash scripts/deploy-prod.sh --target=inst1       # 仅发布实例1（主客户：20080端口）
 #   bash scripts/deploy-prod.sh --target=inst2       # 仅发布实例2（独立客户：20081端口）
+#   bash scripts/deploy-prod.sh --target=instN       # 发布任意指定实例N（如 inst3）
 #   bash scripts/deploy-prod.sh --skip-build ...     # 跳过本地构建，直接发布现有产物
 #
 # ==============================================================================
@@ -53,8 +54,7 @@ for arg in "$@"; do
   case "$arg" in
     --skip-build) SKIP_BUILD=true ;;
     --target=*) TARGET="${arg#*=}" ;;
-    inst1|--inst1) TARGET="inst1" ;;
-    inst2|--inst2) TARGET="inst2" ;;
+    inst*|--inst*) TARGET="${arg#--}" ;;
     all|--all) TARGET="all" ;;
   esac
 done
@@ -71,92 +71,144 @@ fi
 [[ -f "$LOCAL_ROOT/apps/api/dist/main.js" ]] || { log "ERROR: apps/api/dist/main.js missing"; exit 1; }
 [[ -d "$LOCAL_ROOT/apps/web/.next" ]] || { log "ERROR: apps/web/.next missing"; exit 1; }
 
-# ---- 2. 部署单个实例函数 ----
-deploy_single_instance() {
+# ---- 2. 实例参数解析函数 ----
+resolve_instance_params() {
   local inst="$1"
-  local prod_repo api_service web_service api_port web_port public_port data_dir env_file
-  
-  if [[ "$inst" == "inst2" ]]; then
-    prod_repo="/data/llmwiki-inst2/code"
-    api_service="llmwiki-api-inst2"
-    web_service="llmwiki-web-inst2"
-    api_port=3002
-    web_port=3201
-    public_port=20081
-    data_dir="/data/llmwiki-inst2"
-    env_file="/home/ubuntu/.config/llmwiki/production-inst2.env"
+  if [[ "$inst" == "inst1" || "$inst" == "1" ]]; then
+    INST_NAME="inst1"
+    INST_NUM=1
+    PROD_REPO="/home/ubuntu/gbrainkg"
+    API_SERVICE="llmwiki-api"
+    WEB_SERVICE="llmwiki-web"
+    API_PORT=3000
+    WEB_PORT=3200
+    PUBLIC_PORT=20080
+    DATA_DIR="/data/llmwiki"
+    ENV_FILE="/home/ubuntu/.config/llmwiki/production.env"
+    EXPECTED_REDIS_DB=0
+    DB_NAME="llmwiki"
+  elif [[ "$inst" =~ ^inst([0-9]+)$ || "$inst" =~ ^([0-9]+)$ ]]; then
+    INST_NUM="${BASH_REMATCH[1]}"
+    local offset=$((INST_NUM - 1))
+    INST_NAME="inst${INST_NUM}"
+    PROD_REPO="/data/llmwiki-inst${INST_NUM}/code"
+    API_SERVICE="llmwiki-api-inst${INST_NUM}"
+    WEB_SERVICE="llmwiki-web-inst${INST_NUM}"
+    API_PORT=$((3000 + 2 * offset))
+    WEB_PORT=$((3200 + offset))
+    PUBLIC_PORT=$((20080 + offset))
+    DATA_DIR="/data/llmwiki-inst${INST_NUM}"
+    ENV_FILE="/home/ubuntu/.config/llmwiki/production-inst${INST_NUM}.env"
+    EXPECTED_REDIS_DB=$offset
+    DB_NAME="llmwiki_inst${INST_NUM}"
   else
-    prod_repo="/home/ubuntu/gbrainkg"
-    api_service="llmwiki-api"
-    web_service="llmwiki-web"
-    api_port=3000
-    web_port=3200
-    public_port=20080
-    data_dir="/data/llmwiki"
-    env_file="/home/ubuntu/.config/llmwiki/production.env"
+    log "ERROR: Invalid instance target '$inst'. Choose 'instN' (e.g. inst1, inst2) or 'all'."
+    exit 1
   fi
+}
 
-  log ">>> Deploying target: $inst ($api_service, $web_service, port $public_port) <<<"
+# ---- 3. 部署单个实例函数 ----
+deploy_single_instance() {
+  local target_inst="$1"
+  resolve_instance_params "$target_inst"
 
-  # 2.1 检查前置
+  log ">>> Deploying target: $INST_NAME ($API_SERVICE, $WEB_SERVICE, port $PUBLIC_PORT, DB $DB_NAME, Redis DB $EXPECTED_REDIS_DB) <<<"
+
+  # 3.1 检查前置与强隔离防线（重点防止跨实例队列串号与权限缺失）
   ssh "$PROD_HOST" "
     set -e
     mountpoint -q /data || { echo 'ERROR: /data not mounted'; exit 1; }
-    [[ -d '$data_dir' ]] || { echo 'ERROR: $data_dir missing'; exit 1; }
-    [[ -d '$prod_repo' || -L '$prod_repo' ]] || { echo 'ERROR: $prod_repo missing'; exit 1; }
-    [[ -f '$env_file' ]] || { echo 'ERROR: $env_file missing'; exit 1; }
+    [[ -d '$DATA_DIR' ]] || { echo 'ERROR: $DATA_DIR missing'; exit 1; }
+    [[ -d '$PROD_REPO' || -L '$PROD_REPO' ]] || { echo 'ERROR: $PROD_REPO missing'; exit 1; }
+    [[ -f '$ENV_FILE' ]] || { echo 'ERROR: $ENV_FILE missing'; exit 1; }
+
+    # 强校验：检查 REDIS_DB 配置，杜绝任何多实例连入同一 Redis 库导致的任务抢占卡死缺陷
+    actual_redis=\$(grep -E '^REDIS_DB=' '$ENV_FILE' | cut -d= -f2 | tr -cd 0-9 || echo '')
+    actual_redis=\${actual_redis:-0}
+    if [[ \"\$actual_redis\" -ne \"$EXPECTED_REDIS_DB\" ]]; then
+      echo '========================================================================'
+      echo 'CRITICAL ERROR: Redis DB Isolation Violation!'
+      echo \"Target instance: $INST_NAME requires REDIS_DB=$EXPECTED_REDIS_DB\"
+      echo \"Configured file: $ENV_FILE has REDIS_DB=\$actual_redis\"
+      echo 'Aborting deployment to prevent queue interference and stalled indexing!'
+      echo '========================================================================'
+      exit 1
+    fi
+
+    # 校验并补齐 postgresql 角色权限
+    sudo -u postgres psql -tAc \"SELECT rolbypassrls FROM pg_roles WHERE rolname='llmwiki'\" | grep -q t || {
+      echo 'Granting BYPASSRLS to role llmwiki...'
+      sudo -u postgres psql -c \"ALTER ROLE llmwiki BYPASSRLS;\"
+    }
   "
 
-  # 2.2 Rsync 代码与构建产物
-  log "[$inst] Synchronizing code + dist..."
+  # 3.2 Rsync 代码与构建产物
+  log "[$INST_NAME] Synchronizing code + dist..."
   rsync -az --info=stats1 \
     --exclude='.git' --exclude='node_modules' --exclude='.next/cache' \
     --exclude='.env*' --exclude='runtime' --exclude='scratch' \
     --exclude='screenshots' --exclude='.playwright-mcp' --exclude='.turbo' \
     --exclude='.pytest_cache' --exclude='.secrets' --exclude='.agents' \
     --exclude='docs' --exclude='design' \
-    "$LOCAL_ROOT/" "$PROD_HOST:$prod_repo/"
+    "$LOCAL_ROOT/" "$PROD_HOST:$PROD_REPO/"
 
-  # 2.3 依赖安装与数据库迁移
-  log "[$inst] Running database migration & pnpm install..."
+  # 3.3 依赖安装、Prisma 迁移与 GBrain 迁移
+  log "[$INST_NAME] Running database migrations & pnpm install..."
   ssh "$PROD_HOST" "
     set -e
-    export PATH=\$HOME/.local/bin:\$HOME/.hermes/node/bin:\$PATH
-    cd '$prod_repo'
+    export PATH=\$HOME/.local/bin:\$HOME/.hermes/node/bin:/usr/local/bin:\$PATH
+    cd '$PROD_REPO'
     pnpm install --frozen-lockfile=false | tail -2
-    cd '$prod_repo/packages/database'
-    export \$(grep -E '^DATABASE_URL=' '$env_file' | xargs)
+    cd '$PROD_REPO/packages/database'
+    set -a
+    source '$ENV_FILE'
+    set +a
     npx prisma migrate deploy
+
+    # 执行 GBrain 底座迁移，确保 pages / content_chunks 架构同步
+    gbrain apply-migrations --yes || true
   "
 
-  # 2.4 重启专属系统服务
-  log "[$inst] Restarting $api_service and $web_service..."
+  # 3.4 重启专属系统服务
+  log "[$INST_NAME] Restarting $API_SERVICE and $WEB_SERVICE..."
   ssh "$PROD_HOST" "
-    sudo systemctl restart '$api_service' '$web_service'
+    sudo systemctl restart '$API_SERVICE' '$WEB_SERVICE'
     sleep 3
-    systemctl is-active '$api_service' '$web_service'
+    systemctl is-active '$API_SERVICE' '$WEB_SERVICE'
   "
 
-  # 2.5 健康检查
-  log "[$inst] Verifying health..."
+  # 3.5 健康巡检与 GBrain 状态校验
+  log "[$INST_NAME] Verifying health..."
   ssh "$PROD_HOST" "
-    curl -sf 'http://127.0.0.1:$api_port/open-api/spec.json' >/dev/null && echo '  - API (port $api_port): OK'
-    curl -sf 'http://127.0.0.1:$web_port/' >/dev/null && echo '  - Web (port $web_port): OK'
-    curl -sk --resolve knowledge.5gsailor.com:$public_port:127.0.0.1 -o /dev/null -w '  - Public HTTPS ($public_port): HTTP %{http_code}\n' 'https://knowledge.5gsailor.com:$public_port/'
+    curl -sf 'http://127.0.0.1:$API_PORT/open-api/spec.json' >/dev/null && echo '  - API (port $API_PORT): OK'
+    curl -sf 'http://127.0.0.1:$WEB_PORT/' >/dev/null && echo '  - Web (port $WEB_PORT): OK'
+    curl -sk --resolve knowledge.5gsailor.com:$PUBLIC_PORT:127.0.0.1 -o /dev/null -w '  - Public HTTPS ($PUBLIC_PORT): HTTP %{http_code}\n' 'https://knowledge.5gsailor.com:$PUBLIC_PORT/'
+    set -a
+    source '$ENV_FILE'
+    set +a
+    gbrain sources status --json >/dev/null && echo '  - GBrain engine status: OK'
   "
-  log "[$inst] Successfully deployed!"
+  log "[$INST_NAME] Successfully deployed!"
 }
 
-# ---- 3. 执行发布计划 ----
+# ---- 4. 执行发布计划 ----
 if [[ "$TARGET" == "all" ]]; then
-  log "Starting batch deployment to ALL production instances (inst1, inst2)..."
-  deploy_single_instance "inst1"
-  echo ""
-  deploy_single_instance "inst2"
-  log "All instances deployed successfully!"
-elif [[ "$TARGET" == "inst1" || "$TARGET" == "inst2" ]]; then
-  deploy_single_instance "$TARGET"
+  log "Discovering all configured instances on $PROD_HOST..."
+  INSTANCES=()
+  if ssh "$PROD_HOST" "[[ -f /home/ubuntu/.config/llmwiki/production.env ]]"; then
+    INSTANCES+=("inst1")
+  fi
+  REMOTE_INST_NUMS=$(ssh "$PROD_HOST" "ls /home/ubuntu/.config/llmwiki/production-inst*.env 2>/dev/null" | grep -oE 'inst[0-9]+' | sort -u -V || true)
+  for inst in $REMOTE_INST_NUMS; do
+    INSTANCES+=("$inst")
+  done
+
+  log "Found active instance(s): ${INSTANCES[*]}"
+  for inst in "${INSTANCES[@]}"; do
+    echo ""
+    deploy_single_instance "$inst"
+  done
+  log "All discovered instances (${INSTANCES[*]}) deployed successfully!"
 else
-  log "ERROR: Unknown target '$TARGET'. Choose 'inst1', 'inst2', or 'all'."
-  exit 1
+  deploy_single_instance "$TARGET"
 fi

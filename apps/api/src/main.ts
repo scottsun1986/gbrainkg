@@ -81,7 +81,22 @@ async function bootstrap() {
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: false }));
   
   const port = Number(process.env.PORT || 3000);
+  const redisHost = process.env.REDIS_HOST || '127.0.0.1';
+  const redisPort = Number(process.env.REDIS_PORT || 6379);
+  const redisDb = Number(process.env.REDIS_DB || 0);
+
+  if (port !== 3000 && (!process.env.REDIS_DB || process.env.REDIS_DB === '0')) {
+    Logger.warn(
+      `[MultiInstanceSafeguard] PORT is ${port} but REDIS_DB is ${redisDb}. ` +
+      `Ensure REDIS_DB is isolated per instance to prevent cross-queue interference!`,
+      'Bootstrap',
+    );
+  }
+
   await app.listen(port, '0.0.0.0');
-  Logger.log(`Application is running on port ${port}`, 'Bootstrap');
+  Logger.log(
+    `Application is running on port ${port} (Redis Queue: ${redisHost}:${redisPort} db=${redisDb})`,
+    'Bootstrap',
+  );
 }
 bootstrap();
