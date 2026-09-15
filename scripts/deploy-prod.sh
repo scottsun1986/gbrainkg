@@ -12,12 +12,38 @@
 set -euo pipefail
 
 PROD_HOST="${PROD_HOST:-meetings2}"
-PROD_REPO="${PROD_REPO:-/home/ubuntu/gbrainkg}"
 LOCAL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TARGET="inst1"
 SKIP_BUILD=false
-[[ "${1:-}" == "--skip-build" ]] && SKIP_BUILD=true
 
-log() { echo "[deploy-prod $(date '+%F %T')] $*"; }
+for arg in "$@"; do
+  case "$arg" in
+    --skip-build) SKIP_BUILD=true ;;
+    --target=*) TARGET="${arg#*=}" ;;
+    inst1|--inst1) TARGET="inst1" ;;
+    inst2|--inst2) TARGET="inst2" ;;
+  esac
+done
+
+if [[ "$TARGET" == "inst2" ]]; then
+  PROD_REPO="${PROD_REPO:-/home/ubuntu/gbrainkg-inst2}"
+  API_SERVICE="llmwiki-api-inst2"
+  WEB_SERVICE="llmwiki-web-inst2"
+  API_PORT=3002
+  WEB_PORT=3201
+  PUBLIC_PORT=20081
+  DATA_DIR="/data/llmwiki-inst2"
+else
+  PROD_REPO="${PROD_REPO:-/home/ubuntu/gbrainkg}"
+  API_SERVICE="llmwiki-api"
+  WEB_SERVICE="llmwiki-web"
+  API_PORT=3000
+  WEB_PORT=3200
+  PUBLIC_PORT=20080
+  DATA_DIR="/data/llmwiki"
+fi
+
+log() { echo "[deploy-prod $(date '+%F %T')] [target=$TARGET] $*"; }
 
 # ---- 1. 本地构建校验 ----
 if [[ "$SKIP_BUILD" == false ]]; then
@@ -31,19 +57,17 @@ fi
 [[ -d "$LOCAL_ROOT/apps/web/.next" ]] || { log "ERROR: apps/web/.next missing"; exit 1; }
 
 # ---- 2. 生产前置检查 ----
-log "[2/6] Preflight checks on $PROD_HOST ..."
-ssh "$PROD_HOST" '
+log "[2/6] Preflight checks on $PROD_HOST for $TARGET ..."
+ssh "$PROD_HOST" "
   set -e
-  mountpoint -q /data || { echo "ERROR: /data not mounted"; exit 1; }
-  for p in /data/llmwiki/postgres /data/llmwiki/runtime /data/llmwiki/gbrain-data /data/llmwiki/appdata; do
-    [[ -d "$p" ]] || { echo "ERROR: $p missing"; exit 1; }
-  done
-  [[ -L /var/lib/postgresql && -L /home/ubuntu/gbrainkg/runtime ]] || { echo "ERROR: migration symlinks missing"; exit 1; }
+  mountpoint -q /data || { echo 'ERROR: /data not mounted'; exit 1; }
+  [[ -d '$DATA_DIR' ]] || { echo 'ERROR: $DATA_DIR missing'; exit 1; }
+  [[ -d '$PROD_REPO' || -L '$PROD_REPO' ]] || { echo 'ERROR: $PROD_REPO missing'; exit 1; }
   df -h / /data | tail -2
-'
+"
 
 # ---- 3. 同步代码与构建产物 ----
-log "[3/6] Rsync code + builds ..."
+log "[3/6] Rsync code + builds to $PROD_REPO ..."
 rsync -az --info=stats1 \
   --exclude='.git' --exclude='node_modules' --exclude='.next/cache' \
   --exclude='.env*' --exclude='runtime' --exclude='scratch' \
@@ -52,19 +76,19 @@ rsync -az --info=stats1 \
   --exclude='docs' --exclude='design' --exclude='deploy' \
   "$LOCAL_ROOT/" "$PROD_HOST:$PROD_REPO/"
 
-# ---- 4. 依赖安装 ----
-log "[4/6] pnpm install on production ..."
+# ---- 4. 依赖安装与迁移 ----
+log "[4/6] pnpm install on production ($TARGET) ..."
 ssh "$PROD_HOST" "cd $PROD_REPO && export PATH=\$HOME/.local/bin:\$HOME/.hermes/node/bin:\$PATH && pnpm install --frozen-lockfile=false | tail -2"
 
-# ---- 5. 重启服务 ----
-log "[5/6] Restarting services ..."
-ssh "$PROD_HOST" 'sudo systemctl restart llmwiki-api llmwiki-web && sleep 8 && systemctl is-active llmwiki-api llmwiki-web llmwiki-parser'
+# ---- 5. 重启指定实例的服务 ----
+log "[5/6] Restarting $API_SERVICE and $WEB_SERVICE on $PROD_HOST ..."
+ssh "$PROD_HOST" "sudo systemctl restart $API_SERVICE $WEB_SERVICE && sleep 5 && systemctl is-active $API_SERVICE $WEB_SERVICE"
 
 # ---- 6. 健康检查 ----
-log "[6/6] Health checks ..."
-ssh "$PROD_HOST" '
-  curl -sf http://127.0.0.1:3000/health >/dev/null && echo "api: ok"
-  curl -sf http://127.0.0.1:3200/ >/dev/null && echo "web: ok"
-  curl -sk --resolve knowledge.5gsailor.com:20080:127.0.0.1 -o /dev/null -w "public https: %{http_code}\n" https://knowledge.5gsailor.com:20080/health
-'
-log "Deploy complete."
+log "[6/6] Health checks for $TARGET ..."
+ssh "$PROD_HOST" "
+  curl -sf http://127.0.0.1:$API_PORT/health >/dev/null && echo 'api ($API_PORT): ok'
+  curl -sf http://127.0.0.1:$WEB_PORT/ >/dev/null && echo 'web ($WEB_PORT): ok'
+  curl -sk --resolve knowledge.5gsailor.com:$PUBLIC_PORT:127.0.0.1 -o /dev/null -w 'public https ($PUBLIC_PORT): %{http_code}\n' https://knowledge.5gsailor.com:$PUBLIC_PORT/health
+"
+log "Deploy complete for $TARGET."
