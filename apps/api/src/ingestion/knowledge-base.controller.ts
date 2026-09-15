@@ -214,6 +214,15 @@ export class KnowledgeBaseController {
     if (existing >= 20) {
       throw new BadRequestException("Personal knowledge base limit (20) reached.");
     }
+    // Names must be unique within one user's personal scope; different users
+    // may reuse the same name freely.
+    const duplicate = await this.prisma.knowledgeBase.findFirst({
+      where: { type: "personal", ownerUserId: userId, status: "active", name: normalizedName },
+      select: { id: true },
+    });
+    if (duplicate) {
+      throw new BadRequestException(`已存在同名个人知识库「${normalizedName}」，请换一个名称。`);
+    }
     const knowledgeBase = await this.prisma.knowledgeBase.create({
       data: {
         name: normalizedName,

@@ -58,8 +58,12 @@ export class KnowledgeGraphController {
   private readonly prisma = getPrismaClient();
   private readonly gbrain: BrainRepoAdapter;
   /** Content-aware response cache: rebuilding the graph is far too expensive
-   * to run on every page view (it scans the corpus and calls GBrain per doc). */
-  private readonly graphCache = new Map<string, { expiresAt: number; payload: any }>();
+   * to run on every page view (it scans the corpus and calls GBrain per doc).
+   * Keyed by scope+config; on TTL expiry the last snapshot is served stale
+   * (stale-while-revalidate) while a single-flight background rebuild runs. */
+  private readonly graphCache = new Map<string, { expiresAt: number; storedAt: number; fingerprint: string; payload: any }>();
+  /** Single-flight guards so concurrent stale hits share one background rebuild. */
+  private readonly rebuilding = new Map<string, Promise<void>>();
 
   constructor(
     private readonly authService: AuthService,
@@ -72,38 +76,77 @@ export class KnowledgeGraphController {
   }
 
   @Get()
-  async getGraph(@Req() req: any, @Query('limit') rawLimit?: string) {
+  async getGraph(
+    @Req() req: any,
+    @Query('limit') rawLimit?: string,
+    @Query('fresh') freshParam?: string,
+  ) {
     const userId = await this.authService.userIdFromRequest(req);
     const visibleKbIds = await this.permissionService.getVisibleKnowledgeBases(userId);
     const limit = Math.min(Math.max(Number(rawLimit || 1000) || 1000, 1), 1000);
     const maxChunksPerDoc = Math.max(5, Number(process.env.KG_MAX_CHUNKS_PER_DOC || 40));
+    const forceFresh = ["true", "1"].includes(String(freshParam || ""));
 
-    // Content-aware cache key: any publish/unpublish/reindex bumps the corpus
-    // fingerprint, while repeat views within the TTL are served instantly.
-    const corpus = await this.prisma.document.aggregate({
-      where: { kbId: { in: visibleKbIds }, status: 'published' },
-      _count: true,
-      _max: { updatedAt: true },
-    });
-    const fingerprint = createHash('sha256')
-      .update([
-        [...visibleKbIds].sort().join(','),
-        limit,
-        maxChunksPerDoc,
-        corpus._count,
-        corpus._max.updatedAt ? new Date(corpus._max.updatedAt).toISOString() : 'empty',
-      ].join('|'))
-      .digest('hex');
-    const cached = this.graphCache.get(fingerprint);
+    // Cache is scoped to the caller's visible-KB set so one user's stale
+    // snapshot can never leak another scope's nodes.
+    const cacheKey = `${limit}|${maxChunksPerDoc}|${[...visibleKbIds].sort().join(',')}`;
     const cacheTtlMs = Math.max(0, Number(process.env.KG_CACHE_TTL_MS || 300_000));
-    if (cached && cached.expiresAt > Date.now()) {
-      return { ...cached.payload, cached: true };
-    }
+    const cached = this.graphCache.get(cacheKey);
     if (this.graphCache.size > 32) this.graphCache.clear();
 
-    // Persistent heuristic rows do not carry a validated source-version
-    // contract. Build discovery from currently published documents instead.
+    if (cached && cached.expiresAt > Date.now() && !forceFresh) {
+      return { ...cached.payload, cached: true };
+    }
 
+    if (cached && !forceFresh) {
+      // Stale-while-revalidate: serve the last snapshot of this exact scope
+      // instantly and refresh in the background (single-flight per scope).
+      this.scheduleRebuild(cacheKey, userId, visibleKbIds, limit, maxChunksPerDoc);
+      return {
+        ...cached.payload,
+        cached: false,
+        stale: true,
+        snapshotAgeSeconds: Math.max(0, Math.round((Date.now() - cached.storedAt) / 1000)),
+      };
+    }
+
+    // Manual refresh: if a background rebuild for this scope is already
+    // running, await it instead of duplicating the expensive work.
+    if (forceFresh) {
+      const inflight = this.rebuilding.get(cacheKey);
+      if (inflight) {
+        await inflight;
+        const updated = this.graphCache.get(cacheKey);
+        if (updated) return { ...updated.payload, cached: false, refreshed: true };
+      }
+    }
+
+    return this.buildGraph(cacheKey, cacheTtlMs, userId, visibleKbIds, limit, maxChunksPerDoc);
+  }
+
+  private scheduleRebuild(
+    cacheKey: string,
+    userId: string,
+    visibleKbIds: string[],
+    limit: number,
+    maxChunksPerDoc: number,
+  ) {
+    if (this.rebuilding.has(cacheKey)) return;
+    const task = this.buildGraph(cacheKey, Math.max(0, Number(process.env.KG_CACHE_TTL_MS || 300_000)), userId, visibleKbIds, limit, maxChunksPerDoc)
+      .then(() => undefined)
+      .catch(() => undefined)
+      .finally(() => { this.rebuilding.delete(cacheKey); });
+    this.rebuilding.set(cacheKey, task);
+  }
+
+  private async buildGraph(
+    cacheKey: string,
+    cacheTtlMs: number,
+    userId: string,
+    visibleKbIds: string[],
+    limit: number,
+    maxChunksPerDoc: number,
+  ) {
     const buildStartedAt = Date.now();
     const documents = await this.prisma.document.findMany({
       where: { kbId: { in: visibleKbIds }, status: 'published' },
@@ -240,9 +283,24 @@ export class KnowledgeGraphController {
       addEdge(`doc:${left}`, `doc:${right}`, 'related_to', [...terms].slice(0, 5).map((term) => ({ snippet: `共同主题：${term}` })));
     }
 
+    // Wire format: the UI only renders id/label/type/kbId/documentId and
+    // source/target/type/weight. evidence/metadata/edge-id (derivable as
+    // `source|type|target`) are build-internal and stripped to keep the
+    // multi-MB corpus graph payload small.
     const payload = {
-      nodes: [...nodes.values()],
-      edges: [...edges.values()],
+      nodes: [...nodes.values()].map((node) => ({
+        id: node.id,
+        label: node.label,
+        type: node.type,
+        kbId: node.kbId,
+        documentId: node.documentId,
+      })),
+      edges: [...edges.values()].map((edge) => ({
+        source: edge.source,
+        target: edge.target,
+        type: edge.type,
+        weight: edge.weight,
+      })),
       stats: {
         knowledgeBases: new Set(documents.map((item) => item.kbId)).size,
         documents: documents.length,
@@ -258,7 +316,12 @@ export class KnowledgeGraphController {
       scope: { userId, visibleKnowledgeBases: visibleKbIds.length, onlyPublished: true },
     };
     if (cacheTtlMs > 0) {
-      this.graphCache.set(fingerprint, { expiresAt: Date.now() + cacheTtlMs, payload });
+      this.graphCache.set(cacheKey, {
+        expiresAt: Date.now() + cacheTtlMs,
+        storedAt: Date.now(),
+        fingerprint: createHash('sha256').update(`${nodes.size}|${edges.size}`).digest('hex'),
+        payload,
+      });
     }
     return payload;
   }
