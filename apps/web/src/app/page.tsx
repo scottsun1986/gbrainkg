@@ -1396,7 +1396,8 @@ function HelpOverlay({open, onClose}){
         <div className="help-head" style={{borderBottom: '1px solid var(--border)', paddingBottom: '12px'}}>
           <div style={{display: 'flex', alignItems: 'center', gap: '16px'}}>
             <h3 style={{margin: 0, fontSize: '16px', fontWeight: 600}}>平台帮助与使用指南</h3>
-            <div style={{display: 'flex', background: 'var(--bg-subtle, #f1f5f9)', padding: '2px', borderRadius: '6px'}}>
+            <a href="/help" target="_blank" rel="noreferrer" style={{fontSize: '12px', color: 'var(--evidence)', textDecoration: 'none'}}>完整使用指南 ↗</a>
+            <div style={{display: 'flex', background: 'var(--bg-2)', padding: '2px', borderRadius: '6px'}}>
               <button
                 type="button"
                 onClick={() => setActiveTab('manual')}
@@ -1430,10 +1431,10 @@ function HelpOverlay({open, onClose}){
           {activeTab === 'manual' ? (
             <div style={{display: 'flex', flexDirection: 'column', gap: '18px', lineHeight: 1.6}}>
               {manualSections.map((sec, idx) => (
-                <div key={idx} style={{background: 'var(--card-bg, #f8fafc)', padding: '14px 16px', borderRadius: '8px', border: '1px solid var(--border, #e2e8f0)'}}>
+                <div key={idx} style={{background: 'var(--surface-2)', padding: '14px 16px', borderRadius: '8px', border: '1px solid var(--border, #e2e8f0)'}}>
                   <h4 style={{margin: '0 0 6px 0', fontSize: '14px', fontWeight: 600, color: 'var(--primary, #4f46e5)'}}>{sec.title}</h4>
-                  <p style={{margin: '0 0 8px 0', fontSize: '12px', color: 'var(--text-muted, #64748b)'}}>{sec.desc}</p>
-                  <ul style={{margin: 0, paddingLeft: '18px', fontSize: '12px', color: 'var(--text, #1e293b)'}}>
+                  <p style={{margin: '0 0 8px 0', fontSize: '12px', color: 'var(--ink-3)'}}>{sec.desc}</p>
+                  <ul style={{margin: 0, paddingLeft: '18px', fontSize: '12px', color: 'var(--ink)'}}>
                     {sec.points.map((pt, pIdx) => (
                       <li key={pIdx} style={{marginBottom: '4px'}}>{pt}</li>
                     ))}
@@ -1445,7 +1446,7 @@ function HelpOverlay({open, onClose}){
             <div>
               {groups.map((g) => (
                 <div className="help-group" key={g.label} style={{marginBottom: '14px'}}>
-                  <div className="help-group-label" style={{fontWeight: 600, fontSize: '12px', color: 'var(--text-muted, #64748b)', marginBottom: '6px'}}>{g.label}</div>
+                  <div className="help-group-label" style={{fontWeight: 600, fontSize: '12px', color: 'var(--ink-3)', marginBottom: '6px'}}>{g.label}</div>
                   {g.items.map((it, i) => (
                     <div key={i} className="help-row" style={{display: 'flex', justifyContent: 'space-between', padding: '4px 0'}}>
                       <div className="help-label" style={{fontSize: '12px'}}>{it.label}</div>
@@ -2633,7 +2634,7 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], active 
               pagedDocs.map((d,i)=>(
                 <div key={d.id || i} className="doc-row" style={{gridTemplateColumns:'32px 1fr 110px 110px 80px 120px'}}>
                   <div className="doc-type-icon" data-type={d.type}><Icon name="doc" size={14} color="var(--ink-3)"/></div>
-                  <div style={{ cursor: 'pointer' }} onClick={() => previewDocument(d)} title="点击预览文档与标准知识页">
+                  <div style={{ cursor: 'pointer', minWidth: 0 }} onClick={() => previewDocument(d)} title="点击预览文档与标准知识页">
                     <div className="ttl" title={d.name}>{d.name}</div>
                     <div className="sub" title={d.path}>{d.path}</div>
                   </div>
@@ -5262,7 +5263,7 @@ function SystemStatusPanel({ capabilities }){
         </div>
 
         <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, padding: '14px 16px' }}>
-          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 6 }}>🧩 物理切片与向量</div>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 6 }}>物理切片与向量</div>
           <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--ink)' }}>{inq.totalChunks || 0} <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--ink-3)' }}>切片</span></div>
           <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
             均长 {inq.avgChunkLength || 0} 字符 · {inq.embeddingDimensions || 1024} 维
@@ -5305,7 +5306,7 @@ function SystemStatusPanel({ capabilities }){
       {/* 3. Knowledge Pipeline Lifecycle Stage Visual Tracker */}
       <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, padding: '16px 18px', marginBottom: 20 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink)', marginBottom: 12 }}>
-          🔗 知识流转全生命周期质量链路
+          知识流转全生命周期质量链路
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
           <div style={{ padding: '10px 12px', background: 'var(--surface-2)', borderRadius: 6, border: '1px solid var(--line-2)' }}>
@@ -6152,7 +6153,7 @@ function GrantPanel({kbId, setKbId}){
               ))}
             </select>
             <div className="field-hint">
-              {grantTab==='org' ? '💡 组织授权将自动包含该节点下全部直属与递归子部门成员。' : grantTab==='role' ? '💡 绑定该角色的所有当前及未来成员均自动获得访问权。' : '💡 单人授权仅对该成员账号独立生效。'}
+              {grantTab==='org' ? '组织授权将自动包含该节点下全部直属与递归子部门成员。' : grantTab==='role' ? '绑定该角色的所有当前及未来成员均自动获得访问权。' : '单人授权仅对该成员账号独立生效。'}
             </div>
           </div>
 
@@ -7026,7 +7027,7 @@ function App(){
           theme={theme || 'light'}
           onToggleTheme={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')}
           onOpenPalette={() => setPaletteOpen(true)}
-          onOpenHelp={() => { window.location.assign('/help'); }}
+          onOpenHelp={() => setHelpOpen(true)}
           onToggleSidebar={() => setSidebarOpen(v => !v)}
           collapsed={sideCollapsed}
           onToggleCollapse={toggleSideCollapsed}

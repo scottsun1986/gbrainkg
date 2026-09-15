@@ -111,7 +111,9 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
     let isMounted = true;
     setLoading(true);
     setError('');
-    fetch(`${API_BASE_URL}/api/v1/knowledge-graph`, {headers: apiHeaders()})
+    // 手动刷新（reloadToken 变化）带 fresh=1 强制同步重建；首次进入走 SWR 快照
+    const qs = reloadToken > 0 ? '?fresh=1' : '';
+    fetch(`${API_BASE_URL}/api/v1/knowledge-graph${qs}`, {headers: apiHeaders()})
       .then(async response => {
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(payload.message || `API ${response.status}`);
@@ -119,6 +121,13 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
       })
       .then(payload => {
         if (isMounted) {
+          // 服务端已剥离冗余 edge.id，按 source|type|target 派生，供渲染 key 使用
+          if (Array.isArray(payload.edges)) {
+            payload.edges = payload.edges.map((edge: any) => ({
+              ...edge,
+              id: edge.id || `${edge.source}|${edge.type}|${edge.target}`,
+            }));
+          }
           setGraph(payload);
           setError('');
         }
@@ -277,7 +286,7 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
     return groups;
   }, [selectedEdges, selected]);
 
-  const nodeColor: Record<string, string> = { knowledge_base: '#7c6cd9', document: '#4c7fd0', concept: '#c08a3e' };
+  const nodeColor: Record<string, string> = { knowledge_base: '#7C6CD9', document: '#3B82F6', concept: '#0D9488' };
   const labelText = (n: any) => n.label.length > 14 ? `${n.label.slice(0, 14)}…` : n.label;
   const nodeRadius = (n: any) => {
     const base = n.type === 'knowledge_base' ? 18 : n.type === 'document' ? 13 : 8;
@@ -428,6 +437,11 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
           {filteredNodes.length > 350 && !localRoot && (
             <span style={{ color: '#b45309', fontSize: 11.5 }}>（展示前 350 个核心节点，搜索可定位任意节点）</span>
           )}
+          {graph?.stale && (
+            <span style={{ color: 'var(--ink-4)', fontSize: 11.5 }}>
+              （当前为 {graph.snapshotAgeSeconds ? `${Math.floor(graph.snapshotAgeSeconds / 60)} 分 ${graph.snapshotAgeSeconds % 60} 秒` : '片刻'}前的快照，知识已在后台更新中）
+            </span>
+          )}
         </div>
       </div>
 
@@ -508,7 +522,7 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
             >
               <defs>
                 <marker id="graph-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
-                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#b9b5ae" />
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#94A3B8" />
                 </marker>
               </defs>
               <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.k})`}>
@@ -521,7 +535,7 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
                     <g key={edge.id} opacity={opacity}>
                       <line
                         x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                        stroke={edge.type === 'related_to' ? '#c08a3e' : '#9C978C'}
+                        stroke={edge.type === 'related_to' ? '#0D9488' : '#94A3B8'}
                         strokeWidth={Math.min(2.2, 0.7 + (edge.weight || 1) * 0.25) / Math.max(1, transform.k * 0.7)}
                         markerEnd="url(#graph-arrow)"
                       />
