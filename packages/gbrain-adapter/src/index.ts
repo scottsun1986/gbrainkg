@@ -390,7 +390,7 @@ export class BrainRepoAdapter {
       GBRAIN_HOME: this.gbrainHome,
       GBRAIN_POOL_SIZE: process.env.GBRAIN_POOL_SIZE || '2',
       GBRAIN_ALLOW_UNVERIFIED_REMOTE: '1',
-      PATH: `/home/scottsun/.bun/bin:${process.env.PATH || ''}`,
+      PATH: `${dirname(this.gbrainBin)}:/usr/local/bin:/usr/bin:/home/scottsun/.bun/bin:${process.env.PATH || ''}`,
     };
     // Prisma accepts the `schema` query parameter, but the GBrain CLI treats
     // it as a PostgreSQL runtime setting and fails with “unrecognized
