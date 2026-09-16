@@ -40,7 +40,7 @@ export class McpService {
       {
         name: 'search_knowledge',
         description:
-          '在 GBrain 知识库中执行语义与混合检索（BAAI/bge-m3 密集向量 + BM25 全文 + 知识图谱联合召回），返回与查询语义匹配的高可信事实证据片段与引文来源。',
+          '在 GBrain 知识库中执行语义与混合检索（BAAI/bge-m3 密集向量 + BM25 全文 + 知识图谱联合召回），返回与查询语义匹配的高可信事实证据片段与引文来源。若用户未明确限定特定知识库，请勿指定 kb_ids，系统将默认在当前凭证有权限访问的全部知识库中联合检索。',
         inputSchema: {
           type: 'object',
           properties: {
@@ -51,7 +51,7 @@ export class McpService {
             kb_ids: {
               type: 'array',
               items: { type: 'string' },
-              description: '限定检索的知识库 ID 列表（可选，默认检索当前凭证可见的所有知识库）',
+              description: '限定检索的知识库 ID 列表（可选，若未明确指定或为空，系统默认检索当前凭证可见的所有知识库）',
             },
             top_k: {
               type: 'integer',
@@ -64,7 +64,7 @@ export class McpService {
       {
         name: 'chat_knowledge',
         description:
-          '基于 GBrain 企业知识库进行智能问答与深度证据链推理（RAG），支持多跳推理、全证据链事实裁决与上下文多轮对话。',
+          '基于 GBrain 企业知识库进行智能问答与深度证据链推理（RAG），支持多跳推理、全证据链事实裁决与上下文多轮对话。若用户未明确限定特定知识库，请勿指定 kb_ids，系统将默认在当前凭证有权限访问的全部知识库中联合检索。',
         inputSchema: {
           type: 'object',
           properties: {
@@ -79,7 +79,7 @@ export class McpService {
             kb_ids: {
               type: 'array',
               items: { type: 'string' },
-              description: '限定检索的知识库 ID 列表（可选）',
+              description: '限定检索的知识库 ID 列表（可选，若未明确指定或为空，系统默认在当前凭证可见的全部知识库中检索）',
             },
           },
           required: ['prompt'],
@@ -368,12 +368,20 @@ export class McpService {
         const query = String(args?.query || '').trim();
         if (!query) throw new Error('query 参数为必填项');
         const limit = Math.max(1, Math.min(Number(args?.top_k || 10) || 10, 50));
-        const kbIds = Array.isArray(args?.kb_ids) ? args.kb_ids : undefined;
+        const rawKbIds = Array.isArray(args?.kb_ids)
+          ? args.kb_ids.map((id: any) => String(id).trim()).filter(Boolean)
+          : typeof args?.kb_ids === 'string' && args.kb_ids.trim() && args.kb_ids !== 'all'
+            ? [args.kb_ids.trim()]
+            : [];
+        const visibleKbs = await this.permissionService.getVisibleKnowledgeBases(userId);
+        const effectiveKbIds = rawKbIds.length > 0
+          ? rawKbIds.filter((id: string) => visibleKbs.includes(id))
+          : visibleKbs;
 
         const rawResults = await this.chatService.searchKnowledgeForAgent(
           userId,
           query,
-          kbIds,
+          effectiveKbIds,
           limit,
         );
 
@@ -400,9 +408,16 @@ export class McpService {
       case 'chat_knowledge': {
         const prompt = String(args?.prompt || '').trim();
         if (!prompt) throw new Error('prompt 参数为必填项');
-        const kbIds = Array.isArray(args?.kb_ids) ? args.kb_ids : undefined;
+        const rawKbIds = Array.isArray(args?.kb_ids)
+          ? args.kb_ids.map((id: any) => String(id).trim()).filter(Boolean)
+          : typeof args?.kb_ids === 'string' && args.kb_ids.trim() && args.kb_ids !== 'all'
+            ? [args.kb_ids.trim()]
+            : [];
+        const visibleKbs = await this.permissionService.getVisibleKnowledgeBases(userId);
 
         let conversationId = args?.conversation_id;
+        let effectiveKbIds: string[];
+
         if (conversationId) {
           const conv = await this.prisma.conversation.findFirst({
             where: { id: conversationId, userId },
@@ -410,11 +425,22 @@ export class McpService {
           if (!conv) {
             throw new Error(`指定的会话 ID ${conversationId} 不存在或无权访问`);
           }
+          if (rawKbIds.length > 0) {
+            effectiveKbIds = rawKbIds.filter((id: string) => visibleKbs.includes(id));
+          } else if (Array.isArray(conv.kbScope) && (conv.kbScope as string[]).length > 0) {
+            effectiveKbIds = (conv.kbScope as string[]).filter((id: string) => visibleKbs.includes(id));
+          } else {
+            effectiveKbIds = visibleKbs;
+          }
         } else {
+          effectiveKbIds = rawKbIds.length > 0
+            ? rawKbIds.filter((id: string) => visibleKbs.includes(id))
+            : visibleKbs;
           const newConv = await this.prisma.conversation.create({
             data: {
               userId,
               title: prompt.slice(0, 80),
+              kbScope: effectiveKbIds,
             },
           });
           conversationId = newConv.id;
@@ -428,10 +454,11 @@ export class McpService {
           },
         });
 
+        const startedAt = Date.now();
         const stream$ = await this.chatService.handleChatStream(
           userId,
           prompt,
-          kbIds,
+          effectiveKbIds,
           conversationId,
         );
 
@@ -476,7 +503,24 @@ export class McpService {
               }
             },
             error: (err: any) => reject(new Error(err?.message || 'Chat generation error')),
-            complete: () => {
+            complete: async () => {
+              try {
+                const finalContent = answer || '本次问答未生成可保存的回答。';
+                await this.prisma.message.create({
+                  data: {
+                    conversationId,
+                    role: 'assistant',
+                    content: finalContent,
+                    citationsSummary: citations,
+                    processingTrace: trace ? [trace] : undefined,
+                    latencyMs: Date.now() - startedAt,
+                  },
+                });
+              } catch (persistErr: any) {
+                this.logger.error(
+                  `Failed to persist assistant message in MCP chat_knowledge: ${persistErr?.message || persistErr}`,
+                );
+              }
               resolve({
                 conversation_id: conversationId,
                 answer,

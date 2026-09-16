@@ -271,9 +271,10 @@ export class ChatService {
     requestedKbScope?: string[] | string,
   ): Promise<void> {
     if (!requestedKbScope || requestedKbScope === "all") return;
-    const requested = Array.isArray(requestedKbScope)
-      ? requestedKbScope.map((id) => String(id))
-      : [String(requestedKbScope)];
+    const requested = (Array.isArray(requestedKbScope)
+      ? requestedKbScope.map((id) => String(id).trim())
+      : [String(requestedKbScope).trim()]
+    ).filter(Boolean);
     if (!requested.length) return;
     const visibleKbs = await this.permissionService.getVisibleKnowledgeBases(userId);
     const unauthorized = requested.filter((id) => !visibleKbs.includes(id));
@@ -385,7 +386,7 @@ export class ChatService {
   async searchKnowledgeForAgent(
     userId: string,
     query: string,
-    requestedKbScope?: string[],
+    requestedKbScope?: string[] | string,
     limit = 10,
   ): Promise<{
     success: boolean;
@@ -408,11 +409,12 @@ export class ChatService {
     // silently narrow (silent filtering hides misconfiguration from callers).
     await this.assertRequestedScopeAuthorized(userId, requestedKbScope);
     const visibleKbs = await this.permissionService.getVisibleKnowledgeBases(userId);
-    const parsedRequestedScope = Array.isArray(requestedKbScope)
-      ? requestedKbScope
-      : typeof requestedKbScope === "string" && requestedKbScope !== "all"
-        ? [requestedKbScope]
+    const rawList = Array.isArray(requestedKbScope)
+      ? requestedKbScope.map((id) => String(id).trim()).filter(Boolean)
+      : typeof requestedKbScope === "string" && requestedKbScope !== "all" && requestedKbScope.trim() !== ""
+        ? [requestedKbScope.trim()]
         : undefined;
+    const parsedRequestedScope = rawList && rawList.length > 0 ? rawList : undefined;
     const scope = parsedRequestedScope
       ? parsedRequestedScope.filter((id) => visibleKbs.includes(id))
       : visibleKbs;
@@ -2039,11 +2041,12 @@ export class ChatService {
     trace.start("permission_scope", "知识权限计算", "计算当前用户可读知识库及本次选择范围");
     const visibleKbs =
       await this.permissionService.getVisibleKnowledgeBases(userId);
-    const parsedRequestedScope = Array.isArray(requestedKbScope)
-      ? requestedKbScope
-      : typeof requestedKbScope === "string" && requestedKbScope !== "all"
-        ? [requestedKbScope]
+    const rawList = Array.isArray(requestedKbScope)
+      ? requestedKbScope.map((id) => String(id).trim()).filter(Boolean)
+      : typeof requestedKbScope === "string" && requestedKbScope !== "all" && requestedKbScope.trim() !== ""
+        ? [requestedKbScope.trim()]
         : undefined;
+    const parsedRequestedScope = rawList && rawList.length > 0 ? rawList : undefined;
     const scope = parsedRequestedScope
       ? parsedRequestedScope.filter((id) => visibleKbs.includes(id))
       : visibleKbs;

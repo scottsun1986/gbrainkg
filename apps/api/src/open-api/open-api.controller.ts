@@ -4,6 +4,7 @@ import {
   Controller,
   ForbiddenException,
   Get,
+  Logger,
   NotFoundException,
   Param,
   Post,
@@ -36,6 +37,7 @@ const R = (code: number, msg: string, data: any = null) => ({
 export class OpenApiController {
   private readonly prisma = getPrismaClient();
   private readonly uploadRoot = process.env.UPLOAD_ROOT || '/tmp/llmwiki/uploads';
+  private readonly logger = new Logger(OpenApiController.name);
 
   constructor(
     private readonly chatService: ChatService,
@@ -306,7 +308,7 @@ export class OpenApiController {
     @Body() body: {
       prompt: string;
       conversation_id?: string;
-      kb_ids?: string[];
+      kb_ids?: string[] | string;
       stream?: boolean;
     },
   ) {
@@ -316,7 +318,16 @@ export class OpenApiController {
       return res.status(400).json(R(400, 'prompt 不能为空'));
     }
 
+    const rawKbIds = Array.isArray(body.kb_ids)
+      ? body.kb_ids.map((id: any) => String(id).trim()).filter(Boolean)
+      : typeof body.kb_ids === 'string' && body.kb_ids.trim() && body.kb_ids !== 'all'
+        ? [body.kb_ids.trim()]
+        : [];
+    const visibleKbs = await this.permissionService.getVisibleKnowledgeBases(userId);
+
     let conversation: any = null;
+    let effectiveKbIds: string[];
+
     if (body.conversation_id) {
       conversation = await this.prisma.conversation.findFirst({
         where: { id: body.conversation_id, userId },
@@ -324,11 +335,22 @@ export class OpenApiController {
       if (!conversation) {
         return res.status(404).json(R(404, '指定的 conversation_id 不存在或无权访问'));
       }
+      if (rawKbIds.length > 0) {
+        effectiveKbIds = rawKbIds.filter((id: string) => visibleKbs.includes(id));
+      } else if (Array.isArray(conversation.kbScope) && (conversation.kbScope as string[]).length > 0) {
+        effectiveKbIds = (conversation.kbScope as string[]).filter((id: string) => visibleKbs.includes(id));
+      } else {
+        effectiveKbIds = visibleKbs;
+      }
     } else {
+      effectiveKbIds = rawKbIds.length > 0
+        ? rawKbIds.filter((id: string) => visibleKbs.includes(id))
+        : visibleKbs;
       conversation = await this.prisma.conversation.create({
         data: {
           userId,
           title: prompt.slice(0, 80),
+          kbScope: effectiveKbIds,
         },
       });
     }
@@ -345,10 +367,11 @@ export class OpenApiController {
       Boolean(body.stream) ||
       String(req.headers.accept || '').includes('text/event-stream');
 
+    const requestStartedAt = Date.now();
     const stream$ = await this.chatService.handleChatStream(
       userId,
       prompt,
-      body.kb_ids,
+      effectiveKbIds,
       conversation.id,
     );
 
@@ -382,7 +405,20 @@ export class OpenApiController {
           );
           res.end();
         },
-        complete: () => {
+        complete: async () => {
+          try {
+            const finalContent = accumulated || '本次问答未生成可保存的回答。';
+            await this.prisma.message.create({
+              data: {
+                conversationId: conversation.id,
+                role: 'assistant',
+                content: finalContent,
+                latencyMs: Date.now() - requestStartedAt,
+              },
+            });
+          } catch (persistErr: any) {
+            this.logger.error(`Failed to persist assistant message in open-api stream: ${persistErr?.message || persistErr}`);
+          }
           res.write(
             `data: ${JSON.stringify({
               type: 'done',
@@ -422,7 +458,22 @@ export class OpenApiController {
           res.status(500).json(R(500, err?.message || '生成回答失败'));
           resolve();
         },
-        complete: () => {
+        complete: async () => {
+          try {
+            const finalContent = accumulatedAnswer || '本次问答未生成可保存的回答。';
+            await this.prisma.message.create({
+              data: {
+                conversationId: conversation.id,
+                role: 'assistant',
+                content: finalContent,
+                citationsSummary: citations,
+                processingTrace: processingTrace ? [processingTrace] : undefined,
+                latencyMs: Date.now() - requestStartedAt,
+              },
+            });
+          } catch (persistErr: any) {
+            this.logger.error(`Failed to persist assistant message in open-api: ${persistErr?.message || persistErr}`);
+          }
           res.status(200).json(
             R(200, '操作成功', {
               conversation_id: conversation.id,

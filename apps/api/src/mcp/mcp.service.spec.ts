@@ -1,3 +1,4 @@
+import { of } from 'rxjs';
 import { McpService } from './mcp.service';
 
 // saveUploadAndEnqueue 依赖共享 Prisma 客户端与文件系统，这里整体打桩；
@@ -40,11 +41,16 @@ describe('McpService', () => {
           },
         ],
       }),
-      handleChatStream: jest.fn(),
+      handleChatStream: jest.fn().mockResolvedValue(
+        of(
+          { data: { type: 'token', content: '测试回答' } },
+          { data: { type: 'citation', timeline_entry: { title: '测试引用' } } },
+        ),
+      ),
     };
 
     mockPermissionService = {
-      getVisibleKnowledgeBases: jest.fn().mockResolvedValue(['kb-1']),
+      getVisibleKnowledgeBases: jest.fn().mockResolvedValue(['kb-1', 'kb-2']),
       canManageKnowledgeBase: jest.fn().mockResolvedValue(true),
     };
 
@@ -56,6 +62,13 @@ describe('McpService', () => {
       },
       document: {
         create: jest.fn().mockImplementation(({ data }: any) => Promise.resolve({ id: data.id, title: data.title, version: data.version, status: data.status })),
+      },
+      conversation: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockImplementation(({ data }: any) => Promise.resolve({ id: 'conv-123', ...data })),
+      },
+      message: {
+        create: jest.fn().mockImplementation(({ data }: any) => Promise.resolve({ id: 'msg-123', ...data })),
       },
     };
     (global as any).__mcpServicePrismaMock = mockPrisma;
@@ -116,7 +129,7 @@ describe('McpService', () => {
       expect(res.result.tools.length).toBe(6);
     });
 
-    it('should handle tools/call search_knowledge', async () => {
+    it('should handle tools/call search_knowledge defaulting to all visible KBs', async () => {
       const res = await mcpService.handleJsonRpc(mockUser, {
         jsonrpc: '2.0',
         id: 4,
@@ -134,6 +147,108 @@ describe('McpService', () => {
       const parsed = JSON.parse(res.result.content[0].text);
       expect(parsed.total).toBe(1);
       expect(parsed.results[0].title).toBe('测试文档');
+      // When kb_ids is not passed, it defaults to all visible KBs
+      expect(mockChatService.searchKnowledgeForAgent).toHaveBeenCalledWith(
+        'user-123',
+        '测试',
+        ['kb-1', 'kb-2'],
+        10,
+      );
+    });
+
+    it('should handle tools/call search_knowledge with specific kb_ids', async () => {
+      await mcpService.handleJsonRpc(mockUser, {
+        jsonrpc: '2.0',
+        id: 41,
+        method: 'tools/call',
+        params: {
+          name: 'search_knowledge',
+          arguments: { query: '测试', kb_ids: ['kb-2', 'kb-unauthorized'] },
+        },
+      });
+
+      expect(mockChatService.searchKnowledgeForAgent).toHaveBeenCalledWith(
+        'user-123',
+        '测试',
+        ['kb-2'],
+        10,
+      );
+    });
+
+    it('should handle tools/call chat_knowledge defaulting to all visible KBs and persisting assistant reply', async () => {
+      const res = await mcpService.handleJsonRpc(mockUser, {
+        jsonrpc: '2.0',
+        id: 42,
+        method: 'tools/call',
+        params: {
+          name: 'chat_knowledge',
+          arguments: { prompt: '什么是绩效？' },
+        },
+      });
+
+      expect(res.jsonrpc).toBe('2.0');
+      expect(res.id).toBe(42);
+      expect(res.result.isError).toBe(false);
+      const parsed = JSON.parse(res.result.content[0].text);
+      expect(parsed.conversation_id).toBe('conv-123');
+      expect(parsed.answer).toBe('测试回答');
+
+      // Conversation created with all visible KBs scope
+      expect(mockPrisma.conversation.create).toHaveBeenCalledWith({
+        data: {
+          userId: 'user-123',
+          title: '什么是绩效？',
+          kbScope: ['kb-1', 'kb-2'],
+        },
+      });
+
+      // User prompt message created
+      expect(mockPrisma.message.create).toHaveBeenCalledWith({
+        data: {
+          conversationId: 'conv-123',
+          role: 'user',
+          content: '什么是绩效？',
+        },
+      });
+
+      // Stream called with all visible KBs
+      expect(mockChatService.handleChatStream).toHaveBeenCalledWith(
+        'user-123',
+        '什么是绩效？',
+        ['kb-1', 'kb-2'],
+        'conv-123',
+      );
+
+      // Assistant reply persisted to database
+      expect(mockPrisma.message.create).toHaveBeenCalledWith({
+        data: {
+          conversationId: 'conv-123',
+          role: 'assistant',
+          content: '测试回答',
+          citationsSummary: [{ title: '测试引用' }],
+          processingTrace: undefined,
+          latencyMs: expect.any(Number),
+        },
+      });
+    });
+
+    it('should handle tools/call chat_knowledge with specific kb_ids', async () => {
+      await mcpService.handleJsonRpc(mockUser, {
+        jsonrpc: '2.0',
+        id: 43,
+        method: 'tools/call',
+        params: {
+          name: 'chat_knowledge',
+          arguments: { prompt: '考勤时间', kb_ids: ['kb-1'] },
+        },
+      });
+
+      expect(mockChatService.handleChatStream).toHaveBeenCalledWith(
+        'user-123',
+        '考勤时间',
+        ['kb-1'],
+        'conv-123',
+      );
     });
 
     it('should handle tools/call get_user_info', async () => {
