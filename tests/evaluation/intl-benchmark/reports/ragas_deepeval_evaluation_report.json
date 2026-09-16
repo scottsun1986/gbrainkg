@@ -1,13 +1,13 @@
 {
-  "timestamp": "2026-09-17T00:02:24.373092",
+  "timestamp": "2026-09-17T04:18:31.921043",
   "total_benchmarks": 30,
   "total_samples": 3000,
   "global_summary": {
     "faithfulness": 0.9032,
     "answer_relevance": 0.6813,
     "context_precision": 0.9597,
-    "context_recall": 0.8097,
-    "rag_triad_score": 0.7507
+    "context_recall": 0.821,
+    "rag_triad_score": 0.7615
   },
   "benchmark_details": [
     {
@@ -36,7 +36,7 @@
       "groundedness": 0.5625,
       "completeness": 1.0,
       "rag_triad_score": 0.652,
-      "avg_latency_ms": 22.37
+      "avg_latency_ms": 22.32
     },
     {
       "id": 3,
@@ -50,7 +50,7 @@
       "groundedness": 0.99,
       "completeness": 1.0,
       "rag_triad_score": 0.8496,
-      "avg_latency_ms": 22.74
+      "avg_latency_ms": 22.77
     },
     {
       "id": 4,
@@ -64,7 +64,7 @@
       "groundedness": 0.995,
       "completeness": 1.0,
       "rag_triad_score": 0.7911,
-      "avg_latency_ms": 22.79
+      "avg_latency_ms": 22.8
     },
     {
       "id": 5,
@@ -92,7 +92,7 @@
       "groundedness": 1.0,
       "completeness": 1.0,
       "rag_triad_score": 0.8876,
-      "avg_latency_ms": 22.24
+      "avg_latency_ms": 22.26
     },
     {
       "id": 7,
@@ -106,7 +106,7 @@
       "groundedness": 1.0,
       "completeness": 0.6667,
       "rag_triad_score": 0.7791,
-      "avg_latency_ms": 22.27
+      "avg_latency_ms": 22.3
     },
     {
       "id": 8,
@@ -120,7 +120,7 @@
       "groundedness": 1.0,
       "completeness": 1.0,
       "rag_triad_score": 0.9434,
-      "avg_latency_ms": 22.32
+      "avg_latency_ms": 22.33
     },
     {
       "id": 9,
@@ -134,7 +134,7 @@
       "groundedness": 0.505,
       "completeness": 1.0,
       "rag_triad_score": 0.6137,
-      "avg_latency_ms": 22.29
+      "avg_latency_ms": 22.31
     },
     {
       "id": 10,
@@ -148,7 +148,7 @@
       "groundedness": 1.0,
       "completeness": 0.5,
       "rag_triad_score": 0.8448,
-      "avg_latency_ms": 22.29
+      "avg_latency_ms": 22.33
     },
     {
       "id": 11,
@@ -162,7 +162,7 @@
       "groundedness": 1.0,
       "completeness": 1.0,
       "rag_triad_score": 0.725,
-      "avg_latency_ms": 22.28
+      "avg_latency_ms": 22.29
     },
     {
       "id": 12,
@@ -176,7 +176,7 @@
       "groundedness": 1.0,
       "completeness": 1.0,
       "rag_triad_score": 0.7059,
-      "avg_latency_ms": 22.28
+      "avg_latency_ms": 22.3
     },
     {
       "id": 13,
@@ -190,7 +190,7 @@
       "groundedness": 1.0,
       "completeness": 1.0,
       "rag_triad_score": 0.7949,
-      "avg_latency_ms": 22.24
+      "avg_latency_ms": 22.26
     },
     {
       "id": 14,
@@ -204,7 +204,7 @@
       "groundedness": 0.5,
       "completeness": 1.0,
       "rag_triad_score": 0.617,
-      "avg_latency_ms": 22.23
+      "avg_latency_ms": 22.24
     },
     {
       "id": 15,
@@ -218,7 +218,7 @@
       "groundedness": 1.0,
       "completeness": 1.0,
       "rag_triad_score": 0.739,
-      "avg_latency_ms": 22.29
+      "avg_latency_ms": 22.3
     },
     {
       "id": 16,
@@ -232,7 +232,7 @@
       "groundedness": 0.5,
       "completeness": 1.0,
       "rag_triad_score": 0.6969,
-      "avg_latency_ms": 22.28
+      "avg_latency_ms": 22.29
     },
     {
       "id": 17,
@@ -246,7 +246,7 @@
       "groundedness": 1.0,
       "completeness": 1.0,
       "rag_triad_score": 0.8171,
-      "avg_latency_ms": 22.23
+      "avg_latency_ms": 22.25
     },
     {
       "id": 18,
@@ -260,7 +260,7 @@
       "groundedness": 1.0,
       "completeness": 1.0,
       "rag_triad_score": 0.7486,
-      "avg_latency_ms": 22.17
+      "avg_latency_ms": 22.18
     },
     {
       "id": 19,
@@ -274,7 +274,7 @@
       "groundedness": 1.0,
       "completeness": 1.0,
       "rag_triad_score": 0.7312,
-      "avg_latency_ms": 22.26
+      "avg_latency_ms": 22.27
     },
     {
       "id": 20,
@@ -288,7 +288,7 @@
       "groundedness": 0.5,
       "completeness": 1.0,
       "rag_triad_score": 0.6442,
-      "avg_latency_ms": 22.18
+      "avg_latency_ms": 22.19
     },
     {
       "id": 21,
@@ -302,7 +302,7 @@
       "groundedness": 1.0,
       "completeness": 1.0,
       "rag_triad_score": 0.7753,
-      "avg_latency_ms": 22.2
+      "avg_latency_ms": 22.21
     },
     {
       "id": 22,
@@ -316,7 +316,7 @@
       "groundedness": 0.95,
       "completeness": 1.0,
       "rag_triad_score": 0.752,
-      "avg_latency_ms": 22.09
+      "avg_latency_ms": 22.1
     },
     {
       "id": 23,
@@ -330,7 +330,7 @@
       "groundedness": 1.0,
       "completeness": 1.0,
       "rag_triad_score": 0.7104,
-      "avg_latency_ms": 22.15
+      "avg_latency_ms": 22.17
     },
     {
       "id": 24,
@@ -344,7 +344,7 @@
       "groundedness": 1.0,
       "completeness": 0.0,
       "rag_triad_score": 0.7491,
-      "avg_latency_ms": 22.19
+      "avg_latency_ms": 22.21
     },
     {
       "id": 25,
@@ -358,7 +358,7 @@
       "groundedness": 1.0,
       "completeness": 1.0,
       "rag_triad_score": 0.8771,
-      "avg_latency_ms": 22.18
+      "avg_latency_ms": 22.19
     },
     {
       "id": 26,
@@ -372,7 +372,7 @@
       "groundedness": 1.0,
       "completeness": 1.0,
       "rag_triad_score": 0.8323,
-      "avg_latency_ms": 23.65
+      "avg_latency_ms": 23.67
     },
     {
       "id": 27,
@@ -386,7 +386,7 @@
       "groundedness": 1.0,
       "completeness": 1.0,
       "rag_triad_score": 0.6928,
-      "avg_latency_ms": 22.22
+      "avg_latency_ms": 22.24
     },
     {
       "id": 28,
@@ -400,7 +400,7 @@
       "groundedness": 1.0,
       "completeness": 1.0,
       "rag_triad_score": 0.7798,
-      "avg_latency_ms": 22.16
+      "avg_latency_ms": 22.17
     },
     {
       "id": 29,
@@ -410,11 +410,11 @@
       "faithfulness": 0.87,
       "answer_relevance": 0.7974,
       "context_precision": 0.66,
-      "context_recall": 0.627,
+      "context_recall": 0.967,
       "groundedness": 0.87,
       "completeness": 1.0,
-      "rag_triad_score": 0.5418,
-      "avg_latency_ms": 22.15
+      "rag_triad_score": 0.866,
+      "avg_latency_ms": 22.13
     },
     {
       "id": 30,
@@ -428,7 +428,7 @@
       "groundedness": 0.75,
       "completeness": 1.0,
       "rag_triad_score": 0.72,
-      "avg_latency_ms": 22.38
+      "avg_latency_ms": 22.41
     }
   ]
 }

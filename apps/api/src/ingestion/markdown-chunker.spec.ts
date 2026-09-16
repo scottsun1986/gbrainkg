@@ -105,6 +105,28 @@ describe('splitMarkdownIntoChunks', () => {
     expect(continuation!.metadata.has_table).toBe(true);
   });
 
+  it('injects table headers into continuation chunks even when preceded by explanatory text or notes', () => {
+    const doc = [
+      '# 财务指标表',
+      '',
+      '| 年度 | 营收 | 净利润 |',
+      '| --- | --- | --- |',
+      '| 2022 | 100亿 | 15亿 |',
+      '',
+      '### 延续部分',
+      '注：以下数据已审计。',
+      '| 2023 | 120亿 | 18亿 |',
+      '| 2024 | 150亿 | 22亿 |',
+    ].join('\n');
+    const chunks = splitMarkdownIntoChunks(doc);
+    const contChunk = chunks.find((c) => c.content.includes('2023'));
+    expect(contChunk).toBeDefined();
+    expect(contChunk!.content).toContain('| 年度 | 营收 | 净利润 |');
+    expect(contChunk!.metadata.table_header_injected).toBe(true);
+    expect(contChunk!.metadata.table_headers).toEqual(['年度', '营收', '净利润']);
+    expect(contChunk!.content).toContain('年度: 2023 | 营收: 120亿 | 净利润: 18亿');
+  });
+
   it('does not leak a table header onto an unrelated later section', () => {
     const doc = [
       '# 表格页',

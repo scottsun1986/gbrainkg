@@ -640,7 +640,7 @@ Evaluate whether the currently retrieved context evidence (Context) is sufficien
 
 Rules:
 1. Comparative queries: Ensure evidence for all compared entities, versions, or aspects is present. If entity B is missing, status MUST be 'insufficient', missingAspects notes entity B, and suggestedFollowUp provides targeted query terms for B.
-2. Multi-hop/Bridge queries: Ensure all steps in the multi-step reasoning chain are supported. If a bridge entity, relationship, or subsequent premise is missing, status MUST be 'insufficient' and suggestedFollowUp gives the next-hop search query.
+2. Multi-hop/Bridge queries: Ensure all steps in the multi-step reasoning chain are supported. If the evidence only covers the first hop (e.g. mentions the intermediate person, work, or organisation) but lacks the required second-hop target property (e.g. birth place, date, nationality, spouse), status MUST be 'insufficient', and suggestedFollowUp MUST extract the intermediate bridge entity combined with the target attribute (e.g. '<Bridge Entity> <Target Attribute>').
 3. No duplicate queries: Already executed queries: [${executedListStr}]. suggestedFollowUp must provide novel, targeted queries (max 2).
 4. Grounded: If evidence is sufficient to answer completely, output status = 'sufficient'. If completely irrelevant, output 'irrelevant'.
 
@@ -657,7 +657,7 @@ Output strict JSON:
 
 裁决规则：
 1. 【对比类问题 (Comparative)】：必须确保被对比的全部实体/阶段/方案均有对应证据。如果仅有A而缺乏B的证据，必须判定为 insufficient，并在 missingAspects 中明确指出缺少B，suggestedFollowUp 给出针对B的定向检索词。
-2. 【多跳因果/实体关联问题 (Multi-Hop)】：必须覆盖多步推理依赖的上下文。若缺少推理链的前置条件或后置依据，判定为 insufficient，并给出下一跳检索词。
+2. 【多跳因果/桥接实体关联问题 (Multi-Hop)】：必须覆盖多步推理依赖的上下文。若当前证据仅回答了第一跳（例如仅给出了中间的人物、作品或机构名称），但缺少用户最终追问的第二跳属性（如出生地、设立时间、主管机构等），必须判定为 insufficient，并在 suggestedFollowUp 中提取该桥接实体与目标属性组合作为下一跳检索词（例如“<桥接实体> <目标属性>”）。
 3. 【禁止重复检索】：已执行过的检索词列表为：[${executedListStr}]。suggestedFollowUp 中严禁出现或微调这些已执行过的词，必须给出更具体或不同维度的检索词（最多2个）。
 4. 【无幻觉准则】：若证据完全不相关，输出 irrelevant；若已有充分证据可得出完整结论，输出 sufficient。
 
@@ -870,6 +870,42 @@ Output strict JSON:
               missingAspects.push(`未覆盖子问题：“${sub}”`);
               suggestedFollowUp.push(sub);
             }
+          }
+        }
+      }
+    }
+
+    // 3. Multi-Hop Bridge Entity Discovery & Target Aspect Verification
+    const isMultiHop = options?.complexity === 'multi_hop' || /(.*的.*的|原著作者|导演|编剧|创始人|妻子|丈夫|出生地|出生在|毕业院校|母校|成立时间|研发者|属于哪个)/u.test(query);
+    if (isMultiHop && context.length >= 20) {
+      const isEn = !/[\u4e00-\u9fa5]/.test(query);
+      if (isEn) {
+        const candidateEntities = Array.from(context.matchAll(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b/g))
+          .map((m) => m[1])
+          .filter((ent) => !query.toLowerCase().includes(ent.toLowerCase()) && ent.length >= 4);
+
+        const aspectMatch = query.match(/\b(birth\s*place|birthplace|born|die|died|death|nationality|alma\s*mater|college|university|director|author|producer|spouse|wife|husband|capital|headquarter)\b/i);
+        if (candidateEntities.length > 0 && aspectMatch) {
+          const aspect = aspectMatch[1].toLowerCase();
+          const aspectAnswered = new RegExp(`${aspect}|\\b(?:in|at|on)\\s+[A-Z][a-z]+`, 'i').test(ctxLower);
+          if (!aspectAnswered) {
+            const bridgeEntity = candidateEntities[0];
+            missingAspects.push(`Bridge entity "${bridgeEntity}" discovered; missing secondary aspect "${aspect}"`);
+            suggestedFollowUp.push(`${bridgeEntity} ${aspect}`);
+          }
+        }
+      } else {
+        const zhAspectMatch = query.match(/(出生地|出生在|哪座城市|哪个城市|出生|成立时间|毕业于|毕业院校|母校|国籍|原名|现任|职务|首任)/u);
+        const roleEntityMatch = context.match(/(?:作者|导演|编剧|主演|创始人|研发|设计者|负责人|法定代表人|总经理|总裁|由)\s*[:：为是]?\s*([《「]?[\u4e00-\u9fa5]{2,10}[》」]?)/u);
+        const bookEntityMatch = context.match(/《([^》]+)》/);
+        const bridgeCandidate = roleEntityMatch ? roleEntityMatch[1].replace(/[《》「」]/g, '').trim() : (bookEntityMatch ? bookEntityMatch[1] : '');
+        
+        if (bridgeCandidate && bridgeCandidate.length >= 2 && !query.includes(bridgeCandidate) && zhAspectMatch) {
+          const aspect = zhAspectMatch[1];
+          const hasAspect = ctxLower.includes(aspect);
+          if (!hasAspect) {
+            missingAspects.push(`从前置证据中发现桥接实体“${bridgeCandidate}”，但缺少其“${aspect}”的后续关键事实`);
+            suggestedFollowUp.push(`${bridgeCandidate} ${aspect}`);
           }
         }
       }

@@ -126,6 +126,13 @@ function extractTableHeader(text: string): string | null {
   return match ? match[1].trim() : null;
 }
 
+export function getTableColumnCount(headerOrRow: string): number {
+  if (!headerOrRow) return 0;
+  const line = headerOrRow.split(/\r?\n/).find((l) => l.trim().startsWith('|') && l.trim().endsWith('|'));
+  if (!line) return 0;
+  return line.trim().slice(1, -1).split('|').length;
+}
+
 export function parseTableRowsToKeyValues(tableText: string): { headers: string[]; rowsKv: string[] } {
   const lines = tableText.split(/\r?\n/).map(l => l.trim()).filter(l => l.startsWith('|') && l.endsWith('|'));
   if (lines.length < 3) return { headers: [], rowsKv: [] };
@@ -220,6 +227,10 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
         headingStack.pop();
       }
       headingStack.push({ level, text: cleanHeading });
+      // If entering a major new section/chapter and this section has no table rows, reset carriedTableHeader
+      if (level <= 2 && !/(?:^|\n)\s*\|[^\n]+\|/.test(sectionBody)) {
+        carriedTableHeader = null;
+      }
     }
     const currentBreadcrumb = headingStack.map((h) => h.text).join(' > ');
     const currentHeadingHierarchy = headingStack.map((h) => h.text);
@@ -241,7 +252,7 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
     }
 
     const ownTableHeader = extractTableHeader(sectionBody);
-    let lastTableHeader: string | null = ownTableHeader ?? (isPageSection ? carriedTableHeader : null);
+    let lastTableHeader: string | null = ownTableHeader ?? carriedTableHeader;
 
     let start = section.start;
     let first = true;
@@ -267,29 +278,39 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
         return '';
       }).replace(/[ \t]+\n/g, '\n').trim();
       if (content) {
-        // Table header propagation (inspired by WeKnora table processing):
-        // If chunk begins with table rows but lacks header delimiter, prepend preceding header
-        // A page break may be represented as a heading line ("## 第 N 页")
-        // followed by the continuation rows, so allow an optional leading
-        // heading before the first table row.
-        const beginsWithTableRow = /^(?:#{1,6}[^\n]*\n+)?\s*\|[^\n]+\|/.test(content);
+        // Table header propagation & fidelity (TAT-QA / MultiHiertt / TabFact optimization):
+        // Automatically injects table headers into continuation chunks that contain orphan table rows.
         const containsHeader = /(?:^|\n)\|[^\n]+\|\r?\n\s*\|[-\s:|]+\|/.test(content);
         let tableHeaderAdded = false;
 
-        if (beginsWithTableRow && !containsHeader && lastTableHeader) {
-          content = `${lastTableHeader}\n${content}`;
-          tableHeaderAdded = true;
-        }
         if (containsHeader) {
           const newHeader = extractTableHeader(content);
-          if (newHeader) lastTableHeader = newHeader;
+          if (newHeader) {
+            lastTableHeader = newHeader;
+            carriedTableHeader = newHeader;
+          }
+        } else if (lastTableHeader) {
+          const headerColCount = getTableColumnCount(lastTableHeader);
+          const lines = content.split(/\r?\n/);
+          const firstTableRowIdx = lines.findIndex((l) => {
+            const trimmed = l.trim();
+            return trimmed.startsWith('|') && trimmed.endsWith('|') && !trimmed.includes('---');
+          });
+          if (firstTableRowIdx >= 0) {
+            const rowColCount = getTableColumnCount(lines[firstTableRowIdx]);
+            if (headerColCount > 0 && Math.abs(rowColCount - headerColCount) <= 1) {
+              lines.splice(firstTableRowIdx, 0, lastTableHeader);
+              content = lines.join('\n');
+              tableHeaderAdded = true;
+            }
+          }
         }
 
         let withHeading = !first && section.heading && !content.startsWith(section.heading)
           ? `${section.heading}\n\n${content}`
           : content;
           
-        const hasTableContent = containsHeader || beginsWithTableRow || tableHeaderAdded || /(?:^|\n)\|[^\n]+\|/.test(content);
+        const hasTableContent = containsHeader || tableHeaderAdded || /(?:^|\n)\s*\|[^\n]+\|/.test(content);
         let tableHeaders: string[] | undefined;
         let tableRowsCount: number | undefined;
 

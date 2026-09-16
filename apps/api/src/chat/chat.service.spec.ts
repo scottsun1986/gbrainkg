@@ -25,6 +25,7 @@ const mockPermissionService = {
 const mockCompilerService = {
   triggerLazyCompileAndWait: jest.fn(),
   ensureUserBrainRepo: jest.fn(),
+  syncUserBrainRepo: jest.fn().mockResolvedValue(undefined),
 };
 
 const mockGbrainQuery = jest.fn().mockResolvedValue({
@@ -1142,6 +1143,24 @@ describe("ChatService", () => {
       ];
       const result = service.stitchContiguousCitations(citations);
       expect(result).toHaveLength(3);
+    });
+
+    it("triggers fast standard refusal when no citations or sufficient evidence is found", async () => {
+      mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(["kb-1"]);
+      mockCompilerService.ensureUserBrainRepo.mockResolvedValue({ gitRepoUrl: "/tmp/repo" });
+      mockGbrainQuery.mockResolvedValue({
+        topics: [],
+        answer: "",
+        citations: [],
+        reranked: true,
+      });
+      jest.spyOn(service as any, "searchChunksFallback").mockResolvedValue([]);
+
+      const stream$ = await service.handleChatStream("user-1", "不存在的技术标准是什么？", ["kb-1"]);
+      const events = await lastValueFrom(stream$.pipe(toArray()));
+      const deltas = events.filter((e) => (e.data as any).type === "delta");
+      expect(deltas.length).toBeGreaterThan(0);
+      expect((deltas[0].data as any).content).toContain("已知知识库资料中未包含与该问题直接相关的信息");
     });
   });
 });

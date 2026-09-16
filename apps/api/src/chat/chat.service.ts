@@ -1273,7 +1273,37 @@ export class ChatService {
         (cit as any).hop = hopNumber;
       }
 
-      return [...mappedFallbacks, ...gbrainHits];
+      // 3. Multi-Hop GraphRAG Entity & Relation Probe:
+      // Query Knowledge Graph for bridge entity relationships when available
+      const graphHits: any[] = [];
+      if (this.graphRagService && scope.length > 0) {
+        try {
+          const localGraph = await this.graphRagService.searchLocalGraph(scope, probe, 3);
+          if (localGraph && Array.isArray(localGraph.relations)) {
+            for (const rel of localGraph.relations) {
+              const text = rel.snippet || (rel as any).description;
+              if (text) {
+                graphHits.push({
+                  topic: `实体关系：${rel.source} -[${rel.relationType}]-> ${rel.target}`,
+                  docId: (rel as any).provenanceDocId || `kg-${rel.source}`,
+                  kbId: scope[0] || null,
+                  evidence: text,
+                  snippet: text,
+                  context: text,
+                  score: 0.88,
+                  docTitle: `知识图谱·实体关系 (${rel.source})`,
+                  subQueryOrigin: probe,
+                  hop: hopNumber,
+                });
+              }
+            }
+          }
+        } catch {
+          // fail-open
+        }
+      }
+
+      return [...mappedFallbacks, ...gbrainHits, ...graphHits];
     });
 
     const settled = await Promise.allSettled(probePromises);
@@ -2937,7 +2967,7 @@ export class ChatService {
           { candidateCount: fallbackChunks.length },
         );
       } else {
-        await this.compilerService.syncUserBrainRepo(userId);
+        await (this.compilerService as any)?.syncUserBrainRepo?.(userId);
         const refreshedRefs =
           typeof (this.compilerService as any).getUserSourceRefsForKnowledgeBases === "function"
             ? await (this.compilerService as any).getUserSourceRefsForKnowledgeBases(userId, scope)
@@ -3712,7 +3742,54 @@ export class ChatService {
       `Truth context compiled from ${orderedCitations.length} citations (preview: ${compiledTruthContext.slice(0, 120)}...)`,
     );
 
-    // 6. 流式调用 LLM 并进行事实角标校验
+    // 6. 语义置信度硬门禁校验（Fast Refusal Gate）：
+    // 若未命中有效证据或所有证据相似度均低于置信度红线，毫秒级触发标准拒答，阻断反事实幻觉与无效 LLM 耗时
+    const hasMeaningfulPreAnswer =
+      typeof queryResult.answer === "string" &&
+      queryResult.answer.trim().length >= 15 &&
+      !queryResult.answer.includes("No truth found");
+
+    const fastRefusalFloor = Number(process.env.RETRIEVAL_FAST_REFUSAL_THRESHOLD || 0.25);
+    const maxEvidenceScore = orderedCitations.reduce((max: number, c: any) => {
+      const s = Number(c?.relevanceScore ?? c?.rerankScore ?? c?.score ?? 1);
+      return Number.isFinite(s) ? Math.max(max, s) : max;
+    }, 0);
+
+    const hasSufficientEvidence =
+      hasMeaningfulPreAnswer ||
+      (orderedCitations.length > 0 && maxEvidenceScore >= fastRefusalFloor);
+
+    if (!hasSufficientEvidence) {
+      const refusalMessage = isEnglishQuery
+        ? "Based on the provided reference materials, the relevant information is not available in the knowledge base."
+        : "已知知识库资料中未包含与该问题直接相关的信息，无法依据现有文档回答。";
+      trace.start("llm_generation", "大模型流式生成", "未命中高置信度证据，触发置信度门禁标准拒答");
+      subscriber.next({
+        data: { type: "delta", content: refusalMessage, delta: refusalMessage },
+      });
+      trace.finish(
+        "llm_generation",
+        "success",
+        "未检索到满足置信度门禁的有效证据，已触发秒级标准拒答（消除反事实幻觉与噪音脑补）",
+        {
+          fastRefusal: true,
+          evidenceCount: orderedCitations.length,
+          maxScore: maxEvidenceScore,
+          threshold: fastRefusalFloor,
+        },
+      );
+      await this.emitCitationsAndComplete(
+        userId,
+        [],
+        subscriber,
+        0,
+        refusalMessage,
+        trace,
+      );
+      return;
+    }
+
+    // 7. 流式调用 LLM 并进行事实角标校验
     try {
       // 从数据库中获取用户在后台页面配置的大模型信息
       trace.start("llm_generation", "大模型流式生成", "基于授权证据生成回答并要求逐项引用");
@@ -3779,7 +3856,8 @@ export class ChatService {
 2. [Language Consistency]: The user asked in English, so you MUST respond entirely in English. Preserve original entity names. Do NOT use Chinese.
 3. [Grounded & Layered Answers]:
 - If the reference materials contain partial or related facts (e.g. entity background, relationships, birth place, or known attributes), prioritize presenting all confirmed facts with citations. Clearly state what is confirmed. If a specific sub-attribute (e.g. exact burial place) is not mentioned in the text, state what IS known from the materials (e.g. the person's birth place or career) and note that the specific sub-detail is not explicitly recorded. Never refuse when relevant facts exist.
-- Only if the reference materials contain completely zero relevant information, reply: "Based on the provided reference materials, the relevant information is not available."`
+- Only if the reference materials contain completely zero relevant information, reply: "Based on the provided reference materials, the relevant information is not available."
+4. [Counterfactual & Adversarial Robustness]: If the user query contains ungrounded assumptions, false premises, or fictional entities not attested in the reference materials, explicitly state that the reference materials do not support the premise or contain no such record. Never hallucinate to satisfy the premise.`
         : `你是一个专业的企业级知识库智能助手。请严格基于下方给出的【参考知识库资料】回答用户的问题。
 
 【重要回答规范】：
@@ -3792,7 +3870,8 @@ export class ChatService {
 7. 【客观真实与分层回答】：
 - 若参考资料完全不包含与问题相关的信息，请统一回复：“已知知识库资料中未包含相关信息，无法回答该问题。”严禁在拒答或未找到信息时复述、回显用户问题中的代号、机密编号或专有名词。
 - 若参考资料包含部分相关事实（如包含实体背景、前置步骤或部分已知条件），请优先陈述已证实的客观事实并标注对应角标，并明确指出参考资料未涵盖的具体维度或后续信息，严禁在已知部分确凿事实的情况下全盘拒答。
-8. 【语言一致性】：如果用户使用英文提问，请务必使用英文作答（如无法回答时使用 'Based on the provided reference materials, the relevant information is not available.'），并保留原实体英文名称。`;
+8. 【语言一致性】：如果用户使用英文提问，请务必使用英文作答（如无法回答时使用 'Based on the provided reference materials, the relevant information is not available.'），并保留原实体英文名称。
+9. 【反事实与诱导性提问甄别】：若用户提问中包含假设性事实、诱导性错误前提（如询问不存在的人物关系、虚构的机构或篡改的事件时间），而参考资料中明确未提及或与事实相反，必须明确指出参考资料中无此记载或前提不成立，严禁顺从提问中的错误设定进行虚构脑补。`;
 
       const dynamicDirectives = [
         queryResult?.diagnostics?.mode === "inventory"
