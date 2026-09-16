@@ -75,6 +75,10 @@ export class RaptorService {
     return process.env.RAPTOR_ENABLED !== 'false';
   }
 
+  private isSpreadsheet(title?: string): boolean {
+    return Boolean(title && /(?:\.xlsx?|\.csv|\.tsv)(?:\s*·|\s*$)/i.test(title));
+  }
+
   /** Build/refresh the summary tree for one document. Idempotent per document. */
   async indexDocument(kbId: string, documentId: string): Promise<{ nodes: number }> {
     const document = await (this.prisma as any).document.findUnique({
@@ -94,6 +98,11 @@ export class RaptorService {
       },
     });
     if (!document || !document.chunks?.length) return { nodes: 0 };
+    if (this.isSpreadsheet(document.title)) {
+      this.logger.log(`Document ${documentId} (${document.title}) is a spreadsheet/tabular file; skipping RAPTOR indexing and purging existing tree.`);
+      await (this.prisma as any).raptorNode.deleteMany({ where: { documentId } });
+      return { nodes: 0 };
+    }
 
     const llm = await this.llmConfig();
     // Windowed clustering: k-means over thousands of chunks at once both costs
@@ -190,17 +199,19 @@ export class RaptorService {
         where: { documentId: { in: documentIds }, level: 1 },
         take: Math.max(1, limit),
       });
-      return nodes.map((node: any) => ({
-        documentId: node.documentId,
-        kbId: node.kbId,
-        title: node.title,
-        evidence: `【宏观摘要 · 全文】${node.title}\n${node.content}`,
-        score: 0.9,
-        previewUrl: node.documentId ? buildDocumentPreviewUrl(node.kbId, node.documentId) : null,
-        level: 1,
-        raptor: true,
-        section: 'raptor-level1',
-      }));
+      return nodes
+        .filter((node: any) => !this.isSpreadsheet(node.title))
+        .map((node: any) => ({
+          documentId: node.documentId,
+          kbId: node.kbId,
+          title: node.title,
+          evidence: `【宏观摘要 · 全文】${node.title}\n${node.content}`,
+          score: 0.9,
+          previewUrl: node.documentId ? buildDocumentPreviewUrl(node.kbId, node.documentId) : null,
+          level: 1,
+          raptor: true,
+          section: 'raptor-level1',
+        }));
     } catch (err) {
       this.logger.warn(`Document summary fetch failed: ${err instanceof Error ? err.message : String(err)}`);
       return [];
@@ -234,6 +245,7 @@ export class RaptorService {
       const headingRe = /^(?:#{1,6}\s*)?(?:[一二三四五六七八九十百0-9]+[、.]|第[一二三四五六七八九十百0-9]+[章节])/;
       const hits: RaptorSearchHit[] = [];
       for (const doc of docs) {
+        if (this.isSpreadsheet(doc.title)) continue;
         const lines: string[] = [];
         const articleMatches: string[] = [];
         for (const chunk of doc.chunks || []) {
@@ -302,6 +314,7 @@ export class RaptorService {
         take: limit * 4,
       });
       const scored = nodes
+        .filter((node: any) => !this.isSpreadsheet(node.title))
         .map((node: any) => {
           const text = `${node.title}\n${node.content}`.toLowerCase();
           const hits = keywords.filter((kw) => text.includes(kw.toLowerCase())).length;
@@ -347,9 +360,10 @@ export class RaptorService {
         take: limit * 4,
       });
 
-      if (!nodes.length) return [];
+      const validNodes = nodes.filter((node: any) => !this.isSpreadsheet(node.title));
+      if (!validNodes.length) return [];
 
-      const scored = nodes.map((node: any) => {
+      const scored = validNodes.map((node: any) => {
         let score = 0.82;
         // Level 2 priority boost for macro queries
         if (node.level === 2) score += 0.12;
@@ -396,12 +410,13 @@ export class RaptorService {
         select: { id: true, title: true, content: true, documentId: true },
       });
 
-      if (!docNodes.length) return { nodes: 0 };
+      const validDocNodes = docNodes.filter((n: any) => !this.isSpreadsheet(n.title));
+      if (!validDocNodes.length) return { nodes: 0 };
 
       const llm = await this.llmConfig();
       const modelVersion = llm ? llm.modelName : 'extractive-v1';
 
-      const aggregatedText = docNodes
+      const aggregatedText = validDocNodes
         .map((n: any) => `【${n.title}】\n${n.content}`)
         .join('\n\n')
         .slice(0, this.maxSourceChars * 2);
@@ -881,6 +896,7 @@ export class RaptorService {
             LIMIT ${Math.max(limit * 2, 8)}
           `;
       const hits = (rows || [])
+        .filter((row) => !this.isSpreadsheet(row.title))
         .filter((row) => Number(row.similarity) >= Number(process.env.RAPTOR_VECTOR_MIN_SCORE || 0.30))
         .slice(0, limit)
         .map((row, index) => ({

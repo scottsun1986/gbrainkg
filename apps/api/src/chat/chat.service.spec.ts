@@ -332,6 +332,71 @@ describe("ChatService", () => {
     expect(result.evidenceSelection.groups).toBe(1);
   });
 
+  it("selectEvidence protects concrete table chunks from being displaced by doc summaries", () => {
+    const tableText = "| 队伍编号 | 队伍名称 | 分数 |\n| 001 | 队伍A | 90 |\n| 002 | 队伍B | 88 |\n| 003 | 队伍C | 95 |";
+    const summaryText = "【宏观摘要 · 全文】打分表.xlsx\n| 队伍编号 | 队伍名称 | 分数 |\n| 001 | 队伍A | 90 |";
+
+    const result = (service as any).selectEvidence({
+      citations: [
+        {
+          id: "summary-1",
+          docId: "doc-table",
+          docTitle: "打分表.xlsx · 全文摘要",
+          relevanceScore: 0.90,
+          context: summaryText,
+          snippet: summaryText,
+          evidence: summaryText,
+          raptor: true,
+          isSummary: true,
+        },
+        {
+          id: "chunk-0",
+          docId: "doc-table",
+          docTitle: "打分表.xlsx",
+          relevanceScore: 0.85,
+          context: tableText,
+          snippet: tableText,
+          evidence: tableText,
+        },
+      ],
+      reranked: true,
+    }, { breadth: false, tokenBudget: 12000 });
+
+    const ids = result.citations.map((c: any) => c.id);
+    expect(ids).toContain("chunk-0");
+  });
+
+  it("augmentWithDocumentSummaries skips non-macro queries and spreadsheet documents", async () => {
+    const mockRaptorService = {
+      isEnabled: () => true,
+      getDocumentSummaries: jest.fn().mockResolvedValue([
+        { documentId: "doc-1", title: "打分表.xlsx", evidence: "宏观摘要", score: 0.9 },
+      ]),
+      getDocumentOutlines: jest.fn().mockResolvedValue([]),
+    };
+    (service as any).raptorService = mockRaptorService;
+
+    // Non-macro query should NOT augment summaries
+    const res1 = await (service as any).augmentWithDocumentSummaries(
+      { citations: [{ docId: "doc-1", docTitle: "打分表.xlsx", relevanceScore: 0.9 }] },
+      ["kb-1"],
+      "请问001队伍得了多少分",
+      "factual",
+    );
+    expect(res1.citations).toHaveLength(1);
+    expect(mockRaptorService.getDocumentSummaries).not.toHaveBeenCalled();
+
+    // Macro query on spreadsheet should still be skipped
+    const res2 = await (service as any).augmentWithDocumentSummaries(
+      { citations: [{ docId: "doc-1", docTitle: "打分表.xlsx", relevanceScore: 0.9 }] },
+      ["kb-1"],
+      "请概述打分表.xlsx的总体结构",
+      "global_synthesis",
+    );
+    expect(res2.citations).toHaveLength(1);
+    expect(mockRaptorService.getDocumentSummaries).not.toHaveBeenCalled();
+  });
+
   it("should not escalate a high-score weak-semantic hit", () => {
     const decision = (service as any).assessWeakEvidence({
       citations: [{ evidence: "weak_semantic", score: 0.925 }],

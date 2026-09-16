@@ -942,39 +942,73 @@ export class ChatService {
   /**
    * Append document-level (level 1) RAPTOR summaries for documents already
    * present in the candidate set. Guarantees whole-document coverage for
-   * "what is this document about" questions without query-pattern rules.
+   * macro questions without displacing concrete evidence.
    */
-  private async augmentWithDocumentSummaries(queryResult: any, scope: string[]): Promise<any> {
+  private async augmentWithDocumentSummaries(
+    queryResult: any,
+    scope: string[],
+    question?: string,
+    complexity?: string,
+  ): Promise<any> {
     if (!this.raptorService?.isEnabled()) return queryResult;
     const citations = Array.isArray(queryResult?.citations) ? queryResult.citations : [];
     if (!citations.length) return queryResult;
+
+    const q = String(question || "").trim();
+    const isMacroOrStructureQuery =
+      complexity === "global_synthesis" ||
+      /(?:包括那?几大?部分|主要内容|主要章节|有哪些章|目录|大纲|总体结构|全文架构|整体框架|总结|概述|全景|宏观)/u.test(q);
+
+    // Only inject document summaries/outlines when the user query is asking for macro or structural overview
+    if (!isMacroOrStructureQuery) return queryResult;
+
+    // Filter candidate documents: do NOT augment spreadsheet files
+    const candidateCitations = citations.filter((c: any) => {
+      const title = String(c.docTitle || c.topic || "");
+      const isSpreadsheet = /(?:\.xlsx?|\.csv|\.tsv)(?:\s*·|\s*$)/i.test(title);
+      return !isSpreadsheet;
+    });
+
     const docIds = Array.from(
-      new Set(citations.map((c: any) => c.docId || c.documentId).filter(Boolean)),
+      new Set(candidateCitations.map((c: any) => c.docId || c.documentId).filter(Boolean)),
     ).slice(0, 3) as string[];
     if (!docIds.length) return queryResult;
+
     const [summaries, outlines] = await Promise.all([
       this.raptorService.getDocumentSummaries(docIds, 3),
       this.raptorService.getDocumentOutlines(docIds, 3),
     ]);
     const combined = [...summaries, ...outlines];
     if (!combined.length) return queryResult;
-    const existing = new Set(citations.map((c: any) => c.docId || c.documentId));
+
+    const existing = new Set(candidateCitations.map((c: any) => c.docId || c.documentId));
     const additions = combined
       .filter((s) => s.documentId && existing.has(s.documentId))
       .filter((s) => !citations.some((c: any) => (c.docId || c.documentId) === s.documentId && c.section === s.section))
-      .map((s) => ({
-        topic: s.title,
-        docId: s.documentId,
-        kbId: s.kbId,
-        version: 1,
-        evidence: s.evidence,
-        snippet: s.evidence,
-        context: s.evidence,
-        score: s.score,
-        docTitle: s.title,
-        previewUrl: s.previewUrl,
-        section: s.section || "raptor-level1",
-      }));
+      .map((s) => {
+        // Calibrate summary score below parent matching chunks so concrete evidence is not displaced
+        const docMatchingCitations = citations.filter((c: any) => (c.docId || c.documentId) === s.documentId);
+        const parentScore = Math.max(...docMatchingCitations.map((c: any) => Number(c.relevanceScore ?? c.rerankScore ?? c.score ?? 0)));
+        const calibratedScore = parentScore > 0 ? Number((parentScore * 0.88).toFixed(4)) : (s.score ? Number((s.score * 0.8).toFixed(4)) : 0.6);
+
+        return {
+          topic: s.title,
+          docId: s.documentId,
+          kbId: s.kbId,
+          version: 1,
+          evidence: s.evidence,
+          snippet: s.evidence,
+          context: s.evidence,
+          score: calibratedScore,
+          relevanceScore: calibratedScore,
+          docTitle: s.title,
+          previewUrl: s.previewUrl,
+          section: s.section || "raptor-level1",
+          raptor: true,
+          isSummary: true,
+        };
+      });
+
     if (!additions.length) return queryResult;
     return { ...queryResult, citations: [...citations, ...additions] };
   }
@@ -1027,6 +1061,7 @@ export class ChatService {
           previewUrl: h.previewUrl,
           section: h.section || (h.level === 2 ? "raptor-level2-global" : "raptor-level1"),
           raptor: true,
+          isSummary: true,
           level: h.level,
         });
         added++;
@@ -1831,7 +1866,7 @@ export class ChatService {
 
       const maxRrfScore = Math.max(...Array.from(chunkScores.values()), 0.0001);
       const chnNums = ["", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"];
-      const results = expandedChunks.map((c: any) => {
+      const results: any[] = expandedChunks.map((c: any) => {
         const meta = c.metadata || {};
         const chn = chnNums[meta.chapter_no] || meta.chapter_no || "";
         const chPrefix = chn ? `【第${chn}章】` : "";
@@ -1884,6 +1919,8 @@ export class ChatService {
               sectionGroup: undefined,
               subQueryOrigin: undefined,
               previewUrl: hit.previewUrl,
+              raptor: true,
+              isSummary: true,
             });
           }
         } catch (raptorErr) {
@@ -2636,7 +2673,12 @@ export class ChatService {
     // document, add that document's level-1 summary as a candidate. The single
     // selection stage (cross-encoder + relevance floor) keeps it for macro
     // questions and drops it for focused ones — no query-pattern heuristics.
-    queryResult = await this.augmentWithDocumentSummaries(queryResult, scope);
+    queryResult = await this.augmentWithDocumentSummaries(
+      queryResult,
+      scope,
+      retrieval.query || question,
+      agenticComplexity,
+    );
     queryResult = await this.augmentWithRaptorGlobalTree(
       queryResult,
       scope,
@@ -4473,12 +4515,34 @@ ${compiledTruthContext}`;
 
     const groupKeyOf = (c: any, index: number) =>
       typeof c?.sectionGroup === "string" && c.sectionGroup ? c.sectionGroup : `__single_${index}`;
-    const groups = new Map<string, { members: any[]; best: number; repText: string }>();
+    const groups = new Map<
+      string,
+      { members: any[]; best: number; repText: string; isSummary: boolean; isSpreadsheetOrTable: boolean }
+    >();
     citations.forEach((c, index) => {
       const key = groupKeyOf(c, index);
-      const entry = groups.get(key) || { members: [], best: -Infinity, repText: "" };
+      const isSummaryItem = Boolean(
+        c.raptor ||
+        c.isSummary ||
+        String(c.section || "").startsWith("raptor") ||
+        String(c.section || "") === "doc-outline" ||
+        /【宏观摘要[^】]*】/u.test(String(c.evidence || c.snippet || ""))
+      );
+      const isTableItem = Boolean(
+        /(?:\.xlsx?|\.csv|\.tsv)(?:\s*·|\s*$)/i.test(String(c.docTitle || c.topic || "")) ||
+        /\|[^\n]+\|[^\n]+\|/g.test(String(c.evidence || c.snippet || c.context || ""))
+      );
+      const entry = groups.get(key) || {
+        members: [],
+        best: -Infinity,
+        repText: "",
+        isSummary: false,
+        isSpreadsheetOrTable: false,
+      };
       entry.members.push(c);
       entry.best = Math.max(entry.best, norm(rawScore(c)));
+      if (isSummaryItem) entry.isSummary = true;
+      if (isTableItem) entry.isSpreadsheetOrTable = true;
       if (!entry.repText) entry.repText = String(c.context || c.snippet || c.docTitle || c.topic || "").slice(0, 400);
       groups.set(key, entry);
     });
@@ -4512,7 +4576,7 @@ ${compiledTruthContext}`;
 
     const lambda = Math.min(1, Math.max(0, Number(process.env.RETRIEVAL_MMR_LAMBDA || 0.72)));
     const selected: any[] = [];
-    const selectedSets: Array<Set<string>> = [];
+    const selectedSets: Array<{ tokens: Set<string>; docId: string; isSummary: boolean }> = [];
     let usedTokens = 0;
     const pool = entries.slice();
     const docCounts = new Map<string, number>();
@@ -4540,11 +4604,24 @@ ${compiledTruthContext}`;
         // Distinct document boost: if g brings a novel document into the context,
         // it should not suffer the full vocabulary redundancy penalty from other documents.
         const isNovelDoc = countForDoc === 0 && selected.length > 0;
-        const rawRedundancy = selectedSets.length
-          ? Math.max(...selectedSets.map((s) => jaccard(tokenize(g.repText), s)))
+        const gTokens = tokenize(g.repText);
+
+        // When evaluating redundancy:
+        // A concrete chunk should NOT be penalized for redundancy against an auxiliary summary of the SAME document!
+        const relevantSelectedSets = selectedSets.filter(
+          (s) => !(s.docId === docId && s.isSummary && !g.isSummary),
+        );
+        const rawRedundancy = relevantSelectedSets.length
+          ? Math.max(0, ...relevantSelectedSets.map((s) => jaccard(gTokens, s.tokens)))
           : 0;
         const redundancy = isNovelDoc ? rawRedundancy * 0.25 : rawRedundancy;
-        const value = lambda * g.best - (1 - lambda) * redundancy + (isNovelDoc ? 0.15 : 0);
+
+        // Concrete evidence priority boost:
+        // Real document text (and especially tables / spreadsheets) must not be displaced by secondary summaries.
+        const concreteBoost = !g.isSummary ? 0.15 : 0;
+        const tableBoost = g.isSpreadsheetOrTable ? 0.10 : 0;
+
+        const value = lambda * g.best - (1 - lambda) * redundancy + (isNovelDoc ? 0.15 : 0) + concreteBoost + tableBoost;
         if (value > pickVal) { pickVal = value; pickIdx = i; }
       }
       if (pickIdx < 0) {
@@ -4556,10 +4633,17 @@ ${compiledTruthContext}`;
       // Token budget: the first (best) group always fits; later groups must fit.
       if (selected.length > 0 && usedTokens + groupTokens > opts.tokenBudget) break;
       for (const m of group.members) selected.push(m);
-      selectedSets.push(tokenize(group.repText));
-      usedTokens += groupTokens;
       const dId = docIdOf(group);
-      docCounts.set(dId, (docCounts.get(dId) || 0) + 1);
+      selectedSets.push({
+        tokens: tokenize(group.repText),
+        docId: dId,
+        isSummary: group.isSummary,
+      });
+      usedTokens += groupTokens;
+      // Only concrete groups count towards document quota; auxiliary summaries do not block concrete evidence
+      if (!group.isSummary) {
+        docCounts.set(dId, (docCounts.get(dId) || 0) + 1);
+      }
     }
 
     // Sub-question coverage quota (compound questions): with a single global
@@ -4645,7 +4729,11 @@ ${compiledTruthContext}`;
             selectedIds.add(m.id || `${m.docId}:${m.ord}`);
           }
         }
-        selectedSets.push(tokenize(bestGroup.repText));
+        selectedSets.push({
+          tokens: tokenize(bestGroup.repText),
+          docId: docIdOf(bestGroup),
+          isSummary: bestGroup.isSummary,
+        });
         usedTokens += groupTokens;
         subQueryInjected += 1;
         subQueryCovered += 1;

@@ -121,4 +121,46 @@ describe('RaptorService', () => {
     expect(hits[0].evidence).toContain('全库演进全景');
     expect(hits[1].level).toBe(1);
   });
+
+  it('skips spreadsheet documents in indexDocument and purges existing raptor nodes', async () => {
+    const deleteMany = jest.fn().mockResolvedValue({ count: 1 });
+    const findUnique = jest.fn().mockResolvedValue({
+      id: 'doc-xlsx',
+      title: '息壤杯团队打分表.xlsx',
+      chunks: [{ id: 'c1', ord: 0, content: '队伍A 90分', metadata: {} }],
+    });
+    (service as any).prisma = {
+      document: { findUnique },
+      raptorNode: { deleteMany },
+    };
+
+    const res = await service.indexDocument('kb-1', 'doc-xlsx');
+    expect(res.nodes).toBe(0);
+    expect(deleteMany).toHaveBeenCalledWith({ where: { documentId: 'doc-xlsx' } });
+  });
+
+  it('filters out spreadsheet documents from getDocumentSummaries and getDocumentOutlines', async () => {
+    process.env.RAPTOR_ENABLED = 'true';
+    const findManyNodes = jest.fn().mockResolvedValue([
+      { id: 'n1', kbId: 'kb-1', documentId: 'doc-xlsx', level: 1, title: '打分表.xlsx · 全文摘要', content: '队伍数据' },
+      { id: 'n2', kbId: 'kb-1', documentId: 'doc-txt', level: 1, title: '常规文档.md · 全文摘要', content: '常规文本' },
+    ]);
+    const findManyDocs = jest.fn().mockResolvedValue([
+      { id: 'doc-xlsx', kbId: 'kb-1', title: '打分表.xlsx', chunks: [{ content: '# 表头\n数据' }] },
+      { id: 'doc-txt', kbId: 'kb-1', title: '常规文档.md', chunks: [{ content: '一、引言\n正文' }] },
+    ]);
+    (service as any).prisma = {
+      raptorNode: { findMany: findManyNodes },
+      document: { findMany: findManyDocs },
+    };
+
+    const summaries = await service.getDocumentSummaries(['doc-xlsx', 'doc-txt'], 5);
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0].documentId).toBe('doc-txt');
+
+    const outlines = await service.getDocumentOutlines(['doc-xlsx', 'doc-txt'], 5);
+    expect(outlines).toHaveLength(1);
+    expect(outlines[0].documentId).toBe('doc-txt');
+    delete process.env.RAPTOR_ENABLED;
+  });
 });
