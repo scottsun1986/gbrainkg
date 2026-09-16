@@ -254,6 +254,9 @@ LOCAL_DOCLING_ENABLED=0
 OCR_PROVIDER=none
 DOCLING_TIMEOUT_SECONDS=240
 
+# 单分块 Prompt 字数放行上限（默认 6000，防止大表格与密集行描述被硬切断）
+CHAT_CHUNK_MAX_CHARS=6000
+
 ADMIN_EMAIL=admin@local.invalid
 EOF
 
@@ -462,6 +465,7 @@ PROD_HOST="<新服务器公网IP或SSH别名>" bash scripts/deploy-prod.sh --tar
 | **防线 2：BYPASSRLS 权限** | PG 角色 `llmwiki` 必须拥有 `BYPASSRLS` | `sudo -u postgres psql -tAc "SELECT rolbypassrls FROM pg_roles WHERE rolname='llmwiki'"` |
 | **防线 3：GBrain CLI 全局软链** | `/usr/local/bin/gbrain` 和 `/usr/local/bin/bun` 必须存在且正常输出版本 | `gbrain --version && bun --version` |
 | **防线 4：数据盘挂载路径** | 运行时数据与代码存放在 `/data/llmwiki` | `df -h /data` |
+| **防线 5：分块 Prompt 放行上限** | `CHAT_CHUNK_MAX_CHARS=6000` 保障大表格完整进入大模型 | `grep CHAT_CHUNK_MAX_CHARS ~/.config/llmwiki/production.env` |
 
 ---
 

@@ -104,6 +104,9 @@ ssh "$PROD_HOST" "
     sed -i 's|^BRAIN_REPO_BASE_PATH=.*|BRAIN_REPO_BASE_PATH=$DATA_DIR/runtime|' '$ENV_FILE'
     sed -i 's|^UPLOAD_ROOT=.*|UPLOAD_ROOT=$DATA_DIR/runtime/uploads|' '$ENV_FILE'
     
+    # 保障单分块 Prompt 放行上限（防止大表格与密集语义被硬截断）
+    grep -q '^CHAT_CHUNK_MAX_CHARS=' '$ENV_FILE' && sed -i 's/^CHAT_CHUNK_MAX_CHARS=.*/CHAT_CHUNK_MAX_CHARS=6000/' '$ENV_FILE' || echo 'CHAT_CHUNK_MAX_CHARS=6000' >> '$ENV_FILE'
+    
     chmod 600 '$ENV_FILE'
     echo 'Created $ENV_FILE with REDIS_DB=$REDIS_DB and PORT=$API_PORT'
   else

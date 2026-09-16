@@ -286,6 +286,9 @@ LOCAL_DOCLING_ENABLED=0
 OCR_PROVIDER=none
 DOCLING_TIMEOUT_SECONDS=240
 
+# 单分块 Prompt 字数放行上限（默认 6000，保障大表格与密集行语义完整送入大模型）
+CHAT_CHUNK_MAX_CHARS=6000
+
 ADMIN_EMAIL=admin@local.invalid
 EOF
     chmod 600 \"\$ENV_FILE\"
