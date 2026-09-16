@@ -57,6 +57,37 @@ export function extractRawChunkText(text: string): string {
   return text.replace(/^\[(?:上下文|Context):\s*[\s\S]*?\]\n*/i, '').trim();
 }
 
+/**
+ * Truncate chunk text intelligently to fit within maxChunkLen:
+ * 1. If text is within maxChunkLen, return as is.
+ * 2. If text must be truncated:
+ *    - Search for paragraph boundary (\n\n) or line boundary (\n) in the last 20% range.
+ *    - If inside a Markdown table, preserve complete table rows and close with a clean truncation marker.
+ *    - Avoid chopping mid-word or mid-table-row.
+ */
+export function smartTruncateChunkText(rawText: string, maxChunkLen: number): string {
+  if (!rawText || rawText.length <= maxChunkLen) return rawText;
+
+  const minSafe = Math.floor(maxChunkLen * 0.8);
+  const candidateSlice = rawText.slice(0, maxChunkLen);
+
+  // 1. Try paragraph break \n\n
+  const lastDoubleNewline = candidateSlice.lastIndexOf('\n\n');
+  if (lastDoubleNewline >= minSafe) {
+    return `${candidateSlice.slice(0, lastDoubleNewline).trimEnd()}\n\n...[内容超出篇幅限制截断]`;
+  }
+
+  // 2. Try line break \n (crucial for markdown tables so rows are never split in half)
+  const lastNewline = candidateSlice.lastIndexOf('\n');
+  if (lastNewline >= minSafe) {
+    const isTable = candidateSlice.includes('|');
+    const suffix = isTable ? '\n| ... (表格后续行因篇幅限制截断) |\n' : '\n...[内容超出篇幅限制截断]';
+    return `${candidateSlice.slice(0, lastNewline).trimEnd()}${suffix}`;
+  }
+
+  return `${candidateSlice.trimEnd()}...[内容超出篇幅限制截断]`;
+}
+
 export function hasPolarityConflict(statement: string, evidence: string): boolean {
   const normStmt = statement.toLowerCase().replace(/\s+/g, '');
   const normEv = evidence.toLowerCase().replace(/\s+/g, '');
@@ -3531,8 +3562,8 @@ export class ChatService {
             const articleInfo = cit.articleNo ? ` [${cit.articleNo}]` : "";
             const section = cit.section ? (isEnglishQuery ? `\nSection: ${cit.section}` : `\n定位：${cit.section}`) : "";
             const rawText = extractRawChunkText((cit.context || cit.snippet || "").trim());
-            const maxChunkLen = Number(process.env.CHAT_CHUNK_MAX_CHARS || 1000);
-            const content = rawText.length > maxChunkLen ? `${rawText.slice(0, maxChunkLen)}...` : rawText;
+            const maxChunkLen = Number(process.env.CHAT_CHUNK_MAX_CHARS || 6000);
+            const content = smartTruncateChunkText(rawText, maxChunkLen);
             const truthTag = cit.isCompiledTruth
               ? (isEnglishQuery ? " [Compiled Truth / 编译真理]" : " 【编译真理·高优先】")
               : (cit.isCompiledDerived

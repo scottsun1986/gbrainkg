@@ -224,6 +224,11 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
       let end = section.end;
       if (!hasClauseStructure || (section.end - start > 5000)) {
         end = chooseBoundary(cleanMarkdown, start, Math.min(start + MAX_CHARS, section.end));
+        // If the remaining fragment after this split is tiny (< 150 chars, e.g. 1-2 table rows or half a sentence),
+        // absorb it into the current chunk rather than creating an isolated orphaned fragment.
+        if (section.end - end < 150) {
+          end = section.end;
+        }
       }
       
       const raw = cleanMarkdown.slice(start, end);

@@ -1,5 +1,5 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { ChatService, hasPolarityConflict, statementSupportedBy } from "./chat.service";
+import { ChatService, hasPolarityConflict, smartTruncateChunkText, statementSupportedBy } from "./chat.service";
 import { PermissionService } from "../permission/permission.service";
 import { BrainCompilerService } from "../brain-compiler/brain-compiler.service";
 import { BrainScopeService } from "../brain-compiler/brain-scope.service";
@@ -976,6 +976,39 @@ describe("ChatService", () => {
       expect(kws).toContain("下班");
       expect(kws).toContain("时间");
       expect(kws).toContain("具体");
+    });
+  });
+
+  describe("smartTruncateChunkText", () => {
+    it("returns full text when text length is within maxChunkLen", () => {
+      const text = "短文本无需截断";
+      expect(smartTruncateChunkText(text, 100)).toBe(text);
+    });
+
+    it("truncates at paragraph boundary when available in safe zone", () => {
+      const p1 = "第一段文本详细说明。".repeat(10);
+      const p2 = "第二段文本继续说明。".repeat(10);
+      const combined = `${p1}\n\n${p2}`;
+      const truncated = smartTruncateChunkText(combined, p1.length + 20);
+      expect(truncated).toContain(p1);
+      expect(truncated).not.toContain(p2);
+      expect(truncated).toContain("...[内容超出篇幅限制截断]");
+    });
+
+    it("truncates at table row boundary without slicing markdown table rows in half", () => {
+      const header = "| 序号 | 队伍 | 分数 |\n| :--- | :--- | :--- |";
+      const rows = Array.from({ length: 20 }, (_, i) => `| ${i + 1} | 队伍${i + 1}名称 | ${80 + i} |`).join("\n");
+      const fullTable = `${header}\n${rows}`;
+      // Truncate at halfway point
+      const limit = Math.floor(fullTable.length * 0.6);
+      const truncated = smartTruncateChunkText(fullTable, limit);
+      // It should end with the table truncation marker and not have broken half-lines
+      expect(truncated).toContain("| ... (表格后续行因篇幅限制截断) |");
+      // Must not end with a partial row without closing pipe
+      const lines = truncated.split("\n").filter((l) => l.startsWith("|"));
+      for (const line of lines) {
+        expect(line.endsWith("|")).toBe(true);
+      }
     });
   });
 });

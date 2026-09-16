@@ -142,4 +142,18 @@ describe('splitMarkdownIntoChunks', () => {
     expect(chunks[0].content).toContain('编号: T-01 | 事故级别: 一级事故 | 扣减分值: 50分');
     expect(chunks[0].content).toContain('编号: T-02 | 事故级别: 二级事故 | 扣减分值: 30分');
   });
+
+  it('absorbs tiny trailing table rows (< 150 chars) to prevent orphaned 1-row chunk', () => {
+    // Generate a table around 1880 chars (just over the 1800 MAX_CHARS threshold by ~80 chars)
+    const tableHeader = '| 序号 | 团队名称 | 参赛赛道 | 队长姓名 | 部门 | 得分 |\n| :--- | :--- | :--- | :--- | :--- | :--- |';
+    // 26 rows * ~68 chars = ~1768 chars + header ~75 chars = ~1843 chars + 1 row (~68 chars) = ~1911 chars
+    const rowTpl = (i: number) => `| ${String(i).padStart(3, '0')} | 战队名称${i} | 数字化转型赛道 | 队长${i} | 研发中心 | ${80 + (i % 15)} |`;
+    const rows = Array.from({ length: 27 }, (_, i) => rowTpl(i + 1)).join('\n');
+    const fullTable = `# 评分汇总表\n\n${tableHeader}\n${rows}`;
+
+    const chunks = splitMarkdownIntoChunks(fullTable);
+    // Because the 27th row is a tiny tail beyond 1800, it should be absorbed into a single chunk
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].content).toContain('027');
+  });
 });
