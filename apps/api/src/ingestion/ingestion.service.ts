@@ -183,7 +183,8 @@ export class IngestionService implements OnModuleInit {
       data: { status: "parsing" },
     });
 
-    let parsed: any = null;
+    try {
+      let parsed: any = null;
     let conversionMetadata: Record<string, unknown> = {};
     const ext = extname(document.rawFileOid).toLowerCase();
 
@@ -402,18 +403,20 @@ export class IngestionService implements OnModuleInit {
             );
           }
           await tx.chunk.deleteMany({ where: { documentId } });
-          await tx.chunk.createMany({
-            data: enrichedChunks.map((chunk) => ({
-              documentId,
-              kbId: document.kbId,
-              ord: chunk.ord,
-              content: chunk.content,
-              tokenCount: chunk.tokenCount,
-              charStart: chunk.charStart,
-              charEnd: chunk.charEnd,
-              metadata: chunk.metadata as any,
-            })),
-          });
+          const CHUNK_BATCH_SIZE = 500;
+          const chunkData = enrichedChunks.map((chunk) => ({
+            documentId,
+            kbId: document.kbId,
+            ord: chunk.ord,
+            content: chunk.content,
+            tokenCount: chunk.tokenCount,
+            charStart: chunk.charStart,
+            charEnd: chunk.charEnd,
+            metadata: chunk.metadata as any,
+          }));
+          for (let i = 0; i < chunkData.length; i += CHUNK_BATCH_SIZE) {
+            await tx.chunk.createMany({ data: chunkData.slice(i, i + CHUNK_BATCH_SIZE) });
+          }
           await tx.document.update({
             where: { id: documentId },
             data: {
@@ -518,6 +521,12 @@ export class IngestionService implements OnModuleInit {
       qualityScore,
       qualityIssues,
     };
+    } catch (err) {
+      if (!(err instanceof SupersededVersionError)) {
+        await this.markFailed(documentId, err instanceof Error ? err.message : String(err)).catch(() => undefined);
+      }
+      throw err;
+    }
   }
 
   async markFailed(documentId: string, reason: string) {

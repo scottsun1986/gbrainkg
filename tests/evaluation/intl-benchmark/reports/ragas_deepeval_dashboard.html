@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GBrainKG - Ragas & DeepEval 全球 30 大权威基准综合评测大盘</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --success: #16a34a;
+            --bg: #0f172a;
+            --card-bg: #1e293b;
+            --text: #f8fafc;
+            --text-muted: #94a3b8;
+            --border: #334155;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 24px;
+        }
+        .header {
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+        }
+        .header h1 {
+            margin: 0 0 8px 0;
+            font-size: 26px;
+            color: #60a5fa;
+        }
+        .header p {
+            margin: 0;
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .kpi-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            text-align: center;
+        }
+        .kpi-card .val {
+            font-size: 28px;
+            font-weight: bold;
+            color: #38bdf8;
+            margin: 8px 0;
+        }
+        .kpi-card .lbl {
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--card-bg);
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            font-size: 14px;
+        }
+        th, td {
+            padding: 12px 14px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+        th {
+            background: #0f172a;
+            color: #93c5fd;
+            font-weight: 600;
+        }
+        tr:hover {
+            background: rgba(255, 255, 255, 0.03);
+        }
+        .badge {
+            background: #1e3a8a;
+            color: #93c5fd;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        .score-pill {
+            background: #064e3b;
+            color: #6ee7b7;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>GBrainKG 全球 30 大国际基准标准评测大盘 (Ragas & DeepEval)</h1>
+        <p>集成 Ragas (Faithfulness, Answer Relevance, Context Precision/Recall) 与 DeepEval (Groundedness, Completeness) 权威评测标准 | 评测时间: 2026-09-17T00:02:24.373092</p>
+    </div>
+
+    <div class="kpi-grid">
+        <div class="kpi-card">
+            <div class="lbl">Ragas 忠实度 (Faithfulness)</div>
+            <div class="val">90.3%</div>
+            <div class="lbl">支持事实防幻觉率</div>
+        </div>
+        <div class="kpi-card">
+            <div class="lbl">Ragas 答案相关度 (AnsRel)</div>
+            <div class="val">68.1%</div>
+            <div class="lbl">问题语义覆盖与切题度</div>
+        </div>
+        <div class="kpi-card">
+            <div class="lbl">Ragas 上下文精准度 (Precision)</div>
+            <div class="val">96.0%</div>
+            <div class="lbl">证据首位排位率</div>
+        </div>
+        <div class="kpi-card">
+            <div class="lbl">Ragas 上下文召回率 (Recall)</div>
+            <div class="val">81.0%</div>
+            <div class="lbl">黄金事实包含完整度</div>
+        </div>
+        <div class="kpi-card">
+            <div class="lbl">RAG Triad 全局调和分</div>
+            <div class="val" style="color: #4ade80;">75.1%</div>
+            <div class="lbl">综合质量度量</div>
+        </div>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>基准名称</th>
+                <th>评测大类</th>
+                <th>样本数</th>
+                <th>忠实度 (Faithful)</th>
+                <th>相关度 (AnsRel)</th>
+                <th>精准率 (Precision)</th>
+                <th>召回率 (Recall)</th>
+                <th>Triad 综合分</th>
+                <th>平均延时</th>
+            </tr>
+        </thead>
+        <tbody>
+            
+        <tr>
+            <td><strong>1</strong></td>
+            <td>MS MARCO</td>
+            <td><span class="badge">开放域语义检索</span></td>
+            <td>100</td>
+            <td><strong>97.5%</strong></td>
+            <td>63.0%</td>
+            <td>95.0%</td>
+            <td>90.0%</td>
+            <td><span class="score-pill">75.9%</span></td>
+            <td>22.39 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>2</strong></td>
+            <td>Natural Questions</td>
+            <td><span class="badge">开放域语义检索</span></td>
+            <td>100</td>
+            <td><strong>56.2%</strong></td>
+            <td>74.3%</td>
+            <td>100.0%</td>
+            <td>81.1%</td>
+            <td><span class="score-pill">65.2%</span></td>
+            <td>22.37 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>3</strong></td>
+            <td>BEIR Universal Suite</td>
+            <td><span class="badge">开放域语义检索</span></td>
+            <td>100</td>
+            <td><strong>99.0%</strong></td>
+            <td>70.3%</td>
+            <td>100.0%</td>
+            <td>91.6%</td>
+            <td><span class="score-pill">85.0%</span></td>
+            <td>22.74 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>4</strong></td>
+            <td>SciFact</td>
+            <td><span class="badge">开放域语义检索</span></td>
+            <td>100</td>
+            <td><strong>99.5%</strong></td>
+            <td>57.6%</td>
+            <td>100.0%</td>
+            <td>95.9%</td>
+            <td><span class="score-pill">79.1%</span></td>
+            <td>22.79 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>5</strong></td>
+            <td>HotpotQA</td>
+            <td><span class="badge">多跳链式推理</span></td>
+            <td>100</td>
+            <td><strong>100.0%</strong></td>
+            <td>56.8%</td>
+            <td>100.0%</td>
+            <td>92.2%</td>
+            <td><span class="score-pill">75.1%</span></td>
+            <td>24.46 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>6</strong></td>
+            <td>2WikiMultiHopQA</td>
+            <td><span class="badge">多跳链式推理</span></td>
+            <td>100</td>
+            <td><strong>100.0%</strong></td>
+            <td>75.9%</td>
+            <td>100.0%</td>
+            <td>94.6%</td>
+            <td><span class="score-pill">88.8%</span></td>
+            <td>22.24 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>7</strong></td>
+            <td>MuSiQue</td>
+            <td><span class="badge">多跳链式推理</span></td>
+            <td>100</td>
+            <td><strong>100.0%</strong></td>
+            <td>65.9%</td>
+            <td>100.0%</td>
+            <td>75.0%</td>
+            <td><span class="score-pill">77.9%</span></td>
+            <td>22.27 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>8</strong></td>
+            <td>Bamboogle</td>
+            <td><span class="badge">多跳链式推理</span></td>
+            <td>100</td>
+            <td><strong>100.0%</strong></td>
+            <td>98.2%</td>
+            <td>100.0%</td>
+            <td>86.1%</td>
+            <td><span class="score-pill">94.3%</span></td>
+            <td>22.32 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>9</strong></td>
+            <td>TAT-QA</td>
+            <td><span class="badge">表格与数值计算</span></td>
+            <td>100</td>
+            <td><strong>50.5%</strong></td>
+            <td>96.9%</td>
+            <td>68.0%</td>
+            <td>53.6%</td>
+            <td><span class="score-pill">61.4%</span></td>
+            <td>22.29 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>10</strong></td>
+            <td>FinQA</td>
+            <td><span class="badge">表格与数值计算</span></td>
+            <td>100</td>
+            <td><strong>100.0%</strong></td>
+            <td>71.0%</td>
+            <td>100.0%</td>
+            <td>87.5%</td>
+            <td><span class="score-pill">84.5%</span></td>
+            <td>22.29 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>11</strong></td>
+            <td>MultiHiertt</td>
+            <td><span class="badge">表格与数值计算</span></td>
+            <td>100</td>
+            <td><strong>100.0%</strong></td>
+            <td>61.1%</td>
+            <td>100.0%</td>
+            <td>66.7%</td>
+            <td><span class="score-pill">72.5%</span></td>
+            <td>22.28 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>12</strong></td>
+            <td>FinanceBench</td>
+            <td><span class="badge">表格与数值计算</span></td>
+            <td>100</td>
+            <td><strong>100.0%</strong></td>
+            <td>50.0%</td>
+            <td>100.0%</td>
+            <td>80.0%</td>
+            <td><span class="score-pill">70.6%</span></td>
+            <td>22.28 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>13</strong></td>
+            <td>WikiTableQuestions</td>
+            <td><span class="badge">表格与数值计算</span></td>
+            <td>100</td>
+            <td><strong>100.0%</strong></td>
+            <td>61.9%</td>
+            <td>100.0%</td>
+            <td>86.4%</td>
+            <td><span class="score-pill">79.5%</span></td>
+            <td>22.24 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>14</strong></td>
+            <td>TabFact</td>
+            <td><span class="badge">表格与数值计算</span></td>
+            <td>100</td>
+            <td><strong>50.0%</strong></td>
+            <td>94.4%</td>
+            <td>50.0%</td>
+            <td>55.5%</td>
+            <td><span class="score-pill">61.7%</span></td>
+            <td>22.23 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>15</strong></td>
+            <td>CUAD</td>
+            <td><span class="badge">公文与合同规范</span></td>
+            <td>100</td>
+            <td><strong>100.0%</strong></td>
+            <td>58.8%</td>
+            <td>100.0%</td>
+            <td>73.7%</td>
+            <td><span class="score-pill">73.9%</span></td>
+            <td>22.29 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>16</strong></td>
+            <td>LegalBench</td>
+            <td><span class="badge">公文与合同规范</span></td>
+            <td>100</td>
+            <td><strong>50.0%</strong></td>
+            <td>99.5%</td>
+            <td>100.0%</td>
+            <td>76.9%</td>
+            <td><span class="score-pill">69.7%</span></td>
+            <td>22.28 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>17</strong></td>
+            <td>QASPER</td>
+            <td><span class="badge">公文与合同规范</span></td>
+            <td>100</td>
+            <td><strong>100.0%</strong></td>
+            <td>71.0%</td>
+            <td>100.0%</td>
+            <td>79.2%</td>
+            <td><span class="score-pill">81.7%</span></td>
+            <td>22.23 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>18</strong></td>
+            <td>SlideVQA</td>
+            <td><span class="badge">多模态与复杂版面</span></td>
+            <td>100</td>
+            <td><strong>100.0%</strong></td>
+            <td>58.1%</td>
+            <td>100.0%</td>
+            <td>77.8%</td>
+            <td><span class="score-pill">74.9%</span></td>
+            <td>22.17 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>19</strong></td>
+            <td>OmniDocBench</td>
+            <td><span class="badge">多模态与复杂版面</span></td>
+            <td>100</td>
+            <td><strong>100.0%</strong></td>
+            <td>52.5%</td>
+            <td>100.0%</td>
+            <td>83.3%</td>
+            <td><span class="score-pill">73.1%</span></td>
+            <td>22.26 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>20</strong></td>
+            <td>DocVQA</td>
+            <td><span class="badge">多模态与复杂版面</span></td>
+            <td>100</td>
+            <td><strong>50.0%</strong></td>
+            <td>78.0%</td>
+            <td>100.0%</td>
+            <td>72.7%</td>
+            <td><span class="score-pill">64.4%</span></td>
+            <td>22.18 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>21</strong></td>
+            <td>InfographicVQA</td>
+            <td><span class="badge">多模态与复杂版面</span></td>
+            <td>100</td>
+            <td><strong>100.0%</strong></td>
+            <td>57.5%</td>
+            <td>100.0%</td>
+            <td>88.4%</td>
+            <td><span class="score-pill">77.5%</span></td>
+            <td>22.2 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>22</strong></td>
+            <td>ChartQA</td>
+            <td><span class="badge">多模态与复杂版面</span></td>
+            <td>100</td>
+            <td><strong>95.0%</strong></td>
+            <td>56.6%</td>
+            <td>100.0%</td>
+            <td>100.0%</td>
+            <td><span class="score-pill">75.2%</span></td>
+            <td>22.09 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>23</strong></td>
+            <td>TextVQA</td>
+            <td><span class="badge">多模态与复杂版面</span></td>
+            <td>100</td>
+            <td><strong>100.0%</strong></td>
+            <td>52.9%</td>
+            <td>100.0%</td>
+            <td>75.0%</td>
+            <td><span class="score-pill">71.0%</span></td>
+            <td>22.15 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>24</strong></td>
+            <td>TAT-DQA</td>
+            <td><span class="badge">多模态与复杂版面</span></td>
+            <td>100</td>
+            <td><strong>100.0%</strong></td>
+            <td>54.4%</td>
+            <td>100.0%</td>
+            <td>85.8%</td>
+            <td><span class="score-pill">74.9%</span></td>
+            <td>22.19 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>25</strong></td>
+            <td>DUDE</td>
+            <td><span class="badge">多模态与复杂版面</span></td>
+            <td>100</td>
+            <td><strong>100.0%</strong></td>
+            <td>92.0%</td>
+            <td>100.0%</td>
+            <td>75.0%</td>
+            <td><span class="score-pill">87.7%</span></td>
+            <td>22.18 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>26</strong></td>
+            <td>RULER</td>
+            <td><span class="badge">超长上下文多针</span></td>
+            <td>100</td>
+            <td><strong>100.0%</strong></td>
+            <td>66.5%</td>
+            <td>100.0%</td>
+            <td>90.9%</td>
+            <td><span class="score-pill">83.2%</span></td>
+            <td>23.65 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>27</strong></td>
+            <td>LongBench</td>
+            <td><span class="badge">超长上下文多针</span></td>
+            <td>100</td>
+            <td><strong>100.0%</strong></td>
+            <td>52.3%</td>
+            <td>100.0%</td>
+            <td>70.5%</td>
+            <td><span class="score-pill">69.3%</span></td>
+            <td>22.22 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>28</strong></td>
+            <td>BABILong</td>
+            <td><span class="badge">超长上下文多针</span></td>
+            <td>100</td>
+            <td><strong>100.0%</strong></td>
+            <td>54.1%</td>
+            <td>100.0%</td>
+            <td>100.0%</td>
+            <td><span class="score-pill">78.0%</span></td>
+            <td>22.16 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>29</strong></td>
+            <td>RGB Benchmark</td>
+            <td><span class="badge">可信度与时序对齐</span></td>
+            <td>100</td>
+            <td><strong>87.0%</strong></td>
+            <td>79.7%</td>
+            <td>66.0%</td>
+            <td>62.7%</td>
+            <td><span class="score-pill">54.2%</span></td>
+            <td>22.15 ms</td>
+        </tr>
+        
+        <tr>
+            <td><strong>30</strong></td>
+            <td>CRUD-RAG</td>
+            <td><span class="badge">可信度与时序对齐</span></td>
+            <td>100</td>
+            <td><strong>75.0%</strong></td>
+            <td>62.6%</td>
+            <td>100.0%</td>
+            <td>80.9%</td>
+            <td><span class="score-pill">72.0%</span></td>
+            <td>22.38 ms</td>
+        </tr>
+        
+        </tbody>
+    </table>
+</body>
+</html>

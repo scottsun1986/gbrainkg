@@ -56,6 +56,7 @@ export function extractRawChunkText(text: string): string {
   if (!text) return '';
   return text
     .replace(/^\[(?:上下文|Context):\s*[\s\S]*?\]\n*/i, '')
+    .replace(/<!--\s*大纲层级:[\s\S]*?-->/g, '')
     .replace(/<!--\s*表格结构化行语义:[\s\S]*?-->/g, '')
     .replace(/<!--\s*bbox:[\s\S]*?-->/g, '')
     .trim();
@@ -556,6 +557,7 @@ export class ChatService {
             docId: fb.documentId,
             kbId: fb.kbId,
             version: fb.version,
+            ord: fb.ord,
             pageNo: fb.pageNo,
             articleNo: fb.articleNo,
             evidence: fb.evidence,
@@ -784,8 +786,9 @@ export class ChatService {
 
     // 1. Relational-targeted English patterns
     if (rel) {
+      const escapedRel = rel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const directRe = new RegExp(
-        `(?:${rel})(?:\\s+(?:is|was|named|called|of|,|in|at))*?(?:\\s+(?:the|a|an)?\\s*(?:[A-Za-z-]+\\s+){0,4})?([A-Z][a-zA-Z0-9\x27-]+(?:\\s+[A-Z][a-zA-Z0-9\x27-]+){1,3})`,
+        `(?:${escapedRel})(?:\\s+(?:is|was|named|called|of|,|in|at))*?(?:\\s+(?:the|a|an)?\\s*(?:[A-Za-z-]+\\s+){0,4})?([A-Z][a-zA-Z0-9\x27-]+(?:\\s+[A-Z][a-zA-Z0-9\x27-]+){1,3})`,
         'g',
       );
       let m: RegExpExecArray | null;
@@ -1378,6 +1381,7 @@ export class ChatService {
       kbId: string | null;
       title: string;
       version?: number;
+      ord?: number;
       pageNo?: number;
       articleNo?: string;
       evidence: string;
@@ -1924,6 +1928,7 @@ export class ChatService {
           kbId: c.kbId,
           title: c.document?.title || "未知文档",
           version: c.document?.version || 1,
+          ord: c.ord,
           pageNo: meta.pageNumber || c.ord + 1,
           articleNo: meta.article_no ? `第${meta.article_no}条` : undefined,
           evidence,
@@ -2595,6 +2600,7 @@ export class ChatService {
                 docId: fb.documentId,
                 kbId: fb.kbId,
                 version: fb.version,
+                ord: fb.ord,
                 pageNo: fb.pageNo,
                 articleNo: fb.articleNo,
                 evidence: fb.evidence,
@@ -2621,6 +2627,7 @@ export class ChatService {
               docId: fb.documentId,
               kbId: fb.kbId,
               version: fb.version,
+              ord: fb.ord,
               pageNo: fb.pageNo,
               articleNo: fb.articleNo,
               evidence: fb.evidence,
@@ -2910,6 +2917,7 @@ export class ChatService {
           docId: fb.documentId,
           kbId: fb.kbId,
           version: fb.version,
+          ord: fb.ord,
           pageNo: fb.pageNo,
           articleNo: fb.articleNo,
           evidence: fb.evidence,
@@ -2985,6 +2993,7 @@ export class ChatService {
                     docId: fb.documentId,
                     kbId: fb.kbId,
                     version: fb.version,
+                    ord: fb.ord,
                     pageNo: fb.pageNo,
                     articleNo: fb.articleNo,
                     evidence: fb.evidence,
@@ -3642,7 +3651,8 @@ export class ChatService {
     }
 
     trace.start("answer_context", "回答上下文组装", "从授权证据页组装可引用的回答上下文");
-    const orderedCitations = citations.length > 3 ? this.reorderLostInTheMiddle(citations) : citations;
+    const stitchedCitations = this.stitchContiguousCitations(citations);
+    const orderedCitations = stitchedCitations.length > 3 ? this.reorderLostInTheMiddle(stitchedCitations) : stitchedCitations;
     queryResult.citations = orderedCitations;
     this.logger.warn('[PROMPT_SOURCES] ' + orderedCitations.map((c: any, i: number) => `[${i + 1}] ${c.docTitle}`).join(' | '));
     const isEnglishQuery = !/[\u4e00-\u9fa5]/.test(question);
@@ -3651,7 +3661,9 @@ export class ChatService {
           .map((cit: any, idx: number) => {
             const title = cit.docTitle || cit.topic || (isEnglishQuery ? `Reference Document ${idx + 1}` : `参考文档 ${idx + 1}`);
             const kbName = cit.kbName ? (isEnglishQuery ? ` (Knowledge Base: ${cit.kbName})` : ` (所属知识库: ${cit.kbName})`) : "";
-            const pageInfo = typeof cit.pageNo === "number" ? (isEnglishQuery ? ` [Page ${cit.pageNo}]` : ` [第${cit.pageNo}页]`) : "";
+            const pageInfo = cit.pageNo != null && String(cit.pageNo).trim() !== ""
+              ? (isEnglishQuery ? ` [Page ${cit.pageNo}]` : ` [第${cit.pageNo}页]`)
+              : "";
             const articleInfo = cit.articleNo ? ` [${cit.articleNo}]` : "";
             const section = cit.section ? (isEnglishQuery ? `\nSection: ${cit.section}` : `\n定位：${cit.section}`) : "";
             const rawText = extractRawChunkText((cit.context || cit.snippet || "").trim());
@@ -3686,15 +3698,18 @@ export class ChatService {
         this.logger.debug(`GraphRAG search omitted: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
+    const stitchDiff = citations.length - stitchedCitations.length;
     trace.finish(
       "answer_context",
-      citations.length > 0 ? "success" : "warning",
-      citations.length > 0 ? `已组装 ${citations.length} 条可引用证据` : "没有可引用证据，仅返回检索空结果说明",
-      { citationCount: citations.length, contextChars: compiledTruthContext.length },
+      orderedCitations.length > 0 ? "success" : "warning",
+      orderedCitations.length > 0
+        ? `已组装 ${orderedCitations.length} 条可引用证据${stitchDiff > 0 ? `（已自动缝合 ${stitchDiff} 个相邻切片）` : ""}`
+        : "没有可引用证据，仅返回检索空结果说明",
+      { citationCount: orderedCitations.length, contextChars: compiledTruthContext.length, stitchedCount: stitchDiff },
     );
 
     this.logger.debug(
-      `Truth context compiled from ${citations.length} citations (preview: ${compiledTruthContext.slice(0, 120)}...)`,
+      `Truth context compiled from ${orderedCitations.length} citations (preview: ${compiledTruthContext.slice(0, 120)}...)`,
     );
 
     // 6. 流式调用 LLM 并进行事实角标校验
@@ -5271,5 +5286,121 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
       }
     }
     return [...topAnchors, ...result];
+  }
+
+  /**
+   * Automatically stitches contiguous chunks belonging to the same document.
+   * If consecutive chunks are physically adjacent (e.g. ord n and n+1) or on consecutive pages,
+   * merges their text (resolving chunk boundary overlaps and mid-sentence splits)
+   * while keeping citation provenance intact.
+   */
+  public stitchContiguousCitations(citations: any[]): any[] {
+    if (!citations || citations.length <= 1) return citations || [];
+
+    const docGroups = new Map<string, any[]>();
+    citations.forEach((c, idx) => {
+      const key = c.docId ? String(c.docId) : (c.docTitle ? String(c.docTitle) : `__single_${idx}`);
+      if (!docGroups.has(key)) docGroups.set(key, []);
+      docGroups.get(key)!.push(c);
+    });
+
+    const finalCitations: any[] = [];
+
+    for (const group of docGroups.values()) {
+      if (group.length === 1) {
+        finalCitations.push(group[0]);
+        continue;
+      }
+
+      const getOrd = (c: any): number => {
+        if (typeof c.ord === 'number') return c.ord;
+        if (typeof c.metadata?.chunk_order === 'number') return c.metadata.chunk_order;
+        if (typeof c.metadata?.ord === 'number') return c.metadata.ord;
+        if (typeof c.pageNo === 'number') return c.pageNo;
+        if (typeof c.page_no === 'number') return c.page_no;
+        return -1;
+      };
+
+      // Clone objects so we do not mutate input citations in place
+      const groupClones = group.map((item) => ({ ...item }));
+
+      // Sort group in natural reading order
+      const sorted = groupClones.sort((a, b) => {
+        const ordA = getOrd(a);
+        const ordB = getOrd(b);
+        if (ordA !== -1 && ordB !== -1) return ordA - ordB;
+        return 0;
+      });
+
+      const stitchedGroup = [sorted[0]];
+      for (let k = 1; k < sorted.length; k++) {
+        const prev = stitchedGroup[stitchedGroup.length - 1];
+        const curr = sorted[k];
+
+        const ordPrev = getOrd(prev);
+        const ordCurr = getOrd(curr);
+
+        const prevEndPage = typeof prev.endPage === 'number' ? prev.endPage : (typeof prev.pageNo === 'number' ? prev.pageNo : undefined);
+        const currPage = typeof curr.pageNo === 'number' ? curr.pageNo : undefined;
+
+        const isContiguous =
+          (ordPrev !== -1 && ordCurr !== -1 && ordCurr - ordPrev === 1) ||
+          (prevEndPage !== undefined && currPage !== undefined && currPage >= prevEndPage && currPage <= prevEndPage + 1);
+
+        const prevText = String(prev.context || prev.snippet || prev.evidence || '');
+        const currText = String(curr.context || curr.snippet || curr.evidence || '');
+        const prevLen = prevText.length;
+        const currLen = currText.length;
+        const maxStitchChars = Number(process.env.STITCH_CHUNK_MAX_CHARS || 12000);
+        const canMerge = isContiguous && (prevLen + currLen <= maxStitchChars);
+
+        if (canMerge) {
+          let textA = extractRawChunkText(prevText).trim();
+          let textB = extractRawChunkText(currText).trim();
+
+          // Strip duplicate headings or breadcrumb markers at the beginning of textB
+          textB = textB.replace(/^<!--\s*大纲层级:[\s\S]*?-->\s*/g, '');
+          textB = textB.replace(/^#\s*[^\n]+\n+/g, '').trim();
+
+          // Detect chunk overlap
+          let overlapFound = 0;
+          const maxCheck = Math.min(250, textA.length, textB.length);
+          for (let L = maxCheck; L >= 15; L--) {
+            if (textA.slice(-L) === textB.slice(0, L)) {
+              overlapFound = L;
+              break;
+            }
+          }
+
+          let mergedText = '';
+          if (overlapFound > 0) {
+            mergedText = textA + textB.slice(overlapFound);
+          } else {
+            const endsWithPunct = /[。！？；;\n]$/.test(textA);
+            mergedText = endsWithPunct ? `${textA}\n\n${textB}` : `${textA}${textB}`;
+          }
+
+          prev.context = mergedText;
+          prev.snippet = mergedText;
+          prev.evidence = mergedText;
+          prev.score = Math.max(prev.score || 0, curr.score || 0);
+          if (curr.pageNo && prev.pageNo !== curr.pageNo) {
+            const startP = prev.startPage ?? prev.pageNo;
+            const endP = curr.pageNo;
+            prev.startPage = startP;
+            prev.endPage = endP;
+            prev.pageNo = `${startP}-${endP}`;
+          }
+          if (typeof curr.ord === 'number') {
+            prev.ord = curr.ord;
+          }
+        } else {
+          stitchedGroup.push(curr);
+        }
+      }
+      finalCitations.push(...stitchedGroup);
+    }
+
+    return finalCitations.sort((a, b) => (b.score || 0) - (a.score || 0));
   }
 }

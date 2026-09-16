@@ -57,6 +57,8 @@ export class EnrichmentProcessor extends WorkerHost {
     try {
       // Parallel Enrichment Pipeline: dispatch chunk embedding, RAPTOR summary hierarchy,
       // and GraphRAG extraction concurrently to cut document ingestion latency by up to 60%.
+      // Uses allSettled to ensure all parallel tasks complete even if one fails,
+      // preventing orphaned background operations on BullMQ retry.
       const enrichmentTasks: Promise<any>[] = [];
       if (this.chunkEmbeddingService.isEnabled()) {
         enrichmentTasks.push(
@@ -79,7 +81,19 @@ export class EnrichmentProcessor extends WorkerHost {
       if (process.env.AUTO_GRAPH_EXTRACT_ENABLED === 'true') {
         enrichmentTasks.push(this.extractGraph(kbId, documentId));
       }
-      await Promise.all(enrichmentTasks);
+      const settled = await Promise.allSettled(enrichmentTasks);
+      const firstError = settled.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+      if (firstError) {
+        // Log all failures for diagnostics before re-throwing
+        for (const result of settled) {
+          if (result.status === 'rejected') {
+            this.logger.error(
+              `Enrichment sub-task failed for ${documentId}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
+            );
+          }
+        }
+        throw firstError.reason;
+      }
       if (expectedVersion !== undefined) {
         const postCheck = await this.prisma.document.findUnique({
           where: { id: documentId },

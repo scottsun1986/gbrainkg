@@ -5,6 +5,22 @@ import { EmbeddingService } from '../embedding/embedding.service';
 import { estimateTokens } from '../chat/context-budget';
 import { buildDocumentPreviewUrl } from '../ingestion/preview-url';
 
+function pLimit(concurrency: number) {
+  const queue: (() => void)[] = [];
+  let active = 0;
+  const next = () => {
+    if (queue.length > 0 && active < concurrency) {
+      active++;
+      queue.shift()!();
+    }
+  };
+  return <T>(fn: () => Promise<T>): Promise<T> =>
+    new Promise<T>((resolve, reject) => {
+      queue.push(() => fn().then(resolve, reject).finally(() => { active--; next(); }));
+      next();
+    });
+}
+
 interface RaptorSearchHit {
   documentId: string | null;
   kbId: string;
@@ -122,8 +138,9 @@ export class RaptorService {
     const modelVersion = llm ? llm.modelName : 'extractive-v1';
 
     // Parallel summary generation across groups with Promise.all to compress LLM latency
+    const limit = pLimit(Number(process.env.RAPTOR_SUMMARY_CONCURRENCY || 5));
     const sectionNodes = await Promise.all(
-      groups.map(async (group) => {
+      groups.map((group) => limit(async () => {
         const summary = await this.summarize(`章节《${group.title}》`, group.text, llm);
         return {
           title: group.title,
@@ -131,7 +148,7 @@ export class RaptorService {
           chunkIds: group.chunkIds,
           clusterKey: group.clusterKey,
         };
-      }),
+      }))
     );
 
     // Document panorama assembles from EVERY group summary (not a truncated

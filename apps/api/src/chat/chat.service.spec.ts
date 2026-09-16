@@ -1076,6 +1076,74 @@ describe("ChatService", () => {
       }
     });
   });
+
+  describe("stitchContiguousCitations", () => {
+    it("returns empty array or single citation unmodified", () => {
+      expect(service.stitchContiguousCitations([])).toEqual([]);
+      const single = [{ docId: "d1", docTitle: "Doc 1", ord: 0, context: "Text 1" }];
+      expect(service.stitchContiguousCitations(single)).toEqual(single);
+    });
+
+    it("stitches physically contiguous chunks of the same document and merges page range", () => {
+      const citations = [
+        { docId: "d1", docTitle: "Doc 1", ord: 0, pageNo: 1, score: 0.85, context: "第一部分内容介绍。" },
+        { docId: "d1", docTitle: "Doc 1", ord: 1, pageNo: 2, score: 0.90, context: "第二部分内容深入讲解。" },
+      ];
+      const result = service.stitchContiguousCitations(citations);
+      expect(result).toHaveLength(1);
+      expect(result[0].docId).toBe("d1");
+      expect(result[0].pageNo).toBe("1-2");
+      expect(result[0].score).toBe(0.90);
+      expect(result[0].context).toBe("第一部分内容介绍。\n\n第二部分内容深入讲解。");
+    });
+
+    it("seamlessly resolves mid-sentence cutoff across chunk boundary when no punctuation ends the first chunk", () => {
+      const citations = [
+        { docId: "d1", docTitle: "Doc 1", ord: 0, pageNo: 1, context: "13. 强化融资服务保障：鼓励各地联合创" },
+        { docId: "d1", docTitle: "Doc 1", ord: 1, pageNo: 2, context: "新金融支持模式。14. 优化合规服务保障。" },
+      ];
+      const result = service.stitchContiguousCitations(citations);
+      expect(result).toHaveLength(1);
+      expect(result[0].context).toBe("13. 强化融资服务保障：鼓励各地联合创新金融支持模式。14. 优化合规服务保障。");
+      expect(result[0].context).toContain("联合创新金融支持模式");
+    });
+
+    it("removes overlapping sentence boundary across chunks", () => {
+      const overlapText = "这是跨切片完全一致的重叠过渡语句。";
+      const citations = [
+        { docId: "d1", docTitle: "Doc 1", ord: 0, pageNo: 1, context: `前文阐述详细机制。${overlapText}` },
+        { docId: "d1", docTitle: "Doc 1", ord: 1, pageNo: 2, context: `${overlapText}后文继续论述具体落地措施。` },
+      ];
+      const result = service.stitchContiguousCitations(citations);
+      expect(result).toHaveLength(1);
+      expect(result[0].context).toBe(`前文阐述详细机制。${overlapText}后文继续论述具体落地措施。`);
+      // Should not have duplicated the overlap
+      const occurrences = (result[0].context.match(new RegExp(overlapText, "g")) || []).length;
+      expect(occurrences).toBe(1);
+    });
+
+    it("strips duplicate heading or hierarchy tags from subsequent chunks", () => {
+      const citations = [
+        { docId: "d1", docTitle: "Doc 1", ord: 0, pageNo: 1, context: "前置大纲正文。" },
+        { docId: "d1", docTitle: "Doc 1", ord: 1, pageNo: 2, context: "<!-- 大纲层级: 一、概述 > 重点工作 -->\n# Doc 1\n接续正文内容。" },
+      ];
+      const result = service.stitchContiguousCitations(citations);
+      expect(result).toHaveLength(1);
+      expect(result[0].context).toBe("前置大纲正文。\n\n接续正文内容。");
+      expect(result[0].context).not.toContain("大纲层级");
+      expect(result[0].context).not.toContain("# Doc 1");
+    });
+
+    it("does not stitch non-contiguous chunks or chunks from different documents", () => {
+      const citations = [
+        { docId: "d1", docTitle: "Doc 1", ord: 0, pageNo: 1, score: 0.9, context: "文档1切片0" },
+        { docId: "d1", docTitle: "Doc 1", ord: 5, pageNo: 6, score: 0.8, context: "文档1切片5（跳跃）" },
+        { docId: "d2", docTitle: "Doc 2", ord: 1, pageNo: 1, score: 0.7, context: "文档2切片1" },
+      ];
+      const result = service.stitchContiguousCitations(citations);
+      expect(result).toHaveLength(3);
+    });
+  });
 });
 
 

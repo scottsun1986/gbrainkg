@@ -156,4 +156,29 @@ describe('splitMarkdownIntoChunks', () => {
     expect(chunks).toHaveLength(1);
     expect(chunks[0].content).toContain('027');
   });
+
+  it('inherits heading hierarchy breadcrumbs across nested sections and clauses', () => {
+    const doc = [
+      '# 创业支持计划',
+      '',
+      '二、重点工作',
+      '',
+      '（四）完善创业服务保障',
+      '',
+      '14. 优化合规服务保障。强化知识产权保护与合规指引。',
+      '',
+      '15. 深化国际交流合作。搭建国际交流平台。',
+    ].join('\n');
+
+    const chunks = splitMarkdownIntoChunks(doc);
+    expect(chunks.length).toBeGreaterThanOrEqual(1);
+    const chunk14 = chunks.find((c) => c.content.includes('14. 优化合规服务保障'));
+    expect(chunk14).toBeDefined();
+    expect(chunk14!.metadata.breadcrumb).toContain('二、重点工作 > （四）完善创业服务保障');
+    expect(chunk14!.metadata.heading_hierarchy).toEqual(
+      expect.arrayContaining(['创业支持计划', '二、重点工作', '（四）完善创业服务保障']),
+    );
+    expect(chunk14!.content).toContain('<!-- 大纲层级: 创业支持计划 > 二、重点工作 > （四）完善创业服务保障');
+  });
 });
+

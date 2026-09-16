@@ -8,7 +8,7 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
   private readonly logger = new Logger(SemanticCacheService.name);
   private readonly prisma = getPrismaClient();
   private readonly enabled = process.env.SEMANTIC_CACHE_ENABLED !== 'false';
-  private readonly similarityThreshold = Number(process.env.SEMANTIC_CACHE_SIMILARITY || '0.92');
+  private readonly similarityThreshold = Number(process.env.SEMANTIC_CACHE_SIMILARITY || '0.96');
   private readonly ttlHours = Number(process.env.SEMANTIC_CACHE_TTL_HOURS || '24');
   private readonly l1ExactCache = new Map<string, { hit: any; expiresAt: number }>();
   private cleanupTimer?: NodeJS.Timeout;
@@ -89,6 +89,9 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
     const l1Hit = this.l1ExactCache.get(l1Key);
     if (l1Hit && l1Hit.expiresAt > Date.now()) {
       this.logger.log(`Semantic cache L1 FAST HIT (normalized match, 0ms) for: ${queryText.substring(0, 50)}...`);
+      // Refresh Map insertion order for LRU eviction
+      this.l1ExactCache.delete(l1Key);
+      this.l1ExactCache.set(l1Key, l1Hit);
       return l1Hit.hit;
     }
 
@@ -207,7 +210,12 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
 
   async invalidateByEpoch(scopeFingerprint: string, knowledgeEpoch: number): Promise<void> {
     try {
-      this.l1ExactCache.clear();
+      // Only evict L1 entries matching the invalidated scope, not the entire cache
+      for (const key of [...this.l1ExactCache.keys()]) {
+        if (key.startsWith(`${scopeFingerprint}:`)) {
+          this.l1ExactCache.delete(key);
+        }
+      }
       await this.prisma.semanticCache.deleteMany({
         where: {
           scopeFingerprint,

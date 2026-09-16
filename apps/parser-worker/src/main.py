@@ -593,14 +593,19 @@ def extract_pptx_native(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
                     categories = []
                     if plots and hasattr(plots[0], "categories"):
                         categories = [str(c).strip() for c in plots[0].categories]
+                    series_list = list(getattr(chart, "series", []))
+                    if not categories and series_list:
+                        max_len = max((len(getattr(s, "values", [])) for s in series_list), default=0)
+                        categories = [str(i) for i in range(1, max_len + 1)]
                     header = ["系列/指标"] + categories
                     c_rows = ["| " + " | ".join(header) + " |", "| " + " | ".join(["---"] * len(header)) + " |"]
-                    for s in getattr(chart, "series", []):
+                    for s in series_list:
                         s_name = str(getattr(s, "name", "数值")).strip()
                         s_vals = [str(v) if v is not None else "-" for v in getattr(s, "values", [])]
-                        if len(s_vals) < len(categories):
-                            s_vals += ["-"] * (len(categories) - len(s_vals))
-                        c_rows.append("| " + " | ".join([s_name] + s_vals[:len(categories)]) + " |")
+                        row_len = max(len(categories), len(s_vals))
+                        if len(s_vals) < row_len:
+                            s_vals += ["-"] * (row_len - len(s_vals))
+                        c_rows.append("| " + " | ".join([s_name] + s_vals[:row_len]) + " |")
                     if len(c_rows) > 2:
                         parts_acc.append(f"### {title}\n" + "\n".join(c_rows))
             except Exception as chart_err:

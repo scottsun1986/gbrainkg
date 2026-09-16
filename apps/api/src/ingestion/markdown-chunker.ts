@@ -8,6 +8,8 @@ export interface IndexedMarkdownChunk {
   charEnd: number;
   metadata: {
     section: string;
+    breadcrumb?: string;
+    heading_hierarchy?: string[];
     parentContext?: string;
     chunkStrategy: string;
     overlapChars: number;
@@ -21,6 +23,17 @@ export interface IndexedMarkdownChunk {
 
 const MAX_CHARS = 1800;
 const OVERLAP_CHARS = 200;
+
+export function getHeadingHierarchyLevel(heading: string): number {
+  if (!heading) return 99;
+  const hMatch = heading.match(/^(#{1,6})\s+/);
+  if (hMatch) return hMatch[1].length;
+  if (/^第[\d一二三四五六七八九十百千万〇零两]+[编部分]/.test(heading)) return 1;
+  if (/^(?:第[\d一二三四五六七八九十百千万〇零两]+章|[一二三四五六七八九十]+、)/.test(heading)) return 2;
+  if (/^[（(][\d一二三四五六七八九十]+[）)]/.test(heading)) return 3;
+  if (/^(?:\*\*)?\d+[\.、]|^第[\d一二三四五六七八九十]+[条节]/.test(heading)) return 4;
+  return 3;
+}
 
 type Section = { start: number; end: number; heading: string };
 
@@ -194,11 +207,23 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
   // The header is carried only across page-boundary sections (not arbitrary
   // headings) so it never leaks onto unrelated content.
   let carriedTableHeader: string | null = null;
+  const headingStack: Array<{ level: number; text: string }> = [];
   
   for (const section of findSections(cleanMarkdown)) {
     const sectionBody = cleanMarkdown.slice(section.start, section.end).trim();
     const isPageSection = !section.heading || /^#{1,6}\s*第\s*\d+\s*页/.test(section.heading);
     
+    if (section.heading && !isPageSection) {
+      const cleanHeading = section.heading.replace(/^#{1,6}\s+/, '').trim();
+      const level = getHeadingHierarchyLevel(section.heading);
+      while (headingStack.length > 0 && headingStack[headingStack.length - 1].level >= level) {
+        headingStack.pop();
+      }
+      headingStack.push({ level, text: cleanHeading });
+    }
+    const currentBreadcrumb = headingStack.map((h) => h.text).join(' > ');
+    const currentHeadingHierarchy = headingStack.map((h) => h.text);
+
     if (hasClauseStructure && section.heading) {
       const chapterMatch = section.heading.match(/第([\d一二三四五六七八九十百千万〇零两]+)章/);
       if (chapterMatch) {
@@ -282,8 +307,19 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
           }
         }
 
+        // Heading hierarchy breadcrumb inheritance: if chunk has parent headings (e.g. Chapter > Section > Article),
+        // record and inject hierarchy tag so search and LLM context retain complete structural lineage even across chunk splits.
+        if (currentHeadingHierarchy.length >= 2) {
+          const breadcrumbTag = `<!-- 大纲层级: ${currentBreadcrumb} -->`;
+          if (!withHeading.includes(breadcrumbTag)) {
+            withHeading = `${breadcrumbTag}\n${withHeading}`;
+          }
+        }
+
         const metadata: IndexedMarkdownChunk['metadata'] = {
           section: section.heading || '文档正文',
+          breadcrumb: currentBreadcrumb || section.heading || '文档正文',
+          heading_hierarchy: currentHeadingHierarchy,
           parentContext: sectionBody.length <= 4000 ? sectionBody : undefined,
           chunkStrategy: hasClauseStructure ? 'clause-based' : 'parent-child-section-window',
           overlapChars: first ? 0 : OVERLAP_CHARS,
