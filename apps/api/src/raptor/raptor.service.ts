@@ -120,22 +120,26 @@ export class RaptorService {
     const perWindowGroups = Math.max(1, Number(process.env.RAPTOR_MAX_GROUPS_PER_WINDOW || 6));
     const groups = clusteredWindows.flatMap((g) => g.slice(0, perWindowGroups));
     const modelVersion = llm ? llm.modelName : 'extractive-v1';
-    const sectionNodes: Array<{ title: string; content: string; chunkIds: string[]; clusterKey: string }> = [];
 
-    for (const group of groups) {
-      const summary = await this.summarize(`章节《${group.title}》`, group.text, llm);
-      sectionNodes.push({ title: group.title, content: summary, chunkIds: group.chunkIds, clusterKey: group.clusterKey });
-    }
+    // Parallel summary generation across groups with Promise.all to compress LLM latency
+    const sectionNodes = await Promise.all(
+      groups.map(async (group) => {
+        const summary = await this.summarize(`章节《${group.title}》`, group.text, llm);
+        return {
+          title: group.title,
+          content: summary,
+          chunkIds: group.chunkIds,
+          clusterKey: group.clusterKey,
+        };
+      }),
+    );
 
     // Document panorama assembles from EVERY group summary (not a truncated
     // prefix), so the level-1 node reflects the whole document including its
-    // tail sections.
-    const panoramaSource = sectionNodes
-      .map((n) => `【${n.title}】${n.content.slice(0, 600)}`)
-      .join('\n\n');
-    const docSummary = await this.summarize(
+    // tail sections via two-stage Map-Reduce condensation.
+    const docSummary = await this.summarizeLargeCorpus(
       `文档《${document.title}》全景`,
-      panoramaSource.slice(0, this.maxSourceChars * 2),
+      sectionNodes,
       llm,
     );
 
@@ -416,48 +420,19 @@ export class RaptorService {
       const llm = await this.llmConfig();
       const modelVersion = llm ? llm.modelName : 'extractive-v1';
 
-      const aggregatedText = validDocNodes
-        .map((n: any) => `【${n.title}】\n${n.content}`)
-        .join('\n\n')
-        .slice(0, this.maxSourceChars * 2);
-
-      let summary = '';
-      if (llm) {
-        try {
-          const response = await fetch(`${llm.baseUrl}/chat/completions`, {
-            method: 'POST',
-            headers: llm.headers,
-            body: JSON.stringify({
-              model: llm.modelName,
-              messages: [
-                {
-                  role: 'system',
-                  content: `你是企业知识体系战略架构专家。请对当前知识库中包含的 ${docNodes.length} 篇核心文档全景进行跨文档全局宏观全景与演进总结。
+      const kbPrompt = `你是企业知识体系战略架构专家。请对当前知识库中包含的 ${validDocNodes.length} 篇核心文档全景进行跨文档全局宏观全景与演进总结。
 涵盖：
 1. 【全库核心业务全貌】：涵盖的主要业务域、职能分工与规范目标；
 2. 【制度与规范体系架构】：跨文档间的逻辑依赖、业务流程承接与管理闭环；
 3. 【演进历程与核心准则】：知识库反映的业务/技术演进脉络与关键执行底线。
-输出结构化全局综述，提纲挈领，面向全局宏观提问。`,
-                },
-                { role: 'user', content: aggregatedText },
-              ],
-              temperature: 0.1,
-              max_tokens: Number(process.env.RAPTOR_GLOBAL_MAX_TOKENS || 2500),
-            }),
-            signal: AbortSignal.timeout(20000),
-          });
-          if (response.ok) {
-            const payload: any = await response.json();
-            summary = this.assistantText(payload);
-          }
-        } catch (err) {
-          this.logger.warn(`RAPTOR global tree LLM call failed: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
+输出结构化全局综述，提纲挈领，面向全局宏观提问。`;
 
-      if (!summary) {
-        summary = this.extractiveSummary(aggregatedText);
-      }
+      const summary = await this.summarizeLargeCorpus(
+        '全库业务架构与制度演进全景',
+        validDocNodes,
+        llm,
+        kbPrompt,
+      );
 
       const title = '全库业务架构与制度演进全景';
       const [, createdGlobal] = await (this.prisma as any).$transaction([
@@ -763,7 +738,58 @@ export class RaptorService {
     }));
   }
 
-  private async summarize(label: string, text: string, llm: { baseUrl: string; modelName: string; headers: Record<string, string> } | null): Promise<string> {
+  private async summarizeLargeCorpus(
+    title: string,
+    items: Array<{ title: string; content: string }>,
+    llm: { baseUrl: string; modelName: string; headers: Record<string, string> } | null,
+    systemPrompt?: string,
+  ): Promise<string> {
+    const maxChars = this.maxSourceChars * 2;
+    const directSource = items.map((n) => `【${n.title}】\n${n.content.slice(0, 600)}`).join('\n\n');
+    if (directSource.length <= maxChars) {
+      return this.summarize(title, directSource, llm, systemPrompt);
+    }
+
+    // Two-stage Map-Reduce: partition into batches of size <= maxChars so that
+    // ultra-long documents retain 100% of all sections without truncating the tail.
+    const batches: Array<Array<{ title: string; content: string }>> = [];
+    let currentBatch: Array<{ title: string; content: string }> = [];
+    let currentBatchLen = 0;
+
+    for (const item of items) {
+      const itemLen = item.title.length + Math.min(item.content.length, 600) + 10;
+      if (currentBatch.length > 0 && currentBatchLen + itemLen > maxChars) {
+        batches.push(currentBatch);
+        currentBatch = [item];
+        currentBatchLen = itemLen;
+      } else {
+        currentBatch.push(item);
+        currentBatchLen += itemLen;
+      }
+    }
+    if (currentBatch.length > 0) {
+      batches.push(currentBatch);
+    }
+
+    const batchSummaries: string[] = [];
+    for (let bIdx = 0; bIdx < batches.length; bIdx++) {
+      const batch = batches[bIdx];
+      const batchText = batch.map((n) => `【${n.title}】\n${n.content.slice(0, 600)}`).join('\n\n');
+      const subTitle = `${title} (第 ${bIdx + 1}/${batches.length} 篇章群)`;
+      const subSummary = await this.summarize(subTitle, batchText.slice(0, maxChars), llm);
+      batchSummaries.push(`【${subTitle}】\n${subSummary}`);
+    }
+
+    const aggregated = batchSummaries.join('\n\n');
+    return this.summarize(title, aggregated.slice(0, maxChars), llm, systemPrompt);
+  }
+
+  private async summarize(
+    label: string,
+    text: string,
+    llm: { baseUrl: string; modelName: string; headers: Record<string, string> } | null,
+    systemPrompt?: string,
+  ): Promise<string> {
     const bounded = (text || '').trim().slice(0, this.maxSourceChars);
     if (!bounded) return '';
     if (llm) {
@@ -776,7 +802,9 @@ export class RaptorService {
             messages: [
               {
                 role: 'system',
-                content: '你是企业知识库摘要专家。请对给定资料生成忠实、无幻觉的中文摘要，覆盖主题、关键制度/流程、重要数值与适用范围，并保留可追溯的条款线索。只输出摘要正文。',
+                content:
+                  systemPrompt ||
+                  '你是企业知识库摘要专家。请对给定资料生成忠实、无幻觉的中文摘要，覆盖主题、关键制度/流程、重要数值与适用范围，并保留可追溯的条款线索。只输出摘要正文。',
               },
               { role: 'user', content: `${label}\n\n${bounded}` },
             ],

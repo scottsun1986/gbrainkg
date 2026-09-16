@@ -177,6 +177,11 @@ deploy_single_instance() {
   log "[$INST_NAME] Restarting $API_SERVICE and $WEB_SERVICE..."
   ssh "$PROD_HOST" "
     sudo systemctl restart '$API_SERVICE' '$WEB_SERVICE'
+    if [[ '$INST_NAME' == 'inst1' ]] && systemctl list-units --type=service | grep -q 'llmwiki-parser'; then
+      echo 'Restarting shared llmwiki-parser service...'
+      sudo systemctl restart llmwiki-parser
+      systemctl is-active llmwiki-parser
+    fi
     sleep 3
     systemctl is-active '$API_SERVICE' '$WEB_SERVICE'
   "

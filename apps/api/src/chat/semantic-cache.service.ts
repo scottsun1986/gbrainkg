@@ -8,9 +8,17 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
   private readonly logger = new Logger(SemanticCacheService.name);
   private readonly prisma = getPrismaClient();
   private readonly enabled = process.env.SEMANTIC_CACHE_ENABLED !== 'false';
-  private readonly similarityThreshold = Number(process.env.SEMANTIC_CACHE_SIMILARITY || '0.96');
+  private readonly similarityThreshold = Number(process.env.SEMANTIC_CACHE_SIMILARITY || '0.92');
   private readonly ttlHours = Number(process.env.SEMANTIC_CACHE_TTL_HOURS || '24');
+  private readonly l1ExactCache = new Map<string, { hit: any; expiresAt: number }>();
   private cleanupTimer?: NodeJS.Timeout;
+
+  static normalizeQuery(text: string): string {
+    return String(text || '')
+      .toLowerCase()
+      .replace(/[？?。！!,，\s\-_:："“”'‘’（）()【】\[\]、\/\\|`~@#$%^&*+=<>—…]+/g, ' ')
+      .trim();
+  }
 
   constructor(
     private readonly modelConfigService: ModelConfigService,
@@ -75,6 +83,15 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
   ): Promise<any | null> {
     if (!this.enabled) return null;
 
+    // L1 Fast-Path: Normalized exact match in-memory cache (0ms, 0 vector calls)
+    const normalized = SemanticCacheService.normalizeQuery(queryText);
+    const l1Key = `${scopeFingerprint}:${knowledgeEpoch}:${normalized}`;
+    const l1Hit = this.l1ExactCache.get(l1Key);
+    if (l1Hit && l1Hit.expiresAt > Date.now()) {
+      this.logger.log(`Semantic cache L1 FAST HIT (normalized match, 0ms) for: ${queryText.substring(0, 50)}...`);
+      return l1Hit.hit;
+    }
+
     try {
       const embedding = await this.getEmbedding(queryText);
       if (!embedding) return null;
@@ -94,6 +111,12 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
       if (results && results.length > 0) {
         const hit = results[0];
         
+        // Cache to L1 for subsequent instant zero-millisecond hits
+        this.l1ExactCache.set(l1Key, {
+          hit,
+          expiresAt: Date.now() + this.ttlHours * 3600000,
+        });
+
         // Async increment hitCount and update lastHitAt
         this.prisma.$executeRaw`
           UPDATE "SemanticCache"
@@ -132,6 +155,28 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
       const expiresAt = new Date();
       expiresAt.setHours(expiresAt.getHours() + this.ttlHours);
 
+      // Save to L1 cache immediately
+      const normalized = SemanticCacheService.normalizeQuery(queryText);
+      const l1Key = `${scopeFingerprint}:${knowledgeEpoch}:${normalized}`;
+      const entryObj = {
+        id: `l1-${Date.now()}`,
+        queryText,
+        responseContent,
+        citations,
+        processingTrace,
+        modelName,
+        similarity: 1.0,
+        hitCount: 1,
+      };
+      this.l1ExactCache.set(l1Key, {
+        hit: entryObj,
+        expiresAt: expiresAt.getTime(),
+      });
+      if (this.l1ExactCache.size > 2000) {
+        const oldest = this.l1ExactCache.keys().next().value;
+        if (oldest) this.l1ExactCache.delete(oldest);
+      }
+
       // Dedupe: keep only the newest entry per (scope, question) so a re-run
       // after retrieval improvements deterministically replaces stale answers
       // instead of racing them on equal similarity.
@@ -162,6 +207,7 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
 
   async invalidateByEpoch(scopeFingerprint: string, knowledgeEpoch: number): Promise<void> {
     try {
+      this.l1ExactCache.clear();
       await this.prisma.semanticCache.deleteMany({
         where: {
           scopeFingerprint,

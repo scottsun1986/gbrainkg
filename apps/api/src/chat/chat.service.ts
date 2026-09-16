@@ -54,7 +54,11 @@ export function numericClaimsOf(statement: string): string[] {
  */
 export function extractRawChunkText(text: string): string {
   if (!text) return '';
-  return text.replace(/^\[(?:上下文|Context):\s*[\s\S]*?\]\n*/i, '').trim();
+  return text
+    .replace(/^\[(?:上下文|Context):\s*[\s\S]*?\]\n*/i, '')
+    .replace(/<!--\s*表格结构化行语义:[\s\S]*?-->/g, '')
+    .replace(/<!--\s*bbox:[\s\S]*?-->/g, '')
+    .trim();
 }
 
 /**
@@ -768,28 +772,66 @@ export class ChatService {
 
   extractRelationFromQuery(query: string): string | null {
     if (!query) return null;
-    const m = query.match(/\b(husband|wife|spouse|father|mother|parents|son|daughter|child|director|author|writer|creator|founder|composer|producer)\b/i);
-    return m ? m[1].toLowerCase() : null;
+    const m = query.match(
+      /\b(husband|wife|spouse|father|mother|parents|son|daughter|child|director|author|writer|creator|founder|composer|producer|born|birthplace|capital|headquarters|head office|graduated|alma mater|subsidiary|parent|starring)\b|配偶|妻子|丈夫|父亲|母亲|父母|儿子|女儿|导演|作者|编剧|创始人|成立时间|出生地|生于|毕业院校|母校|总部|省会|首都|所属|控股|主演|研发团队/i,
+    );
+    return m ? m[0].toLowerCase() : null;
+  }
+
+  extractBridgeEntitiesFromEvidence(text: string, rel: string | null): string[] {
+    if (!text) return [];
+    const bridges = new Set<string>();
+
+    // 1. Relational-targeted English patterns
+    if (rel) {
+      const directRe = new RegExp(
+        `(?:${rel})(?:\\s+(?:is|was|named|called|of|,|in|at))*?(?:\\s+(?:the|a|an)?\\s*(?:[A-Za-z-]+\\s+){0,4})?([A-Z][a-zA-Z0-9\x27-]+(?:\\s+[A-Z][a-zA-Z0-9\x27-]+){1,3})`,
+        'g',
+      );
+      let m: RegExpExecArray | null;
+      while ((m = directRe.exec(text)) !== null) {
+        const candidate = m[1].replace(/^(?:Sir|Lord|Lady|Dame|Baron|Prince|Queen|King)\s+/i, '').trim();
+        if (candidate && candidate.length >= 3 && candidate.length <= 40) bridges.add(candidate);
+      }
+
+      if (/father|mother|parents/i.test(rel)) {
+        const invRe = /(?:son|daughter|child)\s+of\s+(?:the\s+)?(?:[A-Za-z-]+\s+){0,4}?([A-Z][a-zA-Z0-9\x27-]+(?:\s+[A-Z][a-zA-Z0-9\x27-]+){1,3})/g;
+        while ((m = invRe.exec(text)) !== null) {
+          const candidate = m[1].replace(/^(?:Sir|Lord|Lady|Dame|Baron|Prince|Queen|King)\s+/i, '').trim();
+          if (candidate) bridges.add(candidate);
+        }
+      }
+
+      if (/director|directed/i.test(rel)) {
+        const invRe = /directed\s+by\s+(?:the\s+)?([A-Z][a-zA-Z0-9\x27-]+(?:\s+[A-Z][a-zA-Z0-9\x27-]+){1,3})/g;
+        while ((m = invRe.exec(text)) !== null) {
+          const candidate = m[1].replace(/^(?:Sir|Lord|Lady|Dame|Baron|Prince|Queen|King)\s+/i, '').trim();
+          if (candidate) bridges.add(candidate);
+        }
+      }
+
+      // 2. Relational-targeted Chinese patterns
+      const zhRe = /(?:配偶|妻子|丈夫|父亲|母亲|作者|编剧|导演|创始人|生于|出生于|毕业于|就读于|总部位于|设立于|由|与)(?:是|为|：|:)?\s*([《“]?[\u4e00-\u9fa5A-Za-z0-9\s]{2,20}[》”]?)/g;
+      while ((m = zhRe.exec(text)) !== null) {
+        const candidate = m[1].replace(/[《》“”"']/g, '').trim();
+        if (candidate && candidate.length >= 2 && candidate.length <= 25) bridges.add(candidate);
+      }
+    }
+
+    // 3. Salient bracketed or quoted entities (e.g. 《书名》, “专有名词”)
+    const bracketRe = /[《“]([\u4e00-\u9fa5A-Za-z0-9\s]{2,30})[》”]/g;
+    let bm: RegExpExecArray | null;
+    while ((bm = bracketRe.exec(text)) !== null) {
+      const candidate = bm[1].trim();
+      if (candidate && candidate.length >= 2 && candidate.length <= 25) bridges.add(candidate);
+    }
+
+    return Array.from(bridges).slice(0, 4);
   }
 
   extractBridgeEntityFromEvidence(text: string, rel: string): string | null {
-    if (!text || !rel) return null;
-    const directRe = new RegExp(`(?:${rel})(?:\\s+(?:is|was|named|called|of|,))*?(?:\\s+(?:the|a|an)?\\s*(?:[A-Za-z-]+\\s+){0,6})?([A-Z][a-zA-Z0-9\x27-]+(?:\\s+[A-Z][a-zA-Z0-9\x27-]+){1,3})`);
-    let m = text.match(directRe);
-    if (m && m[1]) return m[1].replace(/^(?:Sir|Lord|Lady|Dame|Baron|Prince|Queen|King)\s+/i, "").trim();
-
-    if (/father|mother|parents/i.test(rel)) {
-      const invRe = /(?:son|daughter|child)\s+of\s+(?:the\s+)?(?:[A-Za-z-]+\s+){0,4}?([A-Z][a-zA-Z0-9\x27-]+(?:\s+[A-Z][a-zA-Z0-9\x27-]+){1,3})/;
-      m = text.match(invRe);
-      if (m && m[1]) return m[1].replace(/^(?:Sir|Lord|Lady|Dame|Baron|Prince|Queen|King)\s+/i, "").trim();
-    }
-
-    if (/director/i.test(rel)) {
-      const invRe = /directed\s+by\s+(?:the\s+)?([A-Z][a-zA-Z0-9\x27-]+(?:\s+[A-Z][a-zA-Z0-9\x27-]+){1,3})/;
-      m = text.match(invRe);
-      if (m && m[1]) return m[1].replace(/^(?:Sir|Lord|Lady|Dame|Baron|Prince|Queen|King)\s+/i, "").trim();
-    }
-    return null;
+    const list = this.extractBridgeEntitiesFromEvidence(text, rel);
+    return list.length > 0 ? list[0] : null;
   }
 
   /**
@@ -1422,101 +1464,62 @@ export class ChatService {
       const chunkMap = new Map<string, any>();
       const vectorScoreById = new Map<string, number>();
 
-      // 1. Query high-priority tokens first (exact match guarantee, avoids swamping by boilerplate)
-      if (highPriorityTokens.length > 0) {
-        const pChunks = await (this.prisma as any).chunk.findMany({
-          where: {
-            kbId: { in: scope },
-            document: { status: "published" },
-            OR: highPriorityTokens.map((kw) => ({
-              content: { contains: kw, mode: "insensitive" },
-            })),
-          },
-          select: {
-            id: true,
-            documentId: true,
-            kbId: true,
-            ord: true,
-            content: true,
-            metadata: true,
-            document: { select: { title: true, version: true } },
-          },
-          take: 100,
-        });
-        pChunks.forEach((c: any) => chunkMap.set(c.id, c));
-      }
-
-      // 2. Query chapter headings if chapter listing query
-      if (isChapterListing) {
-        let targetDocIds: string[] = [];
-        const cleanQuery = query.replace(/[？?。！!,，\s]+|一共有哪些章|有哪些章|所有章|全部章|章名|一共有几章|目录|结构/g, "").trim();
-        if (cleanQuery.length >= 2) {
-          const docRows = await (this.prisma as any).document.findMany({
+      // 1. High-priority token retrieval promise (exact structural guarantee)
+      const pChunksPromise = highPriorityTokens.length > 0
+        ? (this.prisma as any).chunk.findMany({
             where: {
               kbId: { in: scope },
-              status: "published",
-              title: { contains: cleanQuery },
+              document: { status: "published" },
+              OR: highPriorityTokens.map((kw) => ({
+                content: { contains: kw, mode: "insensitive" },
+              })),
             },
-            select: { id: true },
-          });
-          if (docRows.length > 0) {
-            targetDocIds = docRows.map((d: any) => d.id);
-          }
-        }
+            select: {
+              id: true,
+              documentId: true,
+              kbId: true,
+              ord: true,
+              content: true,
+              metadata: true,
+              document: { select: { title: true, version: true } },
+            },
+            take: 100,
+          }).catch(() => [])
+        : Promise.resolve([]);
 
-        const chChunks = await (this.prisma as any).chunk.findMany({
-          where: {
-            kbId: { in: scope },
-            document: { status: "published" },
-            ...(targetDocIds.length > 0 ? { documentId: { in: targetDocIds } } : {}),
-            OR: [
-              { content: { startsWith: "## " } },
-              { content: { contains: "## 第" } },
-              { content: { contains: "## 附则" } },
-              { content: { contains: "## 第一章" } },
-              { content: { contains: "## 第二章" } },
-              { content: { contains: "## 第三章" } },
-              { content: { contains: "## 第四章" } },
-              { content: { contains: "## 罚则" } },
-            ],
-          },
-          select: {
-            id: true,
-            documentId: true,
-            kbId: true,
-            ord: true,
-            content: true,
-            metadata: true,
-            document: { select: { title: true, version: true } },
-          },
-          take: 100,
-          orderBy: { ord: "asc" },
-        });
-        chChunks.forEach((c: any) => chunkMap.set(c.id, c));
-      }
-
-      const stopGeneralTokens = new Set(["记录", "表中", "内容", "部分", "情况", "要求", "相关", "规定", "文档", "系统", "什么", "怎么", "如何"]);
-
-      // 3. General keywords — queried PER TOKEN.
-      // Every distinctive keyword gets a bounded candidate quota so different
-      // aspects/synonyms of the query are represented without token starvation.
-      const generalTokens = keywords
-        .filter((kw) => !highPriorityTokens.includes(kw) && !stopGeneralTokens.has(kw))
-        .sort((a, b) => b.length - a.length)
-        .slice(0, 15);
-      const perTokenTake = Math.max(20, Number(process.env.RETRIEVAL_TOKEN_QUERY_TAKE || 25));
-      const maxCandidatePool = Math.max(120, limit * 8);
-      const tokenBatchSize = 4;
-      for (let i = 0; i < generalTokens.length; i += tokenBatchSize) {
-        if (chunkMap.size >= maxCandidatePool) break;
-        const tokenBatch = generalTokens.slice(i, i + tokenBatchSize);
-        const batchResults = await Promise.all(
-          tokenBatch.map((kw) =>
-            (this.prisma as any).chunk.findMany({
+      // 2. Chapter heading listing retrieval promise
+      const chChunksPromise = isChapterListing
+        ? (async () => {
+            let targetDocIds: string[] = [];
+            const cleanQuery = query.replace(/[？?。！!,，\s]+|一共有哪些章|有哪些章|所有章|全部章|章名|一共有几章|目录|结构/g, "").trim();
+            if (cleanQuery.length >= 2) {
+              const docRows = await (this.prisma as any).document.findMany({
+                where: {
+                  kbId: { in: scope },
+                  status: "published",
+                  title: { contains: cleanQuery },
+                },
+                select: { id: true },
+              }).catch(() => []);
+              if (docRows.length > 0) {
+                targetDocIds = docRows.map((d: any) => d.id);
+              }
+            }
+            return (this.prisma as any).chunk.findMany({
               where: {
                 kbId: { in: scope },
                 document: { status: "published" },
-                content: { contains: kw, mode: "insensitive" },
+                ...(targetDocIds.length > 0 ? { documentId: { in: targetDocIds } } : {}),
+                OR: [
+                  { content: { startsWith: "## " } },
+                  { content: { contains: "## 第" } },
+                  { content: { contains: "## 附则" } },
+                  { content: { contains: "## 第一章" } },
+                  { content: { contains: "## 第二章" } },
+                  { content: { contains: "## 第三章" } },
+                  { content: { contains: "## 第四章" } },
+                  { content: { contains: "## 罚则" } },
+                ],
               },
               select: {
                 id: true,
@@ -1527,41 +1530,29 @@ export class ChatService {
                 metadata: true,
                 document: { select: { title: true, version: true } },
               },
-              orderBy: [{ documentId: "asc" }, { ord: "asc" }],
-              take: perTokenTake,
-            }).catch(() => []),
-          ),
-        );
-        for (const tChunks of batchResults) {
-          for (const c of tChunks || []) {
-            chunkMap.set(c.id, c);
-          }
-        }
-      }
+              take: 100,
+              orderBy: { ord: "asc" },
+            }).catch(() => []);
+          })()
+        : Promise.resolve([]);
 
-      // 4. Title-affinity recall. Across a wide multi-KB scope a small but
-      // correct document can be crowded out by large or repetitive documents
-      // whose generic wording scores high on almost any semantic query (e.g.
-      // a specific 考勤 clause losing to a long generic planning document).
-      // Pull in published documents whose title contains a distinctive query
-      // term so the named target document always enters the candidate set.
-      const titleTokens = keywords
-        .filter((kw) => kw.length >= 2 && kw.length <= 12 && !stopGeneralTokens.has(kw) && !/^第[一二三四五六七八九十百0-9]+[章节条款]/.test(kw))
-        .slice(0, 6);
-      if (titleTokens.length > 0 && chunkMap.size < limit * 6) {
-        const affinityDocs = await (this.prisma as any).document.findMany({
-          where: {
-            kbId: { in: scope },
-            status: "published",
-            OR: titleTokens.map((kw) => ({ title: { contains: kw, mode: "insensitive" } })),
-          },
-          select: { id: true },
-          take: 20,
-        });
-        const affinityDocIds = affinityDocs.map((d: any) => d.id);
-        if (affinityDocIds.length > 0) {
-          const aChunks = await (this.prisma as any).chunk.findMany({
-            where: { kbId: { in: scope }, documentId: { in: affinityDocIds }, document: { status: "published" } },
+      const stopGeneralTokens = new Set(["记录", "表中", "内容", "部分", "情况", "要求", "相关", "规定", "文档", "系统", "什么", "怎么", "如何"]);
+
+      // 3. General keywords retrieval promise (concurrent token queries)
+      const generalTokens = keywords
+        .filter((kw) => !highPriorityTokens.includes(kw) && !stopGeneralTokens.has(kw))
+        .sort((a, b) => b.length - a.length)
+        .slice(0, 15);
+      const perTokenTake = Math.max(20, Number(process.env.RETRIEVAL_TOKEN_QUERY_TAKE || 25));
+
+      const generalChunksPromise = Promise.all(
+        generalTokens.map((kw) =>
+          (this.prisma as any).chunk.findMany({
+            where: {
+              kbId: { in: scope },
+              document: { status: "published" },
+              content: { contains: kw, mode: "insensitive" },
+            },
             select: {
               id: true,
               documentId: true,
@@ -1571,17 +1562,69 @@ export class ChatService {
               metadata: true,
               document: { select: { title: true, version: true } },
             },
-            orderBy: { ord: "asc" },
-            take: Math.max(limit * 4, 120),
-          });
-          aChunks.forEach((c: any) => {
-            if (!chunkMap.has(c.id)) chunkMap.set(c.id, c);
-          });
+            orderBy: [{ documentId: "asc" }, { ord: "asc" }],
+            take: perTokenTake,
+          }).catch(() => []),
+        ),
+      );
+
+      // 4. Title-affinity retrieval promise
+      const titleTokens = keywords
+        .filter((kw) => kw.length >= 2 && kw.length <= 12 && !stopGeneralTokens.has(kw) && !/^第[一二三四五六七八九十百0-9]+[章节条款]/.test(kw))
+        .slice(0, 6);
+
+      const affinityChunksPromise = titleTokens.length > 0
+        ? (async () => {
+            const affinityDocs = await (this.prisma as any).document.findMany({
+              where: {
+                kbId: { in: scope },
+                status: "published",
+                OR: titleTokens.map((kw) => ({ title: { contains: kw, mode: "insensitive" } })),
+              },
+              select: { id: true },
+              take: 20,
+            }).catch(() => []);
+            const affinityDocIds = affinityDocs.map((d: any) => d.id);
+            if (!affinityDocIds.length) return [];
+            return (this.prisma as any).chunk.findMany({
+              where: { kbId: { in: scope }, documentId: { in: affinityDocIds }, document: { status: "published" } },
+              select: {
+                id: true,
+                documentId: true,
+                kbId: true,
+                ord: true,
+                content: true,
+                metadata: true,
+                document: { select: { title: true, version: true } },
+              },
+              orderBy: { ord: "asc" },
+              take: Math.max(limit * 4, 120),
+            }).catch(() => []);
+          })()
+        : Promise.resolve([]);
+
+      // 5. Parallel Burst: Await all 6 retrieval channels simultaneously
+      const [pChunks, chChunks, generalBatches, aChunks, vectorHits, subVectorHits] = await Promise.all([
+        pChunksPromise,
+        chChunksPromise,
+        generalChunksPromise,
+        affinityChunksPromise,
+        vectorHitsPromise,
+        subQueryVectorPromise,
+      ]);
+
+      (pChunks || []).forEach((c: any) => chunkMap.set(c.id, c));
+      (chChunks || []).forEach((c: any) => chunkMap.set(c.id, c));
+      for (const batch of generalBatches || []) {
+        for (const c of batch || []) {
+          chunkMap.set(c.id, c);
         }
       }
+      (aChunks || []).forEach((c: any) => {
+        if (!chunkMap.has(c.id)) chunkMap.set(c.id, c);
+      });
 
-      // Merge the semantic arm into the candidate pool.
-      const [vectorHits, subVectorHits] = await Promise.all([vectorHitsPromise, subQueryVectorPromise]);
+      // Merge the semantic arm into the candidate pool
       for (const hit of [...(vectorHits || []), ...(subVectorHits || [])]) {
         const prevScore = vectorScoreById.get(hit.id);
         if (prevScore === undefined || hit.score > prevScore) vectorScoreById.set(hit.id, hit.score);
@@ -2438,15 +2481,23 @@ export class ChatService {
 
         // Fast-path bridge entity extraction from top evidence
         const rel = this.extractRelationFromQuery(retrieval.query || question);
-        if (rel && base.length > 0) {
+        if ((rel || agenticComplexity !== 'simple') && base.length > 0) {
           try {
-            const topEvidence = base.slice(0, 3).map((b) => b.evidence).join('\n');
-            const bridge = this.extractBridgeEntityFromEvidence(topEvidence, rel);
-            if (bridge && !base.some((b) => (b.title || '').toLowerCase().includes(bridge.toLowerCase()))) {
-              const bridgeHits = await this.searchChunksFallback(scope, bridge, 5).catch(() => []);
-              for (const bh of bridgeHits) {
-                (bh as any).subQueryOrigin = bridge;
-                base.push(bh);
+            const topEvidence = base.slice(0, 4).map((b) => b.evidence).join('\n');
+            const bridges = this.extractBridgeEntitiesFromEvidence(topEvidence, rel);
+            const unseenBridges = bridges.filter(
+              (br) => !base.some((b) => (b.title || '').toLowerCase().includes(br.toLowerCase())),
+            );
+            if (unseenBridges.length > 0) {
+              const bridgeResults = await Promise.all(
+                unseenBridges.map((br) => this.searchChunksFallback(scope, br, 5).catch(() => [])),
+              );
+              for (let i = 0; i < unseenBridges.length; i++) {
+                const br = unseenBridges[i];
+                for (const bh of bridgeResults[i]) {
+                  (bh as any).subQueryOrigin = br;
+                  base.push(bh);
+                }
               }
             }
           } catch (e) {
@@ -3700,6 +3751,11 @@ export class ChatService {
         ? `个人长期记忆（仅当前用户可见，优先级低于当前知识库原文；不能把它冒充为公共制度证据）：\n${personalMemory.text}\n\n`
         : "";
 
+      // KV-Cache Optimized Prompt Architecture:
+      // Modern LLM inference engines (vLLM, DeepSeek, OpenAI) cache key-value tokens from index 0.
+      // 1. Immutable static system rules are placed at the absolute front (100% KV-Cache hit across all queries)
+      // 2. Canonical reference materials are placed second (high cache hit across similar queries on same docs)
+      // 3. Turn-specific conversation history, personal memory, and question are placed last.
       const staticSystemRules = isEnglishQuery
         ? `You are an expert enterprise knowledge-base AI assistant. You MUST strictly base your answer on the provided [Reference Knowledge Base Materials] below.
 
@@ -3721,12 +3777,27 @@ export class ChatService {
 7. 【客观真实与分层回答】：
 - 若参考资料完全不包含与问题相关的信息，请统一回复：“已知知识库资料中未包含相关信息，无法回答该问题。”严禁在拒答或未找到信息时复述、回显用户问题中的代号、机密编号或专有名词。
 - 若参考资料包含部分相关事实（如包含实体背景、前置步骤或部分已知条件），请优先陈述已证实的客观事实并标注对应角标，并明确指出参考资料未涵盖的具体维度或后续信息，严禁在已知部分确凿事实的情况下全盘拒答。
-8. 【语言一致性】：如果用户使用英文提问，请务必使用英文作答（如无法回答时使用 'Based on the provided reference materials, the relevant information is not available.'），并保留原实体英文名称。${queryResult?.diagnostics?.mode === "inventory" ? `\n9. 【全景统计规范】：本次是知识库/文档盘点类问题，参考资料按知识库逐一给出文档清单。请分知识库逐项呈现统计结果，并在每个知识库的统计陈述末尾标注它对应的引用角标（如 [1]、[2]），让用户可逐库核对。` : ""}${orderedCitations.some((c: any) => c.isCompiledTruth || c.isCompiledDerived) ? `\n10. 【编译真理优先采信】：参考资料中带有【编译真理·高优先】或【Scope派生智库】标记的来源，是经过系统编译消歧与对账的高置信度权威事实。若其与普通未编译的碎片化分块存在局部表述差异，请优先采信编译真理。` : ""}`;
+8. 【语言一致性】：如果用户使用英文提问，请务必使用英文作答（如无法回答时使用 'Based on the provided reference materials, the relevant information is not available.'），并保留原实体英文名称。`;
 
-      const contextMessage = `${staticSystemRules}
+      const dynamicDirectives = [
+        queryResult?.diagnostics?.mode === "inventory"
+          ? "【全景统计规范】：本次是知识库/文档盘点类问题，参考资料按知识库逐一给出文档清单。请分知识库逐项呈现统计结果，并在每个知识库的统计陈述末尾标注它对应的引用角标（如 [1]、[2]），让用户可逐库核对。"
+          : "",
+        orderedCitations.some((c: any) => c.isCompiledTruth || c.isCompiledDerived)
+          ? "【编译真理优先采信】：参考资料中带有【编译真理·高优先】或【Scope派生智库】标记的来源，是经过系统编译消歧与对账的高置信度权威事实。若其与普通未编译的碎片化分块存在局部表述差异，请优先采信编译真理。"
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+
+      // System message: static system rules at token 0, followed by disambiguation context and reference materials
+      const systemMessageContent = `${staticSystemRules}
 
 ${priorConversation ? `历史对话参考（仅供消歧，以当前知识库资料为准）：\n${priorConversation}\n\n` : ""}${personalMemoryBlock}${isEnglishQuery ? "【Reference Knowledge Base Materials】" : "【参考知识库资料】"}：
-${compiledTruthContext}`;
+${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n${dynamicDirectives}` : ""}`;
+
+      // User message: cleanly contains the standalone query
+      const userMessageContent = question;
 
       const headers: Record<string, string> = llmRequest?.headers || {
         "Content-Type": "application/json",
@@ -3741,8 +3812,8 @@ ${compiledTruthContext}`;
           body: JSON.stringify({
             model: modelName,
             messages: [
-              { role: "system", content: contextMessage },
-              { role: "user", content: question },
+              { role: "system", content: systemMessageContent },
+              { role: "user", content: userMessageContent },
             ],
             stream: true,
             stream_options: { include_usage: true },

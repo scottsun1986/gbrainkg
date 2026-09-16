@@ -240,17 +240,54 @@ def extract_docx(path: Path) -> str:
                 if not txt:
                     continue
                 style_name = (block.style.name if block.style else "").lower()
-                heading_match = re.search(r"heading\s*([1-6])", style_name)
-                lines.append(f"{'#' * int(heading_match.group(1))} {txt}" if heading_match else txt)
+                heading_match = re.search(r"(?:heading|标题)\s*([1-6])", style_name)
+                if heading_match:
+                    lines.append(f"{'#' * int(heading_match.group(1))} {txt}")
+                else:
+                    # Visual pseudo-heading inference:
+                    # 1. Bold text or large font size
+                    # 2. Section number patterns (e.g. 第一章, 1.1, 一、)
+                    runs = [r for r in block.runs if r.text.strip()]
+                    all_bold = runs and all(r.bold for r in runs)
+                    sizes = [r.font.size.pt for r in runs if r.font and r.font.size]
+                    max_pt = max(sizes) if sizes else 0
+                    is_short = len(txt) <= 70 and not txt.endswith(("。", "！", "？", "；", ".", "!", "?", ";"))
+
+                    pseudo_level = 0
+                    if max_pt >= 16:
+                        pseudo_level = 1
+                    elif max_pt >= 14:
+                        pseudo_level = 2
+                    elif all_bold and is_short:
+                        num_match = re.match(r"^(\d+(?:\.\d+)+)", txt)
+                        if re.match(r"^(第[一二三四五六七八九十0-9]+[章节篇部卷]|Chapter\s*\d+)", txt):
+                            pseudo_level = 1
+                        elif num_match:
+                            pseudo_level = min(6, num_match.group(1).count(".") + 1)
+                        elif re.match(r"^([一二三四五六七八九十]+[、.])", txt):
+                            pseudo_level = 2
+                        else:
+                            pseudo_level = 3
+                    elif is_short and re.match(r"^(第[一二三四五六七八九十0-9]+[章节篇部卷]|Chapter\s*\d+)", txt):
+                        pseudo_level = 1
+
+                    if pseudo_level > 0:
+                        lines.append(f"{'#' * pseudo_level} {txt}")
+                    else:
+                        lines.append(txt)
             else:
                 rows = []
                 for row in block.rows:
-                    cells = [cell.text.strip().replace("\n", " ").replace("|", "\\|") for cell in row.cells]
+                    cells = [cell.text.strip().replace("\r\n", "<br>").replace("\n", "<br>").replace("|", "\\|") for cell in row.cells]
                     if any(cells):
                         rows.append(cells)
                 if rows:
                     width = max(len(row) for row in rows)
                     normalized = [row + [""] * (width - len(row)) for row in rows]
+                    # Forward-fill left-most parent column when empty due to merged cells
+                    for r_idx in range(1, len(normalized)):
+                        if width > 1 and not normalized[r_idx][0] and normalized[r_idx - 1][0]:
+                            normalized[r_idx][0] = normalized[r_idx - 1][0]
                     t_lines = ["| " + " | ".join(normalized[0]) + " |", "| " + " | ".join(["---"] * width) + " |"]
                     t_lines.extend("| " + " | ".join(row) + " |" for row in normalized[1:])
                     lines.append("\n".join(t_lines))
@@ -298,6 +335,16 @@ def inspect_pdf_native(path: Path) -> dict[str, Any]:
             int(result["native_chars"]),
             str(result["native_quality"]),
         )
+        # Layout complexity heuristic: detect tables, multi-column whitespace alignment
+        complex_signals = 0
+        for txt in page_texts:
+            lines = [l.strip() for l in txt.split("\n") if l.strip()]
+            col_lines = sum(1 for l in lines if re.search(r"\S+\s{4,}\S+\s{4,}\S+", l))
+            if col_lines >= 3:
+                complex_signals += 1
+            if re.search(r"\|\s*[-:]+\s*\|", txt):
+                complex_signals += 1
+        result["has_complex_layout"] = complex_signals >= max(1, len(page_texts) // 4)
         if result["native_quality"] == "good":
             result["native_page_indexes"] = [
                 i
@@ -390,24 +437,56 @@ def extract_pdf_native(path: Path) -> str:
     return str(inspect_pdf_native(path).get("markdown", ""))
 
 def extract_excel(path: Path) -> str:
-    """Extract .xlsx / .xls sheets to Markdown tables."""
+    """Extract .xlsx / .xls sheets to Markdown tables with merged-cell forward fill."""
     try:
         import openpyxl
         wb = openpyxl.load_workbook(str(path), data_only=True)
         sheets_md = []
         for sheetname in wb.sheetnames:
             sheet = wb[sheetname]
+            # Forward-fill merged cells across the entire merged range so that
+            # downstream retrieval and chunking preserve multi-row/multi-column category context.
+            try:
+                for merge_range in list(sheet.merged_cells.ranges):
+                    min_col, min_row, max_col, max_row = merge_range.bounds
+                    top_left_val = sheet.cell(row=min_row, column=min_col).value
+                    sheet.unmerge_cells(range_string=str(merge_range))
+                    for r in range(min_row, max_row + 1):
+                        for c in range(min_col, max_col + 1):
+                            sheet.cell(row=r, column=c, value=top_left_val)
+            except Exception as merge_err:
+                logger.debug(f"Excel unmerge notice for {sheetname}: {merge_err}")
+
             rows = list(sheet.iter_rows(values_only=True))
             if not rows:
                 continue
+            # Remove trailing empty rows
+            while rows and all(c is None or str(c).strip() == "" for c in rows[-1]):
+                rows.pop()
+            if not rows:
+                continue
+
+            width = max((len(r) for r in rows), default=0)
+            if width == 0:
+                continue
+
+            raw_header = [
+                str(cell if cell is not None else "").replace("|", "\\|").replace("\r\n", " ").replace("\n", " ").strip()
+                for cell in rows[0]
+            ]
+            header = raw_header + [""] * (width - len(raw_header))
+
             table_lines = [f"### 工作表：{sheetname}\n"]
-            header = [str(cell if cell is not None else "") for cell in rows[0]]
             table_lines.append("| " + " | ".join(header) + " |")
-            table_lines.append("| " + " | ".join(["---"] * len(header)) + " |")
+            table_lines.append("| " + " | ".join(["---"] * width) + " |")
             for row in rows[1:]:
                 if all(c is None or str(c).strip() == "" for c in row):
                     continue
-                cells = [str(c if c is not None else "").replace("\n", " ") for c in row]
+                raw_cells = [
+                    str(c if c is not None else "").replace("|", "\\|").replace("\r\n", " ").replace("\n", " ").strip()
+                    for c in row
+                ]
+                cells = raw_cells + [""] * (width - len(raw_cells))
                 table_lines.append("| " + " | ".join(cells) + " |")
             sheets_md.append("\n".join(table_lines))
         return "\n\n".join(sheets_md)
@@ -419,21 +498,35 @@ def extract_excel(path: Path) -> str:
         try:
             import xlrd
 
-            workbook = xlrd.open_workbook(str(path), on_demand=True)
+            try:
+                workbook = xlrd.open_workbook(str(path), formatting_info=True)
+            except Exception:
+                workbook = xlrd.open_workbook(str(path), on_demand=True)
+
             sheets_md = []
             for sheet in workbook.sheets():
                 if sheet.nrows == 0:
                     continue
-                rows = [
-                    [str(sheet.cell_value(row, col) or "").replace("|", "\\|").replace("\n", " ") for col in range(sheet.ncols)]
-                    for row in range(sheet.nrows)
+                grid = [
+                    [
+                        str(sheet.cell_value(r, c) or "").replace("|", "\\|").replace("\r\n", " ").replace("\n", " ").strip()
+                        for c in range(sheet.ncols)
+                    ]
+                    for r in range(sheet.nrows)
                 ]
-                while rows and not any(rows[-1]):
-                    rows.pop()
-                if not rows:
+                if hasattr(sheet, "merged_cells"):
+                    for (rlo, rhi, clo, chi) in sheet.merged_cells:
+                        val = grid[rlo][clo] if rlo < len(grid) and clo < len(grid[rlo]) else ""
+                        for r in range(rlo, min(rhi, len(grid))):
+                            for c in range(clo, min(chi, len(grid[r]))):
+                                grid[r][c] = val
+
+                while grid and not any(grid[-1]):
+                    grid.pop()
+                if not grid:
                     continue
-                width = max(len(row) for row in rows)
-                rows = [row + [""] * (width - len(row)) for row in rows]
+                width = max(len(row) for row in grid)
+                rows = [row + [""] * (width - len(row)) for row in grid]
                 lines = [f"### 工作表：{sheet.name}\n"]
                 lines.append("| " + " | ".join(rows[0]) + " |")
                 lines.append("| " + " | ".join(["---"] * width) + " |")
@@ -489,6 +582,29 @@ def extract_pptx_native(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
             table_md = _pptx_table_markdown(shape.table)
             if table_md:
                 parts_acc.append(table_md)
+        if getattr(shape, "has_chart", False) or getattr(shape, "shape_type", None) == 3:
+            try:
+                chart = getattr(shape, "chart", None)
+                if chart:
+                    title = "图表数据"
+                    if getattr(chart, "has_title", False) and getattr(chart, "chart_title", None):
+                        title = chart.chart_title.text_frame.text.strip() or "图表数据"
+                    plots = getattr(chart, "plots", [])
+                    categories = []
+                    if plots and hasattr(plots[0], "categories"):
+                        categories = [str(c).strip() for c in plots[0].categories]
+                    header = ["系列/指标"] + categories
+                    c_rows = ["| " + " | ".join(header) + " |", "| " + " | ".join(["---"] * len(header)) + " |"]
+                    for s in getattr(chart, "series", []):
+                        s_name = str(getattr(s, "name", "数值")).strip()
+                        s_vals = [str(v) if v is not None else "-" for v in getattr(s, "values", [])]
+                        if len(s_vals) < len(categories):
+                            s_vals += ["-"] * (len(categories) - len(s_vals))
+                        c_rows.append("| " + " | ".join([s_name] + s_vals[:len(categories)]) + " |")
+                    if len(c_rows) > 2:
+                        parts_acc.append(f"### {title}\n" + "\n".join(c_rows))
+            except Exception as chart_err:
+                logger.debug("Chart extraction skipped: %s", chart_err)
         if getattr(shape, "shape_type", None) == 13:  # MSO_SHAPE_TYPE.PICTURE
             try:
                 image = shape.image
@@ -506,7 +622,17 @@ def extract_pptx_native(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
 
     for slide_number, slide in enumerate(presentation.slides, start=1):
         parts: list[str] = []
-        for shape_number, shape in enumerate(slide.shapes, start=1):
+        # Spatial 2D sorting: PPTX XML stores shapes in arbitrary z-order/insertion order.
+        # Banding by ~4pt (50,000 EMUs) sorts shapes in natural human reading order:
+        # slide titles first, top-to-bottom, left-to-right columns.
+        sorted_shapes = sorted(
+            enumerate(slide.shapes, start=1),
+            key=lambda item: (
+                round((getattr(item[1], "top", 0) or 0) / 50000),
+                getattr(item[1], "left", 0) or 0,
+            ),
+        )
+        for shape_number, shape in sorted_shapes:
             _collect_from_shape(shape, slide_number, shape_number, parts)
         if getattr(slide, "has_notes_slide", False) and getattr(slide.notes_slide, "notes_text_frame", None):
             note_text = slide.notes_slide.notes_text_frame.text.strip()
@@ -896,11 +1022,22 @@ async def convert_pdf_with_fallback(
     ocr_config: dict[str, str],
     page_texts: list[str] | None = None,
     native_page_indexes: list[int] | None = None,
+    has_complex_layout: bool = False,
 ) -> tuple[str, str, dict[str, Any]]:
     """Route PDF to the cheapest suitable engine, then fail open safely."""
     metadata: dict[str, Any] = {}
-    if classification == "text" and PDF_PARSE_MODE in {"fast", "hybrid", "auto"}:
-        return native_md, "pypdf-native", metadata
+    if classification == "text":
+        if has_complex_layout and LOCAL_DOCLING_ENABLED and PDF_PARSE_MODE in {"auto", "thorough", "deep"}:
+            try:
+                markdown = await asyncio.wait_for(
+                    convert_with_docling(path), timeout=DOCLING_TIMEOUT_SECONDS
+                )
+                return markdown, "docling-complex-layout", metadata
+            except Exception as docling_err:
+                logger.warning(f"Docling layout conversion failed on {path.name}, falling back to native: {docling_err}")
+                metadata["docling_error"] = str(docling_err)
+        if PDF_PARSE_MODE in {"fast", "hybrid", "auto"}:
+            return native_md, "pypdf-native", metadata
 
     if classification in {"scanned", "mixed"} and str(
         ocr_config.get("provider") or OCR_PROVIDER
@@ -1051,6 +1188,7 @@ async def process_file(
                 ocr_config,
                 [str(text) for text in pdf_info.get("page_texts", [])],
                 [int(index) for index in pdf_info.get("native_page_indexes", [])],
+                bool(pdf_info.get("has_complex_layout", False)),
             )
             task["markdown"] = md
             task["engine"] = engine

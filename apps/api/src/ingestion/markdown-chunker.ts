@@ -276,7 +276,8 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
           if (tableInfo.rowsKv.length > 0) {
             tableRowsCount = tableInfo.rowsKv.length;
             // Inject structured row semantics (invisible in HTML/purified render, fully indexed by BM25/search)
-            const tableSemantics = `\n\n<!-- 表格结构化行语义:\n${tableInfo.rowsKv.join('\n')}\n-->`;
+            const rowsToInject = tableInfo.rowsKv.slice(0, 40);
+            const tableSemantics = `\n\n<!-- 表格结构化行语义:\n${rowsToInject.join('\n')}\n-->`;
             withHeading += tableSemantics;
           }
         }
