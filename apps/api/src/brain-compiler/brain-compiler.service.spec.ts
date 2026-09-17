@@ -65,4 +65,49 @@ describe("BrainCompilerService source isolation", () => {
     );
     expect(permission.getUsersVisibleToKnowledgeBase).not.toHaveBeenCalled();
   });
+
+  it("handles undefined or null jobs in compilerQueue.getJobs without crashing", async () => {
+    const mockDb = {
+      brainSource: { findMany: jest.fn().mockResolvedValue([]) },
+      brainMaintenanceRun: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+        count: jest.fn().mockResolvedValue(0),
+      },
+      brainScope: { findMany: jest.fn().mockResolvedValue([]) },
+      brainDerivedPage: { count: jest.fn().mockResolvedValue(0) },
+      brainChangeEvent: { count: jest.fn().mockResolvedValue(0) },
+      brainOperationLog: { findMany: jest.fn().mockResolvedValue([]) },
+      brainTopic: { count: jest.fn().mockResolvedValue(0) },
+    };
+    const mockQueue = {
+      getJobCounts: jest.fn().mockResolvedValue({ waiting: 0, active: 0, completed: 0, failed: 1, delayed: 0 }),
+      getJobs: jest.fn().mockResolvedValue([
+        undefined,
+        null,
+        { id: "job-1", name: "other-job" },
+        { id: "job-2", name: "gbrain-maintenance", failedReason: "test timeout", attemptsMade: 2, timestamp: 123456 },
+      ]),
+    };
+    const service = new BrainCompilerService(
+      mockQueue as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    (service as any).prisma = mockDb;
+
+    const telemetry = await service.getDreamTelemetry();
+
+    expect(telemetry.maintenanceFailures).toEqual([
+      {
+        id: "job-2",
+        failedReason: "test timeout",
+        attemptsMade: 2,
+        timestamp: 123456,
+      },
+    ]);
+  });
 });
+

@@ -474,15 +474,15 @@ export class AdminController {
                 userById.get(doc.uploadedById)?.username ||
                 doc.uploadedById
               : "系统",
-            source: doc.kb.name,
+            source: doc.kb?.name || "未知知识库",
           }))
         : []),
       ...(canReadAudit
         ? safeCompileJobs.map((job) => ({
             id: `job-${job.id}`,
             when: job.createdAt,
-            action: `主题「${job.brainTopic.topicSlug}」编译任务 ${job.status}`,
-            actor: job.user.displayName || job.user.username,
+            action: `主题「${job.brainTopic?.topicSlug || "默认"}」编译任务 ${job.status}`,
+            actor: job.user?.displayName || job.user?.username || "未知用户",
             source: job.trigger,
           }))
         : []),
@@ -490,9 +490,9 @@ export class AdminController {
         ? safeGrants.map((grant) => ({
             id: `grant-${grant.id}`,
             when: grant.createdAt,
-            action: `为「${grant.kb.name}」新增 ${grant.subjectType} 授权`,
+            action: `为「${grant.kb?.name || "未知知识库"}」新增 ${grant.subjectType} 授权`,
             actor: grant.grantedById,
-            source: grant.kb.name,
+            source: grant.kb?.name || "未知知识库",
           }))
         : []),
       ...(canReadAudit
@@ -921,8 +921,11 @@ export class AdminController {
           knowledgeEpoch: s.knowledgeEpoch,
           lastCompileAt: s.lastCompileAt,
           membersCount: s._count.members,
-          members: s.members.map((m: any) => ({ username: m.user.username, displayName: m.user.displayName })),
-          derivedPages: s.derivedPages.map((p: any) => ({
+          members: (s.members || []).map((m: any) => ({
+            username: m.user?.username || "",
+            displayName: m.user?.displayName || "",
+          })),
+          derivedPages: (s.derivedPages || []).map((p: any) => ({
             id: p.id,
             slug: p.slug,
             title: p.title,
@@ -944,7 +947,7 @@ export class AdminController {
           ? Math.round(
               dreamTelemetry.runs.reduce(
                 (sum: number, r: any) =>
-                  sum + (r.completedAt && r.startedAt ? (new Date(r.completedAt).getTime() - new Date(r.startedAt).getTime()) / 1000 : 0),
+                  sum + (r?.completedAt && r?.startedAt ? (new Date(r.completedAt).getTime() - new Date(r.startedAt).getTime()) / 1000 : 0),
                 0
               ) / dreamTelemetry.runs.length
             )
@@ -952,7 +955,7 @@ export class AdminController {
       },
       outboxAndQueues: {
         outboxCounts: { pending: outboxPending, completed: outboxCompleted, failed: outboxFailed, total: outboxTotal },
-        recentEvents: recentOutboxEvents.map((e: any) => ({
+        recentEvents: (recentOutboxEvents || []).map((e: any) => ({
           id: e.id,
           eventType: e.eventType,
           status: e.status,
@@ -969,11 +972,11 @@ export class AdminController {
         totalMessages,
         totalCitations,
         runtime: runtimeModelStatus,
-        activeModels: activeModelConfigs.map((m: any) => ({
+        activeModels: (activeModelConfigs || []).map((m: any) => ({
           kind: m.kind,
           modelName: m.modelName,
-          providerName: m.provider.name,
-          baseUrl: m.provider.baseUrl,
+          providerName: m.provider?.name || "",
+          baseUrl: m.provider?.baseUrl || "",
           isDefault: m.isDefault,
           testStatus: m.testStatus
         }))

@@ -1314,8 +1314,8 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
       recentOperationLogs: opLogs,
       dirtyTopics,
       queueCounts,
-      maintenanceFailures: failedJobs
-        .filter((job: any) => job.name === "gbrain-maintenance")
+      maintenanceFailures: (failedJobs || [])
+        .filter((job: any) => Boolean(job && job.name === "gbrain-maintenance"))
         .map((job: any) => ({
           id: job.id,
           failedReason: job.failedReason,
