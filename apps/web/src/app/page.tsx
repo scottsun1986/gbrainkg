@@ -2261,11 +2261,23 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], active 
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || '上传失败');
 
-      const doc = result.documents?.[0];
-      if (doc) {
-        setDocs((ds) => ds.map((d) => (d.id === tempId ? { ...d, id: doc.id, status: doc.status || 'parsing' } : d)));
+      const isArchive = result.isArchive || (result.documents && result.documents.length > 1);
+      if (isArchive) {
+        // 压缩包已在后端自动解压，压缩包本身已物理删除；移除压缩包占位行并提示提取的文档数量
+        setDocs((ds) => ds.filter((d) => d.id !== tempId));
+        const count = result.documents?.length || result.total || 0;
+        window.dispatchEvent(
+          new CustomEvent('app-toast', {
+            detail: `「${tempName}」解压成功，已提取 ${count} 篇文档并开始逐一解析`,
+          }),
+        );
+      } else {
+        const doc = result.documents?.[0];
+        if (doc) {
+          setDocs((ds) => ds.map((d) => (d.id === tempId ? { ...d, id: doc.id, status: doc.status || 'parsing' } : d)));
+        }
+        window.dispatchEvent(new CustomEvent('app-toast', { detail: `「${tempName}」已上传，后台正在解析与索引` }));
       }
-      window.dispatchEvent(new CustomEvent('app-toast', { detail: `「${tempName}」已上传，后台正在解析与索引` }));
       await loadDocuments(current.id);
     } catch (error: any) {
       setDocs((ds) => ds.map((d) => (d.id === tempId ? { ...d, status: 'failed' } : d)));
@@ -2432,7 +2444,7 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], active 
                 }
                 event.target.value='';
               }}
-              accept=".md,.txt,.csv,.html,.htm,.doc,.docx,.pdf,.xls,.xlsx,.pptx,.png,.jpg,.jpeg"
+              accept=".md,.txt,.csv,.html,.htm,.doc,.docx,.pdf,.xls,.xlsx,.pptx,.png,.jpg,.jpeg,.zip,.tar,.tar.gz,.tgz"
             />
             {current.canWrite && <button className="btn" onClick={()=>setNewTextOpen(true)}><Icon name="plus" size={12}/> 添加文本</button>}
             {current.canWrite && <button className="btn primary" onClick={()=>fileInputRef.current?.click()}><Icon name="upload" size={12}/> 上传文档</button>}
@@ -2467,11 +2479,11 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], active 
                 <div className="compact-dropzone-title">
                   <span>拖拽文件到此处快速入库，或点击选择</span>
                   <span style={{ fontSize: '11px', fontWeight: 500, color: 'var(--ink-4)', background: 'var(--line-2)', padding: '1px 6px', borderRadius: '4px' }}>
-                    PDF · Word · PPT · Excel · Markdown
+                    PDF · Word · PPT · Excel · Markdown · 压缩包(ZIP/TAR)
                   </span>
                 </div>
                 <div className="compact-dropzone-sub">
-                  支持多选批量上传 · 单文件最大 200MB · 自动触发异步版面解析与知识图谱对齐
+                  支持多选批量上传及 ZIP/TAR 压缩包（自动解压并逐一解析，压缩包自动删除）· 单文件最大 200MB
                 </div>
               </div>
               <button type="button" className="compact-dropzone-btn" onClick={(e)=>{ e.stopPropagation(); fileInputRef.current?.click(); }}>

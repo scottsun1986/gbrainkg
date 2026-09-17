@@ -25,6 +25,8 @@ import { ChatService } from '../chat/chat.service';
 import { PermissionService } from '../permission/permission.service';
 import { BrainCompilerService } from '../brain-compiler/brain-compiler.service';
 import { IngestionService } from '../ingestion/ingestion.service';
+import { isArchiveFilename } from '../ingestion/parser-capabilities';
+import { extractArchiveDocuments } from '../ingestion/archive-extractor';
 import { getPrismaClient } from '../prisma';
 
 const R = (code: number, msg: string, data: any = null) => ({
@@ -519,8 +521,51 @@ export class OpenApiController {
       throw new ForbiddenException('当前凭证无权向该知识库上传文档');
     }
 
-    const documentId = randomUUID();
     const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
+
+    if (isArchiveFilename(originalName)) {
+      const extractedFiles = await extractArchiveDocuments(file.buffer, originalName);
+      const createdDocs = [];
+      for (const item of extractedFiles) {
+        const childDocId = randomUUID();
+        const safeExt = extname(item.filename).toLowerCase();
+        const destDir = join(this.uploadRoot, childDocId);
+        await fs.mkdir(destDir, { recursive: true });
+        const localFilePath = join(destDir, `raw${safeExt}`);
+        await fs.writeFile(localFilePath, item.buffer);
+
+        const childDoc = await this.prisma.document.create({
+          data: {
+            id: childDocId,
+            kbId,
+            mdPath: `${childDocId}/content.md`,
+            title: item.filename,
+            sourceType: 'upload',
+            rawFileOid: localFilePath,
+            version: 1,
+            uploadedById: userId,
+            status: 'parsing',
+            qualityStatus: 'pending',
+          },
+        });
+        await this.ingestionService.enqueue(childDoc.id, 'upload', childDoc.version);
+        createdDocs.push(childDoc);
+      }
+
+      return R(200, `压缩包上传成功，已解压并提交 ${createdDocs.length} 篇文档至解析流水线`, {
+        document_id: createdDocs[0]?.id,
+        documents: createdDocs.map((d) => ({
+          document_id: d.id,
+          title: d.title,
+          status: d.status,
+          kb_id: d.kbId,
+        })),
+        total: createdDocs.length,
+        kb_id: kbId,
+      });
+    }
+
+    const documentId = randomUUID();
     const safeExt = extname(originalName).toLowerCase();
     const destDir = join(this.uploadRoot, documentId);
     await fs.mkdir(destDir, { recursive: true });

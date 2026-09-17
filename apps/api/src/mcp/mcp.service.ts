@@ -6,6 +6,8 @@ import { getPrismaClient } from '../prisma';
 import { extname, join } from 'node:path';
 import * as fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import { isArchiveFilename } from '../ingestion/parser-capabilities';
+import { extractArchiveDocuments } from '../ingestion/archive-extractor';
 
 export interface McpToolDefinition {
   name: string;
@@ -283,6 +285,61 @@ export class McpService {
     const safeExt = extname(filename).toLowerCase();
     if (!safeExt) {
       throw new Error(`文件名必须包含有效扩展名（如 .pdf, .docx, .md, .txt）`);
+    }
+
+    if (isArchiveFilename(filename)) {
+      const extractedFiles = await extractArchiveDocuments(fileBuffer, filename);
+      const createdDocs = [];
+      for (const item of extractedFiles) {
+        const childDocId = randomUUID();
+        const itemExt = extname(item.filename).toLowerCase();
+        const destDir = join(this.uploadRoot, childDocId);
+        await fs.mkdir(destDir, { recursive: true });
+        const localFilePath = join(destDir, `raw${itemExt}`);
+        await fs.writeFile(localFilePath, item.buffer);
+
+        const childDoc = await this.prisma.document.create({
+          data: {
+            id: childDocId,
+            kbId,
+            mdPath: `${childDocId}/content.md`,
+            title: item.filename,
+            sourceType: 'upload',
+            rawFileOid: localFilePath,
+            version: 1,
+            uploadedById: userId,
+            status: 'parsing',
+            qualityStatus: 'pending',
+          },
+        });
+
+        if (this.ingestionService) {
+          await this.ingestionService.enqueue(
+            childDoc.id,
+            'upload',
+            childDoc.version,
+            item.size <= 1_000_000 ? 1 : 10,
+          );
+        }
+        createdDocs.push(childDoc);
+      }
+
+      return {
+        document_id: createdDocs[0]?.id,
+        documents: createdDocs.map((d) => ({
+          document_id: d.id,
+          title: d.title,
+          status: d.status,
+        })),
+        total: createdDocs.length,
+        is_archive: true,
+        filename,
+        kb_id: kbId,
+        kb_name: kb.name,
+        size_bytes: fileBuffer.length,
+        status: 'parsing',
+        message: `压缩包 "${filename}" 已成功解压并提取 ${createdDocs.length} 篇文档提交至后台智能解析流水线。`,
+      };
     }
 
     const documentId = randomUUID();

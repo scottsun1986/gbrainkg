@@ -1,4 +1,5 @@
 import { of } from 'rxjs';
+import AdmZip = require('adm-zip');
 import { McpService } from './mcp.service';
 
 // saveUploadAndEnqueue 依赖共享 Prisma 客户端与文件系统，这里整体打桩；
@@ -340,6 +341,27 @@ describe('McpService', () => {
       await expect(
         svc.saveUploadAndEnqueue('user-123', { kbId: 'kb-1', filename: 'noext', fileBuffer: Buffer.from('x') }),
       ).rejects.toThrow('扩展名');
+    });
+
+    it('should extract archive, create multiple documents and enqueue each', async () => {
+      const zip = new AdmZip();
+      zip.addFile('docA.md', Buffer.from('# Document A'));
+      zip.addFile('docB.txt', Buffer.from('Document B content'));
+      const zipBuffer = zip.toBuffer();
+
+      const ingestion = { enqueue: jest.fn().mockResolvedValue(undefined) };
+      const svc = new McpService(mockChatService, mockPermissionService, ingestion as any);
+
+      const result = await svc.saveUploadAndEnqueue('user-123', {
+        kbId: 'kb-1',
+        filename: 'bundle.zip',
+        fileBuffer: zipBuffer,
+      });
+
+      expect(result.is_archive).toBe(true);
+      expect(result.total).toBe(2);
+      expect(mockPrisma.document.create).toHaveBeenCalledTimes(2);
+      expect(ingestion.enqueue).toHaveBeenCalledTimes(2);
     });
   });
 });

@@ -47,7 +47,8 @@ function normalizeUploadFilename(value: unknown): string {
   return raw;
 }
 
-import { SUPPORTED_UPLOAD_EXTENSIONS } from './parser-capabilities';
+import { SUPPORTED_UPLOAD_EXTENSIONS, isArchiveFilename } from './parser-capabilities';
+import { extractArchiveDocuments } from './archive-extractor';
 
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -124,6 +125,47 @@ export class IngestionController {
       throw new ForbiddenException(
         "Only the knowledge base owner or administrator can upload.",
       );
+
+    const isArchive = isArchiveFilename(filename);
+    if (isArchive) {
+      const extractedFiles = await extractArchiveDocuments(file.buffer, filename);
+      const createdDocuments = [];
+      for (const item of extractedFiles) {
+        const childDocId = randomUUID();
+        const childFilename = normalizeUploadFilename(item.filename);
+        const rawPath = `${childDocId}/${childFilename}`;
+        await mkdir(join(this.uploadRoot, childDocId), { recursive: true });
+        await writeFile(join(this.uploadRoot, rawPath), item.buffer);
+        const document = await this.prisma.document.create({
+          data: {
+            id: childDocId,
+            kbId,
+            mdPath: `${childDocId}/content.md`,
+            title: childFilename,
+            sourceType: "upload",
+            rawFileOid: join(this.uploadRoot, rawPath),
+            uploadedById: userId,
+            status: "parsing",
+          },
+        });
+        await this.ingestionService.enqueue(
+          document.id,
+          "upload",
+          document.version,
+          item.size <= 1_000_000 ? 1 : 10,
+        );
+        createdDocuments.push(document);
+      }
+
+      // 压缩包本身则删除：解压完成后压缩包在内存及临时流中被丢弃，从未落库或持久化，确保压缩包本身被物理删除。
+      return {
+        documents: createdDocuments,
+        total: createdDocuments.length,
+        status: "accepted",
+        isArchive: true,
+        archiveName: filename,
+      };
+    }
 
     const documentId = randomUUID();
     if (!SUPPORTED_UPLOAD_EXTENSIONS.has(extension)) {
