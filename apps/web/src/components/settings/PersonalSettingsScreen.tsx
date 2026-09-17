@@ -1072,11 +1072,6 @@ curl -X POST ${getOrigin()}/open-api/v1/chat/completions \\
                 </thead>
                 <tbody>
                   <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                    <td style={{ padding: '8px 12px' }}><code>search_knowledge</code></td>
-                    <td style={{ padding: '8px 12px' }}><code>query</code> (必填), <code>kb_ids</code>, <code>top_k</code></td>
-                    <td style={{ padding: '8px 12px' }}>多路召回与混合精排检索，返回高匹配度证据文本、分值与溯源元数据</td>
-                  </tr>
-                  <tr style={{ borderBottom: '1px solid var(--border)' }}>
                     <td style={{ padding: '8px 12px' }}><code>chat_knowledge</code></td>
                     <td style={{ padding: '8px 12px' }}><code>prompt</code> (必填), <code>conversation_id</code>, <code>kb_ids</code></td>
                     <td style={{ padding: '8px 12px' }}>企业知识库智能问答与多跳推理，返回严谨的事实裁决回答与引文出处</td>

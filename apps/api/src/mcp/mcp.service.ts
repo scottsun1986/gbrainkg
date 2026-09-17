@@ -38,30 +38,6 @@ export class McpService {
   getTools(): McpToolDefinition[] {
     return [
       {
-        name: 'search_knowledge',
-        description:
-          '在 GBrain 知识库中执行语义与混合检索（BAAI/bge-m3 密集向量 + BM25 全文 + 知识图谱联合召回），返回与查询语义匹配的高可信事实证据片段与引文来源。若用户未明确限定特定知识库，请勿指定 kb_ids，系统将默认在当前凭证有权限访问的全部知识库中联合检索。',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            query: {
-              type: 'string',
-              description: '搜索关键词、自然语言问题或待检索的语义陈述',
-            },
-            kb_ids: {
-              type: 'array',
-              items: { type: 'string' },
-              description: '限定检索的知识库 ID 列表（可选，若未明确指定或为空，系统默认检索当前凭证可见的所有知识库）',
-            },
-            top_k: {
-              type: 'integer',
-              description: '最大返回证据片段数，范围 1~50（默认 10）',
-            },
-          },
-          required: ['query'],
-        },
-      },
-      {
         name: 'chat_knowledge',
         description:
           '基于 GBrain 企业知识库进行智能问答与深度证据链推理（RAG），支持多跳推理、全证据链事实裁决与上下文多轮对话。若用户未明确限定特定知识库，请勿指定 kb_ids，系统将默认在当前凭证有权限访问的全部知识库中联合检索。',
@@ -365,44 +341,20 @@ export class McpService {
       // 上传能力统一走 POST /mcp/upload 原始文件直传端点。
 
       case 'search_knowledge': {
-        const query = String(args?.query || '').trim();
-        if (!query) throw new Error('query 参数为必填项');
-        const limit = Math.max(1, Math.min(Number(args?.top_k || 10) || 10, 50));
-        const rawKbIds = Array.isArray(args?.kb_ids)
-          ? args.kb_ids.map((id: any) => String(id).trim()).filter(Boolean)
-          : typeof args?.kb_ids === 'string' && args.kb_ids.trim() && args.kb_ids !== 'all'
-            ? [args.kb_ids.trim()]
-            : [];
-        const visibleKbs = await this.permissionService.getVisibleKnowledgeBases(userId);
-        const effectiveKbIds = rawKbIds.length > 0
-          ? rawKbIds.filter((id: string) => visibleKbs.includes(id))
-          : visibleKbs;
-
-        const rawResults = await this.chatService.searchKnowledgeForAgent(
-          userId,
-          query,
-          effectiveKbIds,
-          limit,
+        // search_knowledge 工具已正式下线，统一收敛至端到端事实裁决工具 chat_knowledge。
+        // 为向下兼容已建立连接的旧客户端调用，将 query/prompt 统一转发至 chat_knowledge。
+        const prompt = String(args?.query || args?.prompt || '').trim();
+        if (!prompt) throw new Error('query 或 prompt 参数为必填项');
+        return this.executeTool(
+          user,
+          'chat_knowledge',
+          {
+            prompt,
+            kb_ids: args?.kb_ids,
+            conversation_id: args?.conversation_id,
+          },
+          onProgress,
         );
-
-        const items = Array.isArray(rawResults?.results)
-          ? rawResults.results
-          : Array.isArray(rawResults)
-            ? rawResults
-            : [];
-
-        return {
-          query,
-          total: typeof rawResults?.total === 'number' ? rawResults.total : items.length,
-          results: items.map((r: any) => ({
-            title: r.title || r.documentTitle || '未知文档',
-            snippet: r.snippet || r.content || '',
-            score: r.score ?? r.similarity ?? null,
-            document_id: r.documentId || r.document_id || null,
-            kb_id: r.kbId || r.kb_id || null,
-            metadata: r.metadata || {},
-          })),
-        };
       }
 
       case 'chat_knowledge': {

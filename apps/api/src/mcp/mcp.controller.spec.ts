@@ -10,7 +10,7 @@ describe('McpController', () => {
 
   beforeEach(() => {
     mockMcpService = {
-      getTools: jest.fn().mockReturnValue([{ name: 'search_knowledge' }, { name: 'chat_knowledge' }]),
+      getTools: jest.fn().mockReturnValue([{ name: 'chat_knowledge' }]),
       handleJsonRpc: jest.fn().mockImplementation((user, body, onProgress) => {
         if (onProgress) {
           onProgress({ type: 'progress', phase: 'uploading', message: 'progress test' });
@@ -160,7 +160,7 @@ describe('McpController', () => {
       jsonrpc: '2.0',
       id: 1,
       method: 'tools/call',
-      params: { name: 'search_knowledge', arguments: { query: 'test' } },
+      params: { name: 'chat_knowledge', arguments: { prompt: 'test' } },
     });
 
     expect(mockRes.status).toHaveBeenCalledWith(200);

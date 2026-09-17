@@ -78,9 +78,9 @@ describe('McpService', () => {
 
   it('should list all available tools', () => {
     const tools = mcpService.getTools();
-    expect(tools.length).toBe(6);
+    expect(tools.length).toBe(5);
     const names = tools.map((t) => t.name);
-    expect(names).toContain('search_knowledge');
+    expect(names).not.toContain('search_knowledge');
     expect(names).toContain('chat_knowledge');
     expect(names).toContain('list_knowledge_bases');
     expect(names).toContain('get_document_status');
@@ -126,10 +126,10 @@ describe('McpService', () => {
       expect(res.jsonrpc).toBe('2.0');
       expect(res.id).toBe(3);
       expect(Array.isArray(res.result.tools)).toBe(true);
-      expect(res.result.tools.length).toBe(6);
+      expect(res.result.tools.length).toBe(5);
     });
 
-    it('should handle tools/call search_knowledge defaulting to all visible KBs', async () => {
+    it('should forward legacy tools/call search_knowledge to chat_knowledge', async () => {
       const res = await mcpService.handleJsonRpc(mockUser, {
         jsonrpc: '2.0',
         id: 4,
@@ -143,35 +143,12 @@ describe('McpService', () => {
       expect(res.jsonrpc).toBe('2.0');
       expect(res.id).toBe(4);
       expect(res.result.isError).toBe(false);
-      expect(res.result.content[0].type).toBe('text');
-      const parsed = JSON.parse(res.result.content[0].text);
-      expect(parsed.total).toBe(1);
-      expect(parsed.results[0].title).toBe('测试文档');
-      // When kb_ids is not passed, it defaults to all visible KBs
-      expect(mockChatService.searchKnowledgeForAgent).toHaveBeenCalledWith(
+      // Legacy search_knowledge calls are forwarded to chat_knowledge
+      expect(mockChatService.handleChatStream).toHaveBeenCalledWith(
         'user-123',
         '测试',
         ['kb-1', 'kb-2'],
-        10,
-      );
-    });
-
-    it('should handle tools/call search_knowledge with specific kb_ids', async () => {
-      await mcpService.handleJsonRpc(mockUser, {
-        jsonrpc: '2.0',
-        id: 41,
-        method: 'tools/call',
-        params: {
-          name: 'search_knowledge',
-          arguments: { query: '测试', kb_ids: ['kb-2', 'kb-unauthorized'] },
-        },
-      });
-
-      expect(mockChatService.searchKnowledgeForAgent).toHaveBeenCalledWith(
-        'user-123',
-        '测试',
-        ['kb-2'],
-        10,
+        'conv-123',
       );
     });
 
