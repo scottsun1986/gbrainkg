@@ -51,6 +51,7 @@ docs/test-reports/**/screenshots/
 # E2E test run artifacts
 tests/e2e/results/
 tests/evaluation/results/
+tests/evaluation/intl-benchmark/results/
 
 # Video build intermediates (keep final mp4 + storyboard assets only)
 docs/video/build/

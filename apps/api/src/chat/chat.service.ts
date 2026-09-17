@@ -504,20 +504,43 @@ export class ChatService {
         }
       }
 
-      // Fast-path bridge entity extraction from top evidence
+      // Dynamic cascading bridge entity expansion from top evidence (Direction 2: 2~4 hop multi-hop cascade)
       if (rel && base.length > 0) {
         try {
-          const topEvidence = base.slice(0, 3).map((b) => b.evidence).join('\n');
-          const bridge = this.extractBridgeEntityFromEvidence(topEvidence, rel);
-          if (bridge && !base.some((b) => (b.title || '').toLowerCase().includes(bridge.toLowerCase()))) {
-            const bridgeHits = await this.searchChunksFallback(scope, bridge, 3).catch(() => []);
-            for (const bh of bridgeHits) {
-              (bh as any).subQueryOrigin = bridge;
-              base.push(bh);
+          const visitedBridges = new Set<string>();
+          let currentEvidencePool = base.slice(0, 4).map((b) => b.evidence).join('\n');
+          const maxCascadeRounds = 2;
+
+          for (let round = 0; round < maxCascadeRounds; round++) {
+            const bridges = this.extractBridgeEntitiesFromEvidence(currentEvidencePool, rel);
+            const unseenBridges = bridges.filter((br) => {
+              const lower = br.toLowerCase();
+              if (visitedBridges.has(lower)) return false;
+              visitedBridges.add(lower);
+              return !base.some((b) => (b.title || '').toLowerCase().includes(lower));
+            });
+
+            if (unseenBridges.length === 0) break;
+
+            const bridgeResults = await Promise.all(
+              unseenBridges.map((br) => this.searchChunksFallback(scope, br, 5).catch(() => [])),
+            );
+
+            const newlyAddedChunks: any[] = [];
+            for (let i = 0; i < unseenBridges.length; i++) {
+              const br = unseenBridges[i];
+              for (const bh of bridgeResults[i]) {
+                (bh as any).subQueryOrigin = br;
+                base.push(bh);
+                newlyAddedChunks.push(bh);
+              }
             }
+
+            if (newlyAddedChunks.length === 0) break;
+            currentEvidencePool = newlyAddedChunks.slice(0, 4).map((b) => b.evidence).join('\n');
           }
         } catch (e) {
-          this.logger.warn(`searchKnowledgeForAgent bridge error: ${e instanceof Error ? e.message : String(e)}`);
+          this.logger.warn(`searchKnowledgeForAgent cascading bridge error: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
       return base;
@@ -550,6 +573,33 @@ export class ChatService {
       clearTimeout(raceTimer);
       if (racedGBrain && racedGBrain.citations && racedGBrain.citations.length > 0) {
         queryResult = racedGBrain;
+        const existingEvidence = new Set(
+          racedGBrain.citations.map((c: any) => (c.evidence || c.snippet || "").replace(/\s+/g, "").slice(0, 30)),
+        );
+        for (const fb of fallbackChunks) {
+          const key = fb.evidence.replace(/\s+/g, "").slice(0, 30);
+          if (!existingEvidence.has(key)) {
+            existingEvidence.add(key);
+            queryResult.citations.push({
+              topic: fb.title || fb.documentId,
+              docId: fb.documentId,
+              kbId: fb.kbId,
+              version: fb.version,
+              ord: fb.ord,
+              pageNo: fb.pageNo,
+              articleNo: fb.articleNo,
+              evidence: fb.evidence,
+              snippet: fb.evidence,
+              context: fb.evidence,
+              score: typeof fb.score === "number" && fb.score > 0.5 ? fb.score : 0.88,
+              docTitle: fb.title,
+              sectionGroup: (fb as any).sectionGroup,
+              subQueryOrigin: (fb as any).subQueryOrigin,
+              bbox: fb.bbox,
+              previewUrl: fb.previewUrl,
+            } as any);
+          }
+        }
       } else {
         queryResult = {
           topics: Array.from(new Set(fallbackChunks.map((fb) => fb.title || "相关条款"))),
@@ -591,6 +641,7 @@ export class ChatService {
     );
 
     const citations = Array.isArray(queryResult.citations) ? queryResult.citations : [];
+    citations.sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0));
     const results = citations.slice(0, limit).map((c: any) => {
       const docId = c.docId || c.documentId || null;
       return {
@@ -777,7 +828,7 @@ export class ChatService {
   extractRelationFromQuery(query: string): string | null {
     if (!query) return null;
     const m = query.match(
-      /\b(husband|wife|spouse|father|mother|parents|son|daughter|child|director|author|writer|creator|founder|composer|producer|born|birthplace|capital|headquarters|head office|graduated|alma mater|subsidiary|parent|starring)\b|配偶|妻子|丈夫|父亲|母亲|父母|儿子|女儿|导演|作者|编剧|创始人|成立时间|出生地|生于|毕业院校|母校|总部|省会|首都|所属|控股|主演|研发团队/i,
+      /\b(husband|wife|spouse|father|mother|parents|son|daughter|child|director|author|writer|creator|founder|composer|producer|born|birthplace|capital|headquarters|head office|graduated|alma mater|subsidiary|parent|starring|nationality|citizenship|country|died|place of death|cause of death|educated at|employer|owned by|publisher|distributor|original language|performer|genre|member of|team|located in)\b|配偶|妻子|丈夫|父亲|母亲|父母|儿子|女儿|导演|作者|编剧|创始人|成立时间|出生地|生于|毕业院校|母校|总部|省会|首都|所属|控股|主演|研发团队|国籍|出生国家|逝世地|去世地点|毕业学校|所属团队|效力于|雇主|母公司|子公司|位于|属于|发行商|出版社|演出|流派/i,
     );
     return m ? m[0].toLowerCase() : null;
   }
@@ -786,37 +837,75 @@ export class ChatService {
     if (!text) return [];
     const bridges = new Set<string>();
 
+    const cleanCandidate = (raw: string): string => {
+      let cand = raw.replace(/^(?:Sir|Lord|Lady|Dame|Baron|Prince|Queen|King|the|a|an)\s+/i, '').trim();
+      cand = cand.replace(/\s+(?:in|at|and|or|of|to|for|with|by|on)$/i, '').trim();
+      return cand;
+    };
+
     // 1. Relational-targeted English patterns
     if (rel) {
       const escapedRel = rel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const directRe = new RegExp(
-        `(?:${escapedRel})(?:\\s+(?:is|was|named|called|of|,|in|at))*?(?:\\s+(?:the|a|an)?\\s*(?:[A-Za-z-]+\\s+){0,4})?([A-Z][a-zA-Z0-9\x27-]+(?:\\s+[A-Z][a-zA-Z0-9\x27-]+){1,3})`,
+        `(?:${escapedRel})(?:\\s+(?:is|was|named|called|of|,|in|at))*?(?:\\s+(?:the|a|an)?\\s*(?:[A-Za-z-]+\\s+){0,4})?([A-Z\u00C0-\u017F][a-zA-Z0-9\u00C0-\u017F\x27\.-]*(?:\\s+[A-Z\u00C0-\u017F][a-zA-Z0-9\u00C0-\u017F\x27\.-]*){1,3})`,
         'g',
       );
       let m: RegExpExecArray | null;
       while ((m = directRe.exec(text)) !== null) {
-        const candidate = m[1].replace(/^(?:Sir|Lord|Lady|Dame|Baron|Prince|Queen|King)\s+/i, '').trim();
+        const candidate = cleanCandidate(m[1]);
         if (candidate && candidate.length >= 3 && candidate.length <= 40) bridges.add(candidate);
       }
 
-      if (/father|mother|parents/i.test(rel)) {
-        const invRe = /(?:son|daughter|child)\s+of\s+(?:the\s+)?(?:[A-Za-z-]+\s+){0,4}?([A-Z][a-zA-Z0-9\x27-]+(?:\s+[A-Z][a-zA-Z0-9\x27-]+){1,3})/g;
+      if (/father|mother|parents|spouse|husband|wife|married/i.test(rel)) {
+        const invRe = /(?:son|daughter|child|spouse|husband|wife|married\s+to)\s+(?:of|with)\s+(?:the\s+)?(?:[A-Za-z-]+\s+){0,4}?([A-Z\u00C0-\u017F][a-zA-Z0-9\u00C0-\u017F\x27\.-]*(?:\s+[A-Z\u00C0-\u017F][a-zA-Z0-9\u00C0-\u017F\x27\.-]*){1,3})/g;
         while ((m = invRe.exec(text)) !== null) {
-          const candidate = m[1].replace(/^(?:Sir|Lord|Lady|Dame|Baron|Prince|Queen|King)\s+/i, '').trim();
+          const candidate = cleanCandidate(m[1]);
           if (candidate) bridges.add(candidate);
         }
       }
 
-      if (/director|directed/i.test(rel)) {
-        const invRe = /directed\s+by\s+(?:the\s+)?([A-Z][a-zA-Z0-9\x27-]+(?:\s+[A-Z][a-zA-Z0-9\x27-]+){1,3})/g;
+      if (/director|directed|film/i.test(rel)) {
+        const invRe = /(?:directed\s+by|credited\s+to|directed\s+and\s+written\s+by|director\s+was)\s+(?:the\s+)?([A-Z\u00C0-\u017F][a-zA-Z0-9\u00C0-\u017F\x27\.-]*(?:\s+[A-Z\u00C0-\u017F][a-zA-Z0-9\u00C0-\u017F\x27\.-]*){1,3})/g;
         while ((m = invRe.exec(text)) !== null) {
-          const candidate = m[1].replace(/^(?:Sir|Lord|Lady|Dame|Baron|Prince|Queen|King)\s+/i, '').trim();
+          const candidate = cleanCandidate(m[1]);
           if (candidate) bridges.add(candidate);
+        }
+      }
+
+      if (/educated|alma mater|studied|school|university|college/i.test(rel)) {
+        const eduRe = /(?:educated\s+at|attended|alumnus\s+of|graduate\s+of|studied\s+at)\s+(?:the\s+)?([A-Z\u00C0-\u017F][a-zA-Z0-9\u00C0-\u017F\x27\.-]*(?:\s+[A-Z\u00C0-\u017F][a-zA-Z0-9\u00C0-\u017F\x27\.-]*){1,3})/g;
+        while ((m = eduRe.exec(text)) !== null) {
+          const candidate = cleanCandidate(m[1]);
+          if (candidate) bridges.add(candidate);
+        }
+      }
+
+      if (/owned by|subsidiary|parent|acquired/i.test(rel)) {
+        const ownRe = /(?:subsidiary\s+of|owned\s+by|acquired\s+by|parent\s+company\s+is)\s+(?:the\s+)?([A-Z\u00C0-\u017F][a-zA-Z0-9\u00C0-\u017F\x27\.-]*(?:\s+[A-Z\u00C0-\u017F][a-zA-Z0-9\u00C0-\u017F\x27\.-]*){1,3})/g;
+        while ((m = ownRe.exec(text)) !== null) {
+          const candidate = cleanCandidate(m[1]);
+          if (candidate) bridges.add(candidate);
+        }
+      }
+
+      if (/died|born|birth|death/i.test(rel)) {
+        const placeRe = /(?:born\s+in|died\s+in|buried\s+in|native\s+of)\s+(?:the\s+)?([A-Z\u00C0-\u017F][a-zA-Z0-9\u00C0-\u017F\x27\.-]*(?:\s+[A-Z\u00C0-\u017F][a-zA-Z0-9\u00C0-\u017F\x27\.-]*){0,3})/g;
+        while ((m = placeRe.exec(text)) !== null) {
+          const candidate = cleanCandidate(m[1]);
+          if (candidate && candidate.length >= 3) bridges.add(candidate);
+        }
+      }
+
+      if (/capital|country|territory|nationality|sovereign|ruler|governor|monarch/i.test(rel)) {
+        const sovRe = /(?:capital\s+of|sovereign\s+of|ruled\s+by|monarch|king|queen|emperor|governed\s+by)\s+(?:the\s+)?([A-Z\u00C0-\u017F][a-zA-Z0-9\u00C0-\u017F\x27\.-]*(?:\s+[A-Z\u00C0-\u017F][a-zA-Z0-9\u00C0-\u017F\x27\.-]*){0,3})/g;
+        while ((m = sovRe.exec(text)) !== null) {
+          const candidate = cleanCandidate(m[1]);
+          if (candidate && candidate.length >= 3) bridges.add(candidate);
         }
       }
 
       // 2. Relational-targeted Chinese patterns
-      const zhRe = /(?:配偶|妻子|丈夫|父亲|母亲|作者|编剧|导演|创始人|生于|出生于|毕业于|就读于|总部位于|设立于|由|与)(?:是|为|：|:)?\s*([《“]?[\u4e00-\u9fa5A-Za-z0-9\s]{2,20}[》”]?)/g;
+      const zhRe = /(?:配偶|妻子|丈夫|父亲|母亲|作者|编剧|导演|创始人|生于|出生于|毕业于|就读于|总部位于|设立于|由|与|效力于|属于|母公司|子公司)(?:是|为|：|:)?\s*([《“]?[\u4e00-\u9fa5A-Za-z0-9\s]{2,20}[》”]?)/g;
       while ((m = zhRe.exec(text)) !== null) {
         const candidate = m[1].replace(/[《》“”"']/g, '').trim();
         if (candidate && candidate.length >= 2 && candidate.length <= 25) bridges.add(candidate);
@@ -831,7 +920,7 @@ export class ChatService {
       if (candidate && candidate.length >= 2 && candidate.length <= 25) bridges.add(candidate);
     }
 
-    return Array.from(bridges).slice(0, 4);
+    return Array.from(bridges).slice(0, 6);
   }
 
   extractBridgeEntityFromEvidence(text: string, rel: string): string | null {
@@ -2517,29 +2606,45 @@ export class ChatService {
           }
         }
 
-        // Fast-path bridge entity extraction from top evidence
+        // Dynamic cascading bridge entity extraction (up to 2 cascade rounds for 3~4 step reasoning chains)
         const rel = this.extractRelationFromQuery(retrieval.query || question);
         if ((rel || agenticComplexity !== 'simple') && base.length > 0) {
           try {
-            const topEvidence = base.slice(0, 4).map((b) => b.evidence).join('\n');
-            const bridges = this.extractBridgeEntitiesFromEvidence(topEvidence, rel);
-            const unseenBridges = bridges.filter(
-              (br) => !base.some((b) => (b.title || '').toLowerCase().includes(br.toLowerCase())),
-            );
-            if (unseenBridges.length > 0) {
+            const visitedBridges = new Set<string>();
+            let currentEvidencePool = base.slice(0, 4).map((b) => b.evidence).join('\n');
+            const maxCascadeRounds = agenticComplexity === 'multi_hop' || rel ? 2 : 1;
+
+            for (let round = 0; round < maxCascadeRounds; round++) {
+              const bridges = this.extractBridgeEntitiesFromEvidence(currentEvidencePool, rel);
+              const unseenBridges = bridges.filter((br) => {
+                const lower = br.toLowerCase();
+                if (visitedBridges.has(lower)) return false;
+                visitedBridges.add(lower);
+                return !base.some((b) => (b.title || '').toLowerCase().includes(lower));
+              });
+
+              if (unseenBridges.length === 0) break;
+
               const bridgeResults = await Promise.all(
                 unseenBridges.map((br) => this.searchChunksFallback(scope, br, 5).catch(() => [])),
               );
+
+              const newlyAddedChunks: any[] = [];
               for (let i = 0; i < unseenBridges.length; i++) {
                 const br = unseenBridges[i];
                 for (const bh of bridgeResults[i]) {
                   (bh as any).subQueryOrigin = br;
                   base.push(bh);
+                  newlyAddedChunks.push(bh);
                 }
               }
+
+              if (newlyAddedChunks.length === 0) break;
+              // Feed newly retrieved bridge evidence to the next round of multi-hop extraction
+              currentEvidencePool = newlyAddedChunks.slice(0, 4).map((b) => b.evidence).join('\n');
             }
           } catch (e) {
-            this.logger.warn(`fast-path bridge error: ${e instanceof Error ? e.message : String(e)}`);
+            this.logger.warn(`dynamic cascading bridge error: ${e instanceof Error ? e.message : String(e)}`);
           }
         }
         return base;
@@ -3860,7 +3965,11 @@ export class ChatService {
 3. [Grounded & Layered Answers]:
 - If the reference materials contain partial or related facts (e.g. entity background, relationships, birth place, or known attributes), prioritize presenting all confirmed facts with citations. Clearly state what is confirmed. If a specific sub-attribute (e.g. exact burial place) is not mentioned in the text, state what IS known from the materials (e.g. the person's birth place or career) and note that the specific sub-detail is not explicitly recorded. Never refuse when relevant facts exist.
 - Only if the reference materials contain completely zero relevant information, reply: "Based on the provided reference materials, the relevant information is not available."
-4. [Counterfactual & Adversarial Robustness]: If the user query contains ungrounded assumptions, false premises, or fictional entities not attested in the reference materials, explicitly state that the reference materials do not support the premise or contain no such record. Never hallucinate to satisfy the premise.`
+4. [Counterfactual & Adversarial Robustness]: If the user query contains ungrounded assumptions, false premises, or fictional entities not attested in the reference materials, explicitly state that the reference materials do not support the premise or contain no such record. Never hallucinate to satisfy the premise.
+5. [Direct, Concise & Focused Answers (Direct Answer Inversion)]:
+- In your very first sentence, directly and concisely state the core answer, conclusion, entity, or numerical value (under 30 words) with citation tags.
+- Do NOT begin with generic fillers or preamble phrases (e.g. "According to the provided documents...", "Based on the text..."). Answer the user's question directly upfront.
+- Subsequent sentences should provide the necessary supporting context, calculations, or contractual clauses.`
         : `你是一个专业的企业级知识库智能助手。请严格基于下方给出的【参考知识库资料】回答用户的问题。
 
 【重要回答规范】：
@@ -3874,7 +3983,11 @@ export class ChatService {
 - 若参考资料完全不包含与问题相关的信息，请统一回复：“已知知识库资料中未包含相关信息，无法回答该问题。”严禁在拒答或未找到信息时复述、回显用户问题中的代号、机密编号或专有名词。
 - 若参考资料包含部分相关事实（如包含实体背景、前置步骤或部分已知条件），请优先陈述已证实的客观事实并标注对应角标，并明确指出参考资料未涵盖的具体维度或后续信息，严禁在已知部分确凿事实的情况下全盘拒答。
 8. 【语言一致性】：如果用户使用英文提问，请务必使用英文作答（如无法回答时使用 'Based on the provided reference materials, the relevant information is not available.'），并保留原实体英文名称。
-9. 【反事实与诱导性提问甄别】：若用户提问中包含假设性事实、诱导性错误前提（如询问不存在的人物关系、虚构的机构或篡改的事件时间），而参考资料中明确未提及或与事实相反，必须明确指出参考资料中无此记载或前提不成立，严禁顺从提问中的错误设定进行虚构脑补。`;
+9. 【反事实与诱导性提问甄别】：若用户提问中包含假设性事实、诱导性错误前提（如询问不存在的人物关系、虚构的机构或篡改的事件时间），而参考资料中明确未提及或与事实相反，必须明确指出参考资料中无此记载或前提不成立，严禁顺从提问中的错误设定进行虚构脑补。
+10. 【开门见山、结论先行】：
+- 回答第一句必须开门见山，用简明直接的语言（10~30字以内）直接给出最核心的结论、明确答案、实体或具体数值，并紧随其标注引用角标（如“根据规定，差旅住宿标准为每日450元[1]。”）。
+- 严禁在开头堆砌“根据您提供的参考资料，我为您查询到以下信息……”等无意义的客套废话或免责套话。
+- 首句给出明确结论后，后续段落再展开陈述支撑依据、计算过程或细分条款说明。`;
 
       const dynamicDirectives = [
         queryResult?.diagnostics?.mode === "inventory"
@@ -3887,11 +4000,16 @@ export class ChatService {
         .filter(Boolean)
         .join("\n");
 
-      // System message: static system rules at token 0, followed by disambiguation context and reference materials
+      // System message: KV-Cache Maximized Topology
+      // Prefix tokens from index 0 MUST remain identical across turns to maximize prompt cache hits.
+      // Token 0: Immutable static system rules (100% KV-Cache hit across all queries)
+      // Section 2: Canonical reference materials (stable across turns in the same conversation / document)
+      // Section 3: Dynamic directives (inventory / truth priority)
+      // Section 4: Turn-varying prior conversation & personal memory (changes per turn, placed at tail)
       const systemMessageContent = `${staticSystemRules}
 
-${priorConversation ? `历史对话参考（仅供消歧，以当前知识库资料为准）：\n${priorConversation}\n\n` : ""}${personalMemoryBlock}${isEnglishQuery ? "【Reference Knowledge Base Materials】" : "【参考知识库资料】"}：
-${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n${dynamicDirectives}` : ""}`;
+${isEnglishQuery ? "【Reference Knowledge Base Materials】" : "【参考知识库资料】"}：
+${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n${dynamicDirectives}` : ""}${priorConversation ? `\n\n历史对话参考（仅供消歧，以当前知识库资料为准）：\n${priorConversation}` : ""}${personalMemoryBlock ? `\n\n${personalMemoryBlock}` : ""}`;
 
       // User message: cleanly contains the standalone query
       const userMessageContent = question;

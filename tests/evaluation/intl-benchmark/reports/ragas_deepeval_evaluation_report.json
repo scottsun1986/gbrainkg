@@ -1,13 +1,13 @@
 {
-  "timestamp": "2026-09-17T04:18:31.921043",
+  "timestamp": "2026-09-17T13:56:22.435326",
   "total_benchmarks": 30,
   "total_samples": 3000,
   "global_summary": {
-    "faithfulness": 0.9032,
-    "answer_relevance": 0.6813,
-    "context_precision": 0.9597,
-    "context_recall": 0.821,
-    "rag_triad_score": 0.7615
+    "faithfulness": 0.9985,
+    "answer_relevance": 0.8878,
+    "context_precision": 0.9763,
+    "context_recall": 0.9983,
+    "rag_triad_score": 0.9544
   },
   "benchmark_details": [
     {
@@ -15,56 +15,56 @@
       "name": "MS MARCO",
       "group": "开放域语义检索",
       "samples": 100,
-      "faithfulness": 0.975,
-      "answer_relevance": 0.6303,
+      "faithfulness": 0.98,
+      "answer_relevance": 0.8162,
       "context_precision": 0.95,
-      "context_recall": 0.9003,
-      "groundedness": 0.975,
+      "context_recall": 0.95,
+      "groundedness": 0.98,
       "completeness": 1.0,
-      "rag_triad_score": 0.7588,
-      "avg_latency_ms": 22.39
+      "rag_triad_score": 0.8723,
+      "avg_latency_ms": 22.48
     },
     {
       "id": 2,
       "name": "Natural Questions",
       "group": "开放域语义检索",
       "samples": 100,
-      "faithfulness": 0.5625,
-      "answer_relevance": 0.7429,
+      "faithfulness": 1.0,
+      "answer_relevance": 0.9317,
       "context_precision": 1.0,
-      "context_recall": 0.8114,
-      "groundedness": 0.5625,
+      "context_recall": 1.0,
+      "groundedness": 1.0,
       "completeness": 1.0,
-      "rag_triad_score": 0.652,
-      "avg_latency_ms": 22.32
+      "rag_triad_score": 0.9749,
+      "avg_latency_ms": 22.38
     },
     {
       "id": 3,
       "name": "BEIR Universal Suite",
       "group": "开放域语义检索",
       "samples": 100,
-      "faithfulness": 0.99,
-      "answer_relevance": 0.703,
+      "faithfulness": 0.985,
+      "answer_relevance": 0.8431,
       "context_precision": 1.0,
-      "context_recall": 0.9165,
-      "groundedness": 0.99,
+      "context_recall": 1.0,
+      "groundedness": 0.985,
       "completeness": 1.0,
-      "rag_triad_score": 0.8496,
-      "avg_latency_ms": 22.77
+      "rag_triad_score": 0.9346,
+      "avg_latency_ms": 23.0
     },
     {
       "id": 4,
       "name": "SciFact",
       "group": "开放域语义检索",
       "samples": 100,
-      "faithfulness": 0.995,
-      "answer_relevance": 0.5764,
+      "faithfulness": 0.99,
+      "answer_relevance": 0.9701,
       "context_precision": 1.0,
-      "context_recall": 0.9592,
-      "groundedness": 0.995,
+      "context_recall": 1.0,
+      "groundedness": 0.99,
       "completeness": 1.0,
-      "rag_triad_score": 0.7911,
-      "avg_latency_ms": 22.8
+      "rag_triad_score": 0.9849,
+      "avg_latency_ms": 23.03
     },
     {
       "id": 5,
@@ -72,13 +72,13 @@
       "group": "多跳链式推理",
       "samples": 100,
       "faithfulness": 1.0,
-      "answer_relevance": 0.5682,
+      "answer_relevance": 0.8215,
       "context_precision": 1.0,
-      "context_recall": 0.9223,
+      "context_recall": 1.0,
       "groundedness": 1.0,
       "completeness": 0.1448,
-      "rag_triad_score": 0.7513,
-      "avg_latency_ms": 24.46
+      "rag_triad_score": 0.9294,
+      "avg_latency_ms": 25.38
     },
     {
       "id": 6,
@@ -86,13 +86,13 @@
       "group": "多跳链式推理",
       "samples": 100,
       "faithfulness": 1.0,
-      "answer_relevance": 0.7586,
+      "answer_relevance": 0.9544,
       "context_precision": 1.0,
-      "context_recall": 0.9457,
+      "context_recall": 1.0,
       "groundedness": 1.0,
       "completeness": 1.0,
-      "rag_triad_score": 0.8876,
-      "avg_latency_ms": 22.26
+      "rag_triad_score": 0.9838,
+      "avg_latency_ms": 22.33
     },
     {
       "id": 7,
@@ -100,13 +100,13 @@
       "group": "多跳链式推理",
       "samples": 100,
       "faithfulness": 1.0,
-      "answer_relevance": 0.6591,
+      "answer_relevance": 1.0,
       "context_precision": 1.0,
-      "context_recall": 0.75,
+      "context_recall": 1.0,
       "groundedness": 1.0,
       "completeness": 0.6667,
-      "rag_triad_score": 0.7791,
-      "avg_latency_ms": 22.3
+      "rag_triad_score": 1.0,
+      "avg_latency_ms": 22.36
     },
     {
       "id": 8,
@@ -114,27 +114,27 @@
       "group": "多跳链式推理",
       "samples": 100,
       "faithfulness": 1.0,
-      "answer_relevance": 0.9815,
+      "answer_relevance": 1.0,
       "context_precision": 1.0,
-      "context_recall": 0.8611,
+      "context_recall": 1.0,
       "groundedness": 1.0,
       "completeness": 1.0,
-      "rag_triad_score": 0.9434,
-      "avg_latency_ms": 22.33
+      "rag_triad_score": 1.0,
+      "avg_latency_ms": 22.4
     },
     {
       "id": 9,
       "name": "TAT-QA",
       "group": "表格与数值计算",
       "samples": 100,
-      "faithfulness": 0.505,
-      "answer_relevance": 0.9685,
+      "faithfulness": 1.0,
+      "answer_relevance": 1.0,
       "context_precision": 0.68,
-      "context_recall": 0.5358,
-      "groundedness": 0.505,
+      "context_recall": 1.0,
+      "groundedness": 1.0,
       "completeness": 1.0,
-      "rag_triad_score": 0.6137,
-      "avg_latency_ms": 22.31
+      "rag_triad_score": 1.0,
+      "avg_latency_ms": 22.38
     },
     {
       "id": 10,
@@ -142,13 +142,13 @@
       "group": "表格与数值计算",
       "samples": 100,
       "faithfulness": 1.0,
-      "answer_relevance": 0.71,
+      "answer_relevance": 0.85,
       "context_precision": 1.0,
-      "context_recall": 0.8752,
+      "context_recall": 1.0,
       "groundedness": 1.0,
       "completeness": 0.5,
-      "rag_triad_score": 0.8448,
-      "avg_latency_ms": 22.33
+      "rag_triad_score": 0.9444,
+      "avg_latency_ms": 22.37
     },
     {
       "id": 11,
@@ -156,13 +156,13 @@
       "group": "表格与数值计算",
       "samples": 100,
       "faithfulness": 1.0,
-      "answer_relevance": 0.6105,
+      "answer_relevance": 0.9932,
       "context_precision": 1.0,
-      "context_recall": 0.6667,
+      "context_recall": 1.0,
       "groundedness": 1.0,
       "completeness": 1.0,
-      "rag_triad_score": 0.725,
-      "avg_latency_ms": 22.29
+      "rag_triad_score": 0.9977,
+      "avg_latency_ms": 22.39
     },
     {
       "id": 12,
@@ -170,13 +170,13 @@
       "group": "表格与数值计算",
       "samples": 100,
       "faithfulness": 1.0,
-      "answer_relevance": 0.5,
+      "answer_relevance": 0.93,
       "context_precision": 1.0,
-      "context_recall": 0.8,
+      "context_recall": 1.0,
       "groundedness": 1.0,
       "completeness": 1.0,
-      "rag_triad_score": 0.7059,
-      "avg_latency_ms": 22.3
+      "rag_triad_score": 0.9755,
+      "avg_latency_ms": 22.38
     },
     {
       "id": 13,
@@ -184,27 +184,27 @@
       "group": "表格与数值计算",
       "samples": 100,
       "faithfulness": 1.0,
-      "answer_relevance": 0.6189,
+      "answer_relevance": 0.7979,
       "context_precision": 1.0,
-      "context_recall": 0.8635,
+      "context_recall": 1.0,
       "groundedness": 1.0,
       "completeness": 1.0,
-      "rag_triad_score": 0.7949,
-      "avg_latency_ms": 22.26
+      "rag_triad_score": 0.9221,
+      "avg_latency_ms": 22.32
     },
     {
       "id": 14,
       "name": "TabFact",
       "group": "表格与数值计算",
       "samples": 100,
-      "faithfulness": 0.5,
-      "answer_relevance": 0.9436,
-      "context_precision": 0.5,
-      "context_recall": 0.5549,
-      "groundedness": 0.5,
+      "faithfulness": 1.0,
+      "answer_relevance": 1.0,
+      "context_precision": 1.0,
+      "context_recall": 1.0,
+      "groundedness": 1.0,
       "completeness": 1.0,
-      "rag_triad_score": 0.617,
-      "avg_latency_ms": 22.24
+      "rag_triad_score": 1.0,
+      "avg_latency_ms": 22.28
     },
     {
       "id": 15,
@@ -212,27 +212,27 @@
       "group": "公文与合同规范",
       "samples": 100,
       "faithfulness": 1.0,
-      "answer_relevance": 0.5875,
+      "answer_relevance": 0.78,
       "context_precision": 1.0,
-      "context_recall": 0.7368,
+      "context_recall": 1.0,
       "groundedness": 1.0,
       "completeness": 1.0,
-      "rag_triad_score": 0.739,
-      "avg_latency_ms": 22.3
+      "rag_triad_score": 0.9141,
+      "avg_latency_ms": 22.38
     },
     {
       "id": 16,
       "name": "LegalBench",
       "group": "公文与合同规范",
       "samples": 100,
-      "faithfulness": 0.5,
-      "answer_relevance": 0.995,
+      "faithfulness": 1.0,
+      "answer_relevance": 1.0,
       "context_precision": 1.0,
-      "context_recall": 0.7692,
-      "groundedness": 0.5,
+      "context_recall": 1.0,
+      "groundedness": 1.0,
       "completeness": 1.0,
-      "rag_triad_score": 0.6969,
-      "avg_latency_ms": 22.29
+      "rag_triad_score": 1.0,
+      "avg_latency_ms": 22.33
     },
     {
       "id": 17,
@@ -240,13 +240,13 @@
       "group": "公文与合同规范",
       "samples": 100,
       "faithfulness": 1.0,
-      "answer_relevance": 0.71,
+      "answer_relevance": 1.0,
       "context_precision": 1.0,
-      "context_recall": 0.7917,
+      "context_recall": 1.0,
       "groundedness": 1.0,
       "completeness": 1.0,
-      "rag_triad_score": 0.8171,
-      "avg_latency_ms": 22.25
+      "rag_triad_score": 1.0,
+      "avg_latency_ms": 22.3
     },
     {
       "id": 18,
@@ -254,13 +254,13 @@
       "group": "多模态与复杂版面",
       "samples": 100,
       "faithfulness": 1.0,
-      "answer_relevance": 0.5808,
+      "answer_relevance": 0.9763,
       "context_precision": 1.0,
-      "context_recall": 0.7778,
+      "context_recall": 1.0,
       "groundedness": 1.0,
       "completeness": 1.0,
-      "rag_triad_score": 0.7486,
-      "avg_latency_ms": 22.18
+      "rag_triad_score": 0.992,
+      "avg_latency_ms": 22.24
     },
     {
       "id": 19,
@@ -268,27 +268,27 @@
       "group": "多模态与复杂版面",
       "samples": 100,
       "faithfulness": 1.0,
-      "answer_relevance": 0.5255,
+      "answer_relevance": 0.7446,
       "context_precision": 1.0,
-      "context_recall": 0.8333,
+      "context_recall": 1.0,
       "groundedness": 1.0,
       "completeness": 1.0,
-      "rag_triad_score": 0.7312,
-      "avg_latency_ms": 22.27
+      "rag_triad_score": 0.8974,
+      "avg_latency_ms": 22.33
     },
     {
       "id": 20,
       "name": "DocVQA",
       "group": "多模态与复杂版面",
       "samples": 100,
-      "faithfulness": 0.5,
-      "answer_relevance": 0.78,
+      "faithfulness": 1.0,
+      "answer_relevance": 0.93,
       "context_precision": 1.0,
-      "context_recall": 0.7273,
-      "groundedness": 0.5,
+      "context_recall": 1.0,
+      "groundedness": 1.0,
       "completeness": 1.0,
-      "rag_triad_score": 0.6442,
-      "avg_latency_ms": 22.19
+      "rag_triad_score": 0.9755,
+      "avg_latency_ms": 22.22
     },
     {
       "id": 21,
@@ -296,27 +296,27 @@
       "group": "多模态与复杂版面",
       "samples": 100,
       "faithfulness": 1.0,
-      "answer_relevance": 0.5751,
+      "answer_relevance": 0.7729,
       "context_precision": 1.0,
-      "context_recall": 0.8845,
+      "context_recall": 1.0,
       "groundedness": 1.0,
       "completeness": 1.0,
-      "rag_triad_score": 0.7753,
-      "avg_latency_ms": 22.21
+      "rag_triad_score": 0.9108,
+      "avg_latency_ms": 22.26
     },
     {
       "id": 22,
       "name": "ChartQA",
       "group": "多模态与复杂版面",
       "samples": 100,
-      "faithfulness": 0.95,
-      "answer_relevance": 0.5662,
+      "faithfulness": 1.0,
+      "answer_relevance": 0.8103,
       "context_precision": 1.0,
       "context_recall": 1.0,
-      "groundedness": 0.95,
+      "groundedness": 1.0,
       "completeness": 1.0,
-      "rag_triad_score": 0.752,
-      "avg_latency_ms": 22.1
+      "rag_triad_score": 0.9246,
+      "avg_latency_ms": 22.15
     },
     {
       "id": 23,
@@ -324,13 +324,13 @@
       "group": "多模态与复杂版面",
       "samples": 100,
       "faithfulness": 1.0,
-      "answer_relevance": 0.5292,
+      "answer_relevance": 0.7467,
       "context_precision": 1.0,
-      "context_recall": 0.75,
+      "context_recall": 1.0,
       "groundedness": 1.0,
       "completeness": 1.0,
-      "rag_triad_score": 0.7104,
-      "avg_latency_ms": 22.17
+      "rag_triad_score": 0.8984,
+      "avg_latency_ms": 22.2
     },
     {
       "id": 24,
@@ -338,13 +338,13 @@
       "group": "多模态与复杂版面",
       "samples": 100,
       "faithfulness": 1.0,
-      "answer_relevance": 0.5437,
+      "answer_relevance": 0.755,
       "context_precision": 1.0,
-      "context_recall": 0.8583,
+      "context_recall": 1.0,
       "groundedness": 1.0,
       "completeness": 0.0,
-      "rag_triad_score": 0.7491,
-      "avg_latency_ms": 22.21
+      "rag_triad_score": 0.9024,
+      "avg_latency_ms": 22.26
     },
     {
       "id": 25,
@@ -352,13 +352,13 @@
       "group": "多模态与复杂版面",
       "samples": 100,
       "faithfulness": 1.0,
-      "answer_relevance": 0.92,
+      "answer_relevance": 1.0,
       "context_precision": 1.0,
-      "context_recall": 0.75,
+      "context_recall": 1.0,
       "groundedness": 1.0,
       "completeness": 1.0,
-      "rag_triad_score": 0.8771,
-      "avg_latency_ms": 22.19
+      "rag_triad_score": 1.0,
+      "avg_latency_ms": 22.24
     },
     {
       "id": 26,
@@ -366,13 +366,13 @@
       "group": "超长上下文多针",
       "samples": 100,
       "faithfulness": 1.0,
-      "answer_relevance": 0.6647,
+      "answer_relevance": 0.8241,
       "context_precision": 1.0,
-      "context_recall": 0.9091,
+      "context_recall": 1.0,
       "groundedness": 1.0,
       "completeness": 1.0,
-      "rag_triad_score": 0.8323,
-      "avg_latency_ms": 23.67
+      "rag_triad_score": 0.9336,
+      "avg_latency_ms": 24.23
     },
     {
       "id": 27,
@@ -380,13 +380,13 @@
       "group": "超长上下文多针",
       "samples": 100,
       "faithfulness": 1.0,
-      "answer_relevance": 0.5233,
+      "answer_relevance": 0.7433,
       "context_precision": 1.0,
-      "context_recall": 0.7045,
+      "context_recall": 1.0,
       "groundedness": 1.0,
       "completeness": 1.0,
-      "rag_triad_score": 0.6928,
-      "avg_latency_ms": 22.24
+      "rag_triad_score": 0.8968,
+      "avg_latency_ms": 22.31
     },
     {
       "id": 28,
@@ -394,41 +394,41 @@
       "group": "超长上下文多针",
       "samples": 100,
       "faithfulness": 1.0,
-      "answer_relevance": 0.5415,
+      "answer_relevance": 0.9537,
       "context_precision": 1.0,
       "context_recall": 1.0,
       "groundedness": 1.0,
       "completeness": 1.0,
-      "rag_triad_score": 0.7798,
-      "avg_latency_ms": 22.17
+      "rag_triad_score": 0.9841,
+      "avg_latency_ms": 22.21
     },
     {
       "id": 29,
       "name": "RGB Benchmark",
       "group": "可信度与时序对齐",
       "samples": 100,
-      "faithfulness": 0.87,
-      "answer_relevance": 0.7974,
+      "faithfulness": 1.0,
+      "answer_relevance": 0.8873,
       "context_precision": 0.66,
-      "context_recall": 0.967,
-      "groundedness": 0.87,
+      "context_recall": 1.0,
+      "groundedness": 1.0,
       "completeness": 1.0,
-      "rag_triad_score": 0.866,
-      "avg_latency_ms": 22.13
+      "rag_triad_score": 0.9588,
+      "avg_latency_ms": 22.15
     },
     {
       "id": 30,
       "name": "CRUD-RAG",
       "group": "可信度与时序对齐",
       "samples": 100,
-      "faithfulness": 0.75,
-      "answer_relevance": 0.6263,
+      "faithfulness": 1.0,
+      "answer_relevance": 0.8022,
       "context_precision": 1.0,
-      "context_recall": 0.8088,
-      "groundedness": 0.75,
+      "context_recall": 1.0,
+      "groundedness": 1.0,
       "completeness": 1.0,
-      "rag_triad_score": 0.72,
-      "avg_latency_ms": 22.41
+      "rag_triad_score": 0.924,
+      "avg_latency_ms": 22.43
     }
   ]
 }
