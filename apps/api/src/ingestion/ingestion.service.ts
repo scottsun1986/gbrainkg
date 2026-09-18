@@ -188,11 +188,45 @@ export class IngestionService implements OnModuleInit {
     let conversionMetadata: Record<string, unknown> = {};
     const ext = extname(document.rawFileOid).toLowerCase();
 
-    const cachedParse = IngestionService.parseCache.get(contentHash);
+    let cachedParse = IngestionService.parseCache.get(contentHash);
     if (cachedParse && cachedParse.parsed) {
       this.logger.log(`Document ${documentId} hit parse cache (hash ${contentHash.slice(0, 10)}); reusing parsed Markdown.`);
       parsed = { ...cachedParse.parsed };
       conversionMetadata = { ...cachedParse.conversionMetadata };
+    } else {
+      // L2 Persistent cross-process deduplication cache
+      try {
+        const matchingDoc = await this.prisma.document.findFirst({
+          where: {
+            id: { not: documentId },
+            status: "published",
+            parserMetadata: { path: ["contentHash"], equals: contentHash },
+          },
+          select: { mdPath: true, parserEngine: true, parserClassification: true, parserMetadata: true },
+        });
+        if (matchingDoc && matchingDoc.mdPath) {
+          const mdText = await readFile(join(this.uploadRoot, matchingDoc.mdPath), "utf8").catch(() => null);
+          if (mdText && mdText.trim()) {
+            parsed = {
+              markdown: mdText,
+              engine: `${matchingDoc.parserEngine || "cached"}-dedup`,
+              classification: matchingDoc.parserClassification || ext.slice(1),
+              status: "completed",
+            };
+            conversionMetadata = {
+              ...((matchingDoc.parserMetadata as any) || {}),
+              dedupSource: matchingDoc.mdPath,
+            };
+            IngestionService.parseCache.set(contentHash, {
+              parsed: { ...parsed },
+              conversionMetadata: { ...conversionMetadata },
+            });
+            this.logger.log(`Document ${documentId} hit persistent DB content-hash cache (hash ${contentHash.slice(0, 10)}); skipping expensive re-parse.`);
+          }
+        }
+      } catch {
+        // Fall back gracefully
+      }
     }
 
     // L1 Fast-Path: Plaintext files (.txt, .md) read directly in zero milliseconds
@@ -347,7 +381,7 @@ export class IngestionService implements OnModuleInit {
     // Persist parser facts, but never persist request credentials or the full
     // parser response. This lets operators explain a failed/uncertain import
     // and lets the UI distinguish "parsed" from "safe to publish".
-    const parserMetadata: Record<string, unknown> = { ...conversionMetadata };
+    const parserMetadata: Record<string, unknown> = { ...conversionMetadata, contentHash };
     for (const key of [
       "page_count",
       "text_pages",

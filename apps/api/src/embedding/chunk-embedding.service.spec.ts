@@ -3,6 +3,7 @@ import { ChunkEmbeddingService } from './chunk-embedding.service';
 const mockPrisma = {
   $queryRaw: jest.fn(),
   $executeRaw: jest.fn(),
+  $executeRawUnsafe: jest.fn(),
 };
 jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => mockPrisma) }));
 
@@ -49,7 +50,7 @@ describe('ChunkEmbeddingService.embedDocumentChunks', () => {
     // The cursor advanced past the last ord of the previous page.
     const cursors = batchCalls().map((call) => Number(call[2]));
     expect(cursors).toEqual([-1, 63, 127, 191]);
-    expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(200);
+    expect(mockPrisma.$executeRawUnsafe).toHaveBeenCalledTimes(4);
     expect(result).toEqual({ requested: 200, embedded: 200, failed: 0, missing: 0 });
   });
 
@@ -112,5 +113,26 @@ describe('ChunkEmbeddingService.embedDocumentChunks', () => {
     mockPrisma.$queryRaw.mockResolvedValue([{ total: BigInt(10), missing: BigInt(3) }]);
 
     await expect(service.documentCoverage('doc-1')).resolves.toEqual({ total: 10, missing: 3 });
+  });
+
+  it('uses $executeRawUnsafe for high-performance batch vector updates when available', async () => {
+    mockPrisma.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+      const sql = String(strings);
+      if (sql.includes('ord >')) return rows.slice(0, 5);
+      if (sql.includes('FILTER (WHERE embedding IS NULL)')) {
+        return [{ total: BigInt(5), missing: BigInt(0) }];
+      }
+      return [];
+    });
+    embedMock.embed.mockImplementation(async (texts: string[]) => texts.map(() => [0.1, 0.2]));
+    mockPrisma.$executeRawUnsafe.mockResolvedValue(5);
+
+    const result = await service.embedDocumentChunks('doc-1');
+
+    expect(mockPrisma.$executeRawUnsafe).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.$executeRawUnsafe).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE "Chunk" AS c'),
+    );
+    expect(result).toEqual({ requested: 5, embedded: 5, failed: 0, missing: 0 });
   });
 });

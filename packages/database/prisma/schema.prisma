@@ -117,6 +117,7 @@ model KnowledgeBase {
   @@index([ownerUserId])
   @@index([orgNodeId])
   @@index([type, status])
+  @@index([status, name])
 }
 
 model KbAdmin {
@@ -177,6 +178,7 @@ model Document {
   raptorNodes  RaptorNode[]
 
   @@index([kbId, status])
+  @@index([kbId, status, updatedAt(sort: Desc)])
   @@index([kbId, lifecycleStatus, effectiveFrom])
   @@index([indexReadiness])
 }
@@ -204,6 +206,7 @@ model Chunk {
   citations    Citation[]
 
   @@index([kbId, documentId])
+  @@index([kbId, documentId, ord])
 }
 
 // 会话

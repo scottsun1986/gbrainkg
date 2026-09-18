@@ -21,6 +21,7 @@ import { RaptorService } from "../raptor/raptor.service";
 import { EmbeddingService } from "../embedding/embedding.service";
 import { buildDocumentPreviewUrl } from "../ingestion/preview-url";
 import { buildBm25Pool, bm25Scores } from "./lexical-bm25";
+import { routeKnowledgeBasesByIntent } from "../retrieval/kb-intent-router";
 
 type RetrievalRequest = { query: string; breadth: boolean; operation: 'search' | 'query' };
 
@@ -415,7 +416,7 @@ export class ChatService {
         ? [requestedKbScope.trim()]
         : undefined;
     const parsedRequestedScope = rawList && rawList.length > 0 ? rawList : undefined;
-    const scope = parsedRequestedScope
+    let scope = parsedRequestedScope
       ? parsedRequestedScope.filter((id) => visibleKbs.includes(id))
       : visibleKbs;
 
@@ -454,6 +455,27 @@ export class ChatService {
           previewUrl: buildDocumentPreviewUrl(d.kbId, d.id),
         })),
       };
+    }
+
+    // Large-scale optimization: When search scope is broad (> 3 KBs) and user did not specify
+    // a narrow scope, use intelligent KB intent routing to focus recall on the Top-K relevant KBs.
+    if (!parsedRequestedScope && scope.length > 3) {
+      const routingResult = await routeKnowledgeBasesByIntent(
+        query,
+        scope,
+        async (missingIds) => {
+          return (this.prisma as any).knowledgeBase.findMany({
+            where: { id: { in: missingIds } },
+            select: { id: true, name: true, description: true, domainTerms: true },
+          });
+        },
+      );
+      if (routingResult.routed && routingResult.targetedScope.length > 0) {
+        this.logger.log(
+          `[KB-Router] Narrowed multi-KB search space from ${scope.length} to ${routingResult.targetedScope.length} KBs for query: "${query.slice(0, 30)}"`,
+        );
+        scope = routingResult.targetedScope;
+      }
     }
 
     const brainRepo = await this.compilerService.ensureUserBrainRepo(userId);
@@ -1670,13 +1692,20 @@ export class ChatService {
         .slice(0, 15);
       const perTokenTake = Math.max(20, Number(process.env.RETRIEVAL_TOKEN_QUERY_TAKE || 25));
 
+      // Batch general tokens into small groups of 4 to prevent Prisma connection pool starvation
+      // and reduce DB roundtrips by up to 75% on large corpora
+      const tokenBatchSize = 4;
+      const tokenBatches: string[][] = [];
+      for (let i = 0; i < generalTokens.length; i += tokenBatchSize) {
+        tokenBatches.push(generalTokens.slice(i, i + tokenBatchSize));
+      }
       const generalChunksPromise = Promise.all(
-        generalTokens.map((kw) =>
+        tokenBatches.map((tokens) =>
           (this.prisma as any).chunk.findMany({
             where: {
               kbId: { in: scope },
               document: { status: "published" },
-              content: { contains: kw, mode: "insensitive" },
+              OR: tokens.map((kw) => ({ content: { contains: kw, mode: "insensitive" } })),
             },
             select: {
               id: true,
@@ -1688,7 +1717,7 @@ export class ChatService {
               document: { select: { title: true, version: true } },
             },
             orderBy: [{ documentId: "asc" }, { ord: "asc" }],
-            take: perTokenTake,
+            take: perTokenTake * tokens.length,
           }).catch(() => []),
         ),
       );

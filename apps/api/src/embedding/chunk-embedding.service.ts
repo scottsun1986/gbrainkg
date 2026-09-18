@@ -147,18 +147,12 @@ export class ChunkEmbeddingService {
 
       const neededIndices: number[] = [];
       const neededTexts: string[] = [];
+      const toStore: Array<{ id: string; vec: string }> = [];
+
       for (let i = 0; i < slice.length; i++) {
         const existing = existingVecByContent.get(slice[i].content);
         if (existing) {
-          try {
-            await this.prisma.$executeRaw`
-              UPDATE "Chunk" SET embedding = ${existing}::vector WHERE id = ${slice[i].id}::uuid
-            `;
-            stored += 1;
-          } catch {
-            neededIndices.push(i);
-            neededTexts.push(slice[i].content);
-          }
+          toStore.push({ id: slice[i].id, vec: existing });
         } else {
           neededIndices.push(i);
           neededTexts.push(slice[i].content);
@@ -184,17 +178,46 @@ export class ChunkEmbeddingService {
             failed += 1;
             continue;
           }
+          const literal = `[${vector.join(',')}]`;
+          toStore.push({ id: slice[origIdx].id, vec: literal });
+        }
+      }
+
+      // High-performance batch vector write: executes a single SQL statement for the batch
+      if (toStore.length > 0) {
+        let batchSaved = false;
+        if (typeof (this.prisma as any).$executeRawUnsafe === 'function') {
           try {
-            const literal = `[${vector.join(',')}]`;
-            await this.prisma.$executeRaw`
-              UPDATE "Chunk" SET embedding = ${literal}::vector WHERE id = ${slice[origIdx].id}::uuid
-            `;
-            stored += 1;
-          } catch (err) {
-            failed += 1;
-            this.logger.warn(
-              `Failed to store embedding for chunk ${slice[origIdx].id}: ${err instanceof Error ? err.message : String(err)}`,
+            const values = toStore
+              .map((item) => `('${item.id}'::uuid, '${item.vec}'::vector)`)
+              .join(',');
+            await this.prisma.$executeRawUnsafe(`
+              UPDATE "Chunk" AS c
+              SET embedding = v.vec
+              FROM (VALUES ${values}) AS v(id, vec)
+              WHERE c.id = v.id
+            `);
+            stored += toStore.length;
+            batchSaved = true;
+          } catch (batchErr) {
+            this.logger.debug(
+              `Batch vector update failed, falling back to per-row update: ${batchErr instanceof Error ? batchErr.message : String(batchErr)}`,
             );
+          }
+        }
+        if (!batchSaved) {
+          for (const item of toStore) {
+            try {
+              await this.prisma.$executeRaw`
+                UPDATE "Chunk" SET embedding = ${item.vec}::vector WHERE id = ${item.id}::uuid
+              `;
+              stored += 1;
+            } catch (err) {
+              failed += 1;
+              this.logger.warn(
+                `Failed to store embedding for chunk ${item.id}: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
           }
         }
       }
