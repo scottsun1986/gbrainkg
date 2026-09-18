@@ -644,7 +644,7 @@ export class ChatService {
             bbox: fb.bbox,
             previewUrl: fb.previewUrl,
           })),
-          reranked: true,
+          reranked: false,
         };
       }
     } else {
@@ -720,7 +720,8 @@ export class ChatService {
     return query
       .replace(/^(?:请问|请教一下|请详细介绍一下|请介绍一下|请说一下|我想知道|咨询一下|请说明|请解答|能否告诉我|请给出|请列出全部|请列出)\s*/gi, "")
       .replace(/(?:由|是由)?(?:什么|哪些|何种|怎样|如何)(?:构成|组成|构成的|组成的|包括|涵盖|规定|要求|指标|部分|要素)[\?？。！!]*$/g, "")
-      .replace(/(?:一共有哪些章|请列出全部章名|有哪些章|有哪些|是什么|是多少|怎么做|如何规定|属于什么|怎么算|如何计算|是指什么|有什么要求|有什么规定|有什么后果|分别是什么|是多久|是多少分|是多少天|是什么编号|是多少号)[\?？。！!]*$/g, "")
+      .replace(/(?:主要|具体)?(?:包括|包含|涵盖|涉及|涵盖了|包含了|包括了)(?:由|是由)?(?:什么|哪些|何种|哪几项|哪几部分|哪些内容|什么内容|指标|要求)?[\?？。！!]*$/g, "")
+      .replace(/(?:一共有哪些章|请列出全部章名|有哪些章|有哪些|是什么|是多少|怎么做|如何规定|属于什么|怎么算|如何计算|是指什么|有什么要求|有什么规定|有什么后果|分别是什么|是多久|是多少分|是多少天|是什么编号|是多少号|包含什么|包括什么)[\?？。！!]*$/g, "")
       .replace(/[\?？。！!]+$/g, "")
       .trim();
   }
@@ -2010,7 +2011,7 @@ export class ChatService {
       // Two heading tiers: CHAPTER-level headings (（四）/ 一、/ 第X章) delimit
       // section regions; CLAUSE-level numbering (12. / 第X条) stays inside the
       // region. Treating clauses as headings would shatter the section.
-      const sectionStopRe = /^(?:（[一二三四五六七八九十百]{1,3}）|[一二三四五六七八九十百]{1,3}、|第[一二三四五六七八九十百0-9]+[章节])/;
+      const sectionStopRe = /^(?:#{1,3}\s+|（[一二三四五六七八九十百]{1,3}）|[一二三四五六七八九十百]{1,3}、|第[一二三四五六七八九十百0-9]+[章节]|\d+[\.、]\s*[\u4e00-\u9fa5])/;
       const sectionHeadRe = sectionStopRe;
       const sectionExpansionMax = Math.max(2, Number(process.env.RETRIEVAL_SECTION_EXPANSION_MAX || 12));
       let regionBudget = sectionExpansionMax;
@@ -2018,6 +2019,10 @@ export class ChatService {
       // queries vs allDocChunks from the expansion query), so the group tag is
       // recorded by chunk ID and applied to every expanded instance afterwards.
       const sectionGroupByChunkId = new Map<string, string>();
+      const getLeadingLine = (x: any) => {
+        const raw = extractRawChunkText(String(x?.content || "")).trim();
+        return raw.split("\n")[0].trim();
+      };
       for (const selected of topSelected.slice(0, 4)) {
         if (regionBudget <= 0) break;
         const anchor = selected.chunk;
@@ -2026,8 +2031,8 @@ export class ChatService {
         const anchorIdx = ordered.findIndex((x: any) => x.id === anchor.id);
         if (anchorIdx < 0) continue;
         const isHeadingish = (x: any) => {
-          const t = String(x?.content || "").trim();
-          return t.length > 0 && t.length <= 60 && sectionHeadRe.test(t);
+          const line = getLeadingLine(x);
+          return line.length > 0 && line.length <= 80 && sectionHeadRe.test(line);
         };
         // Walk backward to the region anchor (nearest heading-like chunk).
         let startIdx = anchorIdx;
@@ -2040,14 +2045,18 @@ export class ChatService {
         // Include the anchor and all member chunks until the next heading.
         const region: any[] = [ordered[startIdx]];
         for (let i = startIdx + 1; i < ordered.length && region.length < 10; i++) {
-          const t = String(ordered[i].content || "").trim();
-          if (sectionStopRe.test(t)) break;
+          const line = getLeadingLine(ordered[i]);
+          if (line && sectionStopRe.test(line)) break;
           region.push(ordered[i]);
         }
         for (const member of region) {
           if (regionBudget <= 0) break;
-          sectionGroupByChunkId.set(member.id, groupKey);
-          sectionGroupByChunkId.set(anchor.id, groupKey);
+          if (!sectionGroupByChunkId.has(member.id)) {
+            sectionGroupByChunkId.set(member.id, groupKey);
+          }
+          if (!sectionGroupByChunkId.has(anchor.id)) {
+            sectionGroupByChunkId.set(anchor.id, groupKey);
+          }
           if (!expandedChunkIds.has(member.id)) {
             expandedChunkIds.add(member.id);
             expandedChunks.push(member);
@@ -2800,14 +2809,15 @@ export class ChatService {
               evidence: fb.evidence,
               snippet: fb.evidence,
               context: fb.evidence,
-              score: Math.max(0.70, 0.95 - idx * 0.02),
+              score: typeof fb.score === "number" && fb.score > 0 ? fb.score : Math.max(0.70, 0.95 - idx * 0.02),
               docTitle: fb.title,
               sectionGroup: (fb as any).sectionGroup,
-          subQueryOrigin: (fb as any).subQueryOrigin,
-          bbox: fb.bbox,
-          previewUrl: fb.previewUrl,
+              subQueryOrigin: (fb as any).subQueryOrigin,
+              bbox: fb.bbox,
+              previewUrl: fb.previewUrl,
             })),
-            reranked: true,
+            reranked: false,
+            ...({ isMultiHop: agenticComplexity !== "simple" } as any),
           };
         }
       } else {
@@ -4729,14 +4739,21 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
     const cacheKey = `${config.modelName}:${candidateHash}`;
     const cached = this.rerankCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now() && cached.order.length === citations.length) {
-      const reranked = cached.order.map((idx, rank) => ({ ...citations[idx], rerankScore: cached.scores[rank], relevanceScore: cached.scores[rank] }));
+      const reranked = cached.order.map((idx, rank) => ({
+        ...citations[idx],
+        score: cached.scores[rank],
+        rerankScore: cached.scores[rank],
+        relevanceScore: cached.scores[rank],
+      }));
       return { ...result, citations: reranked, topics: reranked.map((c: any) => c.topic), answer: reranked.map((c: any) => c.context || c.snippet).filter(Boolean).join("\n\n"), reranked: true, platformRerankApplied: true };
     }
 
     const documents = citations
-      .map((citation: any) =>
-        String(citation.snippet || citation.context || citation.docTitle || citation.topic || "").slice(0, 1000).trim(),
-      )
+      .map((citation: any) => {
+        const text = String(citation.snippet || citation.context || citation.evidence || citation.docTitle || citation.topic || "");
+        const raw = extractRawChunkText(text);
+        return (raw || text).slice(0, 3000).trim();
+      })
       .filter(Boolean);
     if (documents.length < 2) return result;
     try {
@@ -4763,7 +4780,17 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
             : typeof item.score === "number" ? item.score : 0;
           // Multi-hop / bridge candidates recalled by a specific subquery probe should not be
           // destroyed by cross-encoder comparing them against the original (hop-1) question.
-          const score = (cit?.subQueryOrigin && rawCrossScore < 0.70)
+          // However, single-hop queries or sub-queries that are simply reformulations/substrings of the
+          // main question are competing on the EXACT same question, so the cross-encoder score is authoritative.
+          const origin = String(cit?.subQueryOrigin || "").trim().toLowerCase();
+          const qLower = question.trim().toLowerCase();
+          const isSubphraseOfQuery = origin.length > 0 && (qLower.includes(origin) || origin.includes(qLower));
+          const isTrueBridgeOrMultiHop = Boolean(
+            cit?.isBridgeEntity ||
+            (typeof cit?.hop === 'number' && cit.hop >= 2) ||
+            (cit?.subQueryOrigin && (breadth || Boolean((result as any)?.isMultiHop)) && !isSubphraseOfQuery)
+          );
+          const score = (isTrueBridgeOrMultiHop && rawCrossScore < 0.70)
             ? Math.max(rawCrossScore, typeof cit.score === "number" ? cit.score : 0.85)
             : rawCrossScore;
           return { idx, citation: cit, score };
@@ -4782,7 +4809,12 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
 
       // No truncation here: the single evidence-selection stage decides what
       // enters the answer context, using these comparable scores.
-      const reranked = scoredItems.map((item) => ({ ...item.citation, rerankScore: item.score, relevanceScore: item.score }));
+      const reranked = scoredItems.map((item) => ({
+        ...item.citation,
+        score: item.score,
+        rerankScore: item.score,
+        relevanceScore: item.score,
+      }));
       return {
         ...result,
         citations: reranked,
@@ -5526,6 +5558,12 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
   public stitchContiguousCitations(citations: any[]): any[] {
     if (!citations || citations.length <= 1) return citations || [];
 
+    const getScore = (c: any): number => {
+      const v = c?.relevanceScore ?? c?.rerankScore ?? c?.score;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : 0;
+    };
+
     const docGroups = new Map<string, any[]>();
     citations.forEach((c, idx) => {
       const key = c.docId ? String(c.docId) : (c.docTitle ? String(c.docTitle) : `__single_${idx}`);
@@ -5533,9 +5571,15 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
       docGroups.get(key)!.push(c);
     });
 
+    const sortedGroups = Array.from(docGroups.values()).sort((gA, gB) => {
+      const maxA = Math.max(...gA.map(getScore));
+      const maxB = Math.max(...gB.map(getScore));
+      return maxB - maxA;
+    });
+
     const finalCitations: any[] = [];
 
-    for (const group of docGroups.values()) {
+    for (const group of sortedGroups) {
       if (group.length === 1) {
         finalCitations.push(group[0]);
         continue;
@@ -5612,7 +5656,10 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
           prev.context = mergedText;
           prev.snippet = mergedText;
           prev.evidence = mergedText;
-          prev.score = Math.max(prev.score || 0, curr.score || 0);
+          const bestMergedScore = Math.max(getScore(prev), getScore(curr));
+          prev.score = bestMergedScore;
+          prev.rerankScore = bestMergedScore;
+          prev.relevanceScore = bestMergedScore;
           if (curr.pageNo && prev.pageNo !== curr.pageNo) {
             const startP = prev.startPage ?? prev.pageNo;
             const endP = curr.pageNo;
@@ -5630,6 +5677,6 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
       finalCitations.push(...stitchedGroup);
     }
 
-    return finalCitations.sort((a, b) => (b.score || 0) - (a.score || 0));
+    return finalCitations.sort((a, b) => getScore(b) - getScore(a));
   }
 }
