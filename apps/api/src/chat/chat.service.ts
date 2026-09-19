@@ -13,7 +13,10 @@ import { BrainScopeService } from "../brain-compiler/brain-scope.service";
 import { ChatTraceRecorder } from "./chat-trace";
 import { getSharedBrainRepoAdapter } from "../brain-compiler/brain-adapter.provider";
 import { WeKnoraClient, WeKnoraBinding, RetrievedEvidence } from "../retrieval/weknora-client";
-import { estimateTokens } from "./context-budget";
+import { estimateTokens, resolveContextTokenBudget } from "./context-budget";
+import { parseTermMappings, expandQueryWithTermMappings, type TermMapping } from "./term-mapping";
+import { numericClaimsSupportedBy, numberNearBound } from "./grounding-numeric";
+import { compressConversationHistory } from "./history-compress";
 import { GraphRagService } from "../graph-rag/graph-rag.service";
 import { SemanticCacheService } from "./semantic-cache.service";
 import { AgenticRagService } from "./agentic-rag.service";
@@ -98,13 +101,26 @@ export function hasPolarityConflict(statement: string, evidence: string): boolea
   const normStmt = statement.toLowerCase().replace(/\s+/g, '');
   const normEv = evidence.toLowerCase().replace(/\s+/g, '');
 
-  const stmtHasLowerBar = /不低于|不得低于|至少|大于等于|不少于/.test(normStmt);
-  const stmtHasUpperBar = /不高于|不得高于|至多|不超过|不得超过|不多于/.test(normStmt);
-  const evHasLowerBar = /不低于|不得低于|至少|大于等于|不少于/.test(normEv);
-  const evHasUpperBar = /不高于|不得高于|至多|不超过|不得超过|不多于/.test(normEv);
+  // Directional bounds. `最低/最高` are anchored to a predicate (为/是/应/不/限)
+  // so the bare noun form ("最低工资标准") does not register as a bound.
+  const LOWER_BAR = /不低于|不得低于|至少|不少于|不小于|大于等于|下限|最低(?:为|是|应|不|限)|最少|起点(?:为|是)/;
+  const UPPER_BAR = /不高于|不得高于|至多|不超过|不得超过|不多于|不大于|上限|最高(?:为|是|应|不|限)|最多|封顶/;
+  const stmtHasLowerBar = LOWER_BAR.test(normStmt);
+  const stmtHasUpperBar = UPPER_BAR.test(normStmt);
+  const evHasLowerBar = LOWER_BAR.test(normEv);
+  const evHasUpperBar = UPPER_BAR.test(normEv);
 
-  if (stmtHasLowerBar && evHasUpperBar && !evHasLowerBar) return true;
-  if (stmtHasUpperBar && evHasLowerBar && !evHasUpperBar) return true;
+  // A lower bound and an upper bound only contradict when the lower bound
+  // exceeds the upper bound (e.g. "不得低于800" vs "不得高于100"). Two bounds
+  // that straddle a range ("下限5万" vs "上限10万") are compatible and must not
+  // be flagged. Numbers missing => keep the conservative conflict.
+  const boundExceeds = (lowerText: string, upperText: string): boolean => {
+    const lower = numberNearBound(lowerText, LOWER_BAR);
+    const upper = numberNearBound(upperText, UPPER_BAR);
+    return lower === null || upper === null ? true : lower >= upper;
+  };
+  if (stmtHasLowerBar && evHasUpperBar && !evHasLowerBar && boundExceeds(normStmt, normEv)) return true;
+  if (stmtHasUpperBar && evHasLowerBar && !evHasUpperBar && boundExceeds(normEv, normStmt)) return true;
 
   const negPrefix = '(?<![不大至不严切]|不得|不能|严禁|切勿|不可)';
   const stmtHigher = new RegExp(`${negPrefix}(?:高于|大于|超过)`).test(normStmt);
@@ -122,8 +138,8 @@ export function hasPolarityConflict(statement: string, evidence: string): boolea
   // Explicit prohibition vs permission/mandate conflict
   const stmtProhibit = /不得|严禁|禁止|不允许|不可|不能|切勿|严控/.test(normStmt);
   const evProhibit = /不得|严禁|禁止|不允许|不可|不能|切勿|严控/.test(normEv);
-  const stmtAllow = /(?<![不严未得])允许|(?<![不严未得])可以|应当|必须|可自主|自愿/.test(normStmt);
-  const evAllow = /(?<![不严未得])允许|(?<![不严未得])可以|应当|必须|可自主|自愿/.test(normEv);
+  const stmtAllow = /(?<![不严未得])允许|(?<![不严未得])可以|应当|必须|可自主|自愿|可选|非强制|酌情/.test(normStmt);
+  const evAllow = /(?<![不严未得])允许|(?<![不严未得])可以|应当|必须|可自主|自愿|可选|非强制|酌情/.test(normEv);
 
   if (stmtProhibit && evAllow && !evProhibit) return true;
   if (stmtAllow && evProhibit && !evAllow) return true;
@@ -184,11 +200,9 @@ export function statementSupportedBy(
     }
   }
 
-  const claims = numericClaimsOf(statement);
-  if (claims.length > 0) {
-    const allPresent = claims.every((claim) => normalizedEvidence.includes(claim.replace(/\s+/g, '')));
-    if (!allPresent) return false;
-  }
+  // Numeric grounding accepts literal matches AND unit-equivalent values so a
+  // correct conversion (0.8s = 800毫秒) is not mis-flagged as fabrication.
+  if (!numericClaimsSupportedBy(statement, evidence)) return false;
   return true;
 }
 
@@ -1068,20 +1082,39 @@ export class ChatService {
    * deployments stay corpus-agnostic. Terms are cached per process for a short
    * window to avoid a KB query on every retrieval.
    */
-  private scopeDomainTermsCache = new Map<string, { terms: string[]; expiresAt: number }>();
+  private scopeDomainTermsCache = new Map<
+    string,
+    { terms: string[]; mappings: TermMapping[]; expiresAt: number }
+  >();
   private readonly subQueryChunkCache = new Map<string, { hits: any[]; expiresAt: number }>();
 
-  private async loadScopeDomainTerms(scope: string[]): Promise<string[]> {
-    if (!scope.length || !this.prisma || !(this.prisma as any).knowledgeBase?.findMany) return [];
+  /**
+   * Load admin-maintained KB-level retrieval vocabulary. `domainTerms` accepts
+   * both the legacy flat hint-term array and the object form
+   * `{ "打车": ["交通费", "交通费用报销"] }`, which is a colloquial -> formal
+   * term mapping. No terms are hardcoded here; an empty/absent config yields
+   * nothing. Cached briefly to avoid a KB query on every retrieval.
+   */
+  private async loadScopeDomainConfig(
+    scope: string[],
+  ): Promise<{ terms: string[]; mappings: TermMapping[] }> {
+    if (!scope.length || !this.prisma || !(this.prisma as any).knowledgeBase?.findMany) {
+      return { terms: [], mappings: [] };
+    }
     const cacheKey = [...scope].sort().join(",");
     const cached = this.scopeDomainTermsCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) return cached.terms;
+    if (cached && cached.expiresAt > Date.now()) {
+      // Entries created by older processes/tests used the legacy terms-only
+      // shape. Treat a missing mapping list as empty during rolling upgrades.
+      return { terms: cached.terms || [], mappings: cached.mappings || [] };
+    }
     try {
       const rows = await (this.prisma as any).knowledgeBase.findMany({
         where: { id: { in: scope } },
         select: { domainTerms: true },
       });
       const terms: string[] = [];
+      const mappings: TermMapping[] = [];
       for (const row of rows) {
         const raw = row?.domainTerms;
         if (Array.isArray(raw)) {
@@ -1089,13 +1122,28 @@ export class ChatService {
             const value = String(term || "").trim();
             if (value) terms.push(value);
           }
+        } else if (raw && typeof raw === "object") {
+          const parsed = parseTermMappings(raw);
+          for (const mapping of parsed) {
+            mappings.push(mapping);
+            terms.push(mapping.from, ...mapping.to);
+          }
         }
       }
-      this.scopeDomainTermsCache.set(cacheKey, { terms, expiresAt: Date.now() + 120_000 });
-      return terms;
+      const dedupedTerms = Array.from(new Set(terms));
+      this.scopeDomainTermsCache.set(cacheKey, {
+        terms: dedupedTerms,
+        mappings,
+        expiresAt: Date.now() + 120_000,
+      });
+      return { terms: dedupedTerms, mappings };
     } catch {
-      return [];
+      return { terms: [], mappings: [] };
     }
+  }
+
+  private async loadScopeDomainTerms(scope: string[]): Promise<string[]> {
+    return (await this.loadScopeDomainConfig(scope)).terms;
   }
 
   /**
@@ -1550,23 +1598,30 @@ export class ChatService {
       }
     }
 
-    const domainTerms = await this.loadScopeDomainTerms(scope);
+    const { terms: domainTerms, mappings: termMappings } = await this.loadScopeDomainConfig(scope);
+    // KB-configured colloquial -> formal term mappings add recall arms carrying
+    // the document's own vocabulary (e.g. "打车" -> "交通费报销"). Corpus-agnostic:
+    // with no admin mapping this is empty and nothing changes.
+    const mappedVariants = expandQueryWithTermMappings(query, termMappings);
     // Agentic sub-queries and HyDE passages are additional recall arms: union
     // their keywords with the primary query so complex/compound questions can
     // hit clauses that a single keyword extraction would miss.
     const primaryKeywords = new Set(this.extractSearchKeywords(query, domainTerms));
     const extraVariants = extraQueries.filter((q) => typeof q === "string" && q.trim().length >= 2);
-    const variantQueries = [query, ...extraVariants];
+    const variantQueries = [query, ...extraVariants, ...mappedVariants];
     const keywords = Array.from(new Set([
       ...primaryKeywords,
       ...extraVariants.flatMap((variant) => this.extractSearchKeywords(variant, domainTerms)),
+      ...mappedVariants.flatMap((variant) => this.extractSearchKeywords(variant, domainTerms)),
     ])).slice(0, 40);
     if (!keywords.length) {
       return [];
     }
 
     // Optimization 6: Prime embedding cache in a single batch for primary query + subqueries
-    const subs = extraQueries.filter((q) => typeof q === "string" && q.length >= 4 && q.length <= 80).slice(0, 3);
+    const subs = [...extraQueries, ...mappedVariants]
+      .filter((q) => typeof q === "string" && q.length >= 4 && q.length <= 80)
+      .slice(0, 3);
     const embeddingTextsToPrime = [query, ...subs].filter((t) => typeof t === "string" && t.trim().length >= 2);
     if (this.embeddingService?.isEnabled() && embeddingTextsToPrime.length > 0) {
       await this.embeddingService.embed(embeddingTextsToPrime).catch(() => []);
@@ -2088,7 +2143,7 @@ export class ChatService {
           title: c.document?.title || "未知文档",
           version: c.document?.version || 1,
           ord: c.ord,
-          pageNo: meta.pageNumber || c.ord + 1,
+          pageNo: meta.page_no || meta.pageNumber || c.ord + 1,
           articleNo: meta.article_no ? `第${meta.article_no}条` : undefined,
           evidence,
           score: Number(normalizedScore.toFixed(3)),
@@ -2689,36 +2744,64 @@ export class ChatService {
       })();
 
       // 2. Query GBrain federated search concurrently
+      // Create a per-stage abort controller for the fallback-race window. This is separate from
+      // gbrainAbort so that the 2500ms race timeout doesn't poison subsequent stages (escalation,
+      // source reconcile). Each stage gets its own controller linked to the request signal.
+      const stageAbort = new AbortController();
+      const stageAbortLink = () => stageAbort.abort();
+      if (signal?.aborted) stageAbort.abort();
+      else if (signal) signal.addEventListener("abort", stageAbortLink, { once: true });
+
       const gbrainQueryOnce = (q: string) =>
         sourceRefs.length > 1
           ? this.gbrain.queryMany(sourceRefs, q, {
               breadth: retrieval.breadth,
               operation: effectiveOp,
-              signal: gbrainAbort.signal,
+              signal: stageAbort.signal,
               ...(forceQueryRefresh ? { forceRefresh: true } : {}),
             })
           : this.gbrain.query(
               sourceRefs[0] || brainRepo.gitRepoUrl,
               q,
-              { breadth: retrieval.breadth, operation: effectiveOp, signal: gbrainAbort.signal, ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
+              { breadth: retrieval.breadth, operation: effectiveOp, signal: stageAbort.signal, ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
             );
       const gbrainSearchPromise = gbrainQueryOnce(retrieval.query).catch((err) => {
+        // Distinguish a genuine GBrain failure from the expected 2.5s
+        // race-window abort (which has its own timed warning below).
+        if (!stageAbort.signal.aborted) {
+          trace.warn(
+            "gbrain_search_error",
+            "GBrain 检索异常降级",
+            `GBrain 检索失败，已回退到数据库分块检索: ${err.message}`,
+          );
+        }
         this.logger.warn(`GBrain search error: ${err.message}`);
         return { topics: [], answer: "", citations: [], reranked: false } as BrainQueryResult;
+      }).finally(() => {
+        // The request-signal link only needs to live as long as the search is
+        // in flight; drop it once the promise settles to avoid a listener leak.
+        if (signal) signal.removeEventListener("abort", stageAbortLink);
       });
       // Decomposed sub-queries get their own GBrain probes, launched at the
       // same time as the main query (they overlap the race window, so waiting
       // for them afterwards adds little latency). Each hop of a compound
       // question gets an independent recall chance.
       // Sub-query probes use their OWN abort controller: the main-query race
-      // aborts gbrainAbort at 2500ms which would kill these probes before
+      // aborts `stageAbort` at 2500ms which would kill these probes before
       // they return; they stay bounded by their own hard timeout or client cancel.
       const subProbeAbort = new AbortController();
       const subProbeAbortLink = () => subProbeAbort.abort();
       if (signal?.aborted) subProbeAbort.abort();
       else if (signal) signal.addEventListener("abort", subProbeAbortLink, { once: true });
       const subProbeTimer = setTimeout(
-        () => subProbeAbort.abort(),
+        () => {
+          subProbeAbort.abort();
+          trace.warn(
+            "gbrain_subprobe_timeout",
+            "子查询探针超时降级",
+            `子查询探针超出 ${Number(process.env.GBRAIN_SUBPROBE_TIMEOUT_MS || 12000)}ms 未返回，已中止（该推理跳可能缺少证据）`,
+          );
+        },
         Number(process.env.GBRAIN_SUBPROBE_TIMEOUT_MS || 12000),
       );
       subProbeTimer.unref?.();
@@ -2755,7 +2838,22 @@ export class ChatService {
         // High-precision DB chunks are already available in milliseconds.
         // Race GBrain with a bounded 2500ms window and genuinely abort the CLI
         // subprocess if it loses, so the process-pool slot is released.
-        const raceTimer = setTimeout(() => gbrainAbort.abort(), 2500);
+        // NOTE: this aborts the SAME per-stage controller that `gbrainQueryOnce`
+        // (and therefore `gbrainSearchPromise`) is bound to. Do NOT declare a new
+        // controller here — an unbound controller would silently make the race
+        // cancellation a no-op and leak the GBrain CLI process-pool slot.
+        // Downstream stages (escalation, source reconcile) use their own
+        // controllers (escalation) or `gbrainAbort` (reconcile), so this abort
+        // does not poison them.
+        const raceTimer = setTimeout(() => {
+          stageAbort.abort();
+          trace.warn(
+            "gbrain_race_timeout",
+            "GBrain 竞速超时降级",
+            "GBrain 在 2.5s 竞赛窗口内未返回，已中止该路检索并沿用数据库分块召回",
+            { windowMs: 2500 },
+          );
+        }, 2500);
         const racedGBrain = await Promise.race([
           gbrainSearchPromise,
           new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
@@ -2868,7 +2966,6 @@ export class ChatService {
             mergedFromSubs += 1;
           }
         }
-        this.logger.warn(`[D1DBG] gbrainSubPromises=${gbrainSubPromises.length} mergedFromSubs=${mergedFromSubs} poolCitations=${(queryResult.citations||[]).length} tagged=${(queryResult.citations||[]).filter((c:any)=>c.subQueryOrigin).length}`);
         if (mergedFromSubs > 0) {
           this.logger.debug(`Merged ${mergedFromSubs} citations from decomposed sub-query probes.`);
         }
@@ -3010,7 +3107,10 @@ export class ChatService {
               { breadth: true, operation: "search", signal: gbrainAbort.signal, ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
             );
       const priorCitations = [...(queryResult.citations || [])];
-      queryResult = await gbrainQueryOnce(retrieval.query);
+      queryResult = await gbrainQueryOnce(retrieval.query).catch((err) => {
+        this.logger.warn(`Escalation GBrain query failed: ${err.message}`);
+        return { topics: [], answer: "", citations: [], reranked: false } as BrainQueryResult;
+      });
       // Decomposed sub-queries run as PARALLEL GBrain probes so each hop of a
       // compound question gets its own recall chance; citations merge by
       // evidence prefix (same dedupe rule as the fallback merge).
@@ -3083,7 +3183,9 @@ export class ChatService {
       );
     }
     // 历史文档可能在 BrainRepo 初始化前已经发布，先通过分块回退检索，若仍无可用候选再触发全量同步重试。
-    if (!queryResult.answer || (queryResult.citations?.length || 0) === 0) {
+    // CRITICAL FIX: Only use fallback when BOTH answer AND citations are missing.
+    // If we have citations but no answer, preserve those citations and let them be used for answer generation.
+    if ((!queryResult.answer || queryResult.answer.trim() === "") && (queryResult.citations?.length || 0) === 0) {
       trace.start("source_reconcile_retry", "Source 回退与对账重试", "未命中候选，优先执行毫秒级 Chunk 数据库回退检索");
       const fallbackChunks = await this.searchChunksFallback(scope, question, 15, recallVariants);
       if (fallbackChunks.length > 0) {
@@ -3136,12 +3238,18 @@ export class ChatService {
                 operation: "search",
                 signal: gbrainAbort.signal,
                 forceRefresh: true,
+              }).catch((err) => {
+                this.logger.warn(`Source reconcile GBrain query failed: ${err.message}`);
+                return { topics: [], answer: "", citations: [], reranked: false } as BrainQueryResult;
               })
             : await this.gbrain.query(
                 refreshedRefs[0] || brainRepo.gitRepoUrl,
                 qTry,
                 { breadth: retrieval.breadth, operation: "search", signal: gbrainAbort.signal, forceRefresh: true },
-              );
+              ).catch((err) => {
+                this.logger.warn(`Source reconcile GBrain query failed: ${err.message}`);
+                return { topics: [], answer: "", citations: [], reranked: false } as BrainQueryResult;
+              });
           if (subResult.citations?.length) {
             queryResult = subResult;
             break;
@@ -3189,12 +3297,18 @@ export class ChatService {
                   breadth: true,
                   operation: "search",
                   signal: gbrainAbort.signal,
-                }).catch(() => null)
+                }).catch((err) => {
+                  this.logger.warn(`CRAG retry GBrain query failed: ${err.message}`);
+                  return null;
+                })
               : await this.gbrain.query(
                   refreshedRefs[0] || brainRepo.gitRepoUrl,
                   qTry,
                   { breadth: true, operation: "search", signal: gbrainAbort.signal },
-                ).catch(() => null);
+                ).catch((err) => {
+                  this.logger.warn(`CRAG retry GBrain query failed: ${err.message}`);
+                  return null;
+                });
             if (retryResult?.citations?.length) {
               if (!queryResult.citations) queryResult.citations = [];
               for (const cit of retryResult.citations) {
@@ -3243,7 +3357,7 @@ export class ChatService {
       trace.start("weknora_retrieval", "WeKnora 外部检索灰度", "使用 WeKnora 执行只读外部分支检索与双路对齐");
       try {
         const publishedDocs = await this.prisma.document.findMany({
-          where: { kbId: { in: scope }, qualityStatus: "passed" },
+          where: { kbId: { in: scope }, status: "published", qualityStatus: "passed" },
           select: { id: true, kbId: true, version: true },
         });
         const bindings: WeKnoraBinding[] = publishedDocs.map((doc) => ({
@@ -3319,7 +3433,6 @@ export class ChatService {
     // reranker only as a fail-open recovery when GBrain reports no rerank
     // Always apply cross-encoder rerank & relevance filtering across candidate sources
     const beforeRerank = queryResult.citations?.length || 0;
-    const platformRerankRequired = !queryResult.reranked;
     trace.start("rerank", "候选重排", "统一比较跨 Source 候选并执行相关性打分");
     queryResult = await this.applyRerank(
       retrieval.query || question,
@@ -3466,9 +3579,26 @@ export class ChatService {
     // document_diversity and evidence_gate passes.
     const beforeSelect = queryResult.citations?.length || 0;
     trace.start("evidence_selection", "证据统一选择", "相关性阈值、组级去重与 token 预算的联合选择");
+    // Pre-selection contiguous stitching: physically adjacent chunks must be
+    // merged BEFORE the relevance floor / group MMR / token-budget selection.
+    // Previously stitching ran only after selection, so a split answer (e.g.
+    // chapter 1-3 in chunk N, chapter 4 in chunk N+1) could be dropped as two
+    // individually-weak chunks before the stitcher ever saw them. Merged here,
+    // the combined unit competes once with the stronger of the two scores.
+    if (process.env.RETRIEVAL_PRESTITCH !== "false" && (queryResult.citations?.length || 0) > 1) {
+      const stitchedInput = this.stitchContiguousCitations(queryResult.citations || []);
+      if (stitchedInput.length !== (queryResult.citations?.length || 0)) {
+        queryResult = { ...queryResult, citations: stitchedInput };
+      }
+    }
     queryResult = this.selectEvidence(queryResult, {
       breadth: retrieval.breadth,
-      tokenBudget: Number(process.env.RETRIEVAL_CONTEXT_TOKEN_BUDGET || (retrieval.breadth ? 8000 : 4500)),
+      tokenBudget: resolveContextTokenBudget({
+        breadth: retrieval.breadth,
+        complexity: agenticComplexity,
+        subQueryCount: allHopProbes.length,
+        evidenceCount: queryResult.citations?.length || 0,
+      }),
       subQueries: allHopProbes,
     });
     const afterSelect = queryResult.citations?.length || 0;
@@ -3898,7 +4028,9 @@ export class ChatService {
 
     const fastRefusalFloor = Number(process.env.RETRIEVAL_FAST_REFUSAL_THRESHOLD || 0.25);
     const maxEvidenceScore = orderedCitations.reduce((max: number, c: any) => {
-      const s = Number(c?.relevanceScore ?? c?.rerankScore ?? c?.score ?? 1);
+      // Missing scores are unknown, not perfect evidence. Treating them as 1
+      // allowed unscored candidates to bypass the hallucination refusal gate.
+      const s = Number(c?.relevanceScore ?? c?.rerankScore ?? c?.score ?? 0);
       return Number.isFinite(s) ? Math.max(max, s) : max;
     }, 0);
 
@@ -3972,19 +4104,23 @@ export class ChatService {
         return;
       }
 
-      const priorConversation = conversationHistory
-        .filter(
+      // Compress (not truncate) the conversation: recent turns stay verbatim
+      // for pronoun resolution, older turns become short extractive digests so
+      // facts/decisions from earlier in a long thread are not silently lost.
+      const priorConversation = compressConversationHistory(
+        conversationHistory.filter(
           (message) =>
             !(message.role === "user" && message.content === question),
-        )
-        .slice(-6)
+        ),
+        { recentMessages: 6, olderSnippetChars: 200, maxTotalChars: 2400 },
+      )
         .map((message) => {
           const roleTag = message.role === "assistant" ? "previous assistant reply" : "previous user message";
           const snippet = String(message.content || "").slice(0, 600);
           return `${roleTag}: ${snippet}`;
         })
         .join("\n")
-        .slice(-2500);
+        .slice(-3000);
 
       const personalMemoryBlock = personalMemory.text
         ? `个人长期记忆（仅当前用户可见，优先级低于当前知识库原文；不能把它冒充为公共制度证据）：\n${personalMemory.text}\n\n`
@@ -4103,7 +4239,7 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
         const tags = sentence.match(/\[(\d+)\]/g) || [];
         const valid = tags
           .map((t) => parseInt(t.replace(/\D/g, ''), 10))
-          .filter((n) => n >= 1 && n <= citations.length);
+          .filter((n) => n >= 1 && n <= (queryResult.citations?.length || 0));
         return {
           texts: valid.map((n) => String(queryResult.citations?.[n - 1]?.context || queryResult.citations?.[n - 1]?.snippet || '')),
           tagged: valid.length > 0,
@@ -4126,8 +4262,18 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
           return;
         }
         const { texts, tagged } = citedEvidenceTexts(sentence);
-        const supported = statementSupportedBy(sentence, tagged ? texts : allEvidenceTexts(), tagged) ||
-          (tagged && statementSupportedBy(sentence, allEvidenceTexts(), true));
+        // When a statement carries citation markers, it is validated ONLY
+        // against the evidence of the sources it actually cites. The previous
+        // all-evidence fallback let a fabricated fact wearing a wrong-but-real
+        // marker [1] pass because some OTHER source happened to contain the
+        // words — turning citation attribution into a routine-formality. A
+        // misattributed claim must now be held back (and judged by the NLI
+        // entailment step at flush time, which still sees the full pool).
+        const supported = statementSupportedBy(
+          sentence,
+          tagged ? texts : allEvidenceTexts(),
+          tagged,
+        );
         if (supported || !strictGrounding) {
           // Non-strict mode keeps legacy behaviour (emit immediately; the
           // post-hoc coverage accounting at completion still reports gaps).
@@ -4245,8 +4391,7 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
             // and character/token overlap is at least 0.35 against the full evidence text.
             const body = toJudge[i].replace(/\[\d+\]/g, ' ');
             const hasConflict = hasPolarityConflict(toJudge[i], evidenceText);
-            const numClaims = numericClaimsOf(toJudge[i]);
-            const numsOk = !numClaims.length || numClaims.every((c) => evidenceText.replace(/\s+/g, '').includes(c.replace(/\s+/g, '')));
+            const numsOk = numericClaimsSupportedBy(toJudge[i], evidenceText);
             const chars = Array.from(new Set(body.replace(/\s+/g, '').split('')));
             let charOverlap = 0;
             const normEv = evidenceText.replace(/\s+/g, '');
@@ -4756,6 +4901,18 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
       })
       .filter(Boolean);
     if (documents.length < 2) return result;
+
+    // Build mapping from filtered document index → original citation index
+    // This is critical because filter(Boolean) compresses the array, so API
+    // indices won't match original citation positions.
+    const docIndexToCitationIdx = citations
+      .map((citation: any, i: number) => {
+        const text = String(citation.snippet || citation.context || citation.evidence || citation.docTitle || citation.topic || "");
+        const raw = extractRawChunkText(text);
+        const trimmed = (raw || text).slice(0, 3000).trim();
+        return trimmed ? i : null;
+      })
+      .filter((i): i is number => i !== null);
     try {
       const response = await fetch(`${config.provider.baseUrl.replace(/\/$/, "")}/rerank`, {
         method: "POST",
@@ -4774,8 +4931,11 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
 
       const scoredItems = ranked
         .map((item) => {
-          const idx = Number(item.index);
-          const cit = citations[idx];
+          const docIdx = Number(item.index);
+          // Map filtered document index back to original citation index
+          const citIdx = docIndexToCitationIdx[docIdx];
+          if (citIdx === undefined) return null; // Should not happen if logic is correct
+          const cit = citations[citIdx];
           const rawCrossScore = typeof item.relevance_score === "number" ? item.relevance_score
             : typeof item.score === "number" ? item.score : 0;
           // Multi-hop / bridge candidates recalled by a specific subquery probe should not be
@@ -4793,9 +4953,9 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
           const score = (isTrueBridgeOrMultiHop && rawCrossScore < 0.70)
             ? Math.max(rawCrossScore, typeof cit.score === "number" ? cit.score : 0.85)
             : rawCrossScore;
-          return { idx, citation: cit, score };
+          return { idx: citIdx, citation: cit, score };
         })
-        .filter((item) => Boolean(item.citation) && Number.isInteger(item.idx));
+        .filter((item): item is { idx: number; citation: any; score: number } => item !== null);
       if (!scoredItems.length) return result;
       scoredItems.sort((a, b) => b.score - a.score);
 
@@ -5363,7 +5523,7 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
         where: {
           id: { in: docIdsToCheck },
           kbId: { in: visibleKbs },
-          status: { in: ["published", "indexing"] },
+          status: "published",
         },
         select: { id: true },
       });

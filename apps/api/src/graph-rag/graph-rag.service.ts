@@ -414,25 +414,47 @@ ${chunkContent.slice(0, 4000)}
       entityMap.set(e.name, e);
     }
     for (const e of allLlmEntities) {
-      if (!entityMap.has(e.name)) {
+      const existing = entityMap.get(e.name);
+      if (!existing) {
         entityMap.set(e.name, e);
-      } else if (e.description && !entityMap.get(e.name)!.description) {
-        // LLM provides better descriptions
-        entityMap.set(e.name, { ...entityMap.get(e.name)!, description: e.description });
+      } else if (e.description) {
+        // Merge descriptions rather than dropping one side: regex and LLM
+        // often capture different facets of the same entity, and discarding
+        // the LLM detail is exactly how bridge-entity evidence was lost.
+        const merged = existing.description
+          ? existing.description.includes(e.description)
+            ? existing.description
+            : `${existing.description}；${e.description}`
+          : e.description;
+        entityMap.set(e.name, { ...existing, description: merged.slice(0, 600) });
       }
     }
 
-    // Deduplicate relations
+    // Deduplicate relations while preserving the richest description/snippet
+    // and the union of provenance instead of silently discarding duplicates.
     const relKey = (r: ExtractedRelation) => `${r.sourceName}|${r.targetName}|${r.relationType}`;
+    const mergeRelation = (prev: ExtractedRelation, next: ExtractedRelation): ExtractedRelation => ({
+      ...prev,
+      description:
+        next.description && next.description.length > (prev.description?.length ?? 0)
+          ? next.description
+          : prev.description,
+      snippet:
+        next.snippet && next.snippet.length > (prev.snippet?.length ?? 0)
+          ? next.snippet
+          : prev.snippet,
+      weight: Math.max(Number(prev.weight ?? 0), Number(next.weight ?? 0)) || prev.weight,
+    });
     const relMap = new Map<string, ExtractedRelation>();
     for (const r of regexResult.relations) {
-      relMap.set(relKey(r), r);
+      const key = relKey(r);
+      const existing = relMap.get(key);
+      relMap.set(key, existing ? mergeRelation(existing, r) : r);
     }
     for (const r of allLlmRelations) {
       const key = relKey(r);
-      if (!relMap.has(key)) {
-        relMap.set(key, r);
-      }
+      const existing = relMap.get(key);
+      relMap.set(key, existing ? mergeRelation(existing, r) : r);
     }
 
     this.logger.log(
@@ -457,8 +479,11 @@ ${chunkContent.slice(0, 4000)}
     if (!entities.length) return { entityCount: 0, relationCount: 0 };
 
     const entityNameToId = new Map<string, string>();
+    const entityContributions: Array<{ id: string; docId: string }> = [];
 
     // 1. Upsert entities
+    // TODO(perf): 实体/关系目前为 N+1 串行 upsert，超大文档批量入库时应改为
+    // createMany + ON CONFLICT 或 $transaction 批量写入以减少数据库往返。
     for (const e of entities) {
       const record = await (this.prisma as any).graphEntity.upsert({
         where: {
@@ -481,10 +506,34 @@ ${chunkContent.slice(0, 4000)}
         },
       });
       entityNameToId.set(e.name, record.id);
+      if (e.sourceDocId) {
+        entityContributions.push({ id: record.id, docId: e.sourceDocId });
+      }
+    }
+
+    // Entity upsert must merge document provenance, not only set it on create.
+    // Use one atomic SQL update for the whole batch to avoid both lost updates
+    // and an additional per-entity read/update loop.
+    if (entityContributions.length > 0) {
+      await (this.prisma as any).$executeRaw`
+        UPDATE "GraphEntity" AS entity
+        SET "properties" = jsonb_set(
+          COALESCE(entity."properties", '{}'::jsonb),
+          '{docIds}',
+          COALESCE(entity."properties"->'docIds', '[]'::jsonb) || to_jsonb(contribution."docId"),
+          true
+        )
+        FROM jsonb_to_recordset(${JSON.stringify(entityContributions)}::jsonb)
+          AS contribution(id text, "docId" text)
+        WHERE entity."id"::text = contribution.id
+          AND NOT COALESCE(entity."properties"->'docIds', '[]'::jsonb)
+            @> jsonb_build_array(contribution."docId")
+      `;
     }
 
     // 2. Upsert relations
     let savedRelations = 0;
+    const relationErrors: Error[] = [];
     for (const r of relations) {
       const sourceId = entityNameToId.get(r.sourceName);
       const targetId = entityNameToId.get(r.targetName);
@@ -527,10 +576,17 @@ ${chunkContent.slice(0, 4000)}
             updatedProv = [newProv];
           }
 
+          // 权重封顶（上限 10）：反复合并同一关系时 increment 不再无界增长，
+          // 避免个别高频关系权重溢出并主导图检索排序。
+          const RELATION_WEIGHT_CAP = 10;
+          const nextWeight = Math.min(
+            Number(existing.weight ?? 0) + 0.5,
+            RELATION_WEIGHT_CAP,
+          );
           await (this.prisma as any).graphRelation.update({
             where: whereClause,
             data: {
-              weight: { increment: 0.5 },
+              weight: nextWeight,
               provenance: updatedProv,
             },
           });
@@ -549,8 +605,19 @@ ${chunkContent.slice(0, 4000)}
         }
         savedRelations++;
       } catch (err: any) {
-        // Skip duplicate or constraint races
+        const relationError = err instanceof Error ? err : new Error(String(err));
+        relationErrors.push(relationError);
+        this.logger.warn(
+          `Skipped relation [${r.sourceName} -> ${r.targetName} (${r.relationType})] in KB ${kbId}: ${err?.message || String(err)}`,
+        );
       }
+    }
+
+    if (relationErrors.length > 0) {
+      throw new AggregateError(
+        relationErrors,
+        `Failed to persist ${relationErrors.length}/${relations.length} graph relations in KB ${kbId}`,
+      );
     }
 
     return {
@@ -582,14 +649,50 @@ ${chunkContent.slice(0, 4000)}
       // 20260907135700_add_graph_tables); the @> containment operator matches
       // whenever any provenance element carries the deleted documentId.
       result.relationsRemoved = await (this.prisma as any).$executeRaw`
-        DELETE FROM "GraphRelation"
-        WHERE "kbId" = ${kbId}::uuid
-          AND "provenance" @> ${JSON.stringify([{ documentId }])}::jsonb
+        WITH matched AS (
+          SELECT relation."id",
+            COALESCE((
+              SELECT jsonb_agg(item)
+              FROM jsonb_array_elements(relation."provenance") AS item
+              WHERE item->>'documentId' <> ${documentId}
+            ), '[]'::jsonb) AS remaining
+          FROM "GraphRelation" AS relation
+          WHERE relation."kbId" = ${kbId}::uuid
+            AND relation."provenance" @> ${JSON.stringify([{ documentId }])}::jsonb
+        ), updated AS (
+          UPDATE "GraphRelation" AS relation
+          SET "provenance" = matched.remaining
+          FROM matched
+          WHERE relation."id" = matched."id"
+            AND jsonb_array_length(matched.remaining) > 0
+          RETURNING relation."id"
+        )
+        DELETE FROM "GraphRelation" AS relation
+        USING matched
+        WHERE relation."id" = matched."id"
+          AND jsonb_array_length(matched.remaining) = 0
       `;
 
       // Phase 2 — entities. Must run strictly after phase 1 so orphan
       // detection sees the post-cleanup edge set.
       result.entitiesRemoved = await (this.prisma as any).$executeRaw`
+        WITH provenance_updated AS (
+          UPDATE "GraphEntity" AS entity
+          SET "properties" = jsonb_set(
+            COALESCE(entity."properties", '{}'::jsonb),
+            '{docIds}',
+            COALESCE((
+              SELECT jsonb_agg(doc_id)
+              FROM jsonb_array_elements_text(entity."properties"->'docIds') AS doc_ids(doc_id)
+              WHERE doc_id <> ${documentId}
+            ), '[]'::jsonb),
+            true
+          )
+          WHERE entity."kbId" = ${kbId}::uuid
+            AND COALESCE(entity."properties"->'docIds', '[]'::jsonb)
+              @> jsonb_build_array(${documentId})
+          RETURNING entity."id"
+        )
         DELETE FROM "GraphEntity" AS e
         WHERE e."kbId" = ${kbId}::uuid
           AND (
@@ -599,17 +702,10 @@ ${chunkContent.slice(0, 4000)}
               WHERE r."sourceId" = e."id" OR r."targetId" = e."id"
             )
             OR (
-              -- Entities whose provenance (properties.docIds) cites only the
-              -- deleted document. The trailing edge check guards against
-              -- cascade-deleting relations contributed by other documents
-              -- (relation FKs are ON DELETE CASCADE).
+              -- Entities whose remaining provenance is empty. The trailing
+              -- edge check guards against cascade-deleting shared relations.
               jsonb_typeof(e."properties" -> 'docIds') = 'array'
-              AND jsonb_array_length(e."properties" -> 'docIds') > 0
-              AND NOT EXISTS (
-                SELECT 1
-                FROM jsonb_array_elements_text(e."properties" -> 'docIds') AS d(docId)
-                WHERE d.docId <> ${documentId}
-              )
+              AND jsonb_array_length(e."properties" -> 'docIds') = 0
               AND NOT EXISTS (
                 SELECT 1 FROM "GraphRelation" AS r
                 WHERE r."sourceId" = e."id" OR r."targetId" = e."id"
@@ -642,14 +738,20 @@ ${chunkContent.slice(0, 4000)}
         outgoingRelations: {
           include: { target: true },
         },
+        incomingRelations: {
+          include: { source: true },
+        },
       },
     });
 
     if (!entities.length) return 0;
 
-    // Simple BFS / Connected Components clustering for community detection
+    // Simple BFS / Connected Components clustering for community detection.
+    // Traversal follows BOTH outgoing and incoming edges so entities linked
+    // only via inbound relations still join their community.
     const visited = new Set<string>();
     const communities: Array<typeof entities> = [];
+    const CLUSTER_CAP = 30;
 
     const entityById = new Map<string, any>(entities.map((e: any) => [e.id, e]));
 
@@ -659,16 +761,33 @@ ${chunkContent.slice(0, 4000)}
       const queue: string[] = [entity.id];
       visited.add(entity.id);
 
-      while (queue.length > 0 && currentCluster.length < 30) {
+      while (queue.length > 0) {
+        if (currentCluster.length >= CLUSTER_CAP) {
+          // Cap reached: entities still sitting in the queue were marked
+          // visited but never joined a community. Roll back their visited
+          // marks so the outer loop can seed the next BFS from them instead
+          // of losing them from every community.
+          for (const pendingId of queue) {
+            visited.delete(pendingId);
+          }
+          queue.length = 0;
+          break;
+        }
         const currId = queue.shift()!;
         const curr = entityById.get(currId);
         if (!curr) continue;
         currentCluster.push(curr);
 
         for (const rel of curr.outgoingRelations || []) {
-          if (!visited.has(rel.targetId)) {
+          if (rel.targetId && !visited.has(rel.targetId)) {
             visited.add(rel.targetId);
             queue.push(rel.targetId);
+          }
+        }
+        for (const rel of curr.incomingRelations || []) {
+          if (rel.sourceId && !visited.has(rel.sourceId)) {
+            visited.add(rel.sourceId);
+            queue.push(rel.sourceId);
           }
         }
       }

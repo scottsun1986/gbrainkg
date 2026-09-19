@@ -37,6 +37,7 @@ const mockGbrainQuery = jest.fn().mockResolvedValue({
       docId: "doc-1",
       docTitle: "规则.md",
       snippet: "Compiled truth",
+      score: 0.9,
     },
   ],
   reranked: true,
@@ -967,6 +968,15 @@ describe("ChatService", () => {
       expect(hasPolarityConflict("Users are permitted to export raw logs", "Users are strictly forbidden from exporting raw logs")).toBe(true);
       expect(hasPolarityConflict("Users shall not export raw logs", "Users are strictly forbidden from exporting raw logs")).toBe(false);
     });
+
+    it("does not flag compatible lower/upper bounds, but flags inverted ones", () => {
+      expect(hasPolarityConflict("报价下限为 5 万元", "报价上限为 10 万元")).toBe(false);
+      expect(hasPolarityConflict("报价下限为 15 万元", "报价上限为 10 万元")).toBe(true);
+    });
+
+    it("detects expanded permission lexicons", () => {
+      expect(hasPolarityConflict("该环节为可选", "该环节禁止跳过")).toBe(true);
+    });
   });
 
   describe("statementSupportedBy", () => {
@@ -983,6 +993,11 @@ describe("ChatService", () => {
     it("rejects statements with hallucinated numbers", () => {
       const evidence = ["系统响应时间不得超过 800 毫秒。"];
       expect(statementSupportedBy("系统响应时间不得超过 500 毫秒 [1]", evidence, true)).toBe(false);
+    });
+
+    it("accepts a correct unit conversion as grounded", () => {
+      const evidence = ["系统响应时间不得超过 0.8s。"];
+      expect(statementSupportedBy("系统响应时间不得超过 800 毫秒 [1]", evidence, true)).toBe(true);
     });
   });
 
@@ -1164,5 +1179,4 @@ describe("ChatService", () => {
     });
   });
 });
-
 

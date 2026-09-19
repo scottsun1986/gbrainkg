@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -185,6 +186,70 @@ async def describe_pdf_page_with_vlm(
         return ''
 
 
+_IMAGE_SUFFIXES = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.tif', '.tiff'}
+
+# ``## 第 N 页`` / ``## Page N`` page markers emitted by the PDF/PPTX pipelines.
+_PAGE_HEADING_RE = re.compile(
+    r'^##\s*(?:第\s*)?(\d+)\s*(?:页|page)\s*$',
+    re.IGNORECASE | re.MULTILINE,
+)
+# Explicit page reference inside a placeholder comment (e.g. ``<!-- image: p3.png page 3 -->``).
+_PLACEHOLDER_PAGE_RE = re.compile(r'(?:第\s*(\d+)\s*页)|(?:page\s*[:#]?\s*(\d+))', re.IGNORECASE)
+# ``image[|picture|figure]`` followed by an optional ``:`` and an inline resource token.
+_PLACEHOLDER_TOKEN_RE = re.compile(
+    r'(image|picture|figure)\b\s*:?\s*(.*)$',
+    re.IGNORECASE,
+)
+
+
+def _resolve_placeholder_image(comment_text: str, source_path: Path | str) -> Path | None:
+    """Resolve a real image file referenced by an image placeholder comment.
+
+    Only tokens that carry a recognised image extension are considered, and the
+    file must actually exist. This deliberately rejects synthetic identifiers
+    such as ``slide-3-picture-2`` so the raw source document is never mistaken
+    for an image (see ``enrich_markdown_with_vlm``).
+    """
+    inner = re.sub(r'^\s*<!--|-->\s*$', '', (comment_text or '').strip()).strip()
+    if not inner:
+        return None
+    match = _PLACEHOLDER_TOKEN_RE.match(inner)
+    token = (match.group(2) if match else inner).strip().strip('"\'')
+    if not token:
+        return None
+    candidate = Path(token)
+    if candidate.suffix.lower() not in _IMAGE_SUFFIXES:
+        return None
+    source_path = Path(source_path)
+    candidates = [candidate] if candidate.is_absolute() else [source_path.parent / candidate, candidate]
+    for path in candidates:
+        try:
+            if path.is_file():
+                return path
+        except OSError:
+            continue
+    return None
+
+
+def _placeholder_page_index(comment_text: str, markdown: str, offset: int) -> int | None:
+    """Return the 0-indexed page for a placeholder, or None if it cannot be determined.
+
+    Priority: an explicit ``第 N 页`` / ``page N`` token inside the placeholder
+    comment, then the nearest preceding ``## 第 N 页`` heading in the markdown.
+    """
+    explicit = _PLACEHOLDER_PAGE_RE.search(comment_text or '')
+    if explicit:
+        raw = explicit.group(1) or explicit.group(2)
+        if raw and raw.isdigit():
+            return max(0, int(raw) - 1)
+    preceding = list(_PAGE_HEADING_RE.finditer(markdown, 0, max(0, offset)))
+    if preceding:
+        raw = preceding[-1].group(1)
+        if raw.isdigit():
+            return max(0, int(raw) - 1)
+    return None
+
+
 async def enrich_markdown_with_vlm(
     markdown: str,
     source_path: Path | str,
@@ -192,58 +257,110 @@ async def enrich_markdown_with_vlm(
     context_hint: str = '',
 ) -> tuple[str, dict[str, Any]]:
     """Scan markdown for image placeholders and enrich them with VLM descriptions.
-    
+
     Looks for patterns like:
     - <!-- image --> or <!-- picture --> or <!-- figure -->
-    - ![alt](path)
-    
-    For each found image reference, if the image file exists, describe it with VLM
-    and insert the description.
-    
+    - (optionally carrying a real media path, e.g. <!-- image: media/p1.png -->)
+
+    The VLM must only ever receive a real image resource. For every
+    placeholder we try, in order:
+    1. A path-like token inside the placeholder comment that resolves to an
+       existing image file (absolute, or relative to the source directory).
+    2. The source file itself, but ONLY when it is a standalone image upload.
+    3. For PDF sources, the page containing the placeholder (explicit page
+       token in the comment, or the nearest preceding ``## 第 N 页`` heading),
+       rendered to an image via describe_pdf_page_with_vlm.
+    If none of these yields an image, the placeholder is skipped with a
+    warning. The raw source document (pptx/docx/pdf bytes) is never sent to
+    the VLM as if it were an image.
+
     Returns:
         Tuple of (enriched_markdown, metadata_dict)
     """
     if not is_vlm_available():
         return markdown, {'vlm_enabled': False}
-    
-    import re
-    
+
     vlm_stats = {
         'vlm_enabled': True,
         'vlm_model': VLM_MODEL,
         'vlm_placeholders_found': 0,
         'vlm_descriptions_added': 0,
+        'vlm_placeholders_skipped': 0,
         'vlm_errors': 0,
     }
-    
-    # Find image placeholders
+
+    # Find image placeholders. Must also match the colon form emitted by the
+    # PPTX/Docling pipelines (`<!-- image: media/p1.png -->`); the previous
+    # pattern required whitespace right after the keyword, so every colon-form
+    # placeholder silently skipped VLM enrichment.
     placeholder_pattern = re.compile(
-        r'<!--\s*(?:image|picture|figure)(?:\s+[^>]*)??\s*-->',
+        r'<!--\s*(?:image|picture|figure)\b[^>]*?-->',
         re.IGNORECASE,
     )
-    
+
     placeholders = list(placeholder_pattern.finditer(markdown))
     vlm_stats['vlm_placeholders_found'] = len(placeholders)
-    
+
     if not placeholders:
         return markdown, vlm_stats
-    
+
     logger.info('Found %d image placeholders to enrich with VLM', len(placeholders))
-    
+
+    source_path = Path(source_path)
+    source_suffix = source_path.suffix.lower()
+    source_is_image = source_suffix in _IMAGE_SUFFIXES
+
     # Process placeholders in reverse order to preserve offsets
     for match in reversed(placeholders):
+        comment_text = match.group(0)
         try:
-            description = await describe_image_with_vlm(
-                Path(source_path),
-                context_hint=context_hint,
-            )
+            image_path = _resolve_placeholder_image(comment_text, source_path)
+            if image_path is None and source_is_image:
+                # Standalone image upload: the source file IS the real image.
+                image_path = source_path
+
+            if image_path is not None:
+                description = await describe_image_with_vlm(
+                    image_path,
+                    context_hint=context_hint,
+                )
+            elif source_suffix == '.pdf':
+                page_index = _placeholder_page_index(comment_text, markdown, match.start())
+                if page_index is None:
+                    logger.warning(
+                        'Skipping VLM enrichment for placeholder at offset %d in %s: '
+                        'page position could not be determined',
+                        match.start(), source_path.name,
+                    )
+                    vlm_stats['vlm_placeholders_skipped'] += 1
+                    continue
+                description = await describe_pdf_page_with_vlm(
+                    source_path,
+                    page_index,
+                    context_hint=context_hint,
+                )
+            else:
+                logger.warning(
+                    'Skipping VLM enrichment for placeholder at offset %d in %s: '
+                    'no real image resource could be resolved for this placeholder '
+                    '(the source document itself is never sent to the VLM)',
+                    match.start(), source_path.name,
+                )
+                vlm_stats['vlm_placeholders_skipped'] += 1
+                continue
+
             if description:
                 # Insert description after the placeholder
                 insertion = f'\n\n> **[图表描述 - VLM 自动生成]**\n>\n> {description}\n'
                 markdown = markdown[:match.end()] + insertion + markdown[match.end():]
                 vlm_stats['vlm_descriptions_added'] += 1
+            else:
+                logger.warning(
+                    'VLM returned no description for placeholder at offset %d in %s',
+                    match.start(), source_path.name,
+                )
         except Exception as exc:
             logger.warning('VLM enrichment failed for placeholder at offset %d: %s', match.start(), exc)
             vlm_stats['vlm_errors'] += 1
-    
+
     return markdown, vlm_stats

@@ -7,7 +7,7 @@ import {
   Optional,
 } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
-import { Queue, QueueEvents } from "bullmq";
+import { Job, Queue, QueueEvents } from "bullmq";
 import { getPrismaClient } from "../prisma";
 import { PermissionService } from "../permission/permission.service";
 import { BrainRepoAdapter } from "@llmwiki/gbrain-adapter";
@@ -62,7 +62,15 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
       where: { status: "active" },
       select: { id: true, brainRepo: { select: { id: true } } },
     });
-    await Promise.all(users.map((user) => this.ensureUserBrainRepo(user.id)));
+    // Bounded fan-out: an unbounded Promise.all over a large user base (each
+    // call doing its own model-config refresh + DB upsert) exhausted the Prisma
+    // connection pool and hung module init, so the HTTP listener never bound.
+    const initConcurrency = Math.max(1, Number(process.env.BRAIN_REPO_INIT_CONCURRENCY || 16));
+    for (let i = 0; i < users.length; i += initConcurrency) {
+      await Promise.all(
+        users.slice(i, i + initConcurrency).map((user) => this.ensureUserBrainRepo(user.id)),
+      );
+    }
     if (process.env.GBRAIN_MIGRATE_ON_STARTUP === "1") {
       this.logger.log(
         `Starting one-time GBrain migration for ${users.length} active user(s).`,
@@ -130,7 +138,9 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
   }
 
   async ensureUserBrainRepo(userId: string) {
-    await this.modelConfigService.applyRuntimeConfig();
+    // Runtime model config is applied once during module init (and on demand
+    // elsewhere); refreshing it per user here multiplied by the whole user base
+    // and was a major startup hazard.
     const existing = await this.prisma.brainRepo.findUnique({
       where: { userId },
     });
@@ -370,47 +380,70 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
     }
     await this.gbrain.initializeSource(definition.sourceKey);
 
-    // A newly parsed document is intentionally marked indexing until this
-    // sync succeeds. Include only the explicitly changed indexing documents;
-    // normal reconciliation still excludes unfinished documents.
-    const desired = await this.prisma.document.findMany({
-      where: {
-        kbId: { in: definition.kbIds },
-        OR: [
-          { status: "published" },
-          ...(changedDocIds.length
-            ? [{ id: { in: changedDocIds }, status: "indexing" }]
-            : []),
-        ],
-      },
-      select: { id: true, kbId: true, version: true, updatedAt: true },
-    });
-    const desiredIds = new Set(desired.map((doc) => doc.id));
-    const existing = await db.brainSourceDocument.findMany({
-      where: { sourceId: source.id },
-      select: { documentId: true, syncedVersion: true, syncedAt: true },
-    });
-    const existingById = new Map<string, any>(
-      existing.map((doc: any) => [doc.documentId, doc] as [string, any]),
-    );
-    const changedSet = new Set(changedDocIds);
     const materialized = options.forceFull
       ? false
       : await this.gbrain.isSourceMaterialized(
           `gbrain://source/${definition.sourceKey}`,
         );
+
+    // Incremental fast path: when an already-materialized source receives an
+    // explicit batch of changed documents, only those documents are relevant.
+    // Skip the full inventory scan and the stale sweep (deletions are handled
+    // by onKnowledgeDeleted and periodic reconciliation). This turns an O(N)
+    // scan per sync into an O(batch) lookup — the difference between ~0.3
+    // docs/s and a scalable bulk import.
+    const incremental =
+      !options.forceFull && materialized && changedDocIds.length > 0;
+
+    const desired = incremental
+      ? await this.prisma.document.findMany({
+          where: {
+            id: { in: changedDocIds },
+            kbId: { in: definition.kbIds },
+            status: { in: ["published", "indexing"] },
+          },
+          select: { id: true, kbId: true, version: true, updatedAt: true },
+        })
+      : await this.prisma.document.findMany({
+          where: {
+            kbId: { in: definition.kbIds },
+            OR: [
+              { status: "published" },
+              ...(changedDocIds.length
+                ? [{ id: { in: changedDocIds }, status: "indexing" }]
+                : []),
+            ],
+          },
+          select: { id: true, kbId: true, version: true, updatedAt: true },
+        });
+    const desiredIds = new Set(desired.map((doc) => doc.id));
+    // `existing` (all source↔doc mappings) is only needed to detect stale
+    // documents and version drift during a full reconcile; the incremental path
+    // already knows exactly which docs changed.
+    const existing: any[] = incremental
+      ? []
+      : await db.brainSourceDocument.findMany({
+          where: { sourceId: source.id },
+          select: { documentId: true, syncedVersion: true, syncedAt: true },
+        });
+    const existingById = new Map<string, any>(
+      existing.map((doc: any) => [doc.documentId, doc] as [string, any]),
+    );
+    const changedSet = new Set(changedDocIds);
     const toSync = options.forceFull
       ? desired
-      : desired.filter((doc) => {
-          const previous = existingById.get(doc.id);
-          return (
-            !materialized ||
-            changedSet.has(doc.id) ||
-            !previous ||
-            doc.version > previous.syncedVersion ||
-            doc.updatedAt > previous.syncedAt
-          );
-        });
+      : incremental
+        ? desired
+        : desired.filter((doc) => {
+            const previous = existingById.get(doc.id);
+            return (
+              !materialized ||
+              changedSet.has(doc.id) ||
+              !previous ||
+              doc.version > previous.syncedVersion ||
+              doc.updatedAt > previous.syncedAt
+            );
+          });
     if (options.forceFull || toSync.length) {
       const documents = await this.prisma.document.findMany({
         where: { id: { in: toSync.map((doc) => doc.id) } },
@@ -627,38 +660,68 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
     const db: any = this.prisma as any;
     const staleDefinitions: typeof plan = [];
     const rebuilt: string[] = [];
+    const publishedCounts = new Map<string, number>();
 
     for (const definition of plan) {
-      const published = await this.prisma.document.findMany({
-        where: { kbId: { in: definition.kbIds }, status: "published" },
-        select: { id: true, version: true, updatedAt: true },
-      });
       const source = await db.brainSource.findUnique({
         where: { sourceKey: definition.sourceKey },
         select: { id: true },
       });
-      const mappings = source
-        ? await db.brainSourceDocument.findMany({
-            where: { sourceId: source.id },
-            select: { documentId: true, syncedVersion: true, syncedAt: true },
-          })
-        : [];
-      const mappedById = new Map<string, any>(
-        mappings.map((item: any) => [item.documentId, item]),
-      );
-      const mappingFresh =
-        mappings.length === published.length &&
-        published.every((document) => {
-          const mapping = mappedById.get(document.id);
-          return Boolean(
-            mapping &&
-              mapping.syncedVersion >= document.version &&
-              new Date(mapping.syncedAt).getTime() >=
-                new Date(document.updatedAt).getTime(),
-          );
-        });
+      // Keep the query path O(1) in application memory. The old code loaded
+      // every published document and every source mapping on every chat query;
+      // at 100k documents that created a large allocation and network transfer
+      // before semantic-cache lookup. Let PostgreSQL perform two index-backed
+      // EXISTS checks and return only a count + one boolean instead.
+      const inventory = source
+        ? await this.prisma.$queryRaw<Array<{ publishedCount: number | bigint; mappingStale: boolean }>>`
+            SELECT
+              (
+                SELECT COUNT(*)
+                FROM "Document" d
+                WHERE d."kbId" = ANY(${definition.kbIds}::uuid[])
+                  AND d.status = 'published'
+              ) AS "publishedCount",
+              (
+                EXISTS (
+                  SELECT 1
+                  FROM "Document" d
+                  LEFT JOIN "BrainSourceDocument" m
+                    ON m."documentId" = d.id
+                   AND m."sourceId" = ${source.id}::uuid
+                  WHERE d."kbId" = ANY(${definition.kbIds}::uuid[])
+                    AND d.status = 'published'
+                    AND (
+                      m."documentId" IS NULL
+                      OR m."syncedVersion" < d.version
+                      OR m."syncedAt" < d."updatedAt"
+                    )
+                  LIMIT 1
+                )
+                OR EXISTS (
+                  SELECT 1
+                  FROM "BrainSourceDocument" m
+                  LEFT JOIN "Document" d ON d.id = m."documentId"
+                  WHERE m."sourceId" = ${source.id}::uuid
+                    AND (
+                      d.id IS NULL
+                      OR d.status <> 'published'
+                      OR NOT (d."kbId" = ANY(${definition.kbIds}::uuid[]))
+                    )
+                  LIMIT 1
+                )
+              ) AS "mappingStale"
+          `
+        : [{
+            publishedCount: await this.prisma.document.count({
+              where: { kbId: { in: definition.kbIds }, status: "published" },
+            }),
+            mappingStale: true,
+          }];
+      const publishedCount = Number(inventory[0]?.publishedCount || 0);
+      publishedCounts.set(definition.sourceKey, publishedCount);
+      const mappingFresh = !inventory[0]?.mappingStale;
       const indexedPages = indexedPageCounts.get(definition.sourceKey);
-      const readPlaneFresh = indexedPages === published.length;
+      const readPlaneFresh = indexedPages === publishedCount;
       if (mappingFresh && readPlaneFresh) continue;
 
       staleDefinitions.push(definition);
@@ -666,9 +729,7 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
 
     if (staleDefinitions.length) {
       for (const definition of staleDefinitions) {
-        const publishedCount = await this.prisma.document.count({
-          where: { kbId: { in: definition.kbIds }, status: "published" },
-        });
+        const publishedCount = publishedCounts.get(definition.sourceKey) || 0;
         if (publishedCount <= 1) {
           await this.syncSourceDefinition(definition, userId, [], {
             forceFull: true,
@@ -875,36 +936,120 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
     docId: string,
     topics: string[],
   ): Promise<number> {
-    this.logger.log(
-      `Knowledge published in KB ${kbId}. Calculating affected users...`,
-    );
-
+    const sourceKey = sourceKeyForKnowledgeBase(kbId);
     const publishedDocument = await this.prisma.document.findUnique({
       where: { id: docId },
       select: { version: true },
     });
     const publishVersion = publishedDocument?.version || Date.now();
-    const sourceKey = sourceKeyForKnowledgeBase(kbId);
+    return this.coalesceSourceSync(kbId, sourceKey, docId, topics, publishVersion);
+  }
+
+  /**
+   * Coalesce per-document publishes into ONE source-sync job per knowledge-base
+   * Source. Previously every document enqueued its own job (jobId contained the
+   * docId), and the dirty-compiler worker runs serially, so a bulk import ran
+   * one full source sync per document: two O(N) inventory scans plus three
+   * GBrain CLI invocations each, i.e. O(N^2) overall. Merging dirty docIds into
+   * a single delayed job lets `syncKnowledgeBaseSource` ingest the whole batch
+   * with one scan and one CLI call, which is what makes 10 万级 imports finish
+   * in hours instead of days.
+   */
+  private async coalesceSourceSync(
+    kbId: string,
+    sourceKey: string,
+    docId: string,
+    topics: string[],
+    publishVersion: number,
+  ): Promise<number> {
+    const baseJobId = `source-sync-${sourceKey}`;
+    const batchSize = Math.max(1, Number(process.env.SOURCE_SYNC_BATCH_SIZE || 100));
+    const debounceMs = Math.max(0, Number(process.env.SOURCE_SYNC_DEBOUNCE_MS || 4000));
+
+    const mergeInto = async (job: Job): Promise<number> => {
+      const data = (job.data || {}) as any;
+      const docIds = Array.from(new Set<string>([...(data.docIds || []), docId]));
+      const mergedTopics = Array.from(new Set<string>([...(data.topics || []), ...topics]));
+      await job.updateData({ kbId, docIds, topics: mergedTopics });
+      if (docIds.length >= batchSize && typeof (job as any).promote === "function") {
+        // Batch is full: flush immediately instead of waiting out the debounce.
+        await (job as any).promote().catch(() => undefined);
+      }
+      return docIds.length;
+    };
+
+    const existing = await this.compilerQueue.getJob(baseJobId).catch(() => undefined);
+    if (existing) {
+      const state = await existing.getState().catch(() => "unknown");
+      if (["delayed", "waiting", "prioritized", "paused", "waiting-children"].includes(state)) {
+        return mergeInto(existing as Job);
+      }
+      // A sync is already running for this source. Do not mutate its data;
+      // enqueue a unique follow-up so this document is not lost.
+      await this.compilerQueue.add(
+        "source-sync",
+        { kbId, docIds: [docId], topics },
+        {
+          jobId: `${baseJobId}-${docId}-v${publishVersion}`,
+          priority: CompilePriority.NORMAL,
+          attempts: 30,
+          backoff: { type: "fixed", delay: 20_000 },
+          removeOnComplete: true,
+          removeOnFail: 500,
+        },
+      );
+      return 1;
+    }
+
     await this.compilerQueue.add(
       "source-sync",
       { kbId, docIds: [docId], topics },
       {
-        jobId: `source-sync-${sourceKey}-${docId}-v${publishVersion}`,
+        jobId: baseJobId,
+        delay: debounceMs,
         priority: CompilePriority.NORMAL,
         // The core-indexing gate defers publish until every required chunk
-        // carries an embedding. Large documents take minutes to embed, so a
-        // 3-attempt/3s-backoff window exhausts long before enrichment
-        // finishes and strands the document in 'indexing' forever. Keep
-        // retrying across a ~10-minute window instead (enrichment completion
-        // also re-drives the publish, see enrichment.processor).
+        // carries an embedding. Keep retrying across a long window; enrichment
+        // completion re-drives the publish (see enrichment.processor).
         attempts: 30,
         backoff: { type: "fixed", delay: 20_000 },
-        removeOnComplete: 200,
+        // Reuse the fixed jobId after completion so the next batch starts fresh.
+        removeOnComplete: true,
         removeOnFail: 500,
       },
     );
-    this.logger.log(`Added source-centric sync for document ${docId} in ${sourceKey}.`);
+    // A concurrent publish may have raced the add; merge this docId in to be
+    // sure it is never dropped.
+    const created = await this.compilerQueue.getJob(baseJobId).catch(() => undefined);
+    if (created) {
+      const state = await created.getState().catch(() => "unknown");
+      if (state === "delayed" || state === "waiting" || state === "prioritized") {
+        return mergeInto(created as Job);
+      }
+    }
     return 1;
+  }
+
+  /**
+   * Re-queue a subset of documents whose core indexing is not yet complete so a
+   * single slow document cannot block a whole coalesced batch.
+   */
+  async requeueIncompleteSourceSync(kbId: string, docIds: string[], delayMs = 20_000): Promise<void> {
+    if (!docIds.length) return;
+    const sourceKey = sourceKeyForKnowledgeBase(kbId);
+    await this.compilerQueue.add(
+      "source-sync",
+      { kbId, docIds, topics: [] },
+      {
+        jobId: `source-sync-${sourceKey}-retry-${Date.now()}`,
+        delay: Math.max(0, delayMs),
+        priority: CompilePriority.NORMAL,
+        attempts: 30,
+        backoff: { type: "fixed", delay: 20_000 },
+        removeOnComplete: true,
+        removeOnFail: 500,
+      },
+    );
   }
 
   async onKnowledgeDeleted(kbId: string, docId: string) {

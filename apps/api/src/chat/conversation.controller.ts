@@ -48,7 +48,44 @@ export class ConversationController {
     const message = await this.prisma.message.findFirst({ where: { id: messageId, conversationId, conversation: { userId }, role: 'assistant' } });
     if (!message) throw new NotFoundException('Message not found.');
     const feedback = ['useful', 'not_useful'].includes(body?.feedback) ? body.feedback : null;
-    return this.prisma.message.update({ where: { id: messageId }, data: { feedback } });
+    const updated = await this.prisma.message.update({ where: { id: messageId }, data: { feedback } });
+
+    // Negative feedback becomes a durable triage case instead of a dead flag.
+    // Repeated clicks update the existing open case rather than multiplying
+    // training/evaluation work items for the same answer.
+    if (feedback === 'not_useful') {
+      const [questionMessage, existingCase] = await Promise.all([
+        this.prisma.message.findFirst({
+          where: {
+            conversationId,
+            role: 'user',
+            createdAt: { lte: message.createdAt },
+          },
+          orderBy: { createdAt: 'desc' },
+          select: { content: true },
+        }),
+        this.prisma.feedbackCase.findFirst({
+          where: { messageId, status: { in: ['new', 'triaging'] } },
+          select: { id: true },
+        }),
+      ]);
+      const correction = String(body?.correction || '').trim().slice(0, 4000) || null;
+      const data = {
+        question: questionMessage?.content || '',
+        answer: message.content,
+        evidence: message.citationsSummary ?? undefined,
+        trace: message.processingTrace ?? undefined,
+        correction,
+      };
+      if (existingCase) {
+        await this.prisma.feedbackCase.update({ where: { id: existingCase.id }, data });
+      } else {
+        await this.prisma.feedbackCase.create({
+          data: { userId, messageId, ...data },
+        });
+      }
+    }
+    return updated;
   }
 
   @Get(':conversationId/messages/:messageId/trace')

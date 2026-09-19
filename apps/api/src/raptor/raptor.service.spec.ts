@@ -108,6 +108,29 @@ describe('RaptorService', () => {
     });
   });
 
+  it('invalidates document and KB-global nodes before scheduling a rebuild', async () => {
+    const deleteMany = jest.fn().mockResolvedValue({ count: 1 });
+    const transaction = jest.fn().mockImplementation((actions) => Promise.all(actions));
+    (service as any).prisma = { raptorNode: { deleteMany }, $transaction: transaction };
+    const schedule = jest.spyOn(service, 'scheduleBuildKbGlobalTree').mockImplementation(() => undefined);
+
+    await service.removeDocument('kb-1', 'doc-1');
+
+    expect(deleteMany).toHaveBeenNthCalledWith(1, { where: { documentId: 'doc-1' } });
+    expect(deleteMany).toHaveBeenNthCalledWith(2, { where: { kbId: 'kb-1', level: 2 } });
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(schedule).toHaveBeenCalledWith('kb-1');
+  });
+
+  it('removes a stale KB-global node when no document summaries remain', async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const deleteMany = jest.fn().mockResolvedValue({ count: 1 });
+    (service as any).prisma = { raptorNode: { findMany, deleteMany } };
+
+    await expect(service.buildKbGlobalTree('kb-empty')).resolves.toEqual({ nodes: 0 });
+    expect(deleteMany).toHaveBeenCalledWith({ where: { kbId: 'kb-empty', level: 2 } });
+  });
+
   it('searchGlobal prioritizes Level 2 KB global nodes over Level 1 document nodes', async () => {
     const findMany = jest.fn().mockResolvedValue([
       { id: 'n-doc', kbId: 'kb-1', documentId: 'doc-1', level: 1, title: '请假制度全文', content: '员工手册全文概述' },

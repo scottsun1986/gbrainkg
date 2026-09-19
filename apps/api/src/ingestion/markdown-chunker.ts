@@ -323,7 +323,12 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
             tableRowsCount = tableInfo.rowsKv.length;
             // Inject structured row semantics (invisible in HTML/purified render, fully indexed by BM25/search)
             const rowsToInject = tableInfo.rowsKv.slice(0, 40);
-            const tableSemantics = `\n\n<!-- 表格结构化行语义:\n${rowsToInject.join('\n')}\n-->`;
+            // Table-level summary: row/column shape makes cross-row / cross-column
+            // comparison questions ("A 部门 Q1 比 B 部门高多少") answerable even
+            // though the per-row key/value comments alone flatten the 2D structure.
+            const columnList = tableInfo.headers.length > 0 ? `，列: ${tableInfo.headers.join(' / ')}` : '';
+            const tableSummary = `<!-- 表格结构摘要: 共 ${tableInfo.rowsKv.length} 行${columnList}；下表为行级语义 -->`;
+            const tableSemantics = `\n\n${tableSummary}\n<!-- 表格结构化行语义:\n${rowsToInject.join('\n')}\n-->`;
             withHeading += tableSemantics;
           }
         }

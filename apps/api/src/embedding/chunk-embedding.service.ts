@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { getPrismaClient } from '../prisma';
 import { EmbeddingService } from './embedding.service';
 
@@ -24,6 +25,19 @@ export class ChunkEmbeddingService {
   private readonly readBatchSize = Math.max(1, Number(process.env.CHUNK_EMBEDDING_READ_BATCH || 64));
 
   constructor(private readonly embeddingService: EmbeddingService) {}
+
+  /**
+   * Check if a vector literal is valid (no NaN/Infinity values).
+   * PostgreSQL ::vector cast fails if any element is NaN or Infinity.
+   * item.vec is a string like "[0.1,0.2,...]"
+   */
+  private isValidVectorLiteral(vecStr: string): boolean {
+    // Parse the string representation of the vector
+    const match = vecStr.match(/^\[(.*)\]$/);
+    if (!match) return false;
+    const elements = match[1].split(',').map((s) => parseFloat(s.trim()));
+    return elements.length > 0 && elements.every((v) => Number.isFinite(v));
+  }
 
   isEnabled(): boolean {
     return this.embeddingService.isEnabled();
@@ -127,18 +141,28 @@ export class ChunkEmbeddingService {
     for (let start = 0; start < rows.length; start += this.writeBatchSize) {
       const slice = rows.slice(start, start + this.writeBatchSize);
 
-      // Content-hash deduplication: check if identical text already has an embedding in Chunk table
+      // Content-hash deduplication: check if identical text already has an
+      // embedding in Chunk table. Matching runs on md5(content) so the query
+      // hits the chunk_content_md5_idx expression index (gin_trgm cannot
+      // serve equality); the SQL expression must stay byte-identical to the
+      // index definition.
       const existingVecByContent = new Map<string, string>();
       try {
         const uniqueContents = Array.from(new Set(slice.map((r) => r.content))).filter(Boolean);
         if (uniqueContents.length > 0) {
-          const cached = await this.prisma.$queryRaw<Array<{ content: string; vec: string }>>`
-            SELECT DISTINCT ON (content) content, embedding::text as vec
+          const contentByHash = new Map<string, string>();
+          for (const content of uniqueContents) {
+            contentByHash.set(createHash('md5').update(content).digest('hex'), content);
+          }
+          const hashes = Array.from(contentByHash.keys());
+          const cached = await this.prisma.$queryRaw<Array<{ hash: string; vec: string }>>`
+            SELECT DISTINCT ON (md5(content)) md5(content) AS hash, embedding::text as vec
             FROM "Chunk"
-            WHERE content = ANY(${uniqueContents}::text[]) AND embedding IS NOT NULL
+            WHERE md5(content) = ANY(${hashes}::text[]) AND embedding IS NOT NULL
           `;
           for (const c of cached || []) {
-            if (c.content && c.vec) existingVecByContent.set(c.content, c.vec);
+            const content = c.hash ? contentByHash.get(c.hash) : undefined;
+            if (content && c.vec) existingVecByContent.set(content, c.vec);
           }
         }
       } catch {
@@ -185,10 +209,20 @@ export class ChunkEmbeddingService {
 
       // High-performance batch vector write: executes a single SQL statement for the batch
       if (toStore.length > 0) {
+        // 单个含 NaN/Infinity 的向量字面量会让整批 ::vector 转换失败，
+        // 写库前先剔除非法条目并告警，只让合法向量进入批量 VALUES。
+        const validStore = toStore.filter((item) => {
+          if (this.isValidVectorLiteral(item.vec)) return true;
+          failed += 1;
+          this.logger.warn(
+            `Dropped non-finite embedding vector for chunk ${item.id}; it will be retried on the next embedding pass.`,
+          );
+          return false;
+        });
         let batchSaved = false;
-        if (typeof (this.prisma as any).$executeRawUnsafe === 'function') {
+        if (validStore.length > 0 && typeof (this.prisma as any).$executeRawUnsafe === 'function') {
           try {
-            const values = toStore
+            const values = validStore
               .map((item) => `('${item.id}'::uuid, '${item.vec}'::vector)`)
               .join(',');
             await this.prisma.$executeRawUnsafe(`
@@ -197,7 +231,7 @@ export class ChunkEmbeddingService {
               FROM (VALUES ${values}) AS v(id, vec)
               WHERE c.id = v.id
             `);
-            stored += toStore.length;
+            stored += validStore.length;
             batchSaved = true;
           } catch (batchErr) {
             this.logger.debug(
@@ -206,7 +240,7 @@ export class ChunkEmbeddingService {
           }
         }
         if (!batchSaved) {
-          for (const item of toStore) {
+          for (const item of validStore) {
             try {
               await this.prisma.$executeRaw`
                 UPDATE "Chunk" SET embedding = ${item.vec}::vector WHERE id = ${item.id}::uuid

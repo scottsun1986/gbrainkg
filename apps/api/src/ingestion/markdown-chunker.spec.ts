@@ -84,6 +84,16 @@ describe('splitMarkdownIntoChunks', () => {
     expect(chunks[1].content).toContain('| 岗位 | 差旅标准 | 住宿上限 |');
   });
 
+  it('emits a table-level shape summary for cross-row/column questions', () => {
+    const tableHeader = '| 部门 | Q1 销售额 | Q2 销售额 |\n| --- | --- | --- |';
+    const rows = ['| A | 100 | 120 |', '| B | 90 | 150 |'].join('\n');
+    const chunks = splitMarkdownIntoChunks(`# 销售\n\n${tableHeader}\n${rows}`);
+    const joined = chunks.map((c) => c.content).join('\n');
+    expect(joined).toContain('表格结构摘要');
+    expect(joined).toContain('共 2 行');
+    expect(joined).toContain('部门 / Q1 销售额 / Q2 销售额');
+  });
+
   it('stitches a table across a page break by carrying the header forward', () => {
     const doc = [
       '# 安全违规对照表',

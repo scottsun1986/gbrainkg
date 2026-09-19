@@ -12,7 +12,13 @@ import { readCanonicalDocument } from "./canonical-document";
 import { getSharedBrainRepoAdapter } from "./brain-adapter.provider";
 import { ChunkEmbeddingService } from "../embedding/chunk-embedding.service";
 
-@Processor("dirty-compiler-queue")
+// Cross-source parallelism: different knowledge bases own different GBrain
+// repositories, so their syncs are independent. Same-source syncs remain
+// serialized by the coalesced jobId in BrainCompilerService. Previously this
+// worker ran at BullMQ's default concurrency of 1, serializing ALL sources.
+@Processor("dirty-compiler-queue", {
+  concurrency: Math.max(1, Number(process.env.COMPILER_QUEUE_CONCURRENCY || 4)),
+})
 export class BrainCompilerProcessor extends WorkerHost {
   private readonly logger = new Logger(BrainCompilerProcessor.name);
   private prisma = getPrismaClient();
@@ -71,7 +77,7 @@ export class BrainCompilerProcessor extends WorkerHost {
     // knowledge-base Source, therefore a publish event produces one sync even
     // when thousands of users can read it.
     if (job.name === "source-sync") {
-      const { kbId, docIds = [] } = job.data;
+      let { kbId, docIds = [] } = job.data;
       // Core-indexing gate: publishing a document before its required chunks
       // all carry embeddings would push a partially indexed version to GBrain.
       // indexReadiness 'ready' short-circuits the per-chunk stats query.
@@ -81,11 +87,27 @@ export class BrainCompilerProcessor extends WorkerHost {
           const detail = incomplete
             .map((d) => `${d.id} (${d.missing}/${d.total} chunks missing embeddings)`)
             .join(", ");
-          // Keep the documents in 'indexing' and let BullMQ retry with
-          // backoff; throwing skips the sync and the publish update entirely.
-          const message = `Source publish deferred, core indexing incomplete: ${detail}`;
-          this.logger.warn(message);
-          throw new Error(message);
+          const incompleteIds = new Set(incomplete.map((d) => d.id));
+          const readyIds = docIds.filter((id: string) => !incompleteIds.has(id));
+          if (readyIds.length) {
+            // A coalesced batch may contain a few stragglers. Sync the ready
+            // documents now and re-queue only the incomplete subset, so one
+            // slow document can no longer block an entire batch.
+            this.logger.warn(
+              `Source sync batch partially deferred (${incomplete.length} incomplete, ${readyIds.length} ready): ${detail}`,
+            );
+            await this.compilerService.requeueIncompleteSourceSync(
+              kbId,
+              incomplete.map((d) => d.id),
+            );
+            docIds = readyIds;
+          } else {
+            // Keep the documents in 'indexing' and let BullMQ retry with
+            // backoff; throwing skips the sync and the publish update entirely.
+            const message = `Source publish deferred, core indexing incomplete: ${detail}`;
+            this.logger.warn(message);
+            throw new Error(message);
+          }
         }
       }
       const start = Date.now();

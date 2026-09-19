@@ -1,7 +1,7 @@
 import { IngestionService } from './ingestion.service';
 
 const mockPrisma = {
-  document: { findUnique: jest.fn(), update: jest.fn() },
+  document: { findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
   chunk: { deleteMany: jest.fn(), createMany: jest.fn() },
   $transaction: jest.fn(),
 };
@@ -16,6 +16,8 @@ jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => mockPrisma) }))
 jest.mock('node:fs/promises', () => ({
   readFile: (...args: unknown[]) => mockReadFile(...args),
   writeFile: jest.fn(),
+  rename: jest.fn().mockResolvedValue(undefined),
+  unlink: jest.fn().mockResolvedValue(undefined),
 }));
 jest.mock('@firecrawl/anydoc', () => ({ toMarkdown: jest.fn() }));
 
@@ -29,6 +31,7 @@ describe('ingestion version fencing', () => {
     jest.clearAllMocks();
     delete process.env.AUTO_GRAPH_EXTRACT_ENABLED;
     mockPrisma.document.update.mockResolvedValue({});
+    mockPrisma.document.updateMany.mockResolvedValue({ count: 1 });
     enrichQueue.add.mockResolvedValue({});
     mockPrisma.$transaction.mockImplementation(async (arg: unknown) => {
       if (typeof arg === 'function') return (arg as (client: typeof tx) => unknown)(tx);

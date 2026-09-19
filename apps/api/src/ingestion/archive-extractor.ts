@@ -174,6 +174,29 @@ async function extractZipEntries(
     const safePath = sanitizeArchiveEntryPath(entry.entryName);
     if (!safePath) continue;
 
+    if (rawItems.length >= maxFiles) {
+      throw new BadRequestException(`压缩包内文件数量超出安全限制 (${maxFiles} 个)`);
+    }
+
+    // Pre-check the declared uncompressed size BEFORE inflating anything into
+    // memory (entry.getData() would otherwise materialize a zip-bomb entry
+    // first and only reject it afterwards). Mirrors the streaming guard used
+    // by the TAR path below. A forged header is still caught by the real-size
+    // check after extraction.
+    const declaredSize = Number(entry.header?.size ?? -1);
+    if (Number.isFinite(declaredSize) && declaredSize >= 0) {
+      if (declaredSize > maxSingleFileBytes) {
+        throw new BadRequestException(
+          `压缩包内文件 "${safePath}" 超出单文件最大限制 (${Math.round(maxSingleFileBytes / (1024 * 1024))}MB)`,
+        );
+      }
+      if (totalBytes + declaredSize > maxTotalBytes) {
+        throw new BadRequestException(
+          `压缩包解压总大小超出安全上限 (${Math.round(maxTotalBytes / (1024 * 1024))}MB)`,
+        );
+      }
+    }
+
     const ext = extname(safePath).toLowerCase();
     let data: Buffer;
     try {
@@ -202,10 +225,6 @@ async function extractZipEntries(
       throw new BadRequestException(
         `压缩包解压总大小超出安全上限 (${Math.round(maxTotalBytes / (1024 * 1024))}MB)`,
       );
-    }
-
-    if (rawItems.length >= maxFiles) {
-      throw new BadRequestException(`压缩包内文件数量超出安全限制 (${maxFiles} 个)`);
     }
 
     rawItems.push({ relativePath: safePath, buffer: data });

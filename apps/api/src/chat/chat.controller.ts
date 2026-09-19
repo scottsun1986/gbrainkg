@@ -177,6 +177,18 @@ export class ChatController {
               latencyMs: Date.now() - requestStartedAt,
             },
           });
+          const citationRows = citations
+            .map((item: any) => item?.timeline_entry || {})
+            .filter((item: any) => item.document_id && item.snippet)
+            .map((item: any) => ({
+              messageId: created.id,
+              documentId: item.document_id,
+              kbId: item.source_kb || null,
+              snippet: String(item.snippet).slice(0, 12_000),
+            }));
+          if (citationRows.length > 0) {
+            await this.prisma.citation.createMany({ data: citationRows });
+          }
           upsertPersistenceTrace("success", "回答、引用和处理链路已保存");
           await this.prisma.message.update({
             where: { id: created.id },

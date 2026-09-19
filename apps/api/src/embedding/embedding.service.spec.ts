@@ -120,4 +120,31 @@ describe('EmbeddingService', () => {
       (global as any).fetch = originalFetch;
     }
   });
+
+  it('does not reuse a cached vector after the embedding route changes', async () => {
+    const originalFetch = global.fetch;
+    const dynamicConfig = {
+      getDefault: jest.fn()
+        .mockResolvedValueOnce({
+          provider: { baseUrl: 'https://a.example.com/v1', apiKey: 'a' },
+          modelName: 'shared-name', dimensions: 4,
+        })
+        .mockResolvedValueOnce({
+          provider: { baseUrl: 'https://b.example.com/v1', apiKey: 'b' },
+          modelName: 'shared-name', dimensions: 4,
+        }),
+    } as any;
+    const isolated = new EmbeddingService(dynamicConfig);
+    const fetchMock = jest.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: [{ index: 0, embedding: [1, 0, 0, 0] }] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: [{ index: 0, embedding: [0, 1, 0, 0] }] }) });
+    (global as any).fetch = fetchMock;
+    try {
+      await expect(isolated.embedOne('same text')).resolves.toEqual([1, 0, 0, 0]);
+      await expect(isolated.embedOne('same text')).resolves.toEqual([0, 1, 0, 0]);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      (global as any).fetch = originalFetch;
+    }
+  });
 });

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import html
+import ipaddress
 import logging
 import os
 import re
@@ -14,7 +15,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
@@ -59,7 +60,19 @@ def reserve_task(task_id: str, filename: str, parser_type: str) -> None:
         raise HTTPException(status_code=503, detail="Parser capacity exhausted", headers={"Retry-After": "5"})
     tasks[task_id] = {"status": "queued", "filename": filename, "parser_type": parser_type, "created_at": time.time()}
 _torchvision_compat_lib = None
-_baidu_access_token: tuple[str, float] | None = None
+# Baidu OAuth token cache keyed by the calling credentials. The parser worker
+# is shared by multiple app instances which may each supply their own API key,
+# so a single global token would leak one tenant's credentials to another.
+# Key: (api_key, secret_key); Value: (access_token, expires_at_epoch_seconds).
+_baidu_access_tokens: dict[tuple[str, str], tuple[str, float]] = {}
+
+# Docling conversions run inside asyncio.to_thread(); asyncio.wait_for() can
+# abandon the await but cannot actually terminate the worker thread, so a
+# timed-out conversion keeps consuming CPU/GPU until it finishes on its own.
+# Bound the number of concurrent Docling conversions so abandoned/timed-out
+# requests cannot pile up threads and model memory without limit.
+DOCLING_MAX_CONCURRENCY = max(1, int(os.environ.get("DOCLING_MAX_CONCURRENCY", "2")))
+_docling_semaphore = asyncio.Semaphore(DOCLING_MAX_CONCURRENCY)
 
 
 try:
@@ -93,6 +106,12 @@ async def periodic_cleanup():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
+    if not os.environ.get("AUTH_TOKEN"):
+        logger.warning(
+            "AUTH_TOKEN is not configured: parser worker accepts unauthenticated "
+            "requests from loopback/internal Docker networks only. Set AUTH_TOKEN "
+            "before exposing this service on any external interface."
+        )
     cleanup_task = asyncio.create_task(periodic_cleanup())
     yield
     cleanup_task.cancel()
@@ -110,11 +129,35 @@ app.add_middleware(
 
 security = HTTPBearer(auto_error=False)
 
-def verify_auth(credentials: HTTPAuthorizationCredentials = Depends(security)):
+# Internal Docker bridge range; combined with loopback this is the only
+# unauthenticated reachability allowed when AUTH_TOKEN is not configured.
+_DOCKER_INTERNAL_NETWORK = ipaddress.ip_network("172.16.0.0/12")
+
+
+def _client_is_local_trusted(request: Request) -> bool:
+    client_host = getattr(request.client, "host", "") if request.client else ""
+    if not client_host:
+        return False
+    try:
+        client_ip = ipaddress.ip_address(client_host)
+    except ValueError:
+        return False
+    return client_ip.is_loopback or client_ip in _DOCKER_INTERNAL_NETWORK
+
+
+def verify_auth(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = os.environ.get("AUTH_TOKEN")
     if token:
         if not credentials or credentials.credentials != token:
             raise HTTPException(status_code=401, detail="Invalid or missing authentication token")
+        return
+    # Without AUTH_TOKEN the worker must not be wide open: only loopback and
+    # the internal Docker network may call it. Everything else gets 401.
+    if not _client_is_local_trusted(request):
+        raise HTTPException(
+            status_code=401,
+            detail="Parser worker authentication is not configured; only loopback/internal network callers are allowed",
+        )
 
 class ParseResponse(BaseModel):
     task_id: str
@@ -158,9 +201,31 @@ def metrics():
         'by_classification': by_classification,
     }
 
+def decode_text_bytes(content: bytes, filename: str) -> str:
+    """Decode plain text with strict UTF-8 first, then Chinese legacy codecs.
+
+    Blind utf-8+replace decoding silently corrupted GBK/GB18030 documents
+    (very common for legacy Chinese .txt/.csv uploads) into replacement
+    characters. Try strict decodings in order and only fall back to a
+    lossy decode when all of them fail.
+    """
+    for encoding in ("utf-8-sig", "gbk", "gb18030"):
+        try:
+            text = content.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+        logger.info("Decoded plaintext %s using %s", filename, encoding)
+        return text
+    logger.warning(
+        "No strict decoding succeeded for %s; falling back to utf-8 with replacement characters",
+        filename,
+    )
+    return content.decode("utf-8", errors="replace")
+
+
 def extract_plaintext(filename: str, content: bytes) -> str:
     suffix = Path(filename).suffix.lower()
-    text = content.decode("utf-8-sig", errors="replace")
+    text = decode_text_bytes(content, filename)
     if suffix in {".html", ".htm"}:
         text = html.unescape(re.sub(r"<[^>]+>", " ", text))
     return text.strip()
@@ -647,7 +712,14 @@ def extract_pptx_native(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
     return slide_blocks, image_parts
 
 async def convert_with_docling(path: Path) -> str:
-    """Docling deep layout extraction with compatibility guard."""
+    """Docling deep layout extraction with compatibility guard.
+
+    Cancellation caveat: the conversion body runs via asyncio.to_thread().
+    asyncio.wait_for() at the call sites can abandon the await on timeout but
+    cannot kill the underlying thread, which keeps running until Docling
+    finishes. _docling_semaphore therefore caps the number of concurrent
+    conversions so timed-out requests cannot accumulate unbounded threads.
+    """
     def _run():
         for k in ["ALL_PROXY", "all_proxy"]:
             if os.environ.get(k, "").startswith("socks://"):
@@ -670,14 +742,19 @@ async def convert_with_docling(path: Path) -> str:
         converter = DocumentConverter()
         result = converter.convert(str(path))
         return result.document.export_to_markdown()
-    return await asyncio.to_thread(_run)
+    async with _docling_semaphore:
+        return await asyncio.to_thread(_run)
 
 
 async def _baidu_token(client: Any, api_key: str, secret_key: str, endpoint: str) -> str:
-    global _baidu_access_token
     now = time.time()
-    if _baidu_access_token and _baidu_access_token[1] > now + 60:
-        return _baidu_access_token[0]
+    # Credential-scoped cache: the shared worker serves multiple instances
+    # that may pass different Baidu keys, so a cached token must only be
+    # reused for the exact (api_key, secret_key) pair it was issued for.
+    cache_key = (api_key, secret_key)
+    cached = _baidu_access_tokens.get(cache_key)
+    if cached and cached[1] > now + 60:
+        return cached[0]
     if not api_key or not secret_key:
         raise RuntimeError("Baidu OCR is enabled but API key/secret key is not configured")
     response = await client.post(
@@ -694,7 +771,7 @@ async def _baidu_token(client: Any, api_key: str, secret_key: str, endpoint: str
     if not token:
         raise RuntimeError(f"Baidu OCR token request failed: {payload.get('error_description') or payload}")
     expires_in = int(payload.get("expires_in") or 2592000)
-    _baidu_access_token = (token, now + max(expires_in, 300))
+    _baidu_access_tokens[cache_key] = (token, now + max(expires_in, 300))
     return token
 
 
@@ -1227,10 +1304,9 @@ async def process_file(
                         task["markdown"] = f"# {path.stem}\n\n{vlm_desc}"
                         task["engine"] = "vlm-image"
                     else:
-                        md, ocr_metadata = await convert_image_with_baidu_ocr(path, ocr_config)
-                        task["markdown"] = f"# {path.stem}\n\n{md}"
-                        task["engine"] = "ocr-baidu-image"
-                        task.update(ocr_metadata)
+                        raise RuntimeError(
+                            "Image extraction requires configured OCR, VLM, or local Docling"
+                        )
             else:
                 provider = str(ocr_config.get("provider") or OCR_PROVIDER).lower()
                 if provider == "baidu":
@@ -1243,10 +1319,9 @@ async def process_file(
                     task["markdown"] = f"# {path.stem}\n\n{vlm_desc}"
                     task["engine"] = "vlm-image"
                 else:
-                    md, ocr_metadata = await convert_image_with_baidu_ocr(path, ocr_config)
-                    task["markdown"] = f"# {path.stem}\n\n{md}"
-                    task["engine"] = "ocr-baidu-image"
-                    task.update(ocr_metadata)
+                    raise RuntimeError(
+                        "Image extraction requires configured OCR, VLM, or local Docling"
+                    )
 
         if not task.get("markdown", "").strip():
             raise RuntimeError("Extracted Markdown is empty")
@@ -1321,10 +1396,6 @@ async def parse_document(
         
     if file.size and file.size > MAX_FILE_BYTES:
         raise HTTPException(status_code=413, detail="File exceeds 200 MiB limit")
-        
-    content = await file.read(MAX_FILE_BYTES + 1)
-    if len(content) > MAX_FILE_BYTES:
-        raise HTTPException(status_code=413, detail="File exceeds 200 MiB limit")
 
     if parser_type.lower() == "anydoc":
         raise HTTPException(
@@ -1337,8 +1408,22 @@ async def parse_document(
     task_id = str(uuid.uuid4())
     path = UPLOAD_ROOT / f"{task_id}{suffix}"
     reserve_task(task_id, filename, parser_type)
+    # Stream the upload straight to disk in bounded chunks. Reading the whole
+    # body into memory first would let a few concurrent 200 MiB uploads
+    # exhaust worker RAM, and the size limit is now enforced while
+    # transferring instead of after the full payload already arrived.
+    chunk_size = 8 * 1024 * 1024
+    received_bytes = 0
     try:
-        await asyncio.to_thread(path.write_bytes, content)
+        with path.open("wb") as handle:
+            while True:
+                chunk = await file.read(chunk_size)
+                if not chunk:
+                    break
+                received_bytes += len(chunk)
+                if received_bytes > MAX_FILE_BYTES:
+                    raise HTTPException(status_code=413, detail="File exceeds 200 MiB limit")
+                await asyncio.to_thread(handle.write, chunk)
     except Exception:
         tasks.pop(task_id, None)
         path.unlink(missing_ok=True)

@@ -17,7 +17,7 @@ import {
 import { FileInterceptor } from "@nestjs/platform-express";
 import { getPrismaClient } from "../prisma";
 import { randomUUID } from "node:crypto";
-import { mkdir, unlink, writeFile } from "node:fs/promises";
+import { mkdir, rm, unlink, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { PermissionService } from "../permission/permission.service";
 import { AuthService } from "../auth/auth.service";
@@ -25,6 +25,7 @@ import { BrainCompilerService } from "../brain-compiler/brain-compiler.service";
 import { AuthGuard } from "../auth/auth.guard";
 import { GraphRagService } from "../graph-rag/graph-rag.service";
 import { IngestionService } from "./ingestion.service";
+import { RaptorService } from "../raptor/raptor.service";
 
 function normalizeUploadFilename(value: unknown): string {
   const raw = String(value || "upload.bin")
@@ -70,6 +71,7 @@ export class IngestionController {
     private readonly compilerService: BrainCompilerService,
     private readonly ingestionService: IngestionService,
     @Optional() private readonly graphRagService?: GraphRagService,
+    @Optional() private readonly raptorService?: RaptorService,
   ) {}
 
   @Post(":kbId/documents")
@@ -350,24 +352,16 @@ export class IngestionController {
     if (!document) throw new NotFoundException("Document not found.");
     await this.compilerService.onKnowledgeDeleted(kbId, docId);
     await this.prisma.document.delete({ where: { id: docId } });
-    // Fire-and-forget graph cleanup: prune relations/entities contributed by
-    // the deleted document (the method itself is idempotent and swallows its
-    // own errors; the catch below only guards against unexpected rejections).
-    // Must never block or fail the deletion main flow.
-    this.graphRagService
-      ?.removeDocumentFromGraph(kbId, docId)
-      .catch((err: unknown) => {
-        this.logger.warn(
-          `Post-delete graph cleanup failed for document ${docId} in KB ${kbId}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      });
+    // Accuracy first: stale graph/global-summary facts must be invalidated
+    // before the delete request completes. Both cleanup operations are
+    // idempotent; GraphRAG internally degrades to a logged zero-result.
+    await Promise.all([
+      this.graphRagService?.removeDocumentFromGraph(kbId, docId),
+      this.raptorService?.removeDocument(kbId, docId),
+    ]);
     if (document.rawFileOid)
       await unlink(document.rawFileOid).catch(() => undefined);
-    await unlink(join(this.uploadRoot, docId, "content.md")).catch(
-      () => undefined,
-    );
+    await rm(join(this.uploadRoot, docId), { recursive: true, force: true }).catch(() => undefined);
     return { ok: true, documentId: docId };
   }
 }

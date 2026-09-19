@@ -31,6 +31,23 @@ run "Prisma client generate" pnpm --filter database exec prisma generate --schem
 run "API unit tests" pnpm run test:api
 run "Parser worker tests" pnpm run test:parser
 run "GBrain adapter contract tests" pnpm run test:adapter
+# Evaluation harness self-tests need no network/API: they validate the metric
+# math, BEIR subsetting (gold docs never dropped) and latency percentiles, so
+# a broken gateway is caught before any live benchmark run.
+run "Evaluation harness self-tests" pnpm run benchmark:selftest
+
+# Official-qrels IR regression gate. Enabled by producing a run file with
+# beir_pipeline.py and exporting BEIR_QRELS + BEIR_RUN. IR_GATE_THRESHOLDS uses
+# comma-separated metric=value pairs (metric names are the same as the CLI --k
+# output, e.g. ndcg@10, recall@100, mrr@10, map@10).
+if [[ -n "${BEIR_QRELS:-}" && -n "${BEIR_RUN:-}" ]]; then
+  run "Official-qrels IR gate" python3 tests/evaluation/intl-benchmark/standard_ir_eval.py \
+    --qrels "$BEIR_QRELS" --run "$BEIR_RUN" \
+    --threshold "${IR_GATE_THRESHOLDS:-ndcg@10=0.5,recall@100=0.8}"
+else
+  echo ""
+  echo "[CI] Skipping official-qrels IR gate: set BEIR_QRELS and BEIR_RUN (see tests/evaluation/intl-benchmark/README.md §6)."
+fi
 
 if [[ -n "${LLMWIKI_TOKEN:-}${LLMWIKI_USER:-}" ]]; then
   run "E2E knowledge-base scenario suite" python3 tests/e2e/sota_knowledge_base_suite.py

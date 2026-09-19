@@ -23,11 +23,17 @@ mkdir -p "$BACKUP_ROOT"
 
 # ---- 1. PostgreSQL ----
 if command -v pg_dump >/dev/null 2>&1; then
-  pg_dump "${DATABASE_URL:-postgresql://$DB_USER@127.0.0.1:5433/$DB_NAME}" \
-    --format=custom --no-owner --file "$BACKUP_ROOT/db-$STAMP.dump"
+  # Default to port 5432 (native PG); docker-compose dual-mapped uses 5433 for host
+  # but native deployments use 5432. DATABASE_URL from env takes precedence.
+  pg_dump "${DATABASE_URL:-postgresql://$DB_USER@127.0.0.1:5432/$DB_NAME}" \
+    --format=custom --no-owner --file "$BACKUP_ROOT/db-$STAMP.dump" || {
+    log "ERROR: pg_dump failed"; exit 1
+  }
 elif docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$DB_CONTAINER"; then
   docker exec "$DB_CONTAINER" pg_dump -U "$DB_USER" --format=custom --no-owner "$DB_NAME" \
-    > "$BACKUP_ROOT/db-$STAMP.dump"
+    > "$BACKUP_ROOT/db-$STAMP.dump" || {
+    log "ERROR: container pg_dump failed"; exit 1
+  }
 else
   log "ERROR: neither pg_dump nor container $DB_CONTAINER available"; exit 1
 fi
@@ -36,7 +42,13 @@ log "database dump ok: db-$STAMP.dump ($(du -h "$BACKUP_ROOT/db-$STAMP.dump" | c
 # ---- 2. 文件 (上传原件 + GBrain 编译仓库) ----
 FILES_TAR="$BACKUP_ROOT/files-$STAMP.tar.gz"
 if [ -d "$LLMWIKI_DATA_ROOT" ]; then
-  tar -czf "$FILES_TAR" -C "$LLMWIKI_DATA_ROOT" uploads brain_repos 2>/dev/null || true
+  tar -czf "$FILES_TAR" -C "$LLMWIKI_DATA_ROOT" uploads brain_repos || {
+    log "ERROR: files tar failed"; exit 1
+  }
+  # Verify archive is non-empty
+  if [ ! -s "$FILES_TAR" ]; then
+    log "WARNING: files archive is empty"; exit 1
+  fi
   log "files archive ok: files-$STAMP.tar.gz ($(du -h "$FILES_TAR" | cut -f1))"
 fi
 

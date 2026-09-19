@@ -50,6 +50,16 @@ describe('kb-intent-router', () => {
       expect(finScore).toBeGreaterThan(10);
       expect(devScore).toBe(0);
     });
+
+    it('treats object-form term-mapping triggers and targets as matches', () => {
+      const kbMapping: KnowledgeBaseMetadata = {
+        id: 'kb-map',
+        name: '综合制度库',
+        domainTerms: { 打车: ['交通费', '交通费用报销'] },
+      };
+      expect(scoreKbRelevance(kbMapping, ['打车'])).toBeGreaterThan(0);
+      expect(scoreKbRelevance(kbMapping, ['交通费'])).toBeGreaterThan(0);
+    });
   });
 
   describe('routeKnowledgeBasesByIntent', () => {

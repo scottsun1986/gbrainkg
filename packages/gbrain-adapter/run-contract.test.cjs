@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { BrainRepoAdapter } = require('./dist/index.js');
+const { BrainRepoAdapter, structuralPassages } = require('./dist/index.js');
 
 test('cancelling a real running child terminates it and releases quota', async () => {
   const adapter = new BrainRepoAdapter('/tmp/adapter-contract-no-io');
@@ -125,4 +125,63 @@ test('argument boundaries cannot collide and migrations are not deduplicated', a
   assert.equal(calls, 2);
   await Promise.all([adapter.run(['migrate', 'embeddings']), adapter.run(['migrate', 'embeddings'])]);
   assert.equal(calls, 4);
+});
+
+test('structuralPassages strips only real leading frontmatter', () => {
+  const page = [
+    '---',
+    'title: "考勤管理办法"',
+    'type: source',
+    '---',
+    '',
+    '# 考勤管理办法',
+    '',
+    '第一条 适用范围说明。',
+  ].join('\n');
+  const joined = structuralPassages(page).map((section) => section.content).join('\n');
+  assert.ok(!joined.includes('title:'), 'frontmatter must be removed');
+  assert.ok(!joined.includes('type: source'), 'frontmatter must be removed');
+  assert.ok(joined.includes('第一条 适用范围说明。'), 'body must survive frontmatter stripping');
+});
+
+test('structuralPassages never deletes body text between --- horizontal rules', () => {
+  // PDF/PPTX converters emit `---` as a page separator. The old multiline
+  // frontmatter regex treated everything between two separators as metadata
+  // and dropped a full page of content.
+  const page = [
+    '# 年度报告',
+    '',
+    '## 第 1 页',
+    '',
+    '第一页正文内容。',
+    '',
+    '---',
+    '',
+    '## 第 2 页',
+    '',
+    '第二页正文内容。',
+    '',
+    '---',
+    '',
+    '## 第 3 页',
+    '',
+    '第三页正文内容。',
+  ].join('\n');
+  const joined = structuralPassages(page).map((section) => section.content).join('\n');
+  assert.ok(joined.includes('第一页正文内容。'), 'page 1 body must not be treated as frontmatter');
+  assert.ok(joined.includes('第二页正文内容。'), 'page 2 body must survive mid-document --- rules');
+  assert.ok(joined.includes('第三页正文内容。'), 'page 3 body must survive mid-document --- rules');
+});
+
+test('structuralPassages handles BOM and CRLF frontmatter but not indented body rules', () => {
+  const withBom = '\uFEFF---\r\ntitle: "x"\r\n---\r\n\r\n正文保留。\r\n';
+  const joinedBom = structuralPassages(withBom).map((section) => section.content).join('\n');
+  assert.ok(!joinedBom.includes('title:'));
+  assert.ok(joinedBom.includes('正文保留。'));
+
+  // A document starting with a `---` horizontal rule (no closing fence at
+  // line start followed by content) must keep all of its text.
+  const leadingRule = '---\n\n紧接水平线的正文。\n';
+  const joinedRule = structuralPassages(leadingRule).map((section) => section.content).join('\n');
+  assert.ok(joinedRule.includes('紧接水平线的正文。'));
 });

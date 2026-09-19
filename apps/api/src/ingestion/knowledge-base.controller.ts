@@ -247,6 +247,60 @@ export class KnowledgeBaseController {
   }
 
   /**
+   * Update KB-level retrieval vocabulary. Accepts either a flat hint-term list
+   * (`["报销","发票"]`) or a colloquial -> formal term mapping object
+   * (`{ "打车": ["交通费","交通费用报销"] }`). Sending `[]` clears it.
+   * No vocabulary is hardcoded server-side; this is the only source of terms.
+   */
+  @Post(":kbId/domain-terms")
+  async updateDomainTerms(
+    @Req() req: any,
+    @Param("kbId") kbId: string,
+    @Body() body: { domainTerms?: unknown },
+  ) {
+    const userId = await this.currentUser(req);
+    const kb = await this.prisma.knowledgeBase.findUnique({
+      where: { id: kbId },
+      select: { id: true, status: true },
+    });
+    if (!kb || kb.status !== "active")
+      throw new NotFoundException("Knowledge base not found.");
+    if (!(await this.permissionService.canManageKnowledgeBase(userId, kbId))) {
+      throw new ForbiddenException(
+        "Only the knowledge base owner or administrator can update domain terms.",
+      );
+    }
+    const raw = body?.domainTerms;
+    const sanitizeTerm = (value: unknown) =>
+      String(value ?? "").trim().slice(0, 100);
+    let stored: unknown;
+    if (Array.isArray(raw)) {
+      stored = Array.from(new Set(raw.map(sanitizeTerm).filter(Boolean))).slice(0, 500);
+    } else if (raw && typeof raw === "object") {
+      const mapped: Record<string, string[]> = {};
+      for (const [from, to] of Object.entries(raw as Record<string, unknown>).slice(0, 200)) {
+        const key = sanitizeTerm(from);
+        if (!key) continue;
+        const targets = (Array.isArray(to) ? to : [to])
+          .map(sanitizeTerm)
+          .filter((target) => Boolean(target) && target !== key)
+          .slice(0, 20);
+        if (targets.length) mapped[key] = Array.from(new Set(targets));
+      }
+      stored = mapped;
+    } else {
+      throw new BadRequestException(
+        "domainTerms must be an array of strings or an object mapping term -> targets.",
+      );
+    }
+    await this.prisma.knowledgeBase.update({
+      where: { id: kbId },
+      data: { domainTerms: stored as any },
+    });
+    return { kbId, domainTerms: stored };
+  }
+
+  /**
    * Self-service deletion of one's own personal knowledge base (archive
    * semantics, matching the admin endpoint).
    */
@@ -339,6 +393,7 @@ export class KnowledgeBaseController {
     @Param("kbId") kbId: string,
     @Req() req: any,
     @Query("status") status?: string,
+    @Query("indexReadiness") indexReadiness?: string,
     @Query("search") search?: string,
     @Query("page") page = "1",
     @Query("limit") limit = "50",
@@ -353,6 +408,7 @@ export class KnowledgeBaseController {
     const where: any = {
       kbId,
       ...(status && status !== "all" ? { status } : {}),
+      ...(indexReadiness && indexReadiness !== "all" ? { indexReadiness } : {}),
       ...(search && search.trim()
         ? {
             OR: [
@@ -362,7 +418,7 @@ export class KnowledgeBaseController {
           }
         : {}),
     };
-    const [items, total] = await Promise.all([
+    const [items, total, statusGroups] = await Promise.all([
       this.prisma.document.findMany({
         where,
         select: {
@@ -388,7 +444,24 @@ export class KnowledgeBaseController {
         orderBy: { updatedAt: "desc" },
       }),
       this.prisma.document.count({ where }),
+      // Whole-KB status breakdown. The management page used to derive these
+      // counters from the fetched page, so with server-side pagination they
+      // would only ever reflect the current page (e.g. 10).
+      this.prisma.document.groupBy({
+        by: ["status"],
+        where: { kbId },
+        _count: { _all: true },
+      }),
     ]);
+    const statusCounts: Record<string, number> = { total: 0 };
+    for (const group of statusGroups) {
+      statusCounts[group.status] = group._count?._all ?? 0;
+    }
+    statusCounts.total = Object.entries(statusCounts)
+      .filter(([key]) => key !== "total" && key !== "processing")
+      .reduce((sum, [, value]) => sum + Number(value || 0), 0);
+    statusCounts.processing =
+      (statusCounts.parsing || 0) + (statusCounts.indexing || 0);
     const uploaderIds = [
       ...new Set(
         items
@@ -415,6 +488,7 @@ export class KnowledgeBaseController {
       total,
       page: pageNumber,
       limit: pageSize,
+      statusCounts,
     };
   }
 

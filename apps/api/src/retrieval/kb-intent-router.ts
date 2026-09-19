@@ -89,7 +89,15 @@ export function scoreKbRelevance(kb: KnowledgeBaseMetadata, queryTokens: string[
   if (Array.isArray(kb.domainTerms)) {
     domainTermsList = kb.domainTerms.map((t) => String(t).toLowerCase());
   } else if (typeof kb.domainTerms === 'object' && kb.domainTerms !== null) {
-    domainTermsList = Object.values(kb.domainTerms).map((t) => String(t).toLowerCase());
+    // Object form is a colloquial -> formal term mapping. Both the trigger
+    // keys and the formal target values must count for intent routing.
+    const flattened: string[] = [];
+    for (const [key, value] of Object.entries(kb.domainTerms as Record<string, unknown>)) {
+      flattened.push(key);
+      if (Array.isArray(value)) flattened.push(...value.map((item) => String(item)));
+      else if (value != null) flattened.push(String(value));
+    }
+    domainTermsList = flattened.map((t) => t.toLowerCase()).filter(Boolean);
   }
 
   for (const token of queryTokens) {

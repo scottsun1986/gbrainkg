@@ -4,13 +4,16 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-API_PORT="${API_PORT:-3202}"
+# API port default is 3000 (base); Web is 3200. Port formula:
+# API = 3000 + 2*(N-1), Web = 3200 + 2*(N-1) for instance N.
+API_PORT="${API_PORT:-3000}"
 WEB_PORT="${WEB_PORT:-3200}"
 PARSER_PORT="${PARSER_PORT:-8100}"
 
 echo "=================================================="
 echo "          LLMWiki Production Healthcheck          "
 echo "=================================================="
+echo "Checking API on port $API_PORT, Web on port $WEB_PORT"
 
 # 1. Check Systemd User Services
 echo "[1/4] Checking Systemd User Services..."

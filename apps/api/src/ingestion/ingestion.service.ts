@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleInit, Optional, Inject } from "@nestjs/comm
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
 import { getPrismaClient } from "../prisma";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { extname, join } from "node:path";
 import { BrainCompilerService } from "../brain-compiler/brain-compiler.service";
@@ -112,8 +112,9 @@ export class IngestionService implements OnModuleInit {
     expectedVersion?: number,
     priority = 5,
   ) {
+    let version = expectedVersion;
     try {
-      const version = expectedVersion ?? (await this.prisma.document.findUnique({
+      version = version ?? (await this.prisma.document.findUnique({
         where: { id: documentId },
         select: { version: true },
       }))?.version;
@@ -151,6 +152,7 @@ export class IngestionService implements OnModuleInit {
       await this.markFailed(
         documentId,
         `Unable to persist ingestion job: ${error instanceof Error ? error.message : String(error)}`,
+        version,
       );
       throw error;
     }
@@ -176,12 +178,16 @@ export class IngestionService implements OnModuleInit {
       return { documentId, status: "published", skipped: true };
     if (!document.rawFileOid)
       throw new Error("Original upload is no longer available.");
+    const targetVersion = expectedVersion ?? document.version;
     const content = await readFile(document.rawFileOid);
     const contentHash = createHash("sha256").update(content).digest("hex");
-    await this.prisma.document.update({
-      where: { id: documentId },
+    const parsingClaim = await this.prisma.document.updateMany({
+      where: { id: documentId, version: targetVersion },
       data: { status: "parsing" },
     });
+    if (parsingClaim.count === 0) {
+      return { documentId, status: document.status, skipped: true, reason: "superseded-version" };
+    }
 
     try {
       let parsed: any = null;
@@ -229,8 +235,11 @@ export class IngestionService implements OnModuleInit {
       }
     }
 
-    // L1 Fast-Path: Plaintext files (.txt, .md) read directly in zero milliseconds
-    if ([".txt", ".md"].includes(ext)) {
+    // Only invoke a parser when neither the process-local nor persistent
+    // content-hash cache produced a result. Previously the AnyDoc branch ran
+    // even after a cache hit and re-parsed every duplicate PDF/Office upload,
+    // defeating both cache layers and multiplying ingestion cost.
+    if (!parsed && [".txt", ".md"].includes(ext)) {
       const rawText = content.toString("utf8");
       if (rawText.trim()) {
         parsed = {
@@ -240,7 +249,7 @@ export class IngestionService implements OnModuleInit {
           status: "completed",
         };
       }
-    } else if (ANYDOC_UPLOAD_EXTENSIONS.has(ext)) {
+    } else if (!parsed && ANYDOC_UPLOAD_EXTENSIONS.has(ext)) {
       try {
         // @ts-ignore
         const anydoc: any = await import("@firecrawl/anydoc" as any).catch(() => null);
@@ -410,8 +419,14 @@ export class IngestionService implements OnModuleInit {
       }
     }
     parserMetadata["parsed_at"] = new Date().toISOString();
+    const contentPath = join(this.uploadRoot, documentId, "content.md");
+    const pendingContentPath = join(
+      this.uploadRoot,
+      documentId,
+      `content.md.v${targetVersion}.${process.pid}.${Date.now()}.tmp`,
+    );
     await writeFile(
-      join(this.uploadRoot, documentId, "content.md"),
+      pendingContentPath,
       markdown,
       "utf8",
     );
@@ -421,7 +436,6 @@ export class IngestionService implements OnModuleInit {
     // Chunk rows carry no version column, so the delete scope cannot be
     // narrowed below documentId; the in-transaction version fence above is
     // what makes that document-wide delete safe.
-    const targetVersion = expectedVersion ?? document.version;
     try {
       await this.prisma.$transaction(
         async (tx) => {
@@ -472,6 +486,7 @@ export class IngestionService implements OnModuleInit {
         },
       );
     } catch (err) {
+      await unlink(pendingContentPath).catch(() => undefined);
       if (err instanceof SupersededVersionError) {
         this.logger.warn(`Skipping save for ${documentId}: ${err.message}`);
         return {
@@ -481,6 +496,15 @@ export class IngestionService implements OnModuleInit {
           reason: "superseded-version",
         };
       }
+      throw err;
+    }
+
+    // Publish the canonical file only after the version-fenced database save
+    // succeeds. A stale parser can no longer overwrite a newer content.md.
+    try {
+      await rename(pendingContentPath, contentPath);
+    } catch (err) {
+      await unlink(pendingContentPath).catch(() => undefined);
       throw err;
     }
 
@@ -556,17 +580,17 @@ export class IngestionService implements OnModuleInit {
       qualityIssues,
     };
     } catch (err) {
-      if (!(err instanceof SupersededVersionError)) {
-        await this.markFailed(documentId, err instanceof Error ? err.message : String(err)).catch(() => undefined);
-      }
       throw err;
     }
   }
 
-  async markFailed(documentId: string, reason: string) {
+  async markFailed(documentId: string, reason: string, expectedVersion?: number) {
     await this.prisma.document
-      .update({
-        where: { id: documentId },
+      .updateMany({
+        where: {
+          id: documentId,
+          ...(expectedVersion === undefined ? {} : { version: expectedVersion }),
+        },
         data: {
           status: "failed",
           qualityStatus: "rejected",

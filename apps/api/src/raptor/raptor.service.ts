@@ -91,6 +91,17 @@ export class RaptorService {
     return process.env.RAPTOR_ENABLED !== 'false';
   }
 
+  /** Remove document-scoped nodes and immediately invalidate the KB-global summary. */
+  async removeDocument(kbId: string, documentId: string): Promise<void> {
+    await (this.prisma as any).$transaction([
+      (this.prisma as any).raptorNode.deleteMany({ where: { documentId } }),
+      // Level-2 content contains facts from every Level-1 document and must
+      // not survive deletion of any contributor.
+      (this.prisma as any).raptorNode.deleteMany({ where: { kbId, level: 2 } }),
+    ]);
+    this.scheduleBuildKbGlobalTree(kbId);
+  }
+
   private isSpreadsheet(title?: string): boolean {
     return Boolean(title && /(?:\.xlsx?|\.csv|\.tsv)(?:\s*·|\s*$)/i.test(title));
   }
@@ -432,7 +443,10 @@ export class RaptorService {
       });
 
       const validDocNodes = docNodes.filter((n: any) => !this.isSpreadsheet(n.title));
-      if (!validDocNodes.length) return { nodes: 0 };
+      if (!validDocNodes.length) {
+        await (this.prisma as any).raptorNode.deleteMany({ where: { kbId, level: 2 } });
+        return { nodes: 0 };
+      }
 
       const llm = await this.llmConfig();
       const modelVersion = llm ? llm.modelName : 'extractive-v1';

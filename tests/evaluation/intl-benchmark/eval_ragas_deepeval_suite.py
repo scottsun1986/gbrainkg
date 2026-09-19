@@ -24,10 +24,11 @@ import json
 import math
 import os
 import re
+import ssl
 import sys
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -39,6 +40,58 @@ FIXTURES_FILE_MULTI = REPO_ROOT / "tests" / "evaluation" / "fixtures" / "intl-30
 FIXTURES_FILE = FIXTURES_FILE_100 if FIXTURES_FILE_100.exists() else FIXTURES_FILE_MULTI
 REPORTS_DIR = REPO_ROOT / "tests" / "evaluation" / "intl-benchmark" / "reports"
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+
+# API Configuration
+API_BASE = os.environ.get("RAGAS_API_BASE", "http://127.0.0.1:3202")
+TEST_USER = os.environ.get("TEST_USER", "admin")
+TEST_PASS = os.environ.get("TEST_PASSWORD", "123456")
+QA_WORKERS = int(os.environ.get("RAGAS_QA_WORKERS", "3"))
+SEARCH_WORKERS = int(os.environ.get("RAGAS_SEARCH_WORKERS", "4"))
+CHAT_TIMEOUT = float(os.environ.get("CHAT_TIMEOUT", "240"))
+
+# SSL context for HTTPS
+CTX = ssl.create_default_context()
+CTX.check_hostname = False
+CTX.verify_mode = ssl.CERT_NONE
+
+# Global token cache
+_cached_token = None
+
+# Default KB scope mapping is only a fallback for local smoke runs. Real
+# evaluations MUST inject RAGAS_KB_SCOPES as a JSON object mapping benchmark
+# id -> list of knowledge-base slugs, so the suite never hardcodes corpus
+# names that may not exist in the target deployment.
+_DEFAULT_KB_SCOPES = {
+    1: ["ms-marco"],  # MS MARCO
+    2: ["natural-questions"],  # Natural Questions
+    3: ["beir-universal"],  # BEIR
+    4: ["scifact"],  # SciFact
+    5: ["hotpotqa"],  # HotpotQA
+    6: ["2wikimultihop"],  # 2WikiMultiHop
+    7: ["musique"],  # MuSiQue
+}
+
+
+def _load_kb_scopes() -> dict:
+    raw = os.environ.get("RAGAS_KB_SCOPES")
+    if not raw:
+        return dict(_DEFAULT_KB_SCOPES)
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"RAGAS_KB_SCOPES is not valid JSON: {exc}")
+    if not isinstance(parsed, dict):
+        raise SystemExit("RAGAS_KB_SCOPES must be a JSON object of benchmark_id -> [kb_slug]")
+    scopes = {}
+    for key, value in parsed.items():
+        scope_key = int(key) if str(key).isdigit() else key
+        if not isinstance(value, list) or not value:
+            raise SystemExit(f"RAGAS_KB_SCOPES[{key}] must be a non-empty list of KB slugs")
+        scopes[scope_key] = [str(v) for v in value]
+    return scopes
+
+
+_kb_scopes = _load_kb_scopes()
 
 # ----------------- Ragas & DeepEval Metric Implementations -----------------
 
@@ -66,6 +119,115 @@ def normalize_text(text: str) -> str:
     text = re.sub(r'[^\w\s\u4e00-\u9fa5\.\,\%\$\-]', ' ', text)
     # Collapse whitespace
     return ' '.join(text.split())
+
+
+# ----------------- API Integration Functions -----------------
+
+def http(method, path, body=None, token=None, timeout=60):
+    """HTTP request helper with SSL context."""
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(f"{API_BASE}{path}", data=data, method=method)
+    req.add_header("Content-Type", "application/json")
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=CTX) as r:
+            return r.status, r.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode("utf-8", "replace")
+    except Exception as e:
+        return 0, str(e)
+
+
+def login():
+    """Login and get authentication token."""
+    s, raw = http("POST", "/api/v1/auth/login", {"username": TEST_USER, "password": TEST_PASS})
+    if s not in (200, 201):
+        raise RuntimeError(f"Login failed ({s}): {raw[:120]}")
+    return json.loads(raw)["token"]
+
+
+def get_token():
+    """Get cached token or login."""
+    global _cached_token
+    if _cached_token is None:
+        _cached_token = login()
+    return _cached_token
+
+
+def search_documents(query, kb_scope, limit=50):
+    """Search documents in knowledge base."""
+    token = get_token()
+    status, response = http("POST", "/api/v1/chat/search",
+                            {"query": query, "kb_scope": kb_scope, "limit": limit},
+                            token=token, timeout=120)
+    if status not in (200, 201):
+        return None, f"{status}:{response[:120]}"
+    try:
+        return json.loads(response), None
+    except json.JSONDecodeError:
+        return None, f"json decode error: {response[:120]}"
+
+
+def chat_query(message, kb_scope):
+    """Send chat query to RAG system."""
+    token = get_token()
+    body = {"message": message, "kb_scope": kb_scope}
+    req = urllib.request.Request(f"{API_BASE}/api/v1/chat/completions",
+                                 data=json.dumps(body).encode(), method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", f"Bearer {token}")
+
+    out = {"answer": "", "citations": [], "ttft": None, "latency": None, "error": None}
+    t0 = time.time()
+
+    try:
+        with urllib.request.urlopen(req, timeout=CHAT_TIMEOUT, context=CTX) as r:
+            for raw in r:
+                line = raw.decode("utf-8", "replace").strip()
+                if not line.startswith("data: "):
+                    continue
+                payload = line[6:].strip()
+                if payload == "[DONE]":
+                    break
+                try:
+                    d = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+                kind = d.get("type")
+                if kind == "delta":
+                    if out["ttft"] is None:
+                        out["ttft"] = round(time.time() - t0, 2)
+                    out["answer"] += d.get("content") or ""
+                elif kind == "citation":
+                    te = d.get("timeline_entry") or {}
+                    if te.get("doc_title"):
+                        out["citations"].append({"title": te.get("doc_title"),
+                                                 "document_id": te.get("document_id"),
+                                                 "snippet": te.get("snippet")})
+                elif kind == "finish":
+                    out["latency"] = round(time.time() - t0, 2)
+                    break
+    except Exception as e:
+        out["error"] = str(e)
+
+    return out
+
+
+def build_context_from_search(search_result):
+    """Build context string from search results."""
+    if not search_result or "results" not in search_result:
+        return ""
+
+    contexts = []
+    for item in search_result["results"][:10]:  # Top 10 results
+        title = item.get("title", "")
+        snippet = item.get("snippet", "")
+        score = item.get("score", 0)
+        ctx = f"[{title}] (score: {score:.4f})\n{snippet}"
+        contexts.append(ctx)
+
+    return "\n\n---\n\n".join(contexts)
 
 VERDICT_LABELS = {
     "entailed", "entailed (true)", "refuted", "refuted (false)", "supported", "not enough info",
@@ -419,7 +581,7 @@ def run_evaluation():
         group = item["group"]
         query = item["query"]
         gold_answer = item["gold_answer"]
-        context = item["context"]
+        # Note: item["context"] is ground truth context, but we will use real retrieval
         supporting_facts = item.get("supporting_facts", [])
 
         if args.limit_per_benchmark:
@@ -427,18 +589,49 @@ def run_evaluation():
             if cnt >= args.limit_per_benchmark:
                 continue
 
-        # Simulate dynamic hybrid retrieval + grounding execution
+        kb_scope = _kb_scopes.get(b_id, ["default"])
+
+        # Real RAG pipeline: search → build context → chat → evaluate
         start_t = time.time()
 
-        # Compute Ragas metrics
-        context_precision = calculate_ragas_context_precision(context, supporting_facts)
-        context_recall = calculate_ragas_context_recall(context, gold_answer, supporting_facts)
-        
-        simulated_answer = gold_answer
-        
-        faithfulness = calculate_ragas_faithfulness(simulated_answer, context)
+        # Step 1: Real-time document search
+        search_result, search_err = search_documents(query, kb_scope, limit=50)
+
+        if search_err:
+            print(f"[{idx}/{len(records)}] {b_name}: Search failed ({search_err})")
+            # Skip this sample or use fallback context
+            real_context = ""
+            real_answer = ""
+            error_msg = search_err
+        else:
+            error_msg = None
+            # Build context from search results
+            real_context = build_context_from_search(search_result)
+
+            # Step 2: Real-time chat query
+            chat_result = chat_query(query, kb_scope)
+            real_answer = chat_result.get("answer", "")
+
+            if chat_result.get("error"):
+                error_msg = chat_result["error"]
+                print(f"[{idx}/{len(records)}] {b_name}: Chat failed ({error_msg})")
+            elif not real_answer.strip():
+                # An empty answer is a system failure, never a reason to score
+                # the gold answer. It must count as an error and score 0.
+                error_msg = "empty_answer"
+                print(f"[{idx}/{len(records)}] {b_name}: Empty answer")
+
+        # Evaluate the REAL system output. Never substitute the gold answer,
+        # otherwise failures would be scored as perfect answers.
+        simulated_answer = real_answer
+
+        # Compute Ragas metrics with real context and answer
+        context_precision = calculate_ragas_context_precision(real_context, supporting_facts)
+        context_recall = calculate_ragas_context_recall(real_context, gold_answer, supporting_facts)
+
+        faithfulness = calculate_ragas_faithfulness(simulated_answer, real_context)
         answer_relevance = calculate_ragas_answer_relevance(query, simulated_answer)
-        
+
         # Dual-track LLM-as-a-Judge evaluation
         should_call_llm = False
         if args.judge == "llm":
@@ -449,7 +642,7 @@ def run_evaluation():
                 should_call_llm = True
 
         if should_call_llm and args.api_key:
-            llm_res = llm_judge_sample(query, simulated_answer, context, args.model, args.api_base, args.api_key)
+            llm_res = llm_judge_sample(query, simulated_answer, real_context, args.model, args.api_base, args.api_key)
             if llm_res:
                 f_llm, r_llm, _ = llm_res
                 if args.judge == "llm":
@@ -464,7 +657,12 @@ def run_evaluation():
         completeness = calculate_deepeval_completeness(simulated_answer, supporting_facts)
         rag_triad = calculate_rag_triad_score(faithfulness, answer_relevance, context_recall)
 
-        latency_ms = (time.time() - start_t) * 1000 + 22.0 # Incorporate base pipeline latency
+        # Real latency measurement (end-to-end RAG pipeline)
+        latency_ms = round((time.time() - start_t) * 1000, 2)
+
+        # Print progress
+        if idx % 10 == 0 or idx == len(records):
+            print(f"[{idx}/{len(records)}] {b_name}: F={faithfulness:.3f}, AR={answer_relevance:.3f}, CR={context_recall:.3f}, Latency={latency_ms:.0f}ms", flush=True)
 
         if b_id not in benchmark_stats:
             benchmark_stats[b_id] = {
@@ -472,6 +670,7 @@ def run_evaluation():
                 "name": b_name,
                 "group": group,
                 "sample_count": 0,
+                "error_count": 0,
                 "faithfulness": [],
                 "answer_relevance": [],
                 "context_precision": [],
@@ -484,14 +683,29 @@ def run_evaluation():
 
         s = benchmark_stats[b_id]
         s["sample_count"] += 1
-        s["faithfulness"].append(faithfulness)
-        s["answer_relevance"].append(answer_relevance)
-        s["context_precision"].append(context_precision)
-        s["context_recall"].append(context_recall)
-        s["groundedness"].append(groundedness)
-        s["completeness"].append(completeness)
-        s["rag_triad"].append(rag_triad)
-        s["latency_ms"].append(latency_ms)
+
+        if error_msg:
+            # Failed samples count as 0 in the quality averages so hard cases
+            # cannot be hidden by excluding them; the failure is also reported
+            # separately through error_rate. Latency is only measured for
+            # samples that actually completed.
+            s["error_count"] += 1
+            s["faithfulness"].append(0.0)
+            s["answer_relevance"].append(0.0)
+            s["context_precision"].append(0.0)
+            s["context_recall"].append(0.0)
+            s["groundedness"].append(0.0)
+            s["completeness"].append(0.0)
+            s["rag_triad"].append(0.0)
+        else:
+            s["faithfulness"].append(faithfulness)
+            s["answer_relevance"].append(answer_relevance)
+            s["context_precision"].append(context_precision)
+            s["context_recall"].append(context_recall)
+            s["groundedness"].append(groundedness)
+            s["completeness"].append(completeness)
+            s["rag_triad"].append(rag_triad)
+            s["latency_ms"].append(latency_ms)
 
     # Summarize results per benchmark
     summary_results = []
@@ -500,20 +714,33 @@ def run_evaluation():
 
     for b_id in sorted(benchmark_stats.keys()):
         st = benchmark_stats[b_id]
-        avg_faith = sum(st["faithfulness"]) / len(st["faithfulness"])
-        avg_rel = sum(st["answer_relevance"]) / len(st["answer_relevance"])
-        avg_prec = sum(st["context_precision"]) / len(st["context_precision"])
-        avg_rec = sum(st["context_recall"]) / len(st["context_recall"])
-        avg_ground = sum(st["groundedness"]) / len(st["groundedness"])
-        avg_comp = sum(st["completeness"]) / len(st["completeness"])
-        avg_triad = sum(st["rag_triad"]) / len(st["rag_triad"])
-        avg_lat = sum(st["latency_ms"]) / len(st["latency_ms"])
+
+        # Quality averages include failed samples as 0 (see the per-sample loop);
+        # latency is averaged only over samples that actually produced a timing.
+        valid_samples = len(st["faithfulness"])
+        total_samples = st["sample_count"]
+        error_count = st["error_count"]
+        latency_samples = len(st["latency_ms"])
+
+        if valid_samples == 0:
+            avg_faith = avg_rel = avg_prec = avg_rec = avg_ground = avg_comp = avg_triad = 0.0
+        else:
+            avg_faith = sum(st["faithfulness"]) / valid_samples
+            avg_rel = sum(st["answer_relevance"]) / valid_samples
+            avg_prec = sum(st["context_precision"]) / valid_samples
+            avg_rec = sum(st["context_recall"]) / valid_samples
+            avg_ground = sum(st["groundedness"]) / valid_samples
+            avg_comp = sum(st["completeness"]) / valid_samples
+            avg_triad = sum(st["rag_triad"]) / valid_samples
+        avg_lat = (sum(st["latency_ms"]) / latency_samples) if latency_samples > 0 else 0.0
 
         summary_results.append({
             "id": b_id,
             "name": st["name"],
             "group": st["group"],
-            "samples": st["sample_count"],
+            "samples": total_samples,
+            "valid_samples": valid_samples,
+            "error_count": error_count,
             "faithfulness": round(avg_faith, 4),
             "answer_relevance": round(avg_rel, 4),
             "context_precision": round(avg_prec, 4),
@@ -524,7 +751,9 @@ def run_evaluation():
             "avg_latency_ms": round(avg_lat, 2)
         })
 
-        print(f"{b_id:<3} | {st['name']:<22} | {st['sample_count']:<5} | {avg_faith*100:>12.2f}% | {avg_rel*100:>12.2f}% | {avg_rec*100:>10.2f}% | {avg_triad*100:>8.2f}%")
+        # Print with error rate
+        error_rate = (error_count / total_samples * 100) if total_samples > 0 else 0
+        print(f"{b_id:<3} | {st['name']:<22} | {total_samples:<5} | {avg_faith*100:>12.2f}% | {avg_rel*100:>12.2f}% | {avg_rec*100:>10.2f}% | {avg_triad*100:>8.2f}% | Errors:{error_rate:>5.1f}%")
 
     # Global aggregate
     overall_faithfulness = sum(r["faithfulness"] for r in summary_results) / len(summary_results)
@@ -532,6 +761,7 @@ def run_evaluation():
     overall_precision = sum(r["context_precision"] for r in summary_results) / len(summary_results)
     overall_recall = sum(r["context_recall"] for r in summary_results) / len(summary_results)
     overall_triad = sum(r["rag_triad_score"] for r in summary_results) / len(summary_results)
+    overall_error_rate = sum(r["error_count"] for r in summary_results) / sum(r["samples"] for r in summary_results) * 100 if summary_results else 0
 
     print("=" * 96)
     print(f"📊 全球 30 大基准 Ragas & DeepEval 综合大盘得分汇总:")
@@ -540,6 +770,7 @@ def run_evaluation():
     print(f"   - 平均上下文精准率 (Context Precision) : {overall_precision * 100:.2f}% (合格线 >= 85.0%)")
     print(f"   - 平均上下文召回率 (Context Recall)    : {overall_recall * 100:.2f}% (合格线 >= 85.0%)")
     print(f"   - RAG Triad 全局调和评分               : {overall_triad * 100:.2f}%")
+    print(f"   - 系统错误率 (Error Rate)              : {overall_error_rate:.2f}%")
     print("=" * 96)
 
     # Save JSON Report
@@ -553,7 +784,8 @@ def run_evaluation():
             "answer_relevance": round(overall_relevance, 4),
             "context_precision": round(overall_precision, 4),
             "context_recall": round(overall_recall, 4),
-            "rag_triad_score": round(overall_triad, 4)
+            "rag_triad_score": round(overall_triad, 4),
+            "error_rate": round(overall_error_rate, 4)
         },
         "benchmark_details": summary_results
     }
@@ -570,6 +802,7 @@ def generate_html_dashboard(data: dict, output_path: Path):
     global_s = data["global_summary"]
     rows_html = ""
     for r in data["benchmark_details"]:
+        error_rate = (r["error_count"] / r["samples"] * 100) if r["samples"] > 0 else 0
         rows_html += f"""
         <tr>
             <td><strong>{r['id']}</strong></td>
@@ -582,6 +815,7 @@ def generate_html_dashboard(data: dict, output_path: Path):
             <td>{r['context_recall']*100:.1f}%</td>
             <td><span class="score-pill">{r['rag_triad_score']*100:.1f}%</span></td>
             <td>{r['avg_latency_ms']} ms</td>
+            <td style="color: {'#ef4444' if error_rate > 5 else '#94a3b8'}">{error_rate:.1f}%</td>
         </tr>
         """
 
@@ -716,6 +950,11 @@ def generate_html_dashboard(data: dict, output_path: Path):
             <div class="val" style="color: #4ade80;">{global_s['rag_triad_score']*100:.1f}%</div>
             <div class="lbl">综合质量度量</div>
         </div>
+        <div class="kpi-card">
+            <div class="lbl">系统错误率 (Error Rate)</div>
+            <div class="val" style="color: {'#ef4444' if global_s.get('error_rate', 0) > 5 else '#94a3b8'};">{global_s.get('error_rate', 0)*100:.1f}%</div>
+            <div class="lbl">检索/问答失败率</div>
+        </div>
     </div>
 
     <table>
@@ -731,6 +970,7 @@ def generate_html_dashboard(data: dict, output_path: Path):
                 <th>召回率 (Recall)</th>
                 <th>Triad 综合分</th>
                 <th>平均延时</th>
+                <th>错误率</th>
             </tr>
         </thead>
         <tbody>

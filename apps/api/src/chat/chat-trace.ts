@@ -97,6 +97,28 @@ export class ChatTraceRecorder {
     this.finish(id, "skipped", summary, details);
   }
 
+  /**
+   * Record a one-shot degradation/timeout event. Unlike `finish`, this never
+   * overwrites a node that a later stage would legitimately update in place:
+   * callers should pass a unique id per degradation point. Degradations are
+   * silent to the user by design, so surfacing them here is what makes an
+   * occasional quality drop observable in the trace sidebar and logs.
+   */
+  warn(id: string, name: string, summary: string, details?: Record<string, unknown>): void {
+    const node: ChatTraceNode = {
+      id,
+      name,
+      status: "warning",
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      durationMs: 0,
+      summary,
+      ...(safeDetails(details) ? { details: safeDetails(details) } : {}),
+    };
+    this.nodes.set(id, node);
+    this.emit(node);
+  }
+
   failRunning(error: unknown): void {
     const message = String((error as any)?.message || error || "未知错误").slice(0, 500);
     for (const node of this.nodes.values()) {

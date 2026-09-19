@@ -286,12 +286,24 @@ export class SystemReprocessService {
 
         if (options.forceAllEmbeddings) {
           this.addLog('选项开启：强制清空历史向量并重新嵌入全部分块。', 'warn');
-          await this.prisma.$executeRaw`
-            UPDATE "Chunk" c
-            SET embedding = NULL
-            FROM "Document" d
-            WHERE c."documentId" = d.id AND d.status = 'published'
-          `;
+          // 与文档扫描的 whereClause 保持一致：指定 kbIds 时必须将清空范围
+          // 限定在这些知识库内，否则会误清空全库（含其他实例/知识库）向量。
+          if (options.kbIds && options.kbIds.length > 0) {
+            await this.prisma.$executeRaw`
+              UPDATE "Chunk" c
+              SET embedding = NULL
+              FROM "Document" d
+              WHERE c."documentId" = d.id AND d.status = 'published'
+                AND d."kbId" = ANY(${options.kbIds}::uuid[])
+            `;
+          } else {
+            await this.prisma.$executeRaw`
+              UPDATE "Chunk" c
+              SET embedding = NULL
+              FROM "Document" d
+              WHERE c."documentId" = d.id AND d.status = 'published'
+            `;
+          }
         }
 
         let docIdx = 0;
@@ -432,9 +444,12 @@ export class SystemReprocessService {
             } catch {}
           }
 
-          const raptorCount = await (this.prisma as any).raptorNode.count({
-            where: { kbId: { in: uniqueKbIds } },
-          });
+          // 与 getCorpusStatistics 一致：raptorNode 模型可能尚未迁移，需做存在性保护。
+          const raptorCount = (this.prisma as any).raptorNode
+            ? await (this.prisma as any).raptorNode.count({
+                where: { kbId: { in: uniqueKbIds } },
+              })
+            : 0;
           this.status.stats.raptorNodes = Number(raptorCount || 0);
           this.addLog(`RAPTOR 树构建完成，全库共计维护 ${this.status.stats.raptorNodes} 个层次摘要节点。`);
         } else {
@@ -493,7 +508,11 @@ export class SystemReprocessService {
               where: { id: doc.id },
               data: { indexReadiness: readiness },
             });
-          } catch {}
+          } catch (alignErr) {
+            this.logger.warn(
+              `文档 《${doc.title}》 (${doc.id}) indexReadiness 对齐失败: ${alignErr instanceof Error ? alignErr.message : String(alignErr)}`,
+            );
+          }
         }
         this.addLog('全部文档 indexReadiness 状态已对齐完毕。');
         this.status.progress = 95;

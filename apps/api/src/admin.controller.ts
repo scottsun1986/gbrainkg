@@ -761,15 +761,50 @@ export class AdminController {
       db.brainSource.count({ where: { ...safeSourceWhere, kind: "shared" } }),
       db.brainSource.count({ where: { ...safeSourceWhere, kind: "private" } }),
     ]);
-    const privateDocumentIds = new Set<string>(
-      (await this.prisma.document.findMany({
-        where: { kb: { type: "personal" } },
-        select: { id: true },
-      })).map((document) => document.id),
-    );
-    const safeOutboxWhere = privateDocumentIds.size
-      ? { NOT: { resourceType: "document", resourceId: { in: [...privateDocumentIds] } } }
-      : {};
+    // Outbox privacy filter. The previous implementation loaded every personal
+    // document id and passed them as an `IN (...)` list; with a 10万-document
+    // personal knowledge base that exceeds PostgreSQL's bind-parameter limit
+    // and the whole admin/audit endpoint returned HTTP 500. A NOT EXISTS
+    // subquery is evaluated per event row and scales to any corpus size.
+    const hasPersonalKnowledgeBase =
+      (await this.prisma.knowledgeBase.count({ where: { type: "personal" } })) > 0;
+    const outboxVisiblePredicate = `NOT (e."resourceType" = 'document' AND EXISTS (
+      SELECT 1 FROM "Document" d
+      JOIN "KnowledgeBase" kb ON d."kbId" = kb.id
+      WHERE kb.type = 'personal' AND d.id::text = e."resourceId"
+    ))`;
+    const countOutboxEvents = async (status?: string): Promise<number> => {
+      if (!hasPersonalKnowledgeBase) {
+        return this.prisma.brainChangeEvent.count({ where: status ? { status } : {} });
+      }
+      const rows: any[] = status
+        ? await this.prisma.$queryRawUnsafe(
+            `SELECT count(*)::int AS count FROM "BrainChangeEvent" e WHERE e."status" = $1 AND ${outboxVisiblePredicate}`,
+            status,
+          )
+        : await this.prisma.$queryRawUnsafe(
+            `SELECT count(*)::int AS count FROM "BrainChangeEvent" e WHERE ${outboxVisiblePredicate}`,
+          );
+      return Number(rows?.[0]?.count ?? 0);
+    };
+    const listOutboxEvents = async (skip: number, take: number): Promise<any[]> => {
+      if (!hasPersonalKnowledgeBase) {
+        return this.prisma.brainChangeEvent.findMany({
+          orderBy: { createdAt: "desc" },
+          skip,
+          take,
+        });
+      }
+      return this.prisma.$queryRawUnsafe<any[]>(
+        `SELECT e."id", e."eventType", e."status", e."createdAt", e."processedAt", e."payload"
+         FROM "BrainChangeEvent" e
+         WHERE ${outboxVisiblePredicate}
+         ORDER BY e."createdAt" DESC
+         OFFSET $1 LIMIT $2`,
+        skip,
+        take,
+      );
+    };
 
     // 3. Scope Brain Quality & Derived Intelligence
     const allScopeKeys = await db.brainScope.findMany({
@@ -815,12 +850,12 @@ export class AdminController {
 
     // 5. Outbox & Queues
     const [outboxTotal, outboxPending, outboxCompleted, outboxFailed, recentOutboxEvents, recentOutboxTotal] = await Promise.all([
-      db.brainChangeEvent.count({ where: safeOutboxWhere }),
-      db.brainChangeEvent.count({ where: { ...safeOutboxWhere, status: "pending" } }),
-      db.brainChangeEvent.count({ where: { ...safeOutboxWhere, status: "completed" } }),
-      db.brainChangeEvent.count({ where: { ...safeOutboxWhere, status: "failed" } }),
-      db.brainChangeEvent.findMany({ where: safeOutboxWhere, orderBy: { createdAt: "desc" }, skip: offsetFor("outbox"), take: limit }),
-      db.brainChangeEvent.count({ where: safeOutboxWhere })
+      countOutboxEvents(),
+      countOutboxEvents("pending"),
+      countOutboxEvents("completed"),
+      countOutboxEvents("failed"),
+      listOutboxEvents(offsetFor("outbox"), limit),
+      countOutboxEvents(),
     ]);
 
     // 6. RAG & QA Stats

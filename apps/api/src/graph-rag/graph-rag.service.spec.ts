@@ -1,6 +1,7 @@
 import { GraphRagService } from './graph-rag.service';
 
 const mockPrisma = {
+  $executeRaw: jest.fn(),
   graphEntity: {
     upsert: jest.fn(),
     findMany: jest.fn(),
@@ -180,6 +181,38 @@ describe('GraphRagService', () => {
           }),
         })
       );
+    });
+
+    it('merges entity document provenance for existing entities', async () => {
+      mockPrisma.graphEntity.upsert.mockResolvedValueOnce({ id: 'ent-1', name: '系统A' });
+      await service.persistGraphElements('kb-1', {
+        entities: [{ name: '系统A', type: 'system', sourceDocId: 'doc-2' }],
+        relations: [],
+      });
+
+      expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(1);
+      const sql = mockPrisma.$executeRaw.mock.calls[0][0] as TemplateStringsArray;
+      expect(sql.join(' ')).toContain('jsonb_to_recordset');
+      expect(mockPrisma.$executeRaw.mock.calls[0]).toContain(
+        JSON.stringify([{ id: 'ent-1', docId: 'doc-2' }]),
+      );
+    });
+
+    it('surfaces relation persistence failures so enrichment can retry', async () => {
+      mockPrisma.graphEntity.upsert
+        .mockResolvedValueOnce({ id: 'ent-1', name: '系统A' })
+        .mockResolvedValueOnce({ id: 'ent-2', name: '服务B' });
+      mockPrisma.graphRelation.findUnique.mockRejectedValueOnce(new Error('database unavailable'));
+
+      await expect(service.persistGraphElements('kb-1', {
+        entities: [
+          { name: '系统A', type: 'system' },
+          { name: '服务B', type: 'system' },
+        ],
+        relations: [
+          { sourceName: '系统A', targetName: '服务B', relationType: 'depends_on' },
+        ],
+      })).rejects.toThrow('Failed to persist 1/1 graph relations');
     });
   });
 

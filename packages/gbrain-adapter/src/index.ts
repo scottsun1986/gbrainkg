@@ -1,8 +1,10 @@
 declare const require: any;
 declare const process: any;
 
+const { existsSync } = require('node:fs');
 const { mkdir, writeFile, access, rename, unlink, readdir, readFile, stat, rm } = require('node:fs').promises;
-const { join, dirname, resolve } = require('node:path');
+const { join, dirname, resolve, delimiter } = require('node:path');
+const { homedir } = require('node:os');
 const { spawn } = require('node:child_process');
 
 export interface BrainEvidence {
@@ -147,8 +149,17 @@ function canonicalPage(slug: string, items: BrainEvidence[]): string {
 
 type Passage = { heading?: string; content: string; score: number };
 
-function structuralPassages(markdown: string): Array<{ heading?: string; content: string }> {
-  const body = markdown.replace(/^---\s*[\s\S]*?---\s*/m, '').trim();
+/**
+ * YAML frontmatter only ever appears at the very start of a page. The previous
+ * multiline pattern also matched `---` horizontal rules emitted as PDF/PPTX
+ * page separators and silently deleted the whole body between two rules.
+ * Anchor the opening fence to the start of the string (optional BOM) and the
+ * closing fence to the start of a line; anything else is document content.
+ */
+const FRONTMATTER_PATTERN = /^\uFEFF?---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/;
+
+export function structuralPassages(markdown: string): Array<{ heading?: string; content: string }> {
+  const body = markdown.replace(FRONTMATTER_PATTERN, '').trim();
   const lines = body.split(/\r?\n/);
   const sections: Array<{ heading?: string; content: string }> = [];
   let heading = '';
@@ -291,10 +302,38 @@ class ProcessSemaphore {
   }
 }
 
+/** Resolve the gbrain CLI without hardcoding any personal home directory. */
+function resolveGBrainBin(): string {
+  const configured = String(process.env.GBRAIN_BIN || '').trim();
+  if (configured) return configured;
+  // Fall back to a PATH lookup (which/where semantics); spawn() resolves a
+  // bare "gbrain" through PATH anyway, but locating the absolute path keeps
+  // the child-process PATH augmentation below deterministic.
+  const pathValue = String(process.env.PATH || '');
+  for (const dir of pathValue.split(delimiter)) {
+    if (!dir) continue;
+    const candidate = join(dir, 'gbrain');
+    try {
+      if (existsSync(candidate)) return candidate;
+    } catch {
+      // Unreadable PATH entry: keep searching.
+    }
+  }
+  return 'gbrain';
+}
+
+/** Resolve the gbrain state directory from the environment or $HOME. */
+function resolveGBrainHome(): string {
+  const configured = String(process.env.GBRAIN_HOME || '').trim();
+  if (configured) return configured;
+  const home = String(process.env.HOME || '').trim() || homedir();
+  return join(home, '.config', 'gbrain');
+}
+
 /** Production bridge to the official garrytan/gbrain CLI. */
 export class BrainRepoAdapter {
-  private readonly gbrainBin = process.env.GBRAIN_BIN || '/home/scottsun/.bun/bin/gbrain';
-  private readonly gbrainHome = process.env.GBRAIN_HOME || '/home/scottsun/.config/gbrain';
+  private readonly gbrainBin = resolveGBrainBin();
+  private readonly gbrainHome = resolveGBrainHome();
   private readonly sourceRoot: string;
   private searchConfigSignature = '';
   private searchConfigPromise: Promise<void> | null = null;
@@ -390,7 +429,7 @@ export class BrainRepoAdapter {
       GBRAIN_HOME: this.gbrainHome,
       GBRAIN_POOL_SIZE: process.env.GBRAIN_POOL_SIZE || '2',
       GBRAIN_ALLOW_UNVERIFIED_REMOTE: '1',
-      PATH: `${dirname(this.gbrainBin)}:/usr/local/bin:/usr/bin:/home/scottsun/.bun/bin:${process.env.PATH || ''}`,
+      PATH: `${dirname(this.gbrainBin)}:/usr/local/bin:/usr/bin:${process.env.PATH || ''}`,
     };
     // Prisma accepts the `schema` query parameter, but the GBrain CLI treats
     // it as a PostgreSQL runtime setting and fails with “unrecognized

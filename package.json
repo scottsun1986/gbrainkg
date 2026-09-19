@@ -20,7 +20,16 @@
     "benchmark:intl": "python3 tests/evaluation/intl-benchmark/benchmark_suite.py all",
     "benchmark:intl:retrieval": "python3 tests/evaluation/intl-benchmark/benchmark_suite.py all --mode retrieval",
     "benchmark:intl:gate": "python3 tests/evaluation/intl-benchmark/benchmark_suite.py all --gate",
-    "benchmark:intl:smoke": "python3 tests/evaluation/intl-benchmark/benchmark_suite.py all --limit 5 --mode retrieval"
+    "benchmark:intl:smoke": "python3 tests/evaluation/intl-benchmark/benchmark_suite.py all --limit 5 --mode retrieval",
+    "benchmark:ir": "python3 tests/evaluation/intl-benchmark/standard_ir_eval.py",
+    "benchmark:ir:selftest": "python3 tests/evaluation/intl-benchmark/standard_ir_eval.py --selftest",
+    "benchmark:beir": "python3 tests/evaluation/intl-benchmark/beir_pipeline.py",
+    "benchmark:beir:selftest": "python3 tests/evaluation/intl-benchmark/beir_pipeline.py --selftest",
+    "benchmark:fetch": "python3 tests/evaluation/intl-benchmark/fetch_datasets.py",
+    "benchmark:fetch:selftest": "python3 tests/evaluation/intl-benchmark/fetch_datasets.py --selftest",
+    "benchmark:selftest": "pnpm benchmark:ir:selftest && python3 tests/evaluation/intl-benchmark/benchmark_suite.py --selftest && pnpm benchmark:beir:selftest && pnpm benchmark:fetch:selftest && pnpm loadtest:selftest",
+    "loadtest": "python3 tests/evaluation/intl-benchmark/load_test.py",
+    "loadtest:selftest": "python3 tests/evaluation/intl-benchmark/load_test.py --selftest"
   },
   "devDependencies": {
     "turbo": "^2.0.0",

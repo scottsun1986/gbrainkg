@@ -12,6 +12,7 @@
 
 import argparse
 import json
+import math
 import os
 import re
 import ssl
@@ -162,22 +163,51 @@ def ranking_metrics(ranked_titles, gold_titles):
         return t.casefold() in gold
     hits = {}
     for i, t in enumerate(ranked_titles):
-        if is_rel(t) and t not in hits:
-            hits[t] = i + 1
-    recall2 = 1.0 if any(r <= 2 for r in hits.values()) else 0.0
-    recall5 = 1.0 if any(r <= 5 for r in hits.values()) else 0.0
-    recall10 = 1.0 if any(r <= 10 for r in hits.values()) else 0.0
-    full = 1.0 if len(hits) == len(gold) else 0.0
-    mrr = 1.0 / min(hits.values()) if hits else 0.0
-    dcg = sum(1.0 / (i + 1 + 1) ** 0.5 for i, t in enumerate(ranked_titles[:10]) if is_rel(t))
-    idcg = sum(1.0 / (i + 2) ** 0.5 for i in range(min(len(gold), 10)))
+        key = t.casefold()
+        if is_rel(t) and key not in hits:
+            hits[key] = i + 1
+    denom = len(gold)
+    recall2 = sum(1 for r in hits.values() if r <= 2) / denom if denom else 0.0
+    recall5 = sum(1 for r in hits.values() if r <= 5) / denom if denom else 0.0
+    recall10 = sum(1 for r in hits.values() if r <= 10) / denom if denom else 0.0
+    full = 1.0 if denom > 0 and recall10 == 1.0 else 0.0
+    top10_hits = [rank for rank in hits.values() if rank <= 10]
+    mrr = 1.0 / min(top10_hits) if top10_hits else 0.0
+
+    # Standard nDCG@10 with binary relevance and document deduplication:
+    # DCG = sum(rel_i / log2(i + 2)) over ranks i=0..9, counting each gold
+    # document only at its best (first) rank. IDCG is the same sum with all
+    # gold documents placed at the top positions.
+    seen_gold = set()
+    dcg = 0.0
+    for i, t in enumerate(ranked_titles[:10]):
+        key = t.casefold()
+        if key in gold and key not in seen_gold:
+            seen_gold.add(key)
+            dcg += 1.0 / math.log2(i + 2)
+
+    num_gold = min(len(gold), 10)
+    idcg = sum(1.0 / math.log2(i + 2) for i in range(num_gold))
+
     return {"recall@2": recall2, "recall@5": recall5, "recall@10": recall10,
-            "full_evidence": full, "mrr@10": mrr, "ndcg@10": dcg / idcg if idcg else 0.0}
+            "full_evidence": full, "mrr@10": mrr, "ndcg@10": dcg / idcg if idcg > 0 else 0.0}
 
 
 def avg(k, rows):
     vals = [r[k] for r in rows if r.get(k) is not None]
     return round(sum(vals) / len(vals), 4) if vals else None
+
+
+def _selftest():
+    perfect = ranking_metrics(["A", "B"], ["A", "B"])
+    assert perfect["recall@2"] == 1.0 and perfect["full_evidence"] == 1.0
+    partial = ranking_metrics(["A", "X"], ["A", "B"])
+    assert partial["recall@2"] == 0.5 and partial["full_evidence"] == 0.0
+    outside_cutoff = ranking_metrics([f"x{i}" for i in range(10)] + ["A"], ["A"])
+    assert outside_cutoff["mrr@10"] == 0.0
+    duplicates = ranking_metrics(["A", "a", "B"], ["A", "B"])
+    assert 0.0 <= duplicates["ndcg@10"] <= 1.0
+    print("benchmark_suite selftest OK")
 
 
 def run_single_benchmark(dataset, mode="full", limit=0, token=None):
@@ -201,7 +231,15 @@ def run_single_benchmark(dataset, mode="full", limit=0, token=None):
     def do_search(q):
         res, err = search_once(token, q["question"], kb_id)
         if err:
-            return {"qid": q["qid"], "error": err}
+            # API failures are benchmark failures, not missing observations.
+            # Scoring them as zero prevents the average from silently dropping
+            # the hardest/erroring requests.
+            return {
+                "qid": q["qid"], "ranked": [], "recall@2": 0.0,
+                "recall@5": 0.0, "recall@10": 0.0,
+                "full_evidence": 0.0, "mrr@10": 0.0,
+                "ndcg@10": 0.0, "error": err,
+            }
         titles = [r.get("title") for r in (res.get("results") or []) if r.get("title")]
         m = ranking_metrics(titles, q["gold_titles"])
         return {"qid": q["qid"], "ranked": titles[:20], **m, "error": None}
@@ -242,20 +280,22 @@ def run_single_benchmark(dataset, mode="full", limit=0, token=None):
                     print(f"  [问答进度]: {i+1}/{len(eval_set)}", flush=True)
         t_qa_dur = round(time.time() - t_qa_start, 2)
         qa_errors = sum(1 for r in qa_rows if r["error"])
-        answered = [r for r in qa_rows if not r["error"]]
-        refusals = [r for r in answered if r["refusal"]]
-        non_ref = [r for r in answered if not r["refusal"]]
+        successful = [r for r in qa_rows if not r["error"]]
+        refusals = [r for r in successful if r["refusal"]]
+        non_ref = [r for r in successful if not r["refusal"]]
         qa_summary = {
-            "containment": avg("containment", answered),
-            "citation_hit": avg("citation_hit", answered),
-            "refusal_rate_on_answerable": round(len(refusals) / len(answered), 4) if answered else None,
-            "em": avg("em", answered),
-            "f1": avg("f1", answered),
+            # Accuracy metrics include API failures (their answer/citations are
+            # empty and therefore score zero); otherwise outages improve scores.
+            "containment": avg("containment", qa_rows),
+            "citation_hit": avg("citation_hit", qa_rows),
+            "refusal_rate_on_answerable": round(len(refusals) / len(successful), 4) if successful else None,
+            "em": avg("em", qa_rows),
+            "f1": avg("f1", qa_rows),
             "f1_on_attempted": avg("f1", non_ref),
             "em_on_attempted": avg("em", non_ref),
             "api_errors": qa_errors,
-            "avg_ttft": avg("ttft", answered),
-            "avg_latency": avg("latency", answered),
+            "avg_ttft": avg("ttft", successful),
+            "avg_latency": avg("latency", successful),
         }
         print(f"  [问答阶段完成 - 耗时 {t_qa_dur}s]: Containment={qa_summary['containment']}, CitationHit={qa_summary['citation_hit']}, RefusalRate={qa_summary['refusal_rate_on_answerable']}")
 
@@ -442,8 +482,13 @@ def main():
                         help="开启防退化门禁判定，未通过则 exit 1")
     parser.add_argument("--compare-only", type=str, default="",
                         help="仅做比对模式：输入一个或多个历史结果 json 文件进行比对分析")
+    parser.add_argument("--selftest", action="store_true", help="仅校验指标实现，不访问 API")
 
     args = parser.parse_args()
+
+    if args.selftest:
+        _selftest()
+        return
 
     if args.compare_only:
         files = [Path(f) for f in args.compare_only.split(",")]

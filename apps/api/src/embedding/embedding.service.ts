@@ -27,6 +27,15 @@ export class EmbeddingService {
 
   constructor(@Optional() private readonly modelConfigService?: ModelConfigService) {}
 
+  private cacheKey(config: EmbeddingProviderConfig, text: string): string {
+    // Model names are not globally unique. Include the route and dimensions so
+    // a provider/model migration cannot reuse vectors from an incompatible
+    // embedding space.
+    const route = `${config.baseUrl}|${config.modelName}|${config.dimensions ?? 'dynamic'}`;
+    const textHash = createHash('sha256').update(String(text || '')).digest('hex').slice(0, 32);
+    return `${route}:${textHash}`;
+  }
+
   isEnabled(): boolean {
     return process.env.CHUNK_EMBEDDINGS_ENABLED !== 'false';
   }
@@ -53,7 +62,7 @@ export class EmbeddingService {
   async embedOne(text: string): Promise<number[] | null> {
     const config = await this.getConfig();
     if (!config) return null;
-    const cacheKey = `${config.modelName}:${createHash('sha256').update(String(text || '')).digest('hex').slice(0, 32)}`;
+    const cacheKey = this.cacheKey(config, text);
     const now = Date.now();
     const cached = this.cache.get(cacheKey);
     if (cached && cached.expiresAt > now) {
@@ -67,7 +76,18 @@ export class EmbeddingService {
 
     const flightPromise = (async () => {
       try {
-        const [result] = await this.embed([text]);
+        // Reuse the exact configuration that formed the cache/singleflight
+        // key. Calling embed() here fetched configuration a second time, which
+        // both doubled control-plane work and could mix routes during a model
+        // migration.
+        const [result] = await this.embedBatch([text], config);
+        if (result) {
+          this.cache.set(cacheKey, { vector: result, expiresAt: Date.now() + this.cacheTtlMs });
+          if (this.cache.size > this.maxCacheEntries) {
+            const oldest = this.cache.keys().next().value;
+            if (oldest) this.cache.delete(oldest);
+          }
+        }
         return result ?? null;
       } finally {
         this.inFlight.delete(cacheKey);
@@ -94,7 +114,7 @@ export class EmbeddingService {
     const now = Date.now();
     for (let i = 0; i < texts.length; i++) {
       const text = texts[i];
-      const cacheKey = `${config.modelName}:${createHash('sha256').update(String(text || '')).digest('hex').slice(0, 32)}`;
+      const cacheKey = this.cacheKey(config, text);
       const cached = this.cache.get(cacheKey);
       if (cached && cached.expiresAt > now) {
         results[i] = cached.vector;
@@ -116,7 +136,7 @@ export class EmbeddingService {
         const vec = batchResult[i];
         results[batchIndices[i]] = vec;
         if (vec) {
-          const cacheKey = `${config.modelName}:${createHash('sha256').update(String(batchTexts[i] || '')).digest('hex').slice(0, 32)}`;
+          const cacheKey = this.cacheKey(config, batchTexts[i]);
           this.cache.set(cacheKey, { vector: vec, expiresAt: now + this.cacheTtlMs });
           if (this.cache.size > this.maxCacheEntries) {
             const oldest = this.cache.keys().next().value;

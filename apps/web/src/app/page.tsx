@@ -2188,10 +2188,23 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], active 
     return `${(n / (1024 * 1024)).toFixed(2)} MB`;
   };
 
-  const loadDocuments = async (kbId) => {
-    if (!kbId) { setDocs([]); return; }
+  // Server-side document pagination + filtering. The API already supports
+  // page/limit/search/status, but the page used to omit them and then paginate
+  // client-side over the API's default 50-row response — so any knowledge base
+  // silently capped at 50 documents in the management view.
+  const loadDocuments = async (kbId, opts: any = {}) => {
+    if (!kbId) { setDocs([]); setDocsTotal(0); return; }
+    const page = opts.page ?? docPage;
+    const limit = opts.limit ?? docPageSize;
+    const search = opts.search ?? docSearch;
+    const status = opts.status ?? docStatusFilter;
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/kbs/${kbId}/documents`, {headers:apiHeaders()});
+      const params = new URLSearchParams();
+      params.set('page', String(page || 1));
+      params.set('limit', String(limit || 50));
+      if (search && String(search).trim()) params.set('search', String(search).trim());
+      if (status && status !== 'all') params.set('status', String(status));
+      const response = await fetch(`${API_BASE_URL}/api/v1/kbs/${kbId}/documents?${params.toString()}`, {headers:apiHeaders()});
       if (!response.ok) throw new Error('文档列表加载失败');
       const result = await response.json();
       setDocs((result.items || []).map((doc: any) => {
@@ -2214,15 +2227,54 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], active 
           parserEngine: doc.parserEngine,
         };
       }));
+      setDocsTotal(Number(result.total) || 0);
+      setDocsStatusCounts(result.statusCounts || {});
     } catch (error) { window.dispatchEvent(new CustomEvent('app-toast', {detail: error.message || '文档加载失败'})); }
   };
+
+  // Export the WHOLE current filtered view, not just the visible page.
+  const exportAllDocuments = async () => {
+    if (!current?.id) return;
+    try {
+      const rows: Array<{ name: string; status: string; path: string }> = [];
+      const limit = 100;
+      let page = 1;
+      let guard = 0;
+      for (;;) {
+        guard += 1;
+        if (guard > 2000) break; // safety cap (~200k rows)
+        const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+        if (docSearch && docSearch.trim()) params.set('search', docSearch.trim());
+        if (docStatusFilter && docStatusFilter !== 'all') params.set('status', docStatusFilter);
+        const response = await fetch(`${API_BASE_URL}/api/v1/kbs/${current.id}/documents?${params.toString()}`, { headers: apiHeaders() });
+        if (!response.ok) throw new Error('导出失败');
+        const data = await response.json();
+        const items = data.items || [];
+        for (const doc of items) {
+          const path = doc.mdPath || '';
+          const baseName = path.split('/').pop() || path;
+          const original = doc.title && !doc.title.includes('/') ? doc.title : baseName;
+          rows.push({ name: original, status: doc.status, path });
+        }
+        if (items.length < limit || rows.length >= Number(data.total || 0)) break;
+        page += 1;
+      }
+      const csv = ['文档,状态,路径', ...rows.map((r) => `${JSON.stringify(r.name)},${r.status},${JSON.stringify(r.path || '')}`)].join('\n');
+      const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${current.name}-documents.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) { window.dispatchEvent(new CustomEvent('app-toast', { detail: error.message || '导出失败' })); }
+  };
+
   useEffect(() => {
     if (!current && filtered[0]) setSel(filtered[0]);
     if (!filtered.length && sel) setSel(null);
   }, [filter, filtered.length, filtered[0]?.id, current?.id]);
   useEffect(() => { const target = KNOWLEDGE_BASES.find(k => k.id === initialKbId); if (target) setSel(target); }, [initialKbId]);
-  useEffect(() => { if (hasBeenActive) void loadDocuments(current?.id); }, [hasBeenActive, current?.id]);
-  useEffect(() => { const refresh = () => { if (hasBeenActive && current?.id) void loadDocuments(current.id); }; window.addEventListener('app-data-refresh', refresh); return () => window.removeEventListener('app-data-refresh', refresh); }, [hasBeenActive, current?.id]);
+
 
   const uploadDocument = async (file: any) => {
     if (!file || !current?.id) return;
@@ -2285,57 +2337,79 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], active 
     }
   };
 
-  // 针对处理中（parsing / indexing）文档进行后台轻量级自动轮询，动态更新状态，完全不阻塞上传按钮与区域
-  const hasProcessingDocs = docs.some((d: any) => d.status === 'parsing' || d.status === 'indexing' || String(d.id).startsWith('temp-'));
-
-  useEffect(() => {
-    if (!hasProcessingDocs || !current?.id) return;
-    const timer = setInterval(() => {
-      loadDocuments(current.id);
-    }, 2000);
-    return () => clearInterval(timer);
-  }, [hasProcessingDocs, current?.id]);
-
   const [docSearch, setDocSearch] = useState('');
   const [docStatusFilter, setDocStatusFilter] = useState('all');
   const [docTypeFilter, setDocTypeFilter] = useState('all');
   const [docPage, setDocPage] = useState(1);
   const [docPageSize, setDocPageSize] = useState(10);
+  const [docsTotal, setDocsTotal] = useState(0);
+  // Whole-KB status counts from the API (server-side), so the summary cards,
+  // tab badge, health panel and processing poller never depend on how many
+  // rows happen to be on the current page.
+  const [docsStatusCounts, setDocsStatusCounts] = useState<any>({});
+
+  // 针对处理中（parsing / indexing）文档进行后台轻量级自动轮询，动态更新状态，完全不阻塞上传按钮与区域
+  const hasProcessingDocs =
+    Number(docsStatusCounts.processing || 0) > 0 ||
+    docs.some((d: any) => d.status === 'parsing' || d.status === 'indexing' || String(d.id).startsWith('temp-'));
+
+  useEffect(() => {
+    if (!hasProcessingDocs || !current?.id) return;
+    const timer = setInterval(() => {
+      loadDocuments(current.id, { page: docPage, limit: docPageSize, search: docSearch, status: docStatusFilter });
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [hasProcessingDocs, current?.id, docPage, docPageSize, docSearch, docStatusFilter]);
 
   useEffect(() => {
     setDocPage(1);
-  }, [current?.id, docSearch, docStatusFilter, docTypeFilter, docPageSize]);
+  }, [current?.id, docSearch, docStatusFilter, docPageSize]);
 
-  const filteredDocs = useMemo(() => {
+  // Fetch the current server page whenever the KB, page, page size or
+  // status/search filters change (search is debounced).
+  useEffect(() => {
+    if (!hasBeenActive || !current?.id) return;
+    const timer = setTimeout(
+      () => void loadDocuments(current.id, { page: docPage, limit: docPageSize, search: docSearch, status: docStatusFilter }),
+      docSearch ? 300 : 0,
+    );
+    return () => clearTimeout(timer);
+  }, [hasBeenActive, current?.id, docPage, docPageSize, docSearch, docStatusFilter]);
+
+  useEffect(() => {
+    const refresh = () => {
+      if (hasBeenActive && current?.id) {
+        void loadDocuments(current.id, { page: docPage, limit: docPageSize, search: docSearch, status: docStatusFilter });
+      }
+    };
+    window.addEventListener('app-data-refresh', refresh);
+    return () => window.removeEventListener('app-data-refresh', refresh);
+  }, [hasBeenActive, current?.id, docPage, docPageSize, docSearch, docStatusFilter]);
+
+  // File-type filtering has no server-side counterpart, so it is applied to
+  // the current server page only (status/search are already server-side).
+  const pagedDocs = useMemo(() => {
+    if (docTypeFilter === 'all') return docs;
     return docs.filter((d: any) => {
-      if (docSearch.trim()) {
-        const q = docSearch.trim().toLowerCase();
-        const matchName = (d.name || '').toLowerCase().includes(q);
-        const matchPath = (d.path || '').toLowerCase().includes(q);
-        const matchUploader = (d.uploader || '').toLowerCase().includes(q);
-        if (!matchName && !matchPath && !matchUploader) return false;
-      }
-      if (docStatusFilter !== 'all' && d.status !== docStatusFilter) {
-        return false;
-      }
-      if (docTypeFilter !== 'all') {
-        const ext = (d.name || '').split('.').pop()?.toLowerCase() || '';
-        if (docTypeFilter === 'word' && !['doc', 'docx'].includes(ext)) return false;
-        if (docTypeFilter === 'pdf' && ext !== 'pdf') return false;
-        if (docTypeFilter === 'excel' && !['xlsx', 'xls', 'csv'].includes(ext)) return false;
-        if (docTypeFilter === 'md' && !['md', 'txt', 'markdown'].includes(ext)) return false;
-      }
+      const ext = (d.name || '').split('.').pop()?.toLowerCase() || '';
+      if (docTypeFilter === 'word' && !['doc', 'docx'].includes(ext)) return false;
+      if (docTypeFilter === 'pdf' && ext !== 'pdf') return false;
+      if (docTypeFilter === 'excel' && !['xlsx', 'xls', 'csv'].includes(ext)) return false;
+      if (docTypeFilter === 'md' && !['md', 'txt', 'markdown'].includes(ext)) return false;
       return true;
     });
-  }, [docs, docSearch, docStatusFilter, docTypeFilter]);
+  }, [docs, docTypeFilter]);
 
-  const totalDocs = filteredDocs.length;
+  const totalDocs = docsTotal;
   const docTotalPages = Math.max(1, Math.ceil(totalDocs / docPageSize));
   const currentDocPage = Math.min(docPage, docTotalPages);
-  const pagedDocs = useMemo(() => {
-    const start = (currentDocPage - 1) * docPageSize;
-    return filteredDocs.slice(start, start + docPageSize);
-  }, [filteredDocs, currentDocPage, docPageSize]);
+
+  // Server-side whole-KB counters (never derived from the current page).
+  const statTotal = Number(docsStatusCounts.total ?? docsTotal) || 0;
+  const statPublished = Number(docsStatusCounts.published || 0);
+  const statProcessing = Number(docsStatusCounts.processing || 0);
+  const statNeedsReview = Number(docsStatusCounts.needs_review || 0);
+  const statFailed = Number(docsStatusCounts.failed || 0);
 
   const previewDocument = (doc) => {
     setOnlinePreview({ kbId: current.id, docId: doc.id, title: doc.name || doc.title || '原始文档' });
@@ -2423,12 +2497,12 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], active 
             <div className="sub">
               {TYPE_BADGE(current.type)}
               <span><Icon name={current.type==='personal'?'lock':current.type==='org'?'users':'shield'} size={11}/> 可见范围：{current.visibility}</span>
-              <span><Icon name="doc" size={11}/> {docs.length} 文档</span>
+              <span><Icon name="doc" size={11}/> {statTotal} 文档</span>
               <span>· Embedding：<b style={{color:'var(--ink)'}}>bge-m3</b> · 1024 维</span>
             </div>
           </div>
           <div className="actions">
-            <button className="btn" onClick={()=>{const csv=['文档,状态,路径',...docs.map(d=>`${JSON.stringify(d.name)},${d.status},${JSON.stringify(d.path||'')}`)].join('\n'); const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})); const a=document.createElement('a'); a.href=url; a.download=`${current.name}-documents.csv`; a.click(); URL.revokeObjectURL(url);}}>导出</button>
+            <button className="btn" onClick={()=>exportAllDocuments()}>导出</button>
             {current.type==='industry' && current.canGrant && <button className="btn" onClick={()=>onManageGrant?.(current)}>管理授权</button>}
             {current.type==='personal' && <button className="btn" onClick={()=>window.dispatchEvent(new CustomEvent('app-toast',{detail:'个人库不可共享，权限仅随账号生效'}))}>查看权限</button>}
             {current.type==='personal' && current.canDelete && <button className="btn danger" onClick={()=>setConfirmKb(current)}>删除知识库</button>}
@@ -2451,7 +2525,7 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], active 
           </div>
         </div>
         <div className="detail-tabs">
-          <div className={`detail-tab ${tab==='docs'?'active':''}`} onClick={()=>setTab('docs')}>文档（{docs.length}）</div>
+          <div className={`detail-tab ${tab==='docs'?'active':''}`} onClick={()=>setTab('docs')}>文档（{statTotal}）</div>
           <div className={`detail-tab ${tab==='health'?'active':''}`} onClick={()=>setTab('health')}>健康度</div>
           <div className={`detail-tab ${tab==='settings'?'active':''}`} onClick={()=>setTab('settings')}>设置</div>
         </div>
@@ -2514,7 +2588,7 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], active 
                 <span>总文档</span>
                 {docStatusFilter==='all' && <span className="kpi-indicator">全部</span>}
               </div>
-              <div className="val">{docs.length}</div>
+              <div className="val">{statTotal}</div>
               <div className="sub">全部已收录条目</div>
             </div>
 
@@ -2529,7 +2603,7 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], active 
                 <span>已发布</span>
                 {docStatusFilter==='published' && <span className="kpi-indicator">已选</span>}
               </div>
-              <div className="val" style={{color: 'var(--ink)'}}>{docs.filter(d=>d.status==='published').length}</div>
+              <div className="val" style={{color: 'var(--ink)'}}>{statPublished}</div>
               <div className="sub">已完成检索就绪</div>
             </div>
 
@@ -2544,7 +2618,7 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], active 
                 <span>处理中</span>
                 {(docStatusFilter==='indexing'||docStatusFilter==='parsing') && <span className="kpi-indicator">已选</span>}
               </div>
-              <div className="val">{docs.filter(d=>d.status==='indexing'||d.status==='parsing').length}</div>
+              <div className="val">{statProcessing}</div>
               <div className="sub">解析 / 索引队列</div>
             </div>
 
@@ -2559,8 +2633,8 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], active 
                 <span>待复核</span>
                 {docStatusFilter==='needs_review' && <span className="kpi-indicator">已选</span>}
               </div>
-              <div className="val" style={{color: docs.filter(d=>d.status==='needs_review').length? 'var(--amber)':'var(--ink)'}}>
-                {docs.filter(d=>d.status==='needs_review').length}
+              <div className="val" style={{color: statNeedsReview? 'var(--amber)':'var(--ink)'}}>
+                {statNeedsReview}
               </div>
               <div className="sub">质量门禁暂缓发布</div>
             </div>
@@ -2576,8 +2650,8 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], active 
                 <span>解析失败</span>
                 {docStatusFilter==='failed' && <span className="kpi-indicator">已选</span>}
               </div>
-              <div className="val" style={{color: docs.filter(d=>d.status==='failed').length? 'var(--danger)':'var(--ink)'}}>
-                {docs.filter(d=>d.status==='failed').length}
+              <div className="val" style={{color: statFailed? 'var(--danger)':'var(--ink)'}}>
+                {statFailed}
               </div>
               <div className="sub">需人工介入排查</div>
             </div>
@@ -2625,7 +2699,7 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], active 
               </button>
             )}
             <div style={{ marginLeft: 'auto', fontSize: '11.5px', color: 'var(--ink-4)' }}>
-              筛选出 {filteredDocs.length} / {docs.length} 篇文档
+              本页 {pagedDocs.length} 篇 · 共 {docsTotal} 篇文档
             </div>
           </div>
 
@@ -2736,7 +2810,7 @@ function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], active 
             </div>
           )}
           </>}
-          {tab==='health' && <div style={{padding:24}}><h3>知识库健康度</h3><p style={{color:'var(--ink-3)'}}>健康度根据当前数据库中的文档状态与解析质量门禁计算。</p><div className="kpi-row"><div className="kpi"><div className="lbl">已发布率</div><div className="val">{docs.length ? Math.round(docs.filter(d=>d.status==='published').length/docs.length*100) : 0}%</div></div><div className="kpi"><div className="lbl">待复核</div><div className="val">{docs.filter(d=>d.status==='needs_review').length}</div></div><div className="kpi"><div className="lbl">失败文档</div><div className="val">{docs.filter(d=>d.status==='failed').length}</div></div><div className="kpi"><div className="lbl">待处理</div><div className="val">{docs.filter(d=>d.status==='parsing'||d.status==='indexing').length}</div></div></div></div>}
+          {tab==='health' && <div style={{padding:24}}><h3>知识库健康度</h3><p style={{color:'var(--ink-3)'}}>健康度根据当前数据库中的文档状态与解析质量门禁计算。</p><div className="kpi-row"><div className="kpi"><div className="lbl">已发布率</div><div className="val">{statTotal ? Math.round(statPublished/statTotal*100) : 0}%</div></div><div className="kpi"><div className="lbl">待复核</div><div className="val">{statNeedsReview}</div></div><div className="kpi"><div className="lbl">失败文档</div><div className="val">{statFailed}</div></div><div className="kpi"><div className="lbl">待处理</div><div className="val">{statProcessing}</div></div></div></div>}
           {tab==='settings' && <div style={{padding:24}}><h3>知识库设置</h3><div className="field"><label>名称</label><input value={current.name} readOnly/></div><div className="field"><label>类型</label><input value={current.type} readOnly/></div><div className="field"><label>可见性</label><input value={current.visibility} readOnly/></div><p className="field-hint">知识库的权限和管理员请在管理后台维护。</p></div>}
         </div>
       </div> : (

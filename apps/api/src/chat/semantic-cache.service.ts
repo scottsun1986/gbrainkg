@@ -180,13 +180,6 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
         if (oldest) this.l1ExactCache.delete(oldest);
       }
 
-      // Dedupe: keep only the newest entry per (scope, question) so a re-run
-      // after retrieval improvements deterministically replaces stale answers
-      // instead of racing them on equal similarity.
-      await this.prisma.$executeRaw`
-        DELETE FROM "SemanticCache"
-        WHERE "scopeFingerprint" = ${scopeFingerprint} AND "queryText" = ${queryText}
-      `;
       // scopeFingerprint already encodes the exact selected source set plus the
       // ACL/knowledge epochs (see semanticCacheScopeKey). Mirror it into
       // cacheFingerprint for the DB-level index and forward compatibility.
@@ -201,6 +194,18 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
           ${processingTrace ? JSON.stringify(processingTrace) : null}::jsonb, 
           ${modelName}, ${expiresAt}, ${scopeFingerprint}
         )
+        ON CONFLICT ("scopeFingerprint", "queryText") DO UPDATE SET
+          "queryEmbedding" = EXCLUDED."queryEmbedding",
+          "knowledgeEpoch" = EXCLUDED."knowledgeEpoch",
+          "responseContent" = EXCLUDED."responseContent",
+          "citations" = EXCLUDED."citations",
+          "processingTrace" = EXCLUDED."processingTrace",
+          "modelName" = EXCLUDED."modelName",
+          "expiresAt" = EXCLUDED."expiresAt",
+          "cacheFingerprint" = EXCLUDED."cacheFingerprint",
+          "hitCount" = 0,
+          "createdAt" = CURRENT_TIMESTAMP,
+          "lastHitAt" = NULL
       `;
       this.logger.debug(`Stored semantic cache for query: ${queryText.substring(0, 50)}...`);
     } catch (err) {

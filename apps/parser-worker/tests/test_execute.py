@@ -11,6 +11,38 @@ import main
 
 
 class ExecuteContractTests(unittest.IsolatedAsyncioTestCase):
+    async def test_image_without_configured_extractor_fails_without_calling_baidu(self):
+        png_bytes = bytes([
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+            0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+            0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+            0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41,
+            0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+            0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
+            0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+            0x42, 0x60, 0x82,
+        ])
+        with (
+            tempfile.TemporaryDirectory() as root,
+            patch.object(main, "UPLOAD_ROOT", Path(root)),
+            patch.object(main, "LOCAL_DOCLING_ENABLED", False),
+            patch.object(main, "OCR_PROVIDER", "none"),
+            patch.object(main, "is_vlm_available", return_value=False),
+            patch.object(main, "convert_image_with_baidu_ocr") as baidu,
+        ):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://parser") as client:
+                response = await client.post(
+                    "/parse-execute",
+                    files={"file": ("fixture.png", png_bytes, "image/png")},
+                    data={"ocr_provider": "none"},
+                )
+            self.assertEqual(response.status_code, 200)
+            result = response.json()
+            self.assertEqual(result["status"], "failed")
+            self.assertIn("requires configured OCR", result["error"])
+            baidu.assert_not_called()
+
     async def test_execution_returns_result_without_durable_python_task(self):
         with tempfile.TemporaryDirectory() as root, patch.object(main, "UPLOAD_ROOT", Path(root)), patch.dict(os.environ, {"AUTH_TOKEN": "audit-token"}):
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://parser") as client:
@@ -189,4 +221,3 @@ class ExecuteContractTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(0 <= pos_title < pos_middle < pos_bottom)
         finally:
             tmp_path.unlink(missing_ok=True)
-
