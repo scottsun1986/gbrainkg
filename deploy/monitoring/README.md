@@ -57,3 +57,24 @@ curl -s 127.0.0.1:9090/api/v1/targets | python3 -m json.tool | head
 curl -s 127.0.0.1:9090/api/v1/rules | python3 -m json.tool | head
 # Grafana 导入后打开 GBrainKG / gbrainkg-overview
 ```
+
+
+## 知识库域名入口（生产）
+
+```
+https://knowledge.5gsailor.com:20080/monitor/            落地页（Grafana / Prometheus 导航）
+https://knowledge.5gsailor.com:20080/monitor/grafana/    Grafana 看板
+https://knowledge.5gsailor.com:20080/monitor/prometheus/ Prometheus
+```
+
+- 全部走 **HTTP Basic Auth**（默认用户 `ops`，密码安装时打印）。
+- 一键发布/改密：
+
+```bash
+sudo MONITOR_USER=ops MONITOR_PASS='你的密码' \
+  bash deploy/monitoring/expose-monitoring-vhost.sh
+```
+
+- 实现要点：Grafana `serve_from_sub_path=true` + 反代**保留** `/monitor/grafana` 前缀；
+  Prometheus `--web.route-prefix=/monitor/prometheus`；落地页用 `alias` 静态文件
+  （nginx `return` 在 rewrite 阶段执行会绕过 `auth_basic`）。
