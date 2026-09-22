@@ -399,3 +399,18 @@ BEGIN
     END IF;
   END LOOP;
 END $$;
+
+
+-- Runtime default: application Prisma pool does not pin one transaction per
+-- request, so a bare GUC is not reliably set. The NOBYPASSRLS runtime role
+-- therefore starts with app.service=on (application ACL is the primary
+-- authorization). forUser()/withServiceContext() still override per call for
+-- strict fail-closed reads.
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT rolname FROM pg_roles WHERE rolname LIKE 'llmwiki_app%'
+  LOOP
+    EXECUTE format('ALTER ROLE %I SET "app.service" = %L', r.rolname, 'on');
+  END LOOP;
+END $$;

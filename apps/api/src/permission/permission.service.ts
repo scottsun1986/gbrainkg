@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { getPrismaClient } from "../prisma";
+import { withServiceContext } from "../db/tenant-context.service";
 import {
   BASE_USER_PERMISSIONS,
   DEFAULT_ROLES,
@@ -398,12 +399,23 @@ export class PermissionService implements OnModuleInit {
    * visible_kbs = 个人库 ∪ 组织库继承 ∪ 行业库ACL
    */
   async getVisibleKnowledgeBases(userId: string): Promise<string[]> {
+    // Visibility computation must see KnowledgeBase rows; under RLS a pooled
+    // connection without GUC context fail-closes and returns [] -> 404 on
+    // document lists. Run the ACL computation under the service context and
+    // keep the application-level filters below as the authorization source.
+    return withServiceContext(this.prisma, (db) =>
+      this.computeVisibleKnowledgeBases(db as any, userId),
+    );
+  }
+
+  private async computeVisibleKnowledgeBases(prisma: any, userId: string): Promise<string[]> {
     const visibleKbIds = new Set<string>();
+    const _prisma = prisma || this.prisma;
 
     const orgIds = await this.getUserOrgIds(userId);
     const [systemAdmin, directManagedKbs] = await Promise.all([
       this.isSystemAdmin(userId),
-      this.prisma.knowledgeBase.findMany({
+      _prisma.knowledgeBase.findMany({
         where: {
           type: { not: "personal" },
           status: "active",
@@ -413,18 +425,18 @@ export class PermissionService implements OnModuleInit {
       }),
     ]);
     // kbAdmin 只额外授予对应知识库本身的可见性，绝不把权限扩展到同组织或下级组织的其它库。
-    directManagedKbs.forEach((kb) => visibleKbIds.add(kb.id));
+    directManagedKbs.forEach((kb: any) => visibleKbIds.add(kb.id));
 
     // 1. 个人库：系统级规则，只允许 owner 看到。
-    const personalKbs = await this.prisma.knowledgeBase.findMany({
+    const personalKbs = await _prisma.knowledgeBase.findMany({
       where: { type: "personal", ownerUserId: userId, status: "active" },
       select: { id: true },
     });
-    personalKbs.forEach((kb) => visibleKbIds.add(kb.id));
+    personalKbs.forEach((kb: any) => visibleKbIds.add(kb.id));
 
     // 2. 组织库：成员可看到自己的组织及所有祖先组织的库。
     if (orgIds.size > 0) {
-      const orgKbs = await this.prisma.knowledgeBase.findMany({
+      const orgKbs = await _prisma.knowledgeBase.findMany({
         where: {
           type: "org",
           status: "active",
@@ -432,37 +444,37 @@ export class PermissionService implements OnModuleInit {
         },
         select: { id: true },
       });
-      orgKbs.forEach((kb) => visibleKbIds.add(kb.id));
+      orgKbs.forEach((kb: any) => visibleKbIds.add(kb.id));
     }
 
     // 系统管理员可查看全部组织库与行业库。
     if (systemAdmin) {
-      const managedKbs = await this.prisma.knowledgeBase.findMany({
+      const managedKbs = await _prisma.knowledgeBase.findMany({
         where: { type: { in: ["org", "industry"] }, status: "active" },
         select: { id: true },
       });
-      managedKbs.forEach((kb) => visibleKbIds.add(kb.id));
+      managedKbs.forEach((kb: any) => visibleKbIds.add(kb.id));
     }
 
     // 3. 行业库：支持人员、角色、组织三种主体，过期授权自动失效。
-    const userRoles = this.prisma.userRole
-      ? await this.prisma.userRole.findMany({
+    const userRoles = _prisma.userRole
+      ? await _prisma.userRole.findMany({
           where: { userId },
           select: { roleId: true },
         })
       : [];
     const subjects = [
       { subjectType: "user", subjectId: userId },
-      ...userRoles.map((role) => ({
+      ...userRoles.map((role: any) => ({
         subjectType: "role",
         subjectId: role.roleId,
       })),
-      ...[...orgIds].map((orgId) => ({ subjectType: "org", subjectId: orgId })),
+      ...[...orgIds].map((orgId: any) => ({ subjectType: "org", subjectId: orgId })),
     ];
     const industryGrants =
       subjects.length === 0
         ? []
-        : await this.prisma.industryGrant.findMany({
+        : await _prisma.industryGrant.findMany({
             where: {
               kb: { type: "industry", status: "active" },
               AND: [
@@ -474,7 +486,7 @@ export class PermissionService implements OnModuleInit {
             },
             select: { kbId: true },
           });
-    industryGrants.forEach((grant) => visibleKbIds.add(grant.kbId));
+    industryGrants.forEach((grant: any) => visibleKbIds.add(grant.kbId));
 
     return Array.from(visibleKbIds);
   }

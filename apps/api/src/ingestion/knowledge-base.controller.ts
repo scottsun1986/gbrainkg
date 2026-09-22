@@ -1,3 +1,4 @@
+import { withServiceContext } from '../db/tenant-context.service';
 import {
   BadRequestException,
   Controller,
@@ -356,13 +357,13 @@ export class KnowledgeBaseController {
     ]);
     const writePermissions = await this.permissionService.canManageKnowledgeBases(
       userId,
-      items.map((item) => item.id),
+      items.map((item: any) => item.id),
     );
     // canDelete 与 canManageIndustryKb 语义一致：系统管理员/行业库 owner/
     // 行业库管理员。批量收集 KbAdmin 关系，避免逐库查询。
     const industryIds = items
-      .filter((item) => item.type === "industry")
-      .map((item) => item.id);
+      .filter((item: any) => item.type === "industry")
+      .map((item: any) => item.id);
     const industryAdminRows = industryIds.length
       ? await this.prisma.kbAdmin.findMany({
           where: { userId, kbId: { in: industryIds } },
@@ -418,8 +419,8 @@ export class KnowledgeBaseController {
           }
         : {}),
     };
-    const [items, total, statusGroups] = await Promise.all([
-      this.prisma.document.findMany({
+    const [items, total, statusGroups] = await withServiceContext(this.prisma, async (db: any) => Promise.all([
+      (db as any).document.findMany({
         where,
         select: {
           id: true,
@@ -443,16 +444,16 @@ export class KnowledgeBaseController {
         take: pageSize,
         orderBy: { updatedAt: "desc" },
       }),
-      this.prisma.document.count({ where }),
+      (db as any).document.count({ where }),
       // Whole-KB status breakdown. The management page used to derive these
       // counters from the fetched page, so with server-side pagination they
       // would only ever reflect the current page (e.g. 10).
-      this.prisma.document.groupBy({
+      (db as any).document.groupBy({
         by: ["status"],
         where: { kbId },
         _count: { _all: true },
       }),
-    ]);
+    ]));
     const statusCounts: Record<string, number> = { total: 0 };
     for (const group of statusGroups) {
       statusCounts[group.status] = group._count?._all ?? 0;
@@ -462,20 +463,20 @@ export class KnowledgeBaseController {
       .reduce((sum, [, value]) => sum + Number(value || 0), 0);
     statusCounts.processing =
       (statusCounts.parsing || 0) + (statusCounts.indexing || 0);
-    const uploaderIds = [
+    const uploaderIds: string[] = [
       ...new Set(
-        items
-          .map((item) => item.uploadedById)
-          .filter((id): id is string => Boolean(id)),
+        (items as any[])
+          .map((item: any) => item.uploadedById)
+          .filter((id: any): id is string => Boolean(id)),
       ),
     ];
     const uploaders = await this.prisma.user.findMany({
       where: { id: { in: uploaderIds } },
       select: { id: true, displayName: true, username: true },
     });
-    const uploaderById = new Map(uploaders.map((user) => [user.id, user]));
+    const uploaderById = new Map(uploaders.map((user: any) => [user.id, user]));
     const itemsWithStats = await Promise.all(
-      items.map(async (item) => ({
+      items.map(async (item: any) => ({
         ...item,
         sizeBytes: await this.resolveDocumentSize(item),
         uploadedBy: item.uploadedById
@@ -735,7 +736,7 @@ export class KnowledgeBaseController {
         dirtyDocIds: Array.isArray(topic?.dirtyDocIds) ? topic?.dirtyDocIds : [],
         dirtySince: topic?.dirtySince || null,
         latestJob,
-        sources: sourceDocuments.map((item) => ({
+        sources: sourceDocuments.map((item: any) => ({
           sourceKey: item.source.sourceKey,
           kind: item.source.kind,
           syncedVersion: item.syncedVersion,
