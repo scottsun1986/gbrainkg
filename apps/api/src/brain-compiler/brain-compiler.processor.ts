@@ -54,7 +54,7 @@ export class BrainCompilerProcessor extends WorkerHost {
         durationMs: Date.now() - start,
         status: "success",
       });
-      return { status: "success", ...res };
+      return { ...res, status: (res as any)?.status ?? "success" };
     }
 
     // 2. 双级 Dream Cycle 调度维护（Source Dream + Scope Dream）
@@ -68,9 +68,9 @@ export class BrainCompilerProcessor extends WorkerHost {
         phase: "two_tier_dream",
         counts: res,
         durationMs: Date.now() - start,
-        status: res.status === "completed" ? "success" : res.status === "failed" ? "failed" : "warning",
+        status: (res as any)?.status === "completed" ? "success" : (res as any)?.status === "failed" ? "failed" : "warning",
       });
-      return { status: "success", ...res };
+      return { ...res, status: (res as any)?.status ?? "success" };
     }
 
     // 3. Source-centric document indexing. A document belongs to one stable
@@ -234,7 +234,7 @@ export class BrainCompilerProcessor extends WorkerHost {
         durationMs: Date.now() - start,
         status: "success",
       });
-      return { status: "success", ...res };
+      return { ...res, status: (res as any)?.status ?? "success" };
     }
 
     // 6. 传统单主题/文档编译 Job（兼容旧队列任务）
@@ -256,7 +256,7 @@ export class BrainCompilerProcessor extends WorkerHost {
       const visibleKbIds =
         await this.permissionService.getVisibleKnowledgeBases(userId);
       const documents =
-        this.prisma.document?.findMany && visibleKbIds.length > 0
+        typeof this.prisma.document?.findMany === "function" && visibleKbIds.length > 0
           ? await this.prisma.document.findMany({
               where: {
                 kbId: { in: visibleKbIds },

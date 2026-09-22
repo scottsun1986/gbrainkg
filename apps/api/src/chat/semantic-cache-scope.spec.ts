@@ -22,4 +22,14 @@ describe('semanticCacheScopeKey', () => {
       semanticCacheScopeKey(keys, 1, 1, 'model-b'),
     );
   });
+
+  it('changes when the requesting user changes (same permission scope)', () => {
+    // Two users can share one BrainScope (identical visible KB set), which is
+    // exactly the case that used to let one user replay another user's answer.
+    const userA = semanticCacheScopeKey(keys, 1, 1, 'model-a', 'user-a');
+    const userB = semanticCacheScopeKey(keys, 1, 1, 'model-a', 'user-b');
+    expect(userA).not.toBe(userB);
+    // Same user + same scope stays stable so the cache still works per user.
+    expect(semanticCacheScopeKey(keys, 1, 1, 'model-a', 'user-a')).toBe(userA);
+  });
 });

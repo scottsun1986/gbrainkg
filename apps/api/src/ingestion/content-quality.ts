@@ -1,4 +1,6 @@
 /** Application-owned publication gate, independent of conversion engine success. */
+import { detectLanguage, scanPii, simhash64 } from './content-dedupe';
+
 export const QUALITY_RULE_VERSION = 'content-v2';
 
 function parseChineseNumber(str: string): number {
@@ -174,4 +176,34 @@ export function assessContentQuality(markdown: string, suffix: string, facts: Re
       image_placeholders: placeholders,
     },
   };
+}
+
+// ---------- 扩展质量门禁：PII / 语言 / 近重复（content-v2.1） ----------
+
+export const QUALITY_RULE_VERSION_EXT = 'content-v2.1';
+
+export interface ExtendedQualityResult {
+  language: string;
+  piiFindings: ReturnType<typeof scanPii>;
+  simhash: string;
+  issues: string[];
+  status: QualityStatus;
+}
+
+/**
+ * 与 assessContentQuality 叠加使用：
+ * - PII 命中不直接拒稿，记 needs_review（由管理员决定是否脱敏发布）
+ * - 语言写入 Document.language
+ * - simhash 供入库前近重复比对（见 isNearDuplicate）
+ */
+export function assessExtendedQuality(markdown: string): ExtendedQualityResult {
+  const issues: string[] = [];
+  const language = detectLanguage(markdown);
+  const piiFindings = scanPii(markdown);
+  if (piiFindings.length > 0) {
+    issues.push(`检测到 ${piiFindings.length} 处可能的个人信息（邮箱/手机号/身份证/银行卡）`);
+  }
+  const simhash = '0x' + simhash64(markdown).toString(16);
+  const status: QualityStatus = piiFindings.length > 0 ? 'needs_review' : 'passed';
+  return { language, piiFindings, simhash, issues, status };
 }

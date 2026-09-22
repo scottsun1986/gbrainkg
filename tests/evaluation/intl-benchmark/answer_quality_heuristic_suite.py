@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Ragas & DeepEval 全面端到端评测执行套件 (Global 30 Benchmarks Edition)
-Standards & Frameworks:
-  - Ragas (https://github.com/explodinggradients/ragas):
-      * Faithfulness (忠实度 / 防幻觉): 答案是否严格由上下文事实支持
-      * Answer Relevance (答案相关度): 答案是否直接、切题地解答了用户问题
-      * Context Precision (上下文精准率): 真正相关的证据片段是否排在最前列
-      * Context Recall (上下文召回率): 检索到的上下文是否涵盖黄金答案所需的全部事实
-  - DeepEval (https://github.com/confident-ai/deepeval):
-      * Groundedness Metric: 严格检测并惩罚模型无事实依据的臆测与伪造
-      * Completeness Metric: 针对多跳、复杂表格或多项条款的要点覆盖完整度
-      * RAG Triad Harmonic Score: 召回度、忠实度与相关度的调和综合评分
+Heuristic answer-quality suite (NOT official Ragas / DeepEval).
 
-支持：
-1. 覆盖全球 30 大 Benchmark 的真实多样本测试集（非单样本假测）
-2. 接入 HotpotQA、Natural Questions、TAT-QA、2WikiMultiHopQA、MuSiQue 等经典公开数据集真实子集
-3. 生成结构化 JSON 报告与可视化 HTML 仪表盘看板
+Renamed from ``eval_ragas_deepeval_suite.py``: the previous name claimed an
+official implementation of two external frameworks while the scorer is a local
+heuristic set (token overlap, numeric consistency, refusal detection) with an
+optional LLM judge. Reporting those numbers as "Ragas" or "DeepEval" results
+would be a credibility defect, so the file now says what it is.
+
+Metrics implemented here and their heuristic analogues:
+  - faithfulness      ~ Ragas faithfulness (context-supported claims)
+  - answer relevance  ~ Ragas answer relevancy (question/answer overlap)
+  - context precision ~ Ragas context precision (rank of relevant evidence)
+  - groundedness      ~ DeepEval groundedness (unsupported-claim penalty)
+  - completeness      ~ DeepEval completeness (key-point coverage)
+
+If an official implementation is required for a release claim, run the real
+packages (`pip install ragas deepeval`) in a separate harness and report those
+numbers instead; this suite must not be cited as their output.
+
+The local fixture labelled "global 30" is a synthetic/deduplicated sample set,
+not the 30 official international benchmarks. Treat its scores as regression
+signals for this repository only.
 """
 
 import argparse
@@ -141,6 +147,9 @@ def http(method, path, body=None, token=None, timeout=60):
 
 def login():
     """Login and get authentication token."""
+    preset = os.environ.get("LLMWIKI_TOKEN") or os.environ.get("EVAL_BEARER_TOKEN")
+    if preset:
+        return preset
     s, raw = http("POST", "/api/v1/auth/login", {"username": TEST_USER, "password": TEST_PASS})
     if s not in (200, 201):
         raise RuntimeError(f"Login failed ({s}): {raw[:120]}")
@@ -774,7 +783,12 @@ def run_evaluation():
     print("=" * 96)
 
     # Save JSON Report
-    json_report_path = REPORTS_DIR / "ragas_deepeval_evaluation_report.json"
+    # Output names must not claim an external framework: this suite is a local
+    # heuristic (see the module docstring), so its artefacts are named after what
+    # they are. The old names (ragas_deepeval_*) survived the file rename and
+    # were the last place where these numbers could be mistaken for official
+    # Ragas/DeepEval output.
+    json_report_path = REPORTS_DIR / "heuristic_answer_quality_report.json"
     report_data = {
         "timestamp": datetime.now().isoformat(),
         "total_benchmarks": len(summary_results),
@@ -794,7 +808,7 @@ def run_evaluation():
     print(f"📁 详细 JSON 报告已保存至: {json_report_path}")
 
     # Generate HTML Dashboard
-    html_report_path = REPORTS_DIR / "ragas_deepeval_dashboard.html"
+    html_report_path = REPORTS_DIR / "heuristic_answer_quality_dashboard.html"
     generate_html_dashboard(report_data, html_report_path)
     print(f"🌐 可视化交互式看板已生成: {html_report_path}")
 

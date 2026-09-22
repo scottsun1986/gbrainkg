@@ -240,12 +240,13 @@
 全套 30 大国际基准已集成为工业级端到端自动化测试流水线：
 - **全量 3,000 样本基准集**：`tests/evaluation/fixtures/intl-30/benchmarks_30_100_samples.jsonl`（每个基准严格覆盖 100 个真实评测样本，总量 3,000+）
 - **代表性快速基准集**：`tests/evaluation/fixtures/intl-30/benchmarks_30_multi_sample.jsonl`
-- **Ragas & DeepEval 自动化评测套件**：`python3 tests/evaluation/intl-benchmark/eval_ragas_deepeval_suite.py`
+- **启发式答案质量套件（非官方 Ragas/DeepEval）**：`python3 tests/evaluation/intl-benchmark/answer_quality_heuristic_suite.py`
+  - 该套件使用本地启发式（token 重叠、数值一致性、拒答检测）+ 可选 LLM judge，**不是**官方 Ragas/DeepEval 实现，其分数不得对外表述为 Ragas/DeepEval 成绩。
 - **3,000 样本数据构建与下载脚本**：`python3 tests/evaluation/intl-benchmark/download_and_build_3000_samples.py`
 - **全量 30 基准大盘入口**：`python3 tests/evaluation/intl-benchmark/eval_global_30_benchmarks_suite.py`
 - **三大多跳标准基准入口**：`pnpm benchmark:intl` / `python3 tests/evaluation/intl-benchmark/benchmark_suite.py all --mode full`
 - **可视化看板输出**：
-  - `tests/evaluation/intl-benchmark/reports/ragas_deepeval_dashboard.html`
+  - `tests/evaluation/intl-benchmark/reports/heuristic_answer_quality_dashboard.html`
   - `tests/evaluation/intl-benchmark/reports/global_30_benchmark_dashboard.html`
 
 ### 5.1 3,000 真实样本最新评测大盘实测总览 (2026-09 最新)

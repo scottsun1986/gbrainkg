@@ -87,9 +87,9 @@ describe('McpController', () => {
       const latin1Name = Buffer.from('测试文档.pdf', 'utf8').toString('latin1');
       const result = await controller.uploadFile(
         mockReq,
-        undefined,
+        undefined as any,
         'kb-1',
-        undefined,
+        undefined as any,
         { originalname: latin1Name, buffer: Buffer.from('binary-content') } as any,
       );
       expect(mockMcpService.saveUploadAndEnqueue).toHaveBeenCalledWith(
@@ -104,7 +104,7 @@ describe('McpController', () => {
         headers: { 'x-app-id': 'app_valid', 'x-app-secret': 'sec_valid' },
         query: {},
       } as any;
-      await expect(controller.uploadFile(mockReq, undefined, 'kb-1', undefined, undefined as any)).rejects.toThrow(
+      await expect(controller.uploadFile(mockReq, undefined as any, 'kb-1', undefined as any, undefined as any)).rejects.toThrow(
         BadRequestException,
       );
     });
@@ -112,7 +112,7 @@ describe('McpController', () => {
     it('should reject without credentials', async () => {
       const mockReq = { headers: {}, query: {} } as any;
       await expect(
-        controller.uploadFile(mockReq, undefined, 'kb-1', undefined, { originalname: 'a.md', buffer: Buffer.from('x') } as any),
+        controller.uploadFile(mockReq, undefined as any, 'kb-1', undefined as any, { originalname: 'a.md', buffer: Buffer.from('x') } as any),
       ).rejects.toThrow(UnauthorizedException);
     });
   });

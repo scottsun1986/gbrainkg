@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@ne
 import { getPrismaClient } from '../prisma';
 import { ModelConfigService } from '../model-config.service';
 import { EmbeddingService } from '../embedding/embedding.service';
+import { withServiceContext } from '../db/tenant-context.service';
 
 @Injectable()
 export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
@@ -99,7 +100,8 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
       const embedding = await this.getEmbedding(queryText);
       if (!embedding) return null;
 
-      const results = await this.prisma.$queryRaw<any[]>`
+      const results = await withServiceContext(this.prisma, (tx) =>
+        tx.$queryRaw<any[]>`
         SELECT id, "queryText", "responseContent", citations, "processingTrace", "modelName",
                1 - ("queryEmbedding" <=> ${embedding}::vector) as similarity
         FROM "SemanticCache"
@@ -109,10 +111,10 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
           AND 1 - ("queryEmbedding" <=> ${embedding}::vector) > ${this.similarityThreshold}
         ORDER BY similarity DESC, "createdAt" DESC
         LIMIT 1
-      `;
+      `);
 
-      if (results && results.length > 0) {
-        const hit = results[0];
+      if (Array.isArray(results) && results.length > 0) {
+        const hit = (results as any[])[0];
         
         // Cache to L1 for subsequent instant zero-millisecond hits
         this.l1ExactCache.set(l1Key, {
@@ -121,11 +123,12 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
         });
 
         // Async increment hitCount and update lastHitAt
-        this.prisma.$executeRaw`
+        withServiceContext(this.prisma, (tx) =>
+          tx.$executeRaw`
           UPDATE "SemanticCache"
           SET "hitCount" = "hitCount" + 1, "lastHitAt" = NOW()
           WHERE id = ${hit.id}
-        `.catch(err => this.logger.error(`Failed to update hit count for ${hit.id}:`, err));
+        `).catch(err => this.logger.error(`Failed to update hit count for ${hit.id}:`, err));
 
         this.logger.log(`Semantic cache HIT (similarity: ${hit.similarity}) for query: ${queryText.substring(0, 50)}...`);
         return hit;
@@ -183,15 +186,16 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
       // scopeFingerprint already encodes the exact selected source set plus the
       // ACL/knowledge epochs (see semanticCacheScopeKey). Mirror it into
       // cacheFingerprint for the DB-level index and forward compatibility.
-      await this.prisma.$executeRaw`
+      await withServiceContext(this.prisma, (tx) =>
+        tx.$executeRaw`
         INSERT INTO "SemanticCache" (
-          "queryText", "queryEmbedding", "scopeFingerprint", "knowledgeEpoch", 
+          "queryText", "queryEmbedding", "scopeFingerprint", "knowledgeEpoch",
           "responseContent", "citations", "processingTrace", "modelName", "expiresAt",
           "cacheFingerprint"
         ) VALUES (
           ${queryText}, ${embedding}::vector, ${scopeFingerprint}, ${knowledgeEpoch},
-          ${responseContent}, ${citations ? JSON.stringify(citations) : null}::jsonb, 
-          ${processingTrace ? JSON.stringify(processingTrace) : null}::jsonb, 
+          ${responseContent}, ${citations ? JSON.stringify(citations) : null}::jsonb,
+          ${processingTrace ? JSON.stringify(processingTrace) : null}::jsonb,
           ${modelName}, ${expiresAt}, ${scopeFingerprint}
         )
         ON CONFLICT ("scopeFingerprint", "queryText") DO UPDATE SET
@@ -206,32 +210,21 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
           "hitCount" = 0,
           "createdAt" = CURRENT_TIMESTAMP,
           "lastHitAt" = NULL
-      `;
+      `);
       this.logger.debug(`Stored semantic cache for query: ${queryText.substring(0, 50)}...`);
     } catch (err) {
       this.logger.error(`Store error: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
-  async invalidateByEpoch(scopeFingerprint: string, knowledgeEpoch: number): Promise<void> {
-    try {
-      // Only evict L1 entries matching the invalidated scope, not the entire cache
-      for (const key of [...this.l1ExactCache.keys()]) {
-        if (key.startsWith(`${scopeFingerprint}:`)) {
-          this.l1ExactCache.delete(key);
-        }
-      }
-      await this.prisma.semanticCache.deleteMany({
-        where: {
-          scopeFingerprint,
-          knowledgeEpoch: { lt: knowledgeEpoch },
-        },
-      });
-      this.logger.log(`Invalidated semantic cache for scope ${scopeFingerprint} below epoch ${knowledgeEpoch}`);
-    } catch (err) {
-      this.logger.error(`Invalidate error: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
+  // Note: there is deliberately no `invalidateByEpoch` here any more. Epochs are
+  // per-BrainScope counters, but the cache key is a hash of
+  // (sources, aclEpoch, knowledgeEpoch, model, user), so bumping an epoch changes
+  // the key: every pre-bump entry becomes unreachable by construction and is
+  // reclaimed by `cleanup()` when its TTL expires. The previous method was dead
+  // code (no callers) and could not have worked correctly anyway, because a
+  // global "knowledgeEpoch < n" sweep would delete entries belonging to other
+  // scopes whose unrelated counters happen to be smaller.
 
   async cleanup(): Promise<void> {
     try {

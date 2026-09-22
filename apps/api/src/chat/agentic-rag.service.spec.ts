@@ -150,6 +150,26 @@ describe('AgenticRagService', () => {
   });
 
   describe('generateHypotheticalDocument', () => {
+    it('stays off unless explicitly enabled (single switch, no contradictory guards)', async () => {
+      const originalFetch = global.fetch;
+      (global as any).fetch = jest.fn();
+      try {
+        // No flag set: the unified planner and the legacy planner must agree
+        // that HyDE is disabled, instead of one of them calling it anyway.
+        await expect(service.generateHypotheticalDocument('任意问题')).resolves.toBeNull();
+        expect(global.fetch).not.toHaveBeenCalled();
+        process.env.AGENTIC_HYDE_ENABLED = 'true';
+        (global as any).fetch = jest.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({ choices: [{ message: { content: '假设性答复' } }] }),
+        });
+        await expect(service.generateHypotheticalDocument('任意问题')).resolves.toBe('假设性答复');
+      } finally {
+        delete process.env.AGENTIC_HYDE_ENABLED;
+        (global as any).fetch = originalFetch;
+      }
+    });
+
     it('respects the HYDE_ENABLED=false switch', async () => {
       process.env.HYDE_ENABLED = 'false';
       await expect(service.generateHypotheticalDocument('任意问题')).resolves.toBeNull();
@@ -158,6 +178,7 @@ describe('AgenticRagService', () => {
 
     it('recovers the passage from reasoning_content for reasoning models', async () => {
       const originalFetch = global.fetch;
+      process.env.HYDE_ENABLED = 'true';
       (global as any).fetch = jest.fn().mockResolvedValue({
         ok: true,
         json: async () => ({
@@ -168,16 +189,19 @@ describe('AgenticRagService', () => {
         const hyde = await service.generateHypotheticalDocument('激光陀螺仪标定要求');
         expect(hyde).toContain('恒温无振动');
       } finally {
+        delete process.env.HYDE_ENABLED;
         (global as any).fetch = originalFetch;
       }
     });
 
     it('fails open to null when the model call errors', async () => {
       const originalFetch = global.fetch;
+      process.env.HYDE_ENABLED = 'true';
       (global as any).fetch = jest.fn().mockRejectedValue(new Error('network down'));
       try {
         await expect(service.generateHypotheticalDocument('任意问题')).resolves.toBeNull();
       } finally {
+        delete process.env.HYDE_ENABLED;
         (global as any).fetch = originalFetch;
       }
     });

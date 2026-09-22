@@ -1,0 +1,115 @@
+groups:
+  - name: gbrainkg-availability
+    rules:
+      - alert: ApiDown
+        expr: up{job="gbrainkg-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'GBrainKG API instance down'
+          description: '{{ $labels.instance }} has been unreachable for 1m.'
+
+      - alert: ApiReadyFail
+        expr: probe_success{job="gbrainkg-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'API /ready failing'
+          description: 'DB or Redis probe failing on {{ $labels.instance }} (if blackbox enabled).'
+
+      - alert: ProcessFlapping
+        expr: process_uptime_seconds{job="gbrainkg-api"} < 60
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'API process restarted repeatedly'
+          description: '{{ $labels.instance }} uptime still <60s after 5m — crash loop?'
+
+  - name: gbrainkg-http
+    rules:
+      - alert: HighHttp5xx
+        expr: |
+          sum(rate(http_requests_total{job="gbrainkg-api",status=~"5.."}[5m]))
+            /
+          sum(rate(http_requests_total{job="gbrainkg-api"}[5m]))
+          > 0.02
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'API 5xx rate > 2%'
+          description: '5-minute error ratio above 2%. Check llmwiki-api journal.'
+
+      - alert: HighLatencyP95
+        expr: |
+          max(http_request_duration_ms_quantile{job="gbrainkg-api",quantile="0.95",route!~"/metrics|/health|/ready"})
+          > 15000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'API p95 latency > 15s'
+          description: 'Route {{ $labels.route }} p95={{ $value }}ms on {{ $labels.instance }}.'
+
+      - alert: ChatLatencyP95
+        expr: |
+          max(http_request_duration_ms_quantile{job="gbrainkg-api",quantile="0.95",route=~".*chat.*"})
+          > 90000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Chat p95 > 90s (budget)'
+          description: 'Chat route p95={{ $value }}ms — LLM/retrieval degradation.'
+
+  - name: gbrainkg-degrade
+    rules:
+      - alert: RetrievalFailopenSpike
+        expr: |
+          sum(rate(retrieval_failopen_total{job="gbrainkg-api"}[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Retrieval fail-open spike'
+          description: 'Channels falling open at {{ $value }}/s. Hybrid quality degrading.'
+
+      - alert: LlmProviderErrors
+        expr: sum(rate(llm_errors_total{job="gbrainkg-api"}[5m])) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Upstream LLM/embedding errors rising'
+          description: 'Provider {{ $labels.provider }} errors {{ $value }}/s.'
+
+      - alert: EmbeddingFailures
+        expr: increase(embedding_failures_total{job="gbrainkg-api"}[15m]) > 50
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Embedding failures in last 15m'
+          description: '{{ $value }} embedding failures — check TEI/embedding service.'
+
+      - alert: IngestionBacklog
+        expr: ingestion_queue_depth{job="gbrainkg-api"} > 500
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Ingestion queue backlog > 500'
+          description: 'Parser/worker cannot keep up. depth={{ $value }}'
+
+  - name: gbrainkg-rls
+    rules:
+      - alert: RlsNotEnforced
+        expr: rls_enforce{job="gbrainkg-api"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'RLS_ENFORCE is not active on an instance'
+          description: '{{ $labels.instance }} is running without application RLS enforcement.'

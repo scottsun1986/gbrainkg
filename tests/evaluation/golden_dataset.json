@@ -2401,7 +2401,8 @@
     "difficulty": "medium",
     "tags": [
       "single_doc"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-LDC-102",
@@ -2425,7 +2426,8 @@
     "difficulty": "easy",
     "tags": [
       "single_doc"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-LDC-103",
@@ -2449,7 +2451,8 @@
     "difficulty": "medium",
     "tags": [
       "single_doc"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-LDC-104",
@@ -2473,7 +2476,8 @@
     "difficulty": "easy",
     "tags": [
       "single_doc"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-LDC-105",
@@ -2497,7 +2501,8 @@
     "difficulty": "easy",
     "tags": [
       "single_doc"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-LDC-106",
@@ -2521,7 +2526,8 @@
     "difficulty": "easy",
     "tags": [
       "structured"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-LDC-107",
@@ -2545,7 +2551,8 @@
     "difficulty": "easy",
     "tags": [
       "multi_doc"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-LDC-108",
@@ -2569,7 +2576,8 @@
     "difficulty": "easy",
     "tags": [
       "single_doc"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-LDC-109",
@@ -2593,7 +2601,8 @@
     "difficulty": "medium",
     "tags": [
       "multi_doc"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-LDC-110",
@@ -2617,7 +2626,8 @@
     "difficulty": "medium",
     "tags": [
       "multi_doc"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-LDC-111",
@@ -2641,7 +2651,8 @@
     "difficulty": "hard",
     "tags": [
       "structured"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-LDC-112",
@@ -2665,7 +2676,8 @@
     "difficulty": "medium",
     "tags": [
       "multi_doc"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-LDC-113",
@@ -2689,7 +2701,8 @@
     "difficulty": "medium",
     "tags": [
       "multi_doc"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-LDC-114",
@@ -2713,7 +2726,8 @@
     "difficulty": "medium",
     "tags": [
       "single_doc"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-LDC-115",
@@ -2737,7 +2751,8 @@
     "difficulty": "easy",
     "tags": [
       "single_doc"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-MDS-116",
@@ -3526,7 +3541,8 @@
     "difficulty": "medium",
     "tags": [
       "structured"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-SOP-147",
@@ -3550,7 +3566,8 @@
     "difficulty": "hard",
     "tags": [
       "multi_doc"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-SOP-148",
@@ -3574,7 +3591,8 @@
     "difficulty": "medium",
     "tags": [
       "structured"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-SOP-149",
@@ -3598,7 +3616,8 @@
     "difficulty": "medium",
     "tags": [
       "multi_doc"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-SOP-150",
@@ -3622,7 +3641,8 @@
     "difficulty": "medium",
     "tags": [
       "multi_doc"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-SOP-151",
@@ -3646,7 +3666,8 @@
     "difficulty": "hard",
     "tags": [
       "structured"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-SOP-152",
@@ -3670,7 +3691,8 @@
     "difficulty": "hard",
     "tags": [
       "multi_doc"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-SOP-153",
@@ -3694,7 +3716,8 @@
     "difficulty": "easy",
     "tags": [
       "structured"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-SOP-154",
@@ -3718,7 +3741,8 @@
     "difficulty": "medium",
     "tags": [
       "multi_doc"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-SOP-155",
@@ -3742,7 +3766,8 @@
     "difficulty": "hard",
     "tags": [
       "single_doc"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-SOP-156",
@@ -3766,7 +3791,8 @@
     "difficulty": "hard",
     "tags": [
       "single_doc"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-SOP-157",
@@ -3790,7 +3816,8 @@
     "difficulty": "medium",
     "tags": [
       "multi_doc"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-SOP-158",
@@ -3814,7 +3841,8 @@
     "difficulty": "medium",
     "tags": [
       "multi_doc"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-SOP-159",
@@ -3838,7 +3866,8 @@
     "difficulty": "medium",
     "tags": [
       "multi_doc"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-SOP-160",
@@ -3862,7 +3891,8 @@
     "difficulty": "medium",
     "tags": [
       "multi_doc"
-    ]
+    ],
+    "corpus_absent": true
   },
   {
     "id": "GS-NA-161",

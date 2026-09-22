@@ -1,0 +1,7 @@
+
+> api@0.0.1 scale:seed /home/scottsun/gbrainkg/apps/api
+> npx --yes tsx@4.23.13 scripts/scale-seed.ts -- --schema\=scale_10k --chunks\=10000 --kb-count\=40 --out\=tests/evaluation/scale/out/run-20260922T143926Z/seed-10000-scale_10k.json
+
+/home/scottsun/gbrainkg/apps/api:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  api@0.0.1 scale:seed: `npx --yes tsx@4.23.13 scripts/scale-seed.ts -- --schema\=scale_10k --chunks\=10000 --kb-count\=40 --out\=tests/evaluation/scale/out/run-20260922T143926Z/seed-10000-scale_10k.json`
+Command failed with signal "SIGTERM"

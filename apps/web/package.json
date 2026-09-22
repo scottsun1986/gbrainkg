@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "test": "npx --yes tsx@4.23.13 --test __tests__/api.test.ts __tests__/markdown.test.ts __tests__/force-layout.test.ts __tests__/org-utils.test.ts __tests__/errors.test.ts __tests__/capabilities.test.ts __tests__/citation-phrases.test.ts"
   },
   "dependencies": {
     "@prisma/client": "5.22.0",

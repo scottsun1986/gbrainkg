@@ -5,6 +5,9 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import helmet from 'helmet';
 import * as express from 'express';
+import { requestIdMiddleware } from './observability/request-id.middleware';
+import { metricsMiddleware } from './observability/metrics.middleware';
+import { createLogger, resolveLogFormat } from './observability/json-logger';
 // compression 是旧式 CJS 导出（无 default），tsconfig 未开启 esModuleInterop，
 // 默认导入在编译后会变成 undefined，这里显式按 require 语义引入。
 const compression = require('compression');
@@ -24,8 +27,21 @@ function loadLocalEnv() {
 
 async function bootstrap() {
   loadLocalEnv();
-  const app = await NestFactory.create(AppModule);
+  // LOG_FORMAT=json（默认）输出结构化 JSON 日志；pretty 保留 Nest 默认着色日志。
+  const logFormat = resolveLogFormat(process.env.LOG_FORMAT);
+  const logger = createLogger(logFormat);
+  const app = await NestFactory.create(AppModule, {
+    ...(logger ? { logger } : {}),
+  });
+  if (logger) {
+    // 同步替换静态 Logger.* 调用，保证 request-id 可关联。
+    Logger.overrideLogger(logger as unknown as Parameters<typeof Logger.overrideLogger>[0]);
+  }
   app.enableShutdownHooks();
+
+  // 为每个请求生成/透传 x-request-id，并挂到 AsyncLocalStorage 供日志关联。
+  app.use(requestIdMiddleware);
+  app.use(metricsMiddleware);
 
   app.use(
     helmet({
@@ -95,7 +111,7 @@ async function bootstrap() {
 
   await app.listen(port, '0.0.0.0');
   Logger.log(
-    `Application is running on port ${port} (Redis Queue: ${redisHost}:${redisPort} db=${redisDb})`,
+    `Application is running on port ${port} (Redis Queue: ${redisHost}:${redisPort} db=${redisDb}, logFormat=${logFormat})`,
     'Bootstrap',
   );
 }

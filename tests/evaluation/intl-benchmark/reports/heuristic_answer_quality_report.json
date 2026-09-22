@@ -430,5 +430,8 @@
       "rag_triad_score": 0.924,
       "avg_latency_ms": 22.43
     }
-  ]
+  ],
+  "suite": "answer_quality_heuristic_suite",
+  "framework_claim": "NOT official Ragas or DeepEval output; local heuristic scorer over a synthetic fixture set.",
+  "supersedes": "ragas_deepeval_evaluation_report.json (misleading name, corrected 2026-09-20)"
 }

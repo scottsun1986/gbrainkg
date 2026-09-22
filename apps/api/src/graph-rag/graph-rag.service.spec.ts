@@ -2,6 +2,7 @@ import { GraphRagService } from './graph-rag.service';
 
 const mockPrisma = {
   $executeRaw: jest.fn(),
+  $queryRaw: jest.fn(),
   graphEntity: {
     upsert: jest.fn(),
     findMany: jest.fn(),
@@ -114,8 +115,13 @@ describe('GraphRagService', () => {
         .mockResolvedValueOnce({ id: 'ent-1', name: '系统A' })
         .mockResolvedValueOnce({ id: 'ent-2', name: '服务B' });
 
-      mockPrisma.graphRelation.findUnique.mockResolvedValueOnce(null);
-      mockPrisma.graphRelation.create.mockResolvedValueOnce({ id: 'rel-1' });
+      // Entities are upserted with one batched statement that returns ids.
+      mockPrisma.$queryRaw
+        .mockResolvedValueOnce([
+          { id: 'ent-1', name: '系统A' },
+          { id: 'ent-2', name: '服务B' },
+        ])
+        .mockResolvedValueOnce([{ id: 'rel-1' }]);
 
       const res = await service.persistGraphElements('kb-1', {
         entities: [
@@ -129,8 +135,16 @@ describe('GraphRagService', () => {
 
       expect(res.entityCount).toBe(2);
       expect(res.relationCount).toBe(1);
-      expect(mockPrisma.graphEntity.upsert).toHaveBeenCalledTimes(2);
-      expect(mockPrisma.graphRelation.create).toHaveBeenCalledTimes(1);
+      // One round trip for every entity, one for every relation batch: the
+      // serial N+1 upsert loop is gone.
+      expect(mockPrisma.graphEntity.upsert).not.toHaveBeenCalled();
+      expect(mockPrisma.graphRelation.create).not.toHaveBeenCalled();
+      expect(mockPrisma.graphRelation.findUnique).not.toHaveBeenCalled();
+      expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(2);
+      const entitySql = (mockPrisma.$queryRaw.mock.calls[0][0] as TemplateStringsArray).join(' ');
+      expect(entitySql).toContain('ON CONFLICT ("kbId", "name") DO UPDATE');
+      const relationSql = (mockPrisma.$queryRaw.mock.calls[1][0] as TemplateStringsArray).join(' ');
+      expect(relationSql).toContain('ON CONFLICT ("sourceId", "targetId", "relationType") DO UPDATE');
     });
 
     it('returns zeroes when entity list is empty', async () => {
@@ -140,17 +154,12 @@ describe('GraphRagService', () => {
     });
 
     it('appends provenance when updating existing relations with documentVersion', async () => {
-      mockPrisma.graphEntity.upsert
-        .mockResolvedValueOnce({ id: 'ent-1', name: '系统A' })
-        .mockResolvedValueOnce({ id: 'ent-2', name: '服务B' });
-
-      mockPrisma.graphRelation.findUnique.mockResolvedValueOnce({
-        id: 'rel-1',
-        provenance: [
-          { documentId: 'doc-1', documentVersion: 1, chunkId: 'c1', snippet: 'old snippet' },
-        ],
-      });
-      mockPrisma.graphRelation.update.mockResolvedValueOnce({ id: 'rel-1' });
+      mockPrisma.$queryRaw
+        .mockResolvedValueOnce([
+          { id: 'ent-1', name: '系统A' },
+          { id: 'ent-2', name: '服务B' },
+        ])
+        .mockResolvedValueOnce([{ id: 'rel-1' }]);
 
       const res = await service.persistGraphElements('kb-1', {
         entities: [
@@ -171,20 +180,30 @@ describe('GraphRagService', () => {
       });
 
       expect(res.relationCount).toBe(1);
-      expect(mockPrisma.graphRelation.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
+      expect(mockPrisma.graphRelation.update).not.toHaveBeenCalled();
+      // The union of existing provenance and the new observation happens
+      // inside the database; the statement must express it as a JSONB concat
+      // guarded by containment so a repeated observation is not duplicated.
+      const relationSql = (mockPrisma.$queryRaw.mock.calls[1][0] as TemplateStringsArray).join(' ');
+      expect(relationSql).toContain('@> COALESCE(EXCLUDED."provenance"');
+      expect(mockPrisma.$queryRaw.mock.calls[1]).toContain(
+        JSON.stringify([
+          {
+            sourceId: 'ent-1',
+            targetId: 'ent-2',
+            relationType: 'depends_on',
+            weight: 1,
+            description: null,
             provenance: [
-              { documentId: 'doc-1', documentVersion: 1, chunkId: 'c1', snippet: 'old snippet' },
               { documentId: 'doc-1', documentVersion: 2, chunkId: 'c2', snippet: 'new snippet' },
             ],
-          }),
-        })
+          },
+        ]),
       );
     });
 
     it('merges entity document provenance for existing entities', async () => {
-      mockPrisma.graphEntity.upsert.mockResolvedValueOnce({ id: 'ent-1', name: '系统A' });
+      mockPrisma.$queryRaw.mockResolvedValueOnce([{ id: 'ent-1', name: '系统A' }]);
       await service.persistGraphElements('kb-1', {
         entities: [{ name: '系统A', type: 'system', sourceDocId: 'doc-2' }],
         relations: [],
@@ -199,10 +218,12 @@ describe('GraphRagService', () => {
     });
 
     it('surfaces relation persistence failures so enrichment can retry', async () => {
-      mockPrisma.graphEntity.upsert
-        .mockResolvedValueOnce({ id: 'ent-1', name: '系统A' })
-        .mockResolvedValueOnce({ id: 'ent-2', name: '服务B' });
-      mockPrisma.graphRelation.findUnique.mockRejectedValueOnce(new Error('database unavailable'));
+      mockPrisma.$queryRaw
+        .mockResolvedValueOnce([
+          { id: 'ent-1', name: '系统A' },
+          { id: 'ent-2', name: '服务B' },
+        ])
+        .mockRejectedValueOnce(new Error('database unavailable'));
 
       await expect(service.persistGraphElements('kb-1', {
         entities: [
@@ -276,7 +297,7 @@ describe('GraphRagService', () => {
             {
               relationType: 'regulates',
               weight: 2.0,
-              provenance: [{ snippet: '依据RBAC模型' }],
+              provenance: [{ documentId: 'd1', chunkId: 'c1', snippet: '依据RBAC模型' }],
               target: { name: '数据访问网关', type: 'system' },
             },
           ],
@@ -289,6 +310,9 @@ describe('GraphRagService', () => {
       expect(result.entities).toHaveLength(1);
       expect(result.entities[0].name).toBe('鉴权中台');
       expect(result.relations).toHaveLength(1);
+      expect(result.relations[0].provenance).toEqual([
+        { documentId: 'd1', chunkId: 'c1', snippet: '依据RBAC模型' },
+      ]);
       expect(result.formattedContext).toContain('【知识图谱关联事实 (GraphRAG Local Search)】');
       expect(result.formattedContext).toContain('[鉴权中台] (system) --[regulates]--> [数据访问网关] (system)');
     });
@@ -332,6 +356,59 @@ describe('GraphRagService', () => {
       const result = await service.searchGlobalCommunities(['kb-1'], '食堂菜单', 1);
       expect(result.communities).toEqual([]);
       expect(result.formattedContext).toBe('');
+    });
+  });
+
+  describe('planDriftQueries', () => {
+    it('uses community summaries only to select canonical entity probes', async () => {
+      jest.spyOn(service, 'searchGlobalCommunities').mockResolvedValue({
+        communities: [{ id: 'comm-1', title: '权限体系', summary: 'generated summary', findings: [] }],
+        formattedContext: 'generated summary',
+      });
+      mockPrisma.graphCommunity.findMany.mockResolvedValueOnce([
+        { id: 'comm-1', title: '权限体系', entityIds: ['e1', 'e2'] },
+      ]);
+      mockPrisma.graphEntity.findMany.mockResolvedValueOnce([
+        { id: 'e1', name: '鉴权中台', type: 'system' },
+        { id: 'e2', name: '数据访问网关', type: 'system' },
+      ]);
+
+      const plan = await service.planDriftQueries(['kb-1'], '权限架构如何运行', { maxProbes: 1 });
+      expect(plan.probes).toEqual(['权限体系 鉴权中台']);
+      expect(plan.communityIds).toEqual(['comm-1']);
+      expect(plan.seedEntities).toContain('鉴权中台');
+      expect(plan.probes.join(' ')).not.toContain('generated summary');
+    });
+  });
+
+  describe('searchRelatedChunkIds (graph retrieval arm)', () => {
+    it('ranks chunks by relation weight and records the hop distance', async () => {
+      mockPrisma.graphEntity.findMany.mockResolvedValueOnce([
+        {
+          id: 'e1',
+          name: '值乘制度',
+          outgoingRelations: [{ targetId: 'e2' }],
+          incomingRelations: [],
+        },
+      ]);
+      // First call = relations of the seed entities, second = 2-hop relations.
+      mockPrisma.graphRelation.findMany
+        .mockResolvedValueOnce([
+          { weight: 3, provenance: [{ chunkId: 'c-strong', documentId: 'd1' }] },
+          { weight: 1, provenance: [{ chunkId: 'c-weak', documentId: 'd1' }, { chunkId: 'c-strong', documentId: 'd1' }] },
+        ])
+        .mockResolvedValueOnce([{ weight: 2, provenance: [{ chunkId: 'c-second-hop', documentId: 'd2' }] }]);
+
+      const hits = await service.searchRelatedChunkIds(['kb-1'], '值乘制度怎么规定的', 10);
+
+      expect(hits.map((h) => h.chunkId)).toEqual(['c-strong', 'c-second-hop', 'c-weak']);
+      expect(hits[0]).toMatchObject({ documentId: 'd1', score: 4, hops: 1 });
+      expect(hits[1]).toMatchObject({ documentId: 'd2', hops: 2 });
+    });
+
+    it('returns nothing when the question mentions no known entity', async () => {
+      mockPrisma.graphEntity.findMany.mockResolvedValueOnce([]);
+      await expect(service.searchRelatedChunkIds(['kb-1'], '完全无关的问题', 10)).resolves.toEqual([]);
     });
   });
 });

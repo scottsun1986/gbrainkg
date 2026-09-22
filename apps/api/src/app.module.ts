@@ -19,6 +19,14 @@ import { EmbeddingModule } from './embedding/embedding.module';
 import { OpenApiModule } from './open-api/open-api.module';
 import { McpModule } from './mcp/mcp.module';
 import { SystemReprocessService } from './system-reprocess.service';
+import { RedisModule } from './redis/redis.module';
+import { DbModule } from './db/db.module';
+import { TenantContextService } from './db/tenant-context.service';
+import { ObservabilityModule } from './observability/observability.module';
+import { DocumentAclController } from './permission/document-acl.controller';
+import { ConnectorModule } from './connector/connector.module';
+import { ExperimentsModule } from './experiments/experiments.module';
+import { VersionChainModule } from './ingestion/version-chain.module';
 
 @Module({
   imports: [
@@ -35,6 +43,7 @@ import { SystemReprocessService } from './system-reprocess.service';
       },
     }),
     BullModule.registerQueue({ name: 'enrichment-queue' }),
+    RedisModule,
     ChatModule,
     BrainCompilerModule,
     PermissionModule,
@@ -47,11 +56,16 @@ import { SystemReprocessService } from './system-reprocess.service';
     EmbeddingModule,
     OpenApiModule,
     McpModule,
+    ObservabilityModule,
+    DbModule,
+    ConnectorModule, ExperimentsModule,
+    VersionChainModule,
   ],
-  controllers: [AppController, AdminController, KnowledgeGraphController],
+  controllers: [AppController, AdminController, KnowledgeGraphController, DocumentAclController],
   providers: [
     AppService,
     SystemReprocessService,
+    TenantContextService,
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,

@@ -26,6 +26,9 @@ def pytest_addoption(parser):
 
 @pytest.fixture(scope="session")
 def auth_token():
+    preset = os.environ.get("LLMWIKI_TOKEN") or os.environ.get("EVAL_BEARER_TOKEN")
+    if preset:
+        return preset
     try:
         url = f"{API_BASE}/auth/login"
         resp = requests.post(url, json={"username": TEST_USER, "password": TEST_PASSWORD}, timeout=5)

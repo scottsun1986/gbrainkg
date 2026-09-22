@@ -11,9 +11,9 @@ function escapeRegExp(value: string): string {
  * Parse an admin-maintained term mapping from KnowledgeBase.domainTerms.
  *
  * Accepted shapes (all corpus-agnostic — this module never hardcodes terms):
- *   { "打车": ["交通费", "交通费用报销"] }        // object map
- *   [{ "from": "打车", "to": ["交通费"] }]        // list of {from,to}
- *   ["打车", "报销"]                              // legacy flat hint terms
+ *   { "<口语词>": ["<正式词1>", "<正式词2>"] }   // object map
+ *   [{ "from": "<口语词>", "to": ["<正式词>"] }] // list of {from,to}
+ *   ["<提示词1>", "<提示词2>"]                   // legacy flat hint terms
  *
  * A flat string array carries no mapping information, so it yields no
  * mappings; those terms continue to be handled as plain retrieval hints.

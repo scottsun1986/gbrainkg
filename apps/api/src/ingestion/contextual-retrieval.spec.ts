@@ -36,6 +36,34 @@ describe('ContextualRetrieval', () => {
   });
 
   describe('a. Normal operation', () => {
+    it('reuses a durable cached prefix instead of paying the LLM again', async () => {
+      const chunks = createChunks(1);
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: 'Fresh description.' } }] }),
+      });
+      // First pass: populates the cache through the LLM.
+      const store = new Map<string, string>();
+      const cache = {
+        get: jest.fn(async (keys: string[]) =>
+          new Map(keys.filter((k) => store.has(k)).map((k) => [k, store.get(k)!])),
+        ),
+        put: jest.fn(async (entries: Array<{ key: string; value: string }>) => {
+          for (const e of entries) store.set(e.key, e.value);
+        }),
+      };
+      const first = await enrichChunksWithContext(fullMarkdown, chunks, config, { cache });
+      expect(first[0].content).toContain('[上下文: Fresh description.]');
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+
+      // Second pass over identical input: cache hit, zero additional LLM calls.
+      (global.fetch as jest.Mock).mockClear();
+      const second = await enrichChunksWithContext(fullMarkdown, chunks, config, { cache });
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(second[0].content).toContain('[上下文: Fresh description.]');
+      expect(second[0].metadata.contextual_prefix_cached).toBe(true);
+    });
+
     it('enriches chunks with context prefix when document is long enough', async () => {
       const chunks = createChunks(2);
       const mockResponse = { choices: [{ message: { content: 'Mocked context description.' } }] };
@@ -132,10 +160,12 @@ describe('ContextualRetrieval', () => {
     it('keeps the first chunk of each section in the sampled subset', async () => {
       const originalLimit = process.env.CONTEXTUAL_RETRIEVAL_MAX_CHUNKS;
       process.env.CONTEXTUAL_RETRIEVAL_MAX_CHUNKS = '6';
-      let enrich: typeof enrichChunksWithContext;
+      let enrich: typeof enrichChunksWithContext = enrichChunksWithContext;
       jest.isolateModules(() => {
         enrich = require('./contextual-retrieval').enrichChunksWithContext;
       });
+      // Definite assignment: isolateModules always runs the callback synchronously.
+      const runEnrich: typeof enrichChunksWithContext = enrich;
       try {
         const sections = ['A', 'A', 'A', 'B', 'B', 'B', 'C', 'C', 'C', 'D', 'D', 'D'];
         const chunks: IndexedMarkdownChunk[] = sections.map((section, i) => ({
@@ -151,7 +181,7 @@ describe('ContextualRetrieval', () => {
           json: async () => ({ choices: [{ message: { content: 'Ctx' } }] }),
         });
 
-        const result = await enrich(fullMarkdown, chunks, config, { concurrency: 4 });
+        const result = await runEnrich(fullMarkdown, chunks, config, { concurrency: 4 });
 
         // Mandatory section openers: 0(A), 3(B), 6(C), 9(D) plus evenly
         // spaced fillers (1 and 7) make up the 6-chunk budget.

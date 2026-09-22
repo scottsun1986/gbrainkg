@@ -280,7 +280,9 @@ async def enrich_markdown_with_vlm(
     if not is_vlm_available():
         return markdown, {'vlm_enabled': False}
 
-    vlm_stats = {
+    # Annotate as dict[str, Any] so the int counters can be incremented below
+    # (a bare dict would widen to dict[str, object] and reject `+= 1`).
+    vlm_stats: dict[str, Any] = {
         'vlm_enabled': True,
         'vlm_model': VLM_MODEL,
         'vlm_placeholders_found': 0,

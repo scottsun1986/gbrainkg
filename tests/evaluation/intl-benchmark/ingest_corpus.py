@@ -50,6 +50,9 @@ def http(method, path, body=None, token=None, timeout=60):
 
 
 def login():
+    preset = os.environ.get("LLMWIKI_TOKEN") or os.environ.get("EVAL_BEARER_TOKEN")
+    if preset:
+        return preset
     s, b = http("POST", "/api/v1/auth/login", {"username": USER, "password": PASS})
     assert s in (200, 201), f"login failed: {s} {b}"
     return b["token"]

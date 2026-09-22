@@ -10,9 +10,12 @@ import { BullModule } from '@nestjs/bullmq';
 import { IngestionService } from './ingestion.service';
 import { IngestionProcessor } from './ingestion.processor';
 import { EnrichmentProcessor } from './enrichment.processor';
+import { LexicalIndexModule } from '../retrieval/lexical-index.module';
+import { StorageModule } from '../storage/storage.module';
+import { VersionChainModule } from './version-chain.module';
 
 @Module({
-  imports: [PermissionModule, AuthModule, BrainCompilerModule, GraphRagModule, RaptorModule,
+  imports: [PermissionModule, AuthModule, BrainCompilerModule, GraphRagModule, RaptorModule, LexicalIndexModule, StorageModule, VersionChainModule,
     BullModule.registerQueue({ name: 'ingestion-queue' }, { name: 'enrichment-queue' })],
   controllers: [IngestionController, KnowledgeBaseController],
   providers: [IngestionService, IngestionProcessor, EnrichmentProcessor],

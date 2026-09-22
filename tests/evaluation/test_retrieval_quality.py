@@ -451,6 +451,10 @@ def test_quality(test_case, auth_token, api_base_url, eval_kb_scope,
         "category": test_case["category"],
         "query": test_case["query"],
         "difficulty": test_case.get("difficulty", "medium"),
+        # Cases whose gold document is absent from this environment measure the corpus,
+        # not the system (see flag_corpus_absent_cases.py and the 2026-09-12 acceptance
+        # report). They stay in `results` but are excluded from the aggregate metrics.
+        "corpus_absent": bool(test_case.get("corpus_absent")),
         "dry_run": dry_run,
         "failure": bool(api_error),
         "api_error": api_error,
@@ -502,17 +506,44 @@ def _write_results():
         "results": _all_results,
         "summary": _compute_summary(_all_results),
     }
-    path = os.path.join(RESULTS_DIR, "latest_results.json")
+    # EVAL_RESULTS_NAME lets the suite be sharded across processes for a large
+    # (220-case) run without every shard overwriting the same artefact; the
+    # shard files are merged afterwards with the same _compute_summary().
+    results_name = os.environ.get("EVAL_RESULTS_NAME") or "latest_results.json"
+    path = os.path.join(RESULTS_DIR, results_name)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(output, f, indent=2, ensure_ascii=False)
 
 
 def _compute_summary(results: list[dict]) -> dict:
-    """Compute aggregate metrics across all evaluated cases."""
+    """Compute aggregate metrics over the cases this environment can answer.
+
+    Cases flagged `corpus_absent` expect documents that were never ingested here, so
+    they cannot be answered by any system. Keeping them in the aggregate made
+    `long_doc_completeness` / `scan_ocr_ppt` look like a 0% capability when in fact
+    they are a corpus gap; they are reported separately instead.
+    """
     if not results:
         return {}
 
+    unanswerable = [r for r in results if r.get("corpus_absent")]
+    results = [r for r in results if not r.get("corpus_absent")]
+
     n = len(results)
+    if n == 0:
+        # A shard can legitimately reach this point with only corpus-absent cases
+        # processed so far (the results file is rewritten after every case). An
+        # empty aggregate must be reported as empty — dividing by zero here used
+        # to fail the *case* and, with it, the shard.
+        return {
+            "overall": {"count": 0},
+            "by_category": {},
+            "corpus_absent": {
+                "count": len(unanswerable),
+                "categories": sorted({str(r.get("category")) for r in unanswerable}),
+                "note": "only corpus-absent cases recorded so far; no aggregate yet",
+            },
+        }
     by_category: dict[str, list[dict]] = {}
     for r in results:
         by_category.setdefault(r["category"], []).append(r)
@@ -544,6 +575,11 @@ def _compute_summary(results: list[dict]) -> dict:
             "avg_total_sec": avg("total_sec", results),
         },
         "by_category": {},
+        "corpus_absent": {
+            "count": len(unanswerable),
+            "categories": sorted({str(r.get("category")) for r in unanswerable}),
+            "note": "expected documents are not in this environment; excluded from the metrics above",
+        },
     }
 
     for cat, cat_results in sorted(by_category.items()):

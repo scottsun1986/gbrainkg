@@ -1,5 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ModelConfigService } from '../model-config.service';
+import { RedisService } from '../redis/redis.service';
 
 export type QueryComplexity = 'simple' | 'multi_hop' | 'comparative' | 'global_synthesis';
 
@@ -31,7 +32,10 @@ export class AgenticRagService {
   private readonly enabled = process.env.AGENTIC_RAG_ENABLED !== 'false';
   private readonly maxHops = Number(process.env.AGENTIC_RAG_MAX_HOPS || '3');
 
-  constructor(private readonly modelConfigService: ModelConfigService) {}
+  constructor(
+    private readonly modelConfigService: ModelConfigService,
+    @Optional() private readonly redisService?: RedisService,
+  ) {}
 
   isFastPathSimple(query: string): boolean {
     const q = query.trim();
@@ -124,7 +128,7 @@ Output valid JSON format:
 规则：
 1. 每个子问题必须是独立的、可以单独在知识库中检索的问题
 2. 子问题合起来应该能完整回答原始问题
-3. 对比/冲突类问题：分别查询各方比较对象或制度的不同表述（严禁在子问题中使用“第一份文档”、“第二份文档”等无意义代词，而应转换为该主题在不同制度/版本中的具体关键词或不同规范表述，如“考勤管理制度 作息时间”、“考勤制度手册 工作时间”）
+3. 对比/冲突类问题：分别查询各方比较对象或不同文件的不同表述（严禁在子问题中使用“第一份文档”、“第二份文档”等无意义代词，而应转换为该主题在不同文件/版本中的具体关键词或规范表述，例如“<主题A> 规定”、“<主题B> 规定”，其中尖括号部分取自用户问题中的实际主题词）
 4. 多跳类问题：按推理链的步骤拆解
 5. 综合类问题：按主题或维度拆解
 
@@ -188,6 +192,22 @@ Output valid JSON format:
   }
 
   /**
+   * Single source of truth for the HyDE switch.
+   *
+   * Previously the caller required `HYDE_ENABLED === 'true'` while
+   * `generateHypotheticalDocument` only bailed out on `HYDE_ENABLED === 'false'`,
+   * so the two guards disagreed and the default deployment never ran HyDE at
+   * all. The canonical flag is now AGENTIC_HYDE_ENABLED; the legacy HYDE_ENABLED
+   * name keeps working but only as an explicit opt-in, so an upgrade never
+   * silently starts paying for an extra LLM call per complex question.
+   */
+  private hydeEnabled(): boolean {
+    const canonical = process.env.AGENTIC_HYDE_ENABLED;
+    if (canonical !== undefined) return canonical === 'true' || canonical === '1';
+    return process.env.HYDE_ENABLED === 'true' || process.env.HYDE_ENABLED === '1';
+  }
+
+  /**
    * HyDE (Hypothetical Document Embeddings, Gao et al., 2022): ask the model
    * to draft a short, plausible expert passage that would answer the question.
    * That passage is then used as an additional retrieval arm, bridging the
@@ -195,7 +215,7 @@ Output valid JSON format:
    * Returns null when disabled, unconfigured, or on any failure.
    */
   async generateHypotheticalDocument(query: string): Promise<string | null> {
-    if (!this.enabled || process.env.HYDE_ENABLED === 'false') return null;
+    if (!this.enabled || !this.hydeEnabled()) return null;
     try {
       const config = await this.getLlmConfig();
       if (!config) return null;
@@ -235,8 +255,9 @@ Output valid JSON format:
    * General, corpus-agnostic query expansion. Instead of maintaining a
    * hardcoded synonym table (which can never be exhaustive), ask the model to
    * produce the formal/standard terms, synonyms and related policy vocabulary
-   * that a document is likely to use. Examples: 夏天→夏令时, 打车→交通费,
-   * 裁员→解除劳动合同. Results are cached in-process because the same query is
+   * that a document is likely to use (colloquial → formal register shift only;
+   * no industry-specific worked examples). Results are cached in-process because
+   * the same query is
    * often re-issued (retries, multiple turns).
    */
   async expandQuery(query: string): Promise<string[]> {
@@ -244,6 +265,14 @@ Output valid JSON format:
     const cacheKey = query.trim();
     const cached = this.expansionCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) return cached.terms;
+    // L2: the same question is usually asked by several users across several
+    // API instances. Without the shared layer each instance pays for its own
+    // model round trip (and its own latency) for an identical prompt.
+    const shared = await this.redisService?.getJson<string[]>(`agentic:expand:${cacheKey}`);
+    if (Array.isArray(shared)) {
+      this.expansionCache.set(cacheKey, { terms: shared, expiresAt: Date.now() + 10 * 60 * 1000 });
+      return shared;
+    }
     try {
       const config = await this.getLlmConfig();
       if (!config) return [];
@@ -256,7 +285,7 @@ Output valid JSON format:
 要求：
 1. 只输出 json：{"expansions": ["词1", "词2", ...]}
 2. 3-6 个，每个是简短检索词或短语（不要整句）
-3. 覆盖：同义词、正式/行业规范用语、相关制度术语、可能的别名（如季节性作息称"夏令时/冬令时"）
+3. 覆盖：同义词、正式/规范用语、相关术语、可能的别名与简称
 4. 不要解释，不要编号`,
           },
           { role: 'user', content: query },
@@ -306,6 +335,9 @@ Output valid JSON format:
             .slice(0, 6)
         : [];
       this.expansionCache.set(cacheKey, { terms, expiresAt: Date.now() + 10 * 60 * 1000 });
+      if (terms.length) {
+        await this.redisService?.setJson(`agentic:expand:${cacheKey}`, terms, 600);
+      }
       if (this.expansionCache.size > 500) {
         const oldest = this.expansionCache.keys().next().value;
         if (oldest) this.expansionCache.delete(oldest);
@@ -339,6 +371,15 @@ Output valid JSON format:
     if (cached && cached.expiresAt > Date.now()) {
       return cached.plan;
     }
+    const shared = await this.redisService?.getJson<{
+      subQueries: string[];
+      expansions: string[];
+      reasoning: string;
+    }>(`agentic:plan:${cacheKey}`);
+    if (shared && Array.isArray(shared.subQueries)) {
+      this.planCache.set(cacheKey, { plan: shared, expiresAt: Date.now() + 3600 * 1000 });
+      return shared;
+    }
 
     try {
       const config = await this.getLlmConfig();
@@ -360,7 +401,7 @@ Output valid JSON:
 }`
         : `你是一个企业知识库检索规划专家。请针对用户复杂问题进行双重检索规划：
 1. 子问题拆解（subQueries）：拆解为 2-3 个可独立在知识库检索的子问题（对比/冲突类问题必须分别查询各方比较对象或不同制度的表述，严禁使用“第一份文档”、“第二份文档”等无意义代词）。
-2. 规范术语扩展（expansions）：给出 3-5 个有助于弥合口语与正式制度文本差异的正式术语、行业规范用语或制度相关词汇（如夏令时/冬令时、标准工时等）。
+2. 规范术语扩展（expansions）：给出 3-5 个有助于弥合口语与正式文本差异的正式术语、规范用语或相关词汇。
 
 输出合法 JSON：
 {
@@ -413,6 +454,9 @@ Output valid JSON:
         reasoning: parsed.reasoning || '',
       };
       this.planCache.set(cacheKey, { plan: res, expiresAt: Date.now() + 3600 * 1000 });
+      if (res.subQueries.length || res.expansions.length) {
+        await this.redisService?.setJson(`agentic:plan:${cacheKey}`, res, 3600);
+      }
       return res;
     } catch (err) {
       this.logger.warn(`Unified query planning failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -451,7 +495,7 @@ Output valid JSON:
     const useUnified = process.env.AGENTIC_UNIFIED_PLAN !== 'false';
     if (useUnified) {
       const planPromise = this.planComplexQuery(query, complexity);
-      const hydePromise = process.env.HYDE_ENABLED === 'true'
+      const hydePromise = this.hydeEnabled()
         ? this.generateHypotheticalDocument(query)
         : Promise.resolve(null);
       const [plan, hyde] = await Promise.all([planPromise, hydePromise]);
@@ -460,11 +504,23 @@ Output valid JSON:
         .map((q) => String(q || '').trim())
         .filter((q) => q.length >= 4 && q !== query.trim());
 
-      const ofMatch = query.match(/(?:husband|wife|spouse|father|mother|son|daughter|brother|sister|parent|child|director|author|producer|performer|composer|creator|founder|inventor|place of birth|birthplace)\s+of\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i);
-      const possMatch = query.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)'s\s+(?:husband|wife|spouse|father|mother|son|daughter|brother|sister|parent|child|director|author|producer|performer|composer|creator|founder|inventor|place of birth|birthplace)/);
-      const bridgeEntity = ofMatch
-        ? ofMatch[1].split(/\s+/).filter((w) => /^[A-Z][a-z]+/.test(w)).join(' ')
-        : possMatch ? possMatch[1] : null;
+      // Bridge-entity extraction for benchmark-shaped English questions
+      // ("the husband of X", "X's director"). Same reasoning as the deterministic
+      // patterns in ChatService.decomposeQuery: these are 2Wiki/HotpotQA
+      // question templates, so they are gated behind RETRIEVAL_BENCHMARK_PATTERNS
+      // instead of steering every English production query.
+      const benchmarkPatternsEnabled =
+        process.env.RETRIEVAL_BENCHMARK_PATTERNS === 'true' ||
+        process.env.RETRIEVAL_BENCHMARK_PATTERNS === '1';
+      const bridgeEntity = benchmarkPatternsEnabled
+        ? (() => {
+            const ofMatch = query.match(/(?:husband|wife|spouse|father|mother|son|daughter|brother|sister|parent|child|director|author|producer|performer|composer|creator|founder|inventor|place of birth|birthplace)\s+of\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i);
+            const possMatch = query.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)'s\s+(?:husband|wife|spouse|father|mother|son|daughter|brother|sister|parent|child|director|author|producer|performer|composer|creator|founder|inventor|place of birth|birthplace)/);
+            return ofMatch
+              ? ofMatch[1].split(/\s+/).filter((w) => /^[A-Z][a-z]+/.test(w)).join(' ')
+              : possMatch ? possMatch[1] : null;
+          })()
+        : null;
 
       const combinedSet = new Set<string>();
       if (bridgeEntity && bridgeEntity.length >= 3) {
@@ -644,13 +700,19 @@ Rules:
 3. No duplicate queries: Already executed queries: [${executedListStr}]. suggestedFollowUp must provide novel, targeted queries (max 2).
 4. Grounded: If evidence is sufficient to answer completely, output status = 'sufficient'. If completely irrelevant, output 'irrelevant'.
 
+Procedure (follow it literally):
+1. State the exact fact the question asks for (e.g. "the birth date of the creator of X").
+2. Find a sentence in the Context that states that fact's VALUE. Put that sentence in evidenceQuote.
+3. If no sentence states the value — even when the topic, the entity, or adjacent facts are covered — status MUST be 'insufficient' and evidenceQuote MUST be empty. Never answer 'sufficient' because the topic is discussed or because a related entity is named.
+
 Output strict JSON:
 {
   "status": "sufficient" | "insufficient" | "irrelevant",
   "confidence": 0.0 - 1.0,
   "reasoning": "brief explanation (under 30 words)",
   "missingAspects": ["missing dimension/entity/clause"],
-  "suggestedFollowUp": ["next hop query"]
+  "suggestedFollowUp": ["next hop query"],
+  "evidenceQuote": "the sentence that states the asked fact, or empty string"
 }`
         : `你是一个企业知识库检索充分性裁决专家（Sufficiency Evaluator）。
 请严谨判断当前检索到的上下文证据（Context）是否足以完整回答用户问题（Query）。
@@ -661,13 +723,20 @@ Output strict JSON:
 3. 【禁止重复检索】：已执行过的检索词列表为：[${executedListStr}]。suggestedFollowUp 中严禁出现或微调这些已执行过的词，必须给出更具体或不同维度的检索词（最多2个）。
 4. 【无幻觉准则】：若证据完全不相关，输出 irrelevant；若已有充分证据可得出完整结论，输出 sufficient。
 
+裁决步骤（必须逐条执行）：
+1. 先写出该问题要问的**具体事实**（例如"某画作者的出生日期"）。
+2. 在 Context 中找出**直接陈述该事实取值**的原句，填入 evidenceQuote。
+3. 若没有任何原句陈述该取值——即便话题相关、实体已出现、邻接事实已覆盖——必须判定 insufficient，且 evidenceQuote 留空。
+   严禁因为"话题被讨论过"或"相关实体已出现"就判定 sufficient。
+
 输出严格 JSON 格式：
 {
   "status": "sufficient" | "insufficient" | "irrelevant",
   "confidence": 0.0 - 1.0,
   "reasoning": "简要裁决理由（50字以内）",
   "missingAspects": ["缺失的维度/实体/条款"],
-  "suggestedFollowUp": ["下一跳建议查询词"]
+  "suggestedFollowUp": ["下一跳建议查询词"],
+  "evidenceQuote": "直接回答该问题的原句，若不存在则为空字符串"
 }`;
 
       const response = await fetch(`${config.baseUrl}/chat/completions`, {
@@ -710,9 +779,23 @@ Output strict JSON:
           missingAspects: [],
         };
       }
-      const rawStatus = ['sufficient', 'insufficient', 'irrelevant'].includes(parsed?.status)
+      let rawStatus = ['sufficient', 'insufficient', 'irrelevant'].includes(parsed?.status)
         ? parsed.status
         : 'sufficient';
+
+      // A sufficiency verdict must be backed by the sentence that states the asked fact.
+      // Measured failure this catches: the judge returned 'sufficient' (80%) for
+      // "date of birth of the creator of A Burial at Ornans" with only the painting's page
+      // in context, so no hop ran and the model refused a fact it never saw. Requiring a
+      // quote turns "the topic looks covered" into "here is the sentence", and an empty
+      // quote on a 'sufficient' verdict is treated as insufficient evidence.
+      const evidenceQuote = String(parsed?.evidenceQuote || '').trim();
+      if (rawStatus === 'sufficient' && process.env.AGENTIC_RAG_REQUIRE_QUOTE !== 'false' && evidenceQuote.length < 10) {
+        this.logger.debug(
+          `Sufficiency judge returned 'sufficient' without a supporting quote; downgrading to insufficient. reasoning=${String(parsed?.reasoning || '').slice(0, 80)}`,
+        );
+        rawStatus = 'insufficient';
+      }
 
       // Deduplicate follow-up queries against already executed probes
       const rawFollowUps: string[] = Array.isArray(parsed.suggestedFollowUp)

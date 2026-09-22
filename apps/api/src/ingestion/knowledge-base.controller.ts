@@ -249,7 +249,7 @@ export class KnowledgeBaseController {
   /**
    * Update KB-level retrieval vocabulary. Accepts either a flat hint-term list
    * (`["报销","发票"]`) or a colloquial -> formal term mapping object
-   * (`{ "打车": ["交通费","交通费用报销"] }`). Sending `[]` clears it.
+   * (object map of colloquial→formal term lists). Sending `[]` clears it.
    * No vocabulary is hardcoded server-side; this is the only source of terms.
    */
   @Post(":kbId/domain-terms")

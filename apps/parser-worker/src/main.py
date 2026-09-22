@@ -7,11 +7,13 @@ import ipaddress
 import logging
 import os
 import re
+import secrets
 import subprocess
 import tempfile
 import time
 import uuid
 from contextlib import asynccontextmanager
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
@@ -50,13 +52,49 @@ LOCAL_DOCLING_ENABLED = os.environ.get("LOCAL_DOCLING_ENABLED", "1").lower() not
 }
 tasks: dict[str, dict[str, Any]] = {}
 MAX_TASKS = max(1, int(os.environ.get("PARSER_MAX_TASKS", "5000")))
+# Two independent limits:
+#  - MAX_TASKS bounds retained entries (finished results keep their markdown until
+#    the polling TTL expires), protecting worker memory;
+#  - MAX_INFLIGHT_TASKS bounds queued+processing work, protecting parse latency.
+# A hung task no longer occupies either forever: the cleanup sweep fails anything
+# still queued/processing after PARSER_TASK_STALE_SECONDS.
+MAX_INFLIGHT_TASKS = max(
+    1, int(os.environ.get("PARSER_MAX_INFLIGHT", str(MAX_TASKS)))
+)
+# A queued/processing entry that never reaches a terminal state used to occupy
+# capacity forever: the sweep below only deleted completed/failed tasks, so a
+# hung parse permanently consumed a MAX_TASKS slot until the process restarted.
+PARSER_TASK_STALE_SECONDS = max(
+    60.0, float(os.environ.get("PARSER_TASK_STALE_SECONDS", "5400"))
+)
+LEGACY_WORD_MAX_BYTES = int(os.environ.get("LEGACY_WORD_MAX_BYTES", str(60 * 1024 * 1024)))
+
+
+def _module_available(name: str) -> bool:
+    """Capability probe for optional parsers (no import side effects)."""
+    try:
+        import importlib.util
+
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+# Reported by /health so an operator can never be told a capability is active
+# while the package that implements it is missing from the image.
+DOCLING_INSTALLED = _module_available("docling")
+PYMUPDF_INSTALLED = _module_available("fitz")
 
 
 def reserve_task(task_id: str, filename: str, parser_type: str) -> None:
     # No await between capacity check and reservation: concurrent uploads in
     # this event loop cannot overbook or evict an in-flight task. Completed
     # results retain their normal TTL so API polling can still retrieve them.
-    if len(tasks) >= MAX_TASKS:
+    in_flight = 0
+    for t in tasks.values():
+        if t.get("status") in ("queued", "processing"):
+            in_flight += 1
+    if in_flight >= MAX_INFLIGHT_TASKS or len(tasks) >= MAX_TASKS:
         raise HTTPException(status_code=503, detail="Parser capacity exhausted", headers={"Retry-After": "5"})
     tasks[task_id] = {"status": "queued", "filename": filename, "parser_type": parser_type, "created_at": time.time()}
 _torchvision_compat_lib = None
@@ -99,13 +137,43 @@ async def periodic_cleanup():
         current_time = time.time()
         for tid in list(tasks.keys()):
             t_info = tasks[tid]
-            if t_info.get("status") in ("completed", "failed"):
-                if current_time - t_info.get("created_at", current_time) > 1800:
+            status = t_info.get("status")
+            age = current_time - t_info.get("created_at", current_time)
+            if status in ("completed", "failed"):
+                if age > 1800:
                     del tasks[tid]
+                continue
+            # Stale in-flight task: mark it failed instead of deleting it, so
+            # polling clients get a definitive answer *and* the slot returns to
+            # the capacity pool.
+            if status in ("queued", "processing") and age > PARSER_TASK_STALE_SECONDS:
+                logger.error(
+                    "Task %s stuck in %s for %.0fs; marking failed to release capacity",
+                    tid,
+                    status,
+                    age,
+                )
+                t_info["status"] = "failed"
+                t_info["error"] = (
+                    f"任务在 {status} 状态超过 {int(PARSER_TASK_STALE_SECONDS)} 秒未完成，"
+                    "已判定为超时失败（解析进程可能已卡死）"
+                )
+                t_info["stale_timeout"] = True
+                t_info["completed_at"] = current_time
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
+    if LOCAL_DOCLING_ENABLED and not DOCLING_INSTALLED:
+        logger.error(
+            "LOCAL_DOCLING_ENABLED is on but the docling package is not installed in this "
+            "environment: every layout call will fail and fall back to native extraction. "
+            "Either install docling in the image or set LOCAL_DOCLING_ENABLED=0."
+        )
+    if not PYMUPDF_INSTALLED:
+        logger.warning(
+            "PyMuPDF (fitz) is not installed: per-page VLM enrichment of PDFs is disabled."
+        )
     if not os.environ.get("AUTH_TOKEN"):
         logger.warning(
             "AUTH_TOKEN is not configured: parser worker accepts unauthenticated "
@@ -148,7 +216,9 @@ def _client_is_local_trusted(request: Request) -> bool:
 def verify_auth(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = os.environ.get("AUTH_TOKEN")
     if token:
-        if not credentials or credentials.credentials != token:
+        # compare_digest: a plain `!=` on a secret is not constant time, which
+        # leaks the token byte by byte to a caller who can measure the response.
+        if not credentials or not secrets.compare_digest(str(credentials.credentials), str(token)):
             raise HTTPException(status_code=401, detail="Invalid or missing authentication token")
         return
     # Without AUTH_TOKEN the worker must not be wide open: only loopback and
@@ -171,7 +241,18 @@ def health_check():
         "version": app.version,
         "pdf_parse_mode": PDF_PARSE_MODE,
         "ocr_provider": OCR_PROVIDER,
-        "local_docling_enabled": LOCAL_DOCLING_ENABLED,
+        # Report what the worker can actually do, not only what it was asked to
+        # do: the production image does not install Docling, so a bare
+        # `local_docling_enabled: true` used to advertise a capability whose
+        # every call raised ImportError and fell back to pypdf.
+        "local_docling_enabled": LOCAL_DOCLING_ENABLED and DOCLING_INSTALLED,
+        "local_docling_configured": LOCAL_DOCLING_ENABLED,
+        "docling_installed": DOCLING_INSTALLED,
+        # PyMuPDF is only needed to render PDF pages for the (API-based) VLM
+        # enrichment; without it that path silently returns an empty string.
+        "pymupdf_installed": PYMUPDF_INSTALLED,
+        "page_vlm_enrichment_available": PYMUPDF_INSTALLED and is_vlm_available(),
+        "task_stale_timeout_seconds": PARSER_TASK_STALE_SECONDS,
         # AnyDoc is intentionally owned by the API's official Node binding;
         # this worker only handles OCR/layout fallbacks.
         "anydoc_available": False,
@@ -223,10 +304,94 @@ def decode_text_bytes(content: bytes, filename: str) -> str:
     return content.decode("utf-8", errors="replace")
 
 
+class _HtmlTextExtractor(HTMLParser):
+    """HTML -> text that keeps block boundaries, headings and table cells.
+
+    The previous implementation deleted every tag with a regex and replaced it
+    with a space, which flattened `<td>` boundaries into nothing (columns ran
+    together into meaningless prose), deleted no script/style bodies, and lost
+    all heading structure. This walks the markup instead, so a table stays a
+    table and sections stay separable.
+    """
+
+    _SKIP = {"script", "style", "noscript", "template", "head", "svg", "iframe"}
+    _BLOCK = {
+        "p", "div", "section", "article", "header", "footer", "main", "aside",
+        "ul", "ol", "dl", "dd", "dt", "li", "tr", "table", "thead", "tbody",
+        "blockquote", "pre", "hr", "figure", "figcaption", "form", "nav",
+    }
+    _HEADING = {"h1": 1, "h2": 2, "h3": 3, "h4": 4, "h5": 5, "h6": 6}
+    _CELL = {"td", "th"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._parts: list[str] = []
+        self._skip_depth = 0
+
+    @property
+    def _skipping(self) -> bool:
+        return self._skip_depth > 0
+
+    def handle_starttag(self, tag: str, attrs) -> None:  # type: ignore[override]
+        tag = tag.lower()
+        if tag in self._SKIP:
+            self._skip_depth += 1
+            return
+        if self._skipping:
+            return
+        if tag in self._CELL:
+            self._parts.append(" | ")
+        elif tag == "br":
+            self._parts.append("\n")
+        elif tag in self._HEADING:
+            self._parts.append("\n\n" + "#" * self._HEADING[tag] + " ")
+        elif tag in self._BLOCK:
+            self._parts.append("\n\n")
+
+    def handle_endtag(self, tag: str) -> None:  # type: ignore[override]
+        tag = tag.lower()
+        if tag in self._SKIP:
+            self._skip_depth = max(0, self._skip_depth - 1)
+            return
+        if self._skipping:
+            return
+        if tag in self._BLOCK or tag in self._HEADING:
+            self._parts.append("\n\n")
+
+    def handle_data(self, data: str) -> None:  # type: ignore[override]
+        if self._skipping:
+            return
+        text = " ".join(data.split())
+        if text:
+            self._parts.append(text + " ")
+
+    def get_text(self) -> str:
+        raw = "".join(self._parts)
+        lines: list[str] = []
+        for line in raw.split("\n"):
+            stripped = re.sub(r"[ \t]{2,}", " ", line).strip()
+            if stripped:
+                lines.append(stripped)
+            elif lines and lines[-1] != "":
+                lines.append("")
+        text = "\n".join(lines)
+        return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
 def extract_plaintext(filename: str, content: bytes) -> str:
     suffix = Path(filename).suffix.lower()
     text = decode_text_bytes(content, filename)
     if suffix in {".html", ".htm"}:
+        parser = _HtmlTextExtractor()
+        try:
+            parser.feed(text)
+            parser.close()
+            extracted = parser.get_text()
+            if extracted:
+                return extracted
+        except Exception as exc:  # malformed markup must not fail the upload
+            logger.warning("HTML structural extraction failed for %s: %s", filename, exc)
+        # Fallback: tag stripping (previous behaviour) rather than returning raw markup.
         text = html.unescape(re.sub(r"<[^>]+>", " ", text))
     return text.strip()
 
@@ -258,6 +423,25 @@ def normalize_markdown(markdown: str, filename: str) -> str:
     return result
 
 def extract_legacy_word(path: Path) -> str:
+    # Validate before handing the file to antiword (an old C converter with a
+    # history of memory-safety CVEs): the OLE2 compound-document signature must
+    # be present and the size bounded, so an arbitrary uploaded blob cannot be
+    # fed to it, and a huge file cannot pin a worker slot.
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        raise RuntimeError(f"Legacy .doc is unreadable: {exc}") from exc
+    if size > LEGACY_WORD_MAX_BYTES:
+        raise RuntimeError(
+            f"Legacy .doc exceeds the {LEGACY_WORD_MAX_BYTES // (1024 * 1024)}MB conversion limit"
+        )
+    with path.open("rb") as handle:
+        header = handle.read(8)
+    if not header.startswith(bytes.fromhex("D0CF11E0A1B11AE1")):
+        raise RuntimeError(
+            "Legacy .doc rejected: the file is not an OLE2 compound document "
+            "(a .doc renamed from another format must be converted first)"
+        )
     env = os.environ.copy()
     try:
         result = subprocess.run(

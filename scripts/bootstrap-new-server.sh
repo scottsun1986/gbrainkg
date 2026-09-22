@@ -31,7 +31,14 @@ PROD_HOST="${PROD_HOST:-}"
 REMOTE_USER="${REMOTE_USER:-ubuntu}"
 DOMAIN="${DOMAIN:-knowledge.5gsailor.com}"
 PUBLIC_PORT="${PUBLIC_PORT:-20080}"
-ADMIN_INITIAL_PASSWORD="${ADMIN_INITIAL_PASSWORD:-123456}"
+# Initial admin password: never fall back to a well-known default. When the
+# operator does not supply one we generate a random value and print it once, so
+# a fresh deployment can never be reached with a guessable credential.
+ADMIN_INITIAL_PASSWORD_GENERATED=0
+if [[ -z "${ADMIN_INITIAL_PASSWORD:-}" ]]; then
+  ADMIN_INITIAL_PASSWORD="$(openssl rand -base64 18 | tr -d '/+=' | head -c 20)"
+  ADMIN_INITIAL_PASSWORD_GENERATED=1
+fi
 LOCAL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if [[ -z "$PROD_HOST" ]]; then
@@ -112,7 +119,9 @@ ssh "$PROD_HOST" "
 "
 
 # ---- 4. 安装与配置 PostgreSQL 16 + pgvector ----
-DB_PASS="$(openssl rand -hex 16)"
+DB_PASS="$(openssl rand -hex 36)"
+# 运行时角色独立口令（NOBYPASSRLS，RLS 生效）；llmwiki 保留 BYPASSRLS 供迁移/GBrain。
+APP_DB_PASS="$(openssl rand -hex 16)"
 log "[4/9] Setting up PostgreSQL 16 with pgvector extension..."
 ssh "$PROD_HOST" "
   set -e
@@ -131,12 +140,20 @@ ssh "$PROD_HOST" "
   sudo systemctl enable postgresql
   sudo systemctl start postgresql
 
-  # 创建用户与赋权（核心铁律：BYPASSRLS）
+  # 迁移/GBrain 角色（核心铁律：BYPASSRLS，否则 GBrain 迁移会在第 24 版中断）
   sudo -u postgres psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname='llmwiki'\" | grep -q 1 || {
     echo 'Creating PostgreSQL role llmwiki...'
     sudo -u postgres psql -c \"CREATE USER llmwiki WITH PASSWORD '$DB_PASS';\"
   }
   sudo -u postgres psql -c \"ALTER ROLE llmwiki WITH PASSWORD '$DB_PASS' BYPASSRLS;\"
+
+  # 运行时角色 llmwiki_app（NOBYPASSRLS）：API 运行时连接必须走此角色，
+  # RLS 租户隔离才会真正拦截越权读；迁移/GBrain 继续用 llmwiki。
+  sudo -u postgres psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname='llmwiki_app'\" | grep -q 1 || {
+    echo 'Creating runtime PostgreSQL role llmwiki_app (NOBYPASSRLS)...'
+    sudo -u postgres psql -c \"CREATE USER llmwiki_app WITH PASSWORD '$APP_DB_PASS' NOBYPASSRLS;\"
+  }
+  sudo -u postgres psql -c \"ALTER ROLE llmwiki_app WITH PASSWORD '$APP_DB_PASS' NOBYPASSRLS;\"
 
   # 创建实例1专属数据库
   sudo -u postgres psql -tAc \"SELECT 1 FROM pg_database WHERE datname='llmwiki'\" | grep -q 1 || {
@@ -144,11 +161,26 @@ ssh "$PROD_HOST" "
     sudo -u postgres psql -c \"CREATE DATABASE llmwiki OWNER llmwiki;\"
   }
 
+  # 授权运行时角色（表由迁移角色 llmwiki 创建；DEFAULT PRIVILEGES 覆盖后续建表）
+  sudo -u postgres psql -c \"GRANT CONNECT,TEMPORARY ON DATABASE llmwiki TO llmwiki_app;\"
+  sudo -u postgres psql -d llmwiki -c \"GRANT USAGE,CREATE ON SCHEMA public TO llmwiki_app;\"
+  sudo -u postgres psql -d llmwiki -c \"GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO llmwiki_app;\"
+  sudo -u postgres psql -d llmwiki -c \"GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO llmwiki_app;\"
+  sudo -u postgres psql -d llmwiki -c \"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO llmwiki_app;\"
+  sudo -u postgres psql -d llmwiki -c \"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE,SELECT ON SEQUENCES TO llmwiki_app;\"
+
   # 安装扩展
   sudo -u postgres psql -d llmwiki -c \"CREATE EXTENSION IF NOT EXISTS vector;\"
   sudo -u postgres psql -d llmwiki -c \"CREATE EXTENSION IF NOT EXISTS pg_trgm;\"
   sudo -u postgres psql -d llmwiki -c \"CREATE EXTENSION IF NOT EXISTS pgcrypto;\"
-  echo 'PostgreSQL 16 & pgvector initialized successfully.'
+
+  # 过滤 HNSW 召回参数按库设置：默认值（ef_search=40, iterative_scan=off）在
+  # 选择性权限过滤下实测 Recall@10 仅 0.21，且 pgvector 的 HNSW 参数无法写进
+  # Prisma migration 之外的地方，必须随库初始化一起落库。
+  sudo -u postgres psql -d llmwiki -c \"ALTER DATABASE llmwiki SET hnsw.ef_search = 200;\"
+  sudo -u postgres psql -d llmwiki -c \"ALTER DATABASE llmwiki SET hnsw.iterative_scan = 'relaxed_order';\"
+  sudo -u postgres psql -d llmwiki -c \"ALTER DATABASE llmwiki SET hnsw.max_scan_tuples = 20000;\"
+  echo 'PostgreSQL 16 & pgvector initialized successfully (llmwiki=BYPASSRLS migrate, llmwiki_app=NOBYPASSRLS runtime).'
 "
 
 # ---- 5. 安装与配置 Redis 7 ----
@@ -220,10 +252,16 @@ ssh "$PROD_HOST" "
     python3 -m venv .venv
   fi
   .venv/bin/pip install --upgrade pip
+  # pymupdf is a pure PDF rasteriser (no model weights) required for page-level
+  # VLM enrichment. Local layout models (docling) stay out of this deployment on
+  # purpose; the loop below tolerates a failure of that optional extra.
   .venv/bin/pip install \
     'fastapi>=0.111.0' 'uvicorn>=0.30.0' 'pydantic>=2.7.0' 'python-multipart>=0.0.9' \
     'httpx>=0.28.0' 'pypdf>=5.0.0' 'python-docx>=1.1.0' 'python-pptx>=1.0.0' \
-    'openpyxl>=3.1.0' 'xlrd>=2.0.1' 'minio>=7.2.7'
+    'openpyxl>=3.1.0' 'xlrd>=2.0.1' 'pymupdf>=1.24.0'
+  if [[ \"\${INSTALL_LOCAL_LAYOUT_MODELS:-0}\" == \"1\" ]]; then
+    .venv/bin/pip install 'docling>=1.1.0' && echo 'Installed optional docling layout models.'
+  fi
   echo 'Parser-worker virtualenv installed successfully.'
 "
 
@@ -250,6 +288,14 @@ DB_PASS=$DB_PASS
 DB_NAME=llmwiki
 DATABASE_URL=postgresql://llmwiki:$DB_PASS@127.0.0.1:5432/llmwiki?schema=public
 GBRAIN_DATABASE_URL=postgresql://llmwiki:$DB_PASS@127.0.0.1:5432/llmwiki?schema=public
+# 运行时角色（NOBYPASSRLS）连接串：API 运行时应优先使用本串，使 RLS 租户隔离生效。
+# 迁移/GBrain 继续使用上方 DATABASE_URL / GBRAIN_DATABASE_URL（llmwiki, BYPASSRLS）。
+DB_USER_APP=llmwiki_app
+DB_PASS_APP=$APP_DB_PASS
+DATABASE_URL_APP=postgresql://llmwiki_app:$APP_DB_PASS@127.0.0.1:5432/llmwiki?schema=public
+# RLS_ENFORCE=1：TenantContextService 对缺少 app.user_id / app.service 的查询 fail-closed。
+# 需配合运行时角色 NOBYPASSRLS + DATABASE_URL_APP 才真正拦截；=0 时行为等价直连。
+RLS_ENFORCE=1
 
 REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
@@ -288,6 +334,11 @@ DOCLING_TIMEOUT_SECONDS=240
 
 # 单分块 Prompt 字数放行上限（默认 6000，保障大表格与密集行语义完整送入大模型）
 CHAT_CHUNK_MAX_CHARS=6000
+
+# 检索管线开关：HyDE 每题多一次 LLM 调用，默认关闭；仅显式开启时生效。
+AGENTIC_HYDE_ENABLED=0
+# 面向公开基准（2Wiki/HotpotQA 模板）的英文拆解规则默认关闭，评测脚本内显式开启。
+RETRIEVAL_BENCHMARK_PATTERNS=0
 
 ADMIN_EMAIL=admin@local.invalid
 EOF
@@ -554,5 +605,9 @@ echo ""
 echo "部署完成后访问入口："
 echo "  - Web 控制台: https://$DOMAIN:$PUBLIC_PORT (或 http://<服务器IP>:$PUBLIC_PORT)"
 echo "  - 默认管理员: admin"
-echo "  - 初始密码:   $ADMIN_INITIAL_PASSWORD"
+if [[ "$ADMIN_INITIAL_PASSWORD_GENERATED" == "1" ]]; then
+  echo "  - 初始密码:   $ADMIN_INITIAL_PASSWORD   (本次随机生成，仅显示一次，请立即保存)"
+else
+  echo "  - 初始密码:   使用你通过 ADMIN_INITIAL_PASSWORD 提供的值"
+fi
 echo "================================================================================"

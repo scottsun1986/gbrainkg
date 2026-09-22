@@ -20,11 +20,59 @@ dependencies = [
     "python-pptx>=1.0.0",
     "openpyxl>=3.1.0",
     "xlrd>=2.0.1",
-    "minio>=7.2.7",
-    "docling>=1.1.0",
-    # paddleocr might have heavy dependencies, adding placeholders
-    # "paddleocr>=2.7.0",
 ]
+
+[project.optional-dependencies]
+# PyMuPDF is a pure PDF rasteriser (no model weights). It is required for
+# page-level VLM enrichment of PDFs: without it the renderer import fails and the
+# enrichment step returns an empty string, which used to look like "the page had
+# no visual content".
+pdf-render = ["pymupdf>=1.24.0"]
+# Local layout/document models (Docling). Intentionally optional: this
+# deployment keeps local models out of the production image, so the flag
+# LOCAL_DOCLING_ENABLED is only meaningful where this extra is installed.
+layout-models = ["docling>=1.1.0"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/parser_worker"]
+
+# ---------------------------------------------------------------------------
+# P2 toolchain: lint (ruff) + type check (mypy). Baseline first — tighten
+# `select` / `strict` incrementally so existing code does not go red overnight.
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+extend-exclude = [".venv", "__pycache__"]
+
+[tool.ruff.lint]
+# Correctness-class rules only for the P2 baseline. F401 (unused imports) is
+# deliberately deferred — existing modules still have a few and main.py is
+# under concurrent edit. Style buckets (E501, I, UP, B) can be enabled once
+# the baseline is clean.
+select = [
+    "E9",   # runtime syntax errors
+    "F63",  # invalid print/star usage
+    "F7",   # syntax errors in py2/async
+    "F82",  # undefined names
+]
+
+[tool.mypy]
+python_version = "3.10"
+# src/ is a flat source root (main.py, quality.py, extractors/), not a package.
+# Invoke from src/ so modules resolve as `main` / `extractors.*` (matching
+# PYTHONPATH=src):   cd src && mypy --explicit-package-bases main.py quality.py extractors
+mypy_path = "src"
+explicit_package_bases = true
+namespace_packages = true
+# Baseline: surface real type errors, do not require annotations everywhere.
+# warn_unused_ignores is off so existing `# type: ignore` comments kept for
+# older typing edge cases do not fail the gate.
+ignore_missing_imports = true
+check_untyped_defs = false
+disallow_untyped_defs = false
+warn_unused_ignores = false
+no_implicit_optional = true
+exclude = ["(?x)(\\.venv|__pycache__|tests/)"]

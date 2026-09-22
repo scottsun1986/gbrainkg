@@ -53,6 +53,11 @@ const REQUEST_TIMEOUT_MS = Number(process.env.GATE_REQUEST_TIMEOUT_MS || 90_000)
 // GATE_LLM_JUDGE_MIN > 0. This avoids a gate that only measures keyword overlap.
 const LLM_JUDGE_ENABLED = process.env.GATE_LLM_JUDGE === 'true';
 const LLM_JUDGE_MIN = parseFloat(process.env.GATE_LLM_JUDGE_MIN || '0');
+// Judge self-consistency: how many independent judge passes to run per answer.
+// A single pass cannot distinguish "the answer is weak" from "the judge is
+// unstable". With N>1 the score is the mean and the spread is reported, so a
+// gate decision made on an unstable judge is visible instead of silent.
+const LLM_JUDGE_SAMPLES = Math.max(1, Math.min(5, Number(process.env.GATE_LLM_JUDGE_SAMPLES || 1)));
 
 const DATASET_PATH = path.join(__dirname, 'golden-dataset.json');
 const RESULTS_DIR = path.join(__dirname, 'results');
@@ -178,6 +183,33 @@ const EVIDENCE_SNIPPET_MAX_CHARS = 800;
  * the judge output cannot be parsed (fail-open).
  */
 async function judgeAnswer(
+  question: string,
+  answer: string,
+  expectedKeywords: string[],
+  citations: Array<{ doc_title?: string; snippet?: string }>,
+  expectedNoAnswer: boolean,
+): Promise<number> {
+  if (LLM_JUDGE_SAMPLES <= 1) {
+    return judgeAnswerOnce(question, answer, expectedKeywords, citations, expectedNoAnswer);
+  }
+  const scores: number[] = [];
+  for (let sample = 0; sample < LLM_JUDGE_SAMPLES; sample++) {
+    const score = await judgeAnswerOnce(question, answer, expectedKeywords, citations, expectedNoAnswer);
+    if (score >= 0) scores.push(score);
+  }
+  if (!scores.length) return -1;
+  if (scores.length > 1) judgeSampleSpreads.push(Math.max(...scores) - Math.min(...scores));
+  return scores.reduce((a, b) => a + b, 0) / scores.length;
+}
+
+/**
+ * Per-answer spread between judge passes. Reported so a decision taken on an
+ * unstable judge is visible; a high mean spread means the judge score should not
+ * be trusted as a release gate without human review.
+ */
+const judgeSampleSpreads: number[] = [];
+
+async function judgeAnswerOnce(
   question: string,
   answer: string,
   expectedKeywords: string[],
@@ -377,6 +409,14 @@ async function runQualityGate() {
     summary: {
       total, passed: totalScore, overallSuccessRate: totalScore / total,
       metrics: agg, byCategory: categories,
+      judge: {
+        enabled: LLM_JUDGE_ENABLED,
+        samplesPerAnswer: LLM_JUDGE_SAMPLES,
+        meanSampleSpread: judgeSampleSpreads.length
+          ? judgeSampleSpreads.reduce((a, b) => a + b, 0) / judgeSampleSpreads.length
+          : null,
+        maxSampleSpread: judgeSampleSpreads.length ? Math.max(...judgeSampleSpreads) : null,
+      },
     },
     results,
   }, null, 2));

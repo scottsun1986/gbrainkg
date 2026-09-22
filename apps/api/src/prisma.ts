@@ -2,6 +2,11 @@ import { PrismaClient } from '@prisma/client';
 import * as fs from 'fs';
 import * as path from 'path';
 
+// Prefer the NOBYPASSRLS runtime role (RLS-enforced) when provided.
+if (process.env.DATABASE_URL_APP && !process.env.LLMWIKI_FORCE_MIGRATOR_URL) {
+  process.env.DATABASE_URL = process.env.DATABASE_URL_APP;
+}
+
 if (!process.env.DATABASE_URL) {
   const candidatePaths = [
     path.resolve(process.cwd(), '.env'),
@@ -38,6 +43,32 @@ if (!process.env.DATABASE_URL) {
 
 // One Prisma pool per API process. This prevents each controller and service
 // from silently allocating an independent PostgreSQL connection pool.
+//
+// Pool sizing is explicit rather than implicit: Prisma's default is
+// num_cpus * 2 + 1 per process, which on a 2 vCPU box that also runs the
+// enrichment workers produced "Unable to start a transaction in the given
+// time" under load (the API shares PostgreSQL with GBrain, the parser worker and
+// every BullMQ consumer). ENABLE the bound by setting PRISMA_CONNECTION_LIMIT;
+// an explicit value already present in DATABASE_URL always wins.
+function withConnectionPoolParams(url: string | undefined): string | undefined {
+  if (!url || !/^postgres(ql)?:\/\//i.test(url)) return url;
+  if (/[?&]connection_limit=/.test(url)) return url;
+  const limit = Number(process.env.PRISMA_CONNECTION_LIMIT || 0);
+  const poolTimeout = Number(process.env.PRISMA_POOL_TIMEOUT_SECONDS || 0);
+  if (!Number.isFinite(limit) || limit <= 0) return url;
+  const separator = url.includes('?') ? '&' : '?';
+  const params = [`connection_limit=${Math.floor(limit)}`];
+  if (Number.isFinite(poolTimeout) && poolTimeout > 0) {
+    params.push(`pool_timeout=${Math.floor(poolTimeout)}`);
+  }
+  return `${url}${separator}${params.join('&')}`;
+}
+
+if (process.env.DATABASE_URL) {
+  const bounded = withConnectionPoolParams(process.env.DATABASE_URL);
+  if (bounded) process.env.DATABASE_URL = bounded;
+}
+
 const prismaGlobal = globalThis as typeof globalThis & {
   __llmwikiPrisma?: PrismaClient;
 };

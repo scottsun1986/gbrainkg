@@ -4,6 +4,8 @@ import { ModelConfigService } from '../model-config.service';
 import { EmbeddingService } from '../embedding/embedding.service';
 import { estimateTokens } from '../chat/context-budget';
 import { buildDocumentPreviewUrl } from '../ingestion/preview-url';
+import { RedisService } from '../redis/redis.service';
+import { withServiceContext } from '../db/tenant-context.service';
 
 function pLimit(concurrency: number) {
   const queue: (() => void)[] = [];
@@ -57,6 +59,7 @@ export class RaptorService {
   constructor(
     @Optional() private readonly modelConfigService?: ModelConfigService,
     @Optional() private readonly embeddingService?: EmbeddingService,
+    @Optional() private readonly redisService?: RedisService,
   ) {}
 
   /**
@@ -75,7 +78,21 @@ export class RaptorService {
       }
       this.globalTreeRunningKbs.add(kbId);
       try {
-        await this.buildKbGlobalTree(kbId);
+        // Multi-instance guard: the debounce timer lives in this process, so
+        // without a distributed lock every API instance would rebuild the same
+        // KB-wide summary tree at the same time. The lock is held for the run's
+        // maximum expected duration and released by its owner only.
+        const lockTtlMs = Math.max(60_000, Number(process.env.RAPTOR_GLOBAL_TREE_LOCK_MS || 15 * 60 * 1000));
+        if (this.redisService) {
+          const { acquired } = await this.redisService.withLock(`raptor:global:${kbId}`, lockTtlMs, async () => {
+            await this.buildKbGlobalTree(kbId);
+          });
+          if (!acquired) {
+            this.logger.debug(`Skipping KB global tree for ${kbId}: another instance holds the build lock.`);
+          }
+        } else {
+          await this.buildKbGlobalTree(kbId);
+        }
       } catch (err) {
         this.logger.warn(`Debounced buildKbGlobalTree failed for KB ${kbId}: ${err instanceof Error ? err.message : String(err)}`);
       } finally {
@@ -492,10 +509,11 @@ export class RaptorService {
           .embedOne(`${createdGlobal.title}\n${String(createdGlobal.content || '').slice(0, 4000)}`)
           .catch(() => null);
         if (globalVector) {
-          await (this.prisma as any).$executeRaw`
+          await withServiceContext(this.prisma, (tx) =>
+            (tx as any).$executeRaw`
             UPDATE "RaptorNode" SET embedding = ${`[${globalVector.join(',')}]`}::vector
             WHERE id = ${createdGlobal.id}::uuid
-          `.catch(() => undefined);
+          `).catch(() => undefined);
         }
       }
       return { nodes: 1 };
@@ -935,7 +953,8 @@ export class RaptorService {
       if (!vector || !vector.length) return [];
       const literal = `[${vector.join(',')}]`;
       const rows = levels
-        ? await (this.prisma as any).$queryRaw<any[]>`
+        ? await withServiceContext(this.prisma, (tx) =>
+            (tx as any).$queryRaw<any[]>`
             SELECT id, "kbId", "documentId", level, title, content,
                    1 - (embedding <=> ${literal}::vector) AS similarity
             FROM "RaptorNode"
@@ -944,8 +963,9 @@ export class RaptorService {
               AND level = ANY(${levels}::int[])
             ORDER BY embedding <=> ${literal}::vector
             LIMIT ${Math.max(limit * 2, 8)}
-          `
-        : await (this.prisma as any).$queryRaw<any[]>`
+          `)
+        : await withServiceContext(this.prisma, (tx) =>
+            (tx as any).$queryRaw<any[]>`
             SELECT id, "kbId", "documentId", level, title, content,
                    1 - (embedding <=> ${literal}::vector) AS similarity
             FROM "RaptorNode"
@@ -953,17 +973,21 @@ export class RaptorService {
               AND embedding IS NOT NULL
             ORDER BY embedding <=> ${literal}::vector
             LIMIT ${Math.max(limit * 2, 8)}
-          `;
+          `);
       const hits = (rows || [])
-        .filter((row) => !this.isSpreadsheet(row.title))
-        .filter((row) => Number(row.similarity) >= Number(process.env.RAPTOR_VECTOR_MIN_SCORE || 0.30))
+        .filter((row: any) => !this.isSpreadsheet(row.title))
+        .filter((row: any) => Number(row.similarity) >= Number(process.env.RAPTOR_VECTOR_MIN_SCORE || 0.30))
         .slice(0, limit)
-        .map((row, index) => ({
+        .map((row: any, index: any) => ({
           documentId: row.documentId,
           kbId: row.kbId,
           title: row.title,
           evidence: `【宏观摘要 · ${row.level === 2 ? '全库演进全景' : row.level === 1 ? '全文' : '章节'}】${row.title}\n${row.content}`,
           score: Math.max(0.75, Math.min(0.98, Number(row.similarity) - index * 0.01)),
+          // Clamped to a display floor so macro summaries stay visible next to
+          // clause evidence; the number is not a relevance measurement and must
+          // not feed an absolute gate (see ChatService.calibratedScoreOf).
+          scoreSource: 'synthetic' as const,
           previewUrl: row.documentId ? buildDocumentPreviewUrl(row.kbId, row.documentId) : null,
           level: row.level,
           raptor: true as const,
@@ -985,20 +1009,22 @@ export class RaptorService {
   /** Embed all summary nodes of a document and persist the vectors. */
   private async embedNodesForDocument(documentId: string): Promise<number> {
     if (!this.embeddingService?.isEnabled()) return 0;
-    const nodes = await (this.prisma as any).$queryRaw<any[]>`
+    const nodes = await withServiceContext(this.prisma, (tx) =>
+      (tx as any).$queryRaw<any[]>`
       SELECT id, title, content FROM "RaptorNode"
       WHERE "documentId" = ${documentId}::uuid AND embedding IS NULL
-    `;
+    `);
     if (!nodes?.length) return 0;
     const vectors = await this.embeddingService.embed(nodes.map((n: any) => `${n.title}\n${String(n.content || '').slice(0, 4000)}`));
     let written = 0;
     for (let i = 0; i < nodes.length; i++) {
       const vector = vectors[i];
       if (!vector) continue;
-      await (this.prisma as any).$executeRaw`
+      await withServiceContext(this.prisma, (tx) =>
+        (tx as any).$executeRaw`
         UPDATE "RaptorNode" SET embedding = ${`[${vector.join(',')}]`}::vector
         WHERE id = ${nodes[i].id}::uuid
-      `;
+      `);
       written++;
     }
     return written;
@@ -1017,21 +1043,23 @@ export class RaptorService {
     this.backfillInFlight.add(kbId);
     try {
       for (let round = 0; round < 20; round++) {
-        const nodes = await (this.prisma as any).$queryRaw<any[]>`
+        const nodes = await withServiceContext(this.prisma, (tx) =>
+          (tx as any).$queryRaw<any[]>`
           SELECT id, title, content FROM "RaptorNode"
           WHERE "kbId" = ${kbId}::uuid AND embedding IS NULL
           LIMIT 100
-        `;
+        `);
         if (!nodes?.length) return;
         const vectors = await this.embeddingService.embed(nodes.map((n: any) => `${n.title}\n${String(n.content || '').slice(0, 4000)}`));
         let written = 0;
         for (let i = 0; i < nodes.length; i++) {
           const vector = vectors[i];
           if (!vector) continue;
-          await (this.prisma as any).$executeRaw`
+          await withServiceContext(this.prisma, (tx) =>
+            (tx as any).$executeRaw`
             UPDATE "RaptorNode" SET embedding = ${`[${vector.join(',')}]`}::vector
             WHERE id = ${nodes[i].id}::uuid
-          `;
+          `);
           written++;
         }
         if (written === 0) return;

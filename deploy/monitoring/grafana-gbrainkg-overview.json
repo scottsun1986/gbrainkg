@@ -1,0 +1,104 @@
+{
+  "title": "GBrainKG Enterprise Knowledge Base",
+  "uid": "gbrainkg-overview",
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "API Up",
+      "targets": [{ "expr": "up{job=\"gbrainkg-api\"}", "legendFormat": "{{instance}}" }],
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "RLS Enforce",
+      "targets": [{ "expr": "rls_enforce{job=\"gbrainkg-api\"}", "legendFormat": "{{instance}}" }],
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Req/s",
+      "targets": [{ "expr": "sum(rate(http_requests_total{job=\"gbrainkg-api\"}[5m]))", "legendFormat": "rps" }],
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "5xx ratio",
+      "targets": [{
+        "expr": "sum(rate(http_requests_total{job=\"gbrainkg-api\",status=~\"5..\"}[5m])) / sum(rate(http_requests_total{job=\"gbrainkg-api\"}[5m]))",
+        "legendFormat": "err"
+      }],
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Ingestion backlog",
+      "targets": [{ "expr": "ingestion_queue_depth{job=\"gbrainkg-api\"}", "legendFormat": "{{instance}}" }],
+      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 4 }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Fail-open /s",
+      "targets": [{ "expr": "sum(rate(retrieval_failopen_total{job=\"gbrainkg-api\"}[5m]))", "legendFormat": "failopen" }],
+      "gridPos": { "x": 20, "y": 0, "w": 4, "h": 4 }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "HTTP p50/p95/p99 (ms)",
+      "targets": [
+        { "expr": "max(http_request_duration_ms_quantile{job=\"gbrainkg-api\",quantile=\"0.5\"}) by (instance)", "legendFormat": "p50 {{instance}}" },
+        { "expr": "max(http_request_duration_ms_quantile{job=\"gbrainkg-api\",quantile=\"0.95\"}) by (instance)", "legendFormat": "p95 {{instance}}" },
+        { "expr": "max(http_request_duration_ms_quantile{job=\"gbrainkg-api\",quantile=\"0.99\"}) by (instance)", "legendFormat": "p99 {{instance}}" }
+      ],
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Requests by status",
+      "targets": [
+        { "expr": "sum(rate(http_requests_total{job=\"gbrainkg-api\"}[5m])) by (status)", "legendFormat": "{{status}}" }
+      ],
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 }
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Retrieval fail-open by channel",
+      "targets": [
+        { "expr": "sum(rate(retrieval_failopen_total{job=\"gbrainkg-api\"}[5m])) by (channel)", "legendFormat": "{{channel}}" }
+      ],
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 }
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "LLM / Embedding errors",
+      "targets": [
+        { "expr": "sum(rate(llm_errors_total{job=\"gbrainkg-api\"}[5m])) by (provider)", "legendFormat": "llm {{provider}}" },
+        { "expr": "sum(rate(embedding_failures_total{job=\"gbrainkg-api\"}[5m]))", "legendFormat": "embedding" }
+      ],
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 }
+    },
+    {
+      "id": 30,
+      "type": "timeseries",
+      "title": "Top routes by traffic",
+      "targets": [
+        { "expr": "topk(8, sum(rate(http_requests_total{job=\"gbrainkg-api\"}[5m])) by (route))", "legendFormat": "{{route}}" }
+      ],
+      "gridPos": { "x": 0, "y": 20, "w": 24, "h": 8 }
+    }
+  ],
+  "schemaVersion": 39,
+  "version": 1
+}

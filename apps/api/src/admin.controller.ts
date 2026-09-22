@@ -1,3 +1,4 @@
+import { withServiceContext } from './db/tenant-context.service';
 import {
   BadRequestException,
   Body,
@@ -86,6 +87,97 @@ export class AdminController {
     @Optional() @InjectQueue("enrichment-queue") private readonly enrichmentQueue?: Queue,
     @Optional() private readonly systemReprocessService?: SystemReprocessService,
   ) {}
+
+  /**
+   * Feedback triage loop.
+   *
+   * `not_useful` feedback already lands in FeedbackCase (see
+   * ConversationController.feedback). These endpoints close the loop the audit
+   * flagged as missing: a case can be triaged, converted into a gold
+   * regression item (the correction becomes the expected answer) or dismissed,
+   * and tests/evaluation/feedback-regression.ts replays every converted case
+   * against the live API so a fixed defect stays fixed.
+   */
+  private async assertFeedbackAccess(req: any): Promise<string> {
+    const adminId = await this.authService.userIdFromRequest(req);
+    const capabilities = await this.permissionService.getCapabilities(adminId);
+    if (
+      !capabilities.includes("*") &&
+      !capabilities.includes("system.settings.manage") &&
+      !capabilities.includes("system.settings.read")
+    ) {
+      throw new ForbiddenException("您没有查看或处理反馈案例的权限。");
+    }
+    return adminId;
+  }
+
+  @Get("feedback-cases")
+  async listFeedbackCases(
+    @Req() req: any,
+    @Query("status") status?: string,
+    @Query("limit") limit?: string,
+  ) {
+    await this.assertFeedbackAccess(req);
+    const allowed = ["new", "triaging", "converted", "dismissed"];
+    const where = status && allowed.includes(status) ? { status } : {};
+    const take = Math.min(Math.max(Number(limit || 50), 1), 200);
+    const [cases, counts] = await Promise.all([
+      this.prisma.feedbackCase.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        take,
+        select: {
+          id: true,
+          messageId: true,
+          question: true,
+          answer: true,
+          correction: true,
+          status: true,
+          createdAt: true,
+        },
+      }),
+      this.prisma.feedbackCase.groupBy({ by: ["status"], _count: { _all: true } }),
+    ]);
+    return {
+      cases,
+      counts: Object.fromEntries(counts.map((row: any) => [row.status, row._count?._all ?? 0])),
+    };
+  }
+
+  @Patch("feedback-cases/:id")
+  async updateFeedbackCase(@Req() req: any, @Param("id") id: string, @Body() body: any) {
+    const adminId = await this.assertFeedbackAccess(req);
+    const status = String(body?.status || "");
+    if (!["new", "triaging", "converted", "dismissed"].includes(status)) {
+      throw new BadRequestException("status 必须是 new / triaging / converted / dismissed 之一。");
+    }
+    const existing = await this.prisma.feedbackCase.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException("Feedback case not found.");
+    const correction =
+      typeof body?.correction === "string" && body.correction.trim()
+        ? body.correction.trim().slice(0, 4000)
+        : existing.correction;
+    if (status === "converted" && !correction) {
+      throw new BadRequestException("转换为回归用例前必须填写 correction（期望答案/关键事实）。");
+    }
+    const updated = await this.prisma.feedbackCase.update({
+      where: { id },
+      data: {
+        status,
+        ...(correction ? { correction } : {}),
+      },
+    });
+    await this.auditService
+      .log({
+        userId: adminId,
+        action: "feedback_case.update",
+        resource: "FeedbackCase",
+        resourceId: id,
+        details: { status, hasCorrection: Boolean(correction) },
+      })
+      .catch(() => undefined);
+    return updated;
+  }
 
   @Get("system/reprocess/status")
   async getSystemReprocessStatus(@Req() req: any) {
@@ -207,6 +299,36 @@ export class AdminController {
       });
   }
 
+  /**
+   * IndustryGrant.kb is a required Prisma relation. Under RLS the related
+   * KnowledgeBase row can be invisible (or genuinely missing), and Prisma then
+   * throws "Field kb is required ... got null". Load grants and KBs separately
+   * so a filtered/missing KB cannot 500 the admin shell after login.
+   */
+  private async loadGrantsWithKb() {
+    const grants = await this.prisma.industryGrant.findMany({
+      select: {
+        id: true,
+        kbId: true,
+        subjectType: true,
+        subjectId: true,
+        grantedById: true,
+        expiresAt: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: "desc" as const },
+    });
+    const kbIds = [...new Set(grants.map((g: any) => g.kbId))];
+    const kbs: any[] = kbIds.length
+      ? await this.prisma.knowledgeBase.findMany({
+          where: { id: { in: kbIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const kbMap = new Map(kbs.map((k: any) => [k.id, k]));
+    return grants.map((g: any) => ({ ...g, kb: kbMap.get(g.kbId) ?? null }));
+  }
+
   @Get("data")
   async getAllData(
     @Req() req: any,
@@ -260,377 +382,379 @@ export class AdminController {
     )
       throw new ForbiddenException("No administration permission.");
 
-    const users = await this.prisma.user.findMany({
-      include: {
-        roles: { include: { role: true } },
-        orgs: { include: { orgNode: true } },
-      },
-      orderBy: { createdAt: "asc" },
-    });
-    const allOrgs = await this.prisma.orgNode.findMany({
-      where: { status: "active" },
-      include: {
-        admins: {
-          include: {
-            user: { select: { id: true, displayName: true, username: true } },
-          },
+    // Admin shell inventory must run under service RLS context: otherwise
+    // KnowledgeBase filters make required Prisma relations (IndustryGrant.kb)
+    // resolve to null and 500 the post-login admin bootstrap.
+    return withServiceContext(this.prisma, async (db: any) => {
+      const users = await (db as any).user.findMany({
+        include: {
+          roles: { include: { role: true } },
+          orgs: { include: { orgNode: true } },
         },
-        kbs: {
-          where: { status: "active" },
-          select: {
-            id: true,
-            name: true,
-            status: true,
-            description: true,
-            orgNodeId: true,
-            admins: {
-              include: {
-                user: { select: { displayName: true, username: true } },
+        orderBy: { createdAt: "asc" },
+      });
+      const allOrgs = await (db as any).orgNode.findMany({
+        where: { status: "active" },
+        include: {
+          admins: {
+            include: {
+              user: { select: { id: true, displayName: true, username: true } },
+            },
+          },
+          kbs: {
+            where: { status: "active" },
+            select: {
+              id: true,
+              name: true,
+              status: true,
+              description: true,
+              orgNodeId: true,
+              admins: {
+                include: {
+                  user: { select: { displayName: true, username: true } },
+                },
               },
             },
           },
         },
-      },
-      orderBy: [{ path: "asc" }, { sort: "asc" }],
-    });
-    const orgs =
-      canReadOrg || canReadIndustry
-        ? allOrgs.map((org) => ({
-            ...org,
-            canManage: isSystemAdmin || managedOrgIds.has(org.id),
-            canCreateChild: isSystemAdmin || managedOrgIds.has(org.id),
-            // Organization administrators may delegate administration within their
-            // own subtree. They never receive access to a parent or sibling node
-            // because managedOrgIds is rooted at their assigned organization(s).
-            canSetAdmin: isSystemAdmin || managedOrgIds.has(org.id),
-          }))
+        orderBy: [{ path: "asc" }, { sort: "asc" }],
+      });
+      const orgs =
+        canReadOrg || canReadIndustry
+          ? allOrgs.map((org: any) => ({
+              ...org,
+              canManage: isSystemAdmin || managedOrgIds.has(org.id),
+              canCreateChild: isSystemAdmin || managedOrgIds.has(org.id),
+              // Organization administrators may delegate administration within their
+              // own subtree. They never receive access to a parent or sibling node
+              // because managedOrgIds is rooted at their assigned organization(s).
+              canSetAdmin: isSystemAdmin || managedOrgIds.has(org.id),
+            }))
+          : [];
+      const kbs = await (db as any).knowledgeBase.findMany({
+        where: { status: "active" },
+        include: {
+          admins: {
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  username: true,
+                  displayName: true,
+                  email: true,
+                  status: true,
+                },
+              },
+            },
+          },
+          _count: { select: { documents: true } },
+        },
+      });
+      // 审计流水只需要标题/状态/时间等汇总字段；不带 parserMetadata 等大
+      // JSON 列，避免为拼审计文案把整张文档表（含 MB 级元数据）拉进内存。
+      const [roles, grants, providers, configs, compileJobs, documents] =
+        await Promise.all([
+          (db as any).role.findMany({
+            include: { _count: { select: { users: true } } },
+            orderBy: { name: "asc" },
+          }),
+          this.loadGrantsWithKb(),
+          (db as any).modelProvider.findMany({ orderBy: { name: "asc" } }),
+          (db as any).modelConfig.findMany({
+            include: { provider: true },
+            orderBy: { createdAt: "asc" },
+          }),
+          (db as any).compileJob.findMany({
+            select: {
+              id: true,
+              userId: true,
+              status: true,
+              trigger: true,
+              createdAt: true,
+              inputEvidenceIds: true,
+              user: { select: { displayName: true, username: true } },
+              brainTopic: { select: { topicSlug: true } },
+            },
+            orderBy: { createdAt: "desc" },
+            take: auditWindow,
+          }),
+          (db as any).document.findMany({
+            select: {
+              id: true,
+              kbId: true,
+              title: true,
+              status: true,
+              updatedAt: true,
+              uploadedById: true,
+              kb: { select: { name: true } },
+            },
+            orderBy: { updatedAt: "desc" },
+            take: auditWindow,
+          }),
+        ]);
+      const recentAuditLogs = canReadAudit
+        ? await (db as any).auditLog.findMany({
+            orderBy: { createdAt: "desc" },
+            take: 50,
+          })
         : [];
-    const kbs = await this.prisma.knowledgeBase.findMany({
-      where: { status: "active" },
-      include: {
-        admins: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                username: true,
-                displayName: true,
-                email: true,
-                status: true,
-              },
-            },
-          },
-        },
-        _count: { select: { documents: true } },
-      },
-    });
-    // 审计流水只需要标题/状态/时间等汇总字段；不带 parserMetadata 等大
-    // JSON 列，避免为拼审计文案把整张文档表（含 MB 级元数据）拉进内存。
-    const [roles, grants, providers, configs, compileJobs, documents] =
-      await Promise.all([
-        this.prisma.role.findMany({
-          include: { _count: { select: { users: true } } },
-          orderBy: { name: "asc" },
+      const safeProviders = (isSystemAdmin ? providers : []).map(
+        ({ apiKeyEncrypted, secretKeyEncrypted, ...provider }: any) => ({
+          ...provider,
+          keyMask: maskModelCredential(apiKeyEncrypted),
+          hasApiKey: Boolean(apiKeyEncrypted),
+          secretKeyMask: maskModelCredential(secretKeyEncrypted),
+          hasSecretKey: Boolean(secretKeyEncrypted),
         }),
-        this.prisma.industryGrant.findMany({
-          include: { kb: { select: { id: true, name: true } } },
-          orderBy: { createdAt: "desc" },
-        }),
-        this.prisma.modelProvider.findMany({ orderBy: { name: "asc" } }),
-        this.prisma.modelConfig.findMany({
-          include: { provider: true },
-          orderBy: { createdAt: "asc" },
-        }),
-        this.prisma.compileJob.findMany({
-          select: {
-            id: true,
-            userId: true,
-            status: true,
-            trigger: true,
-            createdAt: true,
-            inputEvidenceIds: true,
-            user: { select: { displayName: true, username: true } },
-            brainTopic: { select: { topicSlug: true } },
-          },
-          orderBy: { createdAt: "desc" },
-          take: auditWindow,
-        }),
-        this.prisma.document.findMany({
-          select: {
-            id: true,
-            kbId: true,
-            title: true,
-            status: true,
-            updatedAt: true,
-            uploadedById: true,
-            kb: { select: { name: true } },
-          },
-          orderBy: { updatedAt: "desc" },
-          take: auditWindow,
-        }),
-      ]);
-    const recentAuditLogs = canReadAudit
-      ? await this.prisma.auditLog.findMany({
-          orderBy: { createdAt: "desc" },
-          take: 50,
-        })
-      : [];
-    const safeProviders = (isSystemAdmin ? providers : []).map(
-      ({ apiKeyEncrypted, secretKeyEncrypted, ...provider }) => ({
-        ...provider,
-        keyMask: maskModelCredential(apiKeyEncrypted),
-        hasApiKey: Boolean(apiKeyEncrypted),
-        secretKeyMask: maskModelCredential(secretKeyEncrypted),
-        hasSecretKey: Boolean(secretKeyEncrypted),
-      }),
-    );
-    const industryScopeKbs = kbs.filter(
-      (kb) =>
-        kb.type === "industry" &&
-        (isSystemAdmin ||
-          kb.ownerUserId === adminId ||
-          kb.admins.some((admin) => admin.userId === adminId)),
-    );
-    // 管理后台的管理范围和用户实际阅读范围不同：普通成员不能管理组织库，
-    // 但仍应在对话/知识库页面看到自己按组织继承规则可读的组织库。
-    const readableKbIds = new Set(
-      await this.permissionService.getVisibleKnowledgeBases(adminId),
-    );
-    const readableKbs = kbs.filter((kb) => readableKbIds.has(kb.id));
-    const visibleKbs = isSystemAdmin
-      // 个人库仍然遵循“仅本人可见”：超级管理员可以看到自己创建的个人库，
-      // 但不能因为系统管理员身份看到其他人的个人库。
-      ? kbs.filter(
-          (kb) => kb.type !== "personal" || kb.ownerUserId === adminId,
-        )
-      : [
-          ...new Map(
-            [...readableKbs, ...industryScopeKbs].map((kb) => [kb.id, kb]),
-          ).values(),
-        ];
-    const directoryUsers =
-      isSystemAdmin || canReadIndustry || directIndustryScopeCount > 0
-        ? users
-        : users.filter(
-            (user) =>
-              user.id === adminId ||
-              user.orgs.some((org) => managedOrgIds.has(org.orgNodeId)),
-          );
-    const safeUsers = directoryUsers.map(({ passwordHash, ...user }) => {
-      const isTargetSystemAdmin = user.roles.some(
-        (r) =>
-          r.role?.builtin ||
-          r.role?.name === "超级管理员" ||
-          r.role?.name === "系统管理员",
       );
-      const canManage =
-        isSystemAdmin ||
-        (!isTargetSystemAdmin &&
-          user.orgs.length > 0 &&
-          user.orgs.some((org) => managedOrgIds.has(org.orgNodeId)));
-      return { ...user, canManage };
+      const industryScopeKbs = kbs.filter(
+        (kb: any) =>
+          kb.type === "industry" &&
+          (isSystemAdmin ||
+            kb.ownerUserId === adminId ||
+            kb.admins.some((admin: any) => admin.userId === adminId)),
+      );
+      // 管理后台的管理范围和用户实际阅读范围不同：普通成员不能管理组织库，
+      // 但仍应在对话/知识库页面看到自己按组织继承规则可读的组织库。
+      const readableKbIds = new Set(
+        await this.permissionService.getVisibleKnowledgeBases(adminId),
+      );
+      const readableKbs = kbs.filter((kb: any) => readableKbIds.has(kb.id));
+      const visibleKbs = isSystemAdmin
+        // 个人库仍然遵循“仅本人可见”：超级管理员可以看到自己创建的个人库，
+        // 但不能因为系统管理员身份看到其他人的个人库。
+        ? kbs.filter(
+            (kb: any) => kb.type !== "personal" || kb.ownerUserId === adminId,
+          )
+        : [
+            ...new Map(
+              [...readableKbs, ...industryScopeKbs].map((kb: any) => [kb.id, kb]),
+            ).values(),
+          ];
+      const directoryUsers =
+        isSystemAdmin || canReadIndustry || directIndustryScopeCount > 0
+          ? users
+          : users.filter(
+              (user: any) =>
+                user.id === adminId ||
+                user.orgs.some((org: any) => managedOrgIds.has(org.orgNodeId)),
+            );
+      const safeUsers = directoryUsers.map(({ passwordHash, ...user }: any) => {
+        const isTargetSystemAdmin = user.roles.some(
+          (r: any) =>
+            r.role?.builtin ||
+            r.role?.name === "超级管理员" ||
+            r.role?.name === "系统管理员",
+        );
+        const canManage =
+          isSystemAdmin ||
+          (!isTargetSystemAdmin &&
+            user.orgs.length > 0 &&
+            user.orgs.some((org: any) => managedOrgIds.has(org.orgNodeId)));
+        return { ...user, canManage };
+      });
+      const visibleKbIdSet = new Set(visibleKbs.map((kb: any) => kb.id));
+      const industryScopeKbIds = new Set(industryScopeKbs.map((kb: any) => kb.id));
+      const safeGrants = grants.filter(
+        (grant: any) =>
+          isSystemAdmin || industryScopeKbIds.has(grant.kbId),
+      );
+      const safeDocuments = documents.filter((doc: any) =>
+        visibleKbIdSet.has(doc.kbId),
+      );
+      const userById = new Map<string, any>(users.map((user: any) => [user.id, user]));
+      const privateDocumentIds = isSystemAdmin
+        ? new Set(
+            (await (db as any).document.findMany({
+              where: {
+                kb: {
+                  type: "personal",
+                  ownerUserId: { not: adminId },
+                },
+              },
+              select: { id: true },
+            })).map((document: any) => document.id),
+          )
+        : new Set<string>();
+      const allCompileJobEvidence = isSystemAdmin
+        ? await (db as any).compileJob.findMany({ select: { inputEvidenceIds: true } })
+        : [];
+      const hasPrivateEvidence = (job: any) =>
+        Array.isArray(job.inputEvidenceIds) &&
+        job.inputEvidenceIds.some((id: string) => privateDocumentIds.has(id));
+      const safeCompileJobs = (isSystemAdmin
+        ? compileJobs
+        : compileJobs.filter((job: any) => job.userId === adminId)
+      ).filter((job: any) => !hasPrivateEvidence(job));
+      const auditItems = [
+        ...(canReadAudit
+          ? safeDocuments.map((doc: any) => ({
+              id: `doc-${doc.id}`,
+              when: doc.updatedAt,
+              action: `文档「${doc.title}」状态变更为 ${doc.status}`,
+              actor: doc.uploadedById
+                ? userById.get(doc.uploadedById)?.displayName ||
+                  userById.get(doc.uploadedById)?.username ||
+                  doc.uploadedById
+                : "系统",
+              source: doc.kb?.name || "未知知识库",
+            }))
+          : []),
+        ...(canReadAudit
+          ? safeCompileJobs.map((job: any) => ({
+              id: `job-${job.id}`,
+              when: job.createdAt,
+              action: `主题「${job.brainTopic?.topicSlug || "默认"}」编译任务 ${job.status}`,
+              actor: job.user?.displayName || job.user?.username || "未知用户",
+              source: job.trigger,
+            }))
+          : []),
+        ...(canReadAudit
+          ? safeGrants.map((grant: any) => ({
+              id: `grant-${grant.id}`,
+              when: grant.createdAt,
+              action: `为「${grant.kb?.name || "未知知识库"}」新增 ${grant.subjectType} 授权`,
+              actor: grant.grantedById,
+              source: grant.kb?.name || "未知知识库",
+            }))
+          : []),
+        ...(canReadAudit
+          ? recentAuditLogs.map((entry: any) => ({
+              id: `auditlog-${entry.id}`,
+              when: entry.createdAt,
+              action: entry.action,
+              actor:
+                entry.userId ||
+                (entry.details as any)?.attemptedIdentity ||
+                "系统",
+              source: entry.resource || "",
+            }))
+          : []),
+      ]
+        .sort((a: any, b: any) => new Date(b.when).getTime() - new Date(a.when).getTime());
+      const [auditDocumentsTotal, auditCompileJobsTotalRaw, auditGrantsTotal] =
+        canReadAudit
+          ? await Promise.all([
+              (db as any).document.count({
+                where: { kbId: { in: visibleKbs.map((kb: any) => kb.id) } },
+              }),
+              (db as any).compileJob.count(
+                isSystemAdmin ? undefined : { where: { userId: adminId } },
+              ),
+              (db as any).industryGrant.count({
+                where: isSystemAdmin
+                  ? undefined
+                  : { kbId: { in: industryScopeKbs.map((kb: any) => kb.id) } },
+              }),
+            ])
+          : [0, 0, 0];
+      const auditCompileJobsTotal = isSystemAdmin
+        ? Math.max(
+            0,
+            auditCompileJobsTotalRaw - allCompileJobEvidence.filter(hasPrivateEvidence).length,
+          )
+        : auditCompileJobsTotalRaw;
+      const auditTotal = auditDocumentsTotal + auditCompileJobsTotal + auditGrantsTotal;
+      const audit = auditItems.slice((auditPage - 1) * auditLimit, auditPage * auditLimit);
+      // 批量判定写权限：一次加载管理面数据，避免对每个知识库重复发起
+      // isSystemAdmin/组织子树/KbAdmin 查询的 N+1 开销。
+      const [writePermissions, managedIndustryWritePermissions] =
+        await Promise.all([
+          this.permissionService.canManageKnowledgeBases(
+            adminId,
+            visibleKbs.map((kb: any) => kb.id),
+          ),
+          this.permissionService.canManageKnowledgeBases(
+            adminId,
+            industryScopeKbs.map((kb: any) => kb.id),
+          ),
+        ]);
+      return {
+        user: (() => {
+          const current = safeUsers.find((item: any) => item.id === adminId);
+          if (!current) return null;
+          return current;
+        })(),
+        users: safeUsers,
+        orgs,
+        roles: roles.map(({ _count, ...role }: any) => ({
+          ...role,
+          users: _count.users,
+          perms: Array.isArray(role.permissions) ? role.permissions : [],
+        })),
+        kbs: visibleKbs.map(({ _count, ...kb }: any) => ({
+          ...kb,
+          documentCount: _count.documents,
+          canWrite: writePermissions.get(kb.id) || false,
+          canManage:
+            isSystemAdmin ||
+            (kb.type === "industry" &&
+              (kb.ownerUserId === adminId ||
+                kb.admins.some((admin: any) => admin.userId === adminId))),
+          canGrant:
+            isSystemAdmin ||
+            (kb.type === "industry" &&
+              kb.admins.some((admin: any) => admin.userId === adminId)),
+          canDelete:
+            isSystemAdmin ||
+            (kb.type === "personal" && kb.ownerUserId === adminId) ||
+            (kb.type === "industry" &&
+              (kb.ownerUserId === adminId ||
+                kb.admins.some((admin: any) => admin.userId === adminId))),
+        })),
+        // 管理后台的行业库页只消费这一组，避免“可阅读但不可管理”的行业库
+        // 因阅读权限混入行业库管理列表。
+        managedIndustryKbs: industryScopeKbs.map(({ _count, ...kb }: any) => ({
+          ...kb,
+          documentCount: _count.documents,
+          canWrite: managedIndustryWritePermissions.get(kb.id) || false,
+          canManage:
+            isSystemAdmin ||
+            kb.ownerUserId === adminId ||
+            kb.admins.some((admin: any) => admin.userId === adminId),
+          canGrant:
+            isSystemAdmin || kb.admins.some((admin: any) => admin.userId === adminId),
+          canDelete:
+            isSystemAdmin ||
+            kb.ownerUserId === adminId ||
+            kb.admins.some((admin: any) => admin.userId === adminId),
+        })),
+        grants: safeGrants,
+        providers: safeProviders,
+        models: isSystemAdmin
+          ? configs.map(({ provider, ...config }: any) => {
+              const { apiKeyEncrypted, ...safeProvider } = provider;
+              return {
+                ...config,
+                provider: {
+                  ...safeProvider,
+                  keyMask: maskModelCredential(apiKeyEncrypted),
+                  hasApiKey: Boolean(apiKeyEncrypted),
+                },
+              };
+            })
+          : [],
+        audit,
+        dream: includeTelemetry && (isSystemAdmin || canReadAudit)
+          ? await this.brainCompilerService.getDreamTelemetry({
+              excludePrivate: true,
+              runsPage: dreamPage,
+              runsLimit: auditLimit,
+            })
+          : null,
+        systemStatus: includeTelemetry && (isSystemAdmin || canReadAudit)
+          ? await this.getSystemStatusTelemetryData()
+          : null,
+        auditPagination: {
+          page: auditPage,
+          limit: auditLimit,
+          total: auditTotal,
+          totalPages: Math.max(1, Math.ceil(auditTotal / auditLimit)),
+        },
+        capabilities,
+        managedOrgIds: [...managedOrgIds],
+      };
     });
-    const visibleKbIdSet = new Set(visibleKbs.map((kb) => kb.id));
-    const industryScopeKbIds = new Set(industryScopeKbs.map((kb) => kb.id));
-    const safeGrants = grants.filter(
-      (grant) =>
-        isSystemAdmin || industryScopeKbIds.has(grant.kbId),
-    );
-    const safeDocuments = documents.filter((doc) =>
-      visibleKbIdSet.has(doc.kbId),
-    );
-    const userById = new Map<string, any>(users.map((user: any) => [user.id, user]));
-    const privateDocumentIds = isSystemAdmin
-      ? new Set(
-          (await this.prisma.document.findMany({
-            where: {
-              kb: {
-                type: "personal",
-                ownerUserId: { not: adminId },
-              },
-            },
-            select: { id: true },
-          })).map((document) => document.id),
-        )
-      : new Set<string>();
-    const allCompileJobEvidence = isSystemAdmin
-      ? await this.prisma.compileJob.findMany({ select: { inputEvidenceIds: true } })
-      : [];
-    const hasPrivateEvidence = (job: any) =>
-      Array.isArray(job.inputEvidenceIds) &&
-      job.inputEvidenceIds.some((id: string) => privateDocumentIds.has(id));
-    const safeCompileJobs = (isSystemAdmin
-      ? compileJobs
-      : compileJobs.filter((job) => job.userId === adminId)
-    ).filter((job) => !hasPrivateEvidence(job));
-    const auditItems = [
-      ...(canReadAudit
-        ? safeDocuments.map((doc) => ({
-            id: `doc-${doc.id}`,
-            when: doc.updatedAt,
-            action: `文档「${doc.title}」状态变更为 ${doc.status}`,
-            actor: doc.uploadedById
-              ? userById.get(doc.uploadedById)?.displayName ||
-                userById.get(doc.uploadedById)?.username ||
-                doc.uploadedById
-              : "系统",
-            source: doc.kb?.name || "未知知识库",
-          }))
-        : []),
-      ...(canReadAudit
-        ? safeCompileJobs.map((job) => ({
-            id: `job-${job.id}`,
-            when: job.createdAt,
-            action: `主题「${job.brainTopic?.topicSlug || "默认"}」编译任务 ${job.status}`,
-            actor: job.user?.displayName || job.user?.username || "未知用户",
-            source: job.trigger,
-          }))
-        : []),
-      ...(canReadAudit
-        ? safeGrants.map((grant) => ({
-            id: `grant-${grant.id}`,
-            when: grant.createdAt,
-            action: `为「${grant.kb?.name || "未知知识库"}」新增 ${grant.subjectType} 授权`,
-            actor: grant.grantedById,
-            source: grant.kb?.name || "未知知识库",
-          }))
-        : []),
-      ...(canReadAudit
-        ? recentAuditLogs.map((entry) => ({
-            id: `auditlog-${entry.id}`,
-            when: entry.createdAt,
-            action: entry.action,
-            actor:
-              entry.userId ||
-              (entry.details as any)?.attemptedIdentity ||
-              "系统",
-            source: entry.resource || "",
-          }))
-        : []),
-    ]
-      .sort((a, b) => new Date(b.when).getTime() - new Date(a.when).getTime());
-    const [auditDocumentsTotal, auditCompileJobsTotalRaw, auditGrantsTotal] =
-      canReadAudit
-        ? await Promise.all([
-            this.prisma.document.count({
-              where: { kbId: { in: visibleKbs.map((kb) => kb.id) } },
-            }),
-            this.prisma.compileJob.count(
-              isSystemAdmin ? undefined : { where: { userId: adminId } },
-            ),
-            this.prisma.industryGrant.count({
-              where: isSystemAdmin
-                ? undefined
-                : { kbId: { in: industryScopeKbs.map((kb) => kb.id) } },
-            }),
-          ])
-        : [0, 0, 0];
-    const auditCompileJobsTotal = isSystemAdmin
-      ? Math.max(
-          0,
-          auditCompileJobsTotalRaw - allCompileJobEvidence.filter(hasPrivateEvidence).length,
-        )
-      : auditCompileJobsTotalRaw;
-    const auditTotal = auditDocumentsTotal + auditCompileJobsTotal + auditGrantsTotal;
-    const audit = auditItems.slice((auditPage - 1) * auditLimit, auditPage * auditLimit);
-    // 批量判定写权限：一次加载管理面数据，避免对每个知识库重复发起
-    // isSystemAdmin/组织子树/KbAdmin 查询的 N+1 开销。
-    const [writePermissions, managedIndustryWritePermissions] =
-      await Promise.all([
-        this.permissionService.canManageKnowledgeBases(
-          adminId,
-          visibleKbs.map((kb) => kb.id),
-        ),
-        this.permissionService.canManageKnowledgeBases(
-          adminId,
-          industryScopeKbs.map((kb) => kb.id),
-        ),
-      ]);
-    return {
-      user: (() => {
-        const current = safeUsers.find((item) => item.id === adminId);
-        if (!current) return null;
-        return current;
-      })(),
-      users: safeUsers,
-      orgs,
-      roles: roles.map(({ _count, ...role }) => ({
-        ...role,
-        users: _count.users,
-        perms: Array.isArray(role.permissions) ? role.permissions : [],
-      })),
-      kbs: visibleKbs.map(({ _count, ...kb }) => ({
-        ...kb,
-        documentCount: _count.documents,
-        canWrite: writePermissions.get(kb.id) || false,
-        canManage:
-          isSystemAdmin ||
-          (kb.type === "industry" &&
-            (kb.ownerUserId === adminId ||
-              kb.admins.some((admin) => admin.userId === adminId))),
-        canGrant:
-          isSystemAdmin ||
-          (kb.type === "industry" &&
-            kb.admins.some((admin) => admin.userId === adminId)),
-        canDelete:
-          isSystemAdmin ||
-          (kb.type === "personal" && kb.ownerUserId === adminId) ||
-          (kb.type === "industry" &&
-            (kb.ownerUserId === adminId ||
-              kb.admins.some((admin) => admin.userId === adminId))),
-      })),
-      // 管理后台的行业库页只消费这一组，避免“可阅读但不可管理”的行业库
-      // 因阅读权限混入行业库管理列表。
-      managedIndustryKbs: industryScopeKbs.map(({ _count, ...kb }) => ({
-        ...kb,
-        documentCount: _count.documents,
-        canWrite: managedIndustryWritePermissions.get(kb.id) || false,
-        canManage:
-          isSystemAdmin ||
-          kb.ownerUserId === adminId ||
-          kb.admins.some((admin) => admin.userId === adminId),
-        canGrant:
-          isSystemAdmin || kb.admins.some((admin) => admin.userId === adminId),
-        canDelete:
-          isSystemAdmin ||
-          kb.ownerUserId === adminId ||
-          kb.admins.some((admin) => admin.userId === adminId),
-      })),
-      grants: safeGrants,
-      providers: safeProviders,
-      models: isSystemAdmin
-        ? configs.map(({ provider, ...config }) => {
-            const { apiKeyEncrypted, ...safeProvider } = provider;
-            return {
-              ...config,
-              provider: {
-                ...safeProvider,
-                keyMask: maskModelCredential(apiKeyEncrypted),
-                hasApiKey: Boolean(apiKeyEncrypted),
-              },
-            };
-          })
-        : [],
-      audit,
-      dream: includeTelemetry && (isSystemAdmin || canReadAudit)
-        ? await this.brainCompilerService.getDreamTelemetry({
-            excludePrivate: true,
-            runsPage: dreamPage,
-            runsLimit: auditLimit,
-          })
-        : null,
-      systemStatus: includeTelemetry && (isSystemAdmin || canReadAudit)
-        ? await this.getSystemStatusTelemetryData()
-        : null,
-      auditPagination: {
-        page: auditPage,
-        limit: auditLimit,
-        total: auditTotal,
-        totalPages: Math.max(1, Math.ceil(auditTotal / auditLimit)),
-      },
-      capabilities,
-      managedOrgIds: [...managedOrgIds],
-    };
   }
 
   @Get("system/status-telemetry")

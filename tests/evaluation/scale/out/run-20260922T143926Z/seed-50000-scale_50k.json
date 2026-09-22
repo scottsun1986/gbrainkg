@@ -1,0 +1,43 @@
+{
+  "schema": "scale_50k",
+  "chunks": 50000,
+  "steps": {
+    "documents": {
+      "count": 12500,
+      "seconds": 1.144
+    },
+    "chunks": {
+      "written": 50000,
+      "failed": 0,
+      "successRate": 1,
+      "seconds": 924.423,
+      "chunksPerSecond": 54.08779314231688
+    },
+    "lexicalIndexes": {
+      "seconds": 4.503
+    },
+    "embeddings": {
+      "seconds": 7.18,
+      "note": "real embeddings reused (pairwise average); no synthetic noise vectors"
+    },
+    "hnswIndex": {
+      "seconds": 96.876
+    }
+  },
+  "resumed": false,
+  "sizes": {
+    "chunk_table": "709 MB",
+    "chunk_bytes": 743481344,
+    "lexical_table": "91 MB",
+    "term_stat_table": "28 MB",
+    "index_count": 13
+  },
+  "consistency": {
+    "chunks": 50000,
+    "postings": 50000,
+    "stat_df": 4805909,
+    "terms": 186924,
+    "embedded": 50000
+  },
+  "indexConsistent": true
+}

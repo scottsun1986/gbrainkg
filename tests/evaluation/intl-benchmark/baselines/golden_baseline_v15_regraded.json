@@ -1,0 +1,63 @@
+{
+  "version": "v15.0-regraded",
+  "metric_definition": "gold_title_fraction_v1",
+  "description": "Baseline regraded from the stored ranked lists of the v14 runs with the current fractional grader. Supersedes golden_baseline_v14.json, which was produced by a binary any-gold-in-top-k indicator and is not comparable.",
+  "supersedes": "golden_baseline_v14.json",
+  "note": "v14 artifacts regraded with the fractional grader",
+  "datasets": {
+    "2wiki": {
+      "n": 100,
+      "source_run": "results/intl-2wiki-20260913-121603.json",
+      "unmatched_qids": [],
+      "retrieval": {
+        "recall@2": 0.6,
+        "recall@5": 0.685,
+        "recall@10": 0.725,
+        "full_evidence": 0.41,
+        "mrr@10": 0.985,
+        "ndcg@10": 0.7572
+      },
+      "gates": {
+        "recall@10_min": 0.695,
+        "full_evidence_min": 0.36,
+        "refusal_rate_max": 0.05
+      }
+    },
+    "hotpot": {
+      "n": 100,
+      "source_run": "results/intl-hotpot-20260913-132204.json",
+      "unmatched_qids": [],
+      "retrieval": {
+        "recall@2": 0.635,
+        "recall@5": 0.835,
+        "recall@10": 0.945,
+        "full_evidence": 0.89,
+        "mrr@10": 0.9006,
+        "ndcg@10": 0.8393
+      },
+      "gates": {
+        "recall@10_min": 0.915,
+        "full_evidence_min": 0.84,
+        "refusal_rate_max": 0.05
+      }
+    },
+    "musique": {
+      "n": 100,
+      "source_run": "results/intl-musique-20260913-134657.json",
+      "unmatched_qids": [],
+      "retrieval": {
+        "recall@2": 0.535,
+        "recall@5": 0.6483,
+        "recall@10": 0.7292,
+        "full_evidence": 0.44,
+        "mrr@10": 0.9187,
+        "ndcg@10": 0.7157
+      },
+      "gates": {
+        "recall@10_min": 0.6992,
+        "full_evidence_min": 0.39,
+        "refusal_rate_max": 0.05
+      }
+    }
+  }
+}

@@ -238,10 +238,11 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
             scopeKey: definition.scopeKey,
           },
         });
-        sourceId = source.id;
+        sourceId = source.id as string;
         existingMap.set(definition.sourceKey, sourceId);
         await this.gbrain.initializeSource(definition.sourceKey);
       }
+      if (!sourceId) continue;
       desiredSourceIds.push(sourceId);
       if (!existingMemberSet.has(sourceId)) {
         await db.brainSourceMember.upsert({
@@ -1068,8 +1069,8 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
     await Promise.all(
       visibleUsers.map(async (userId) => {
         const sourceKey =
-          (await this.getSourcePlan(userId).catch(() => [])).find((item) =>
-            item.kbIds.includes(kbId),
+          (await this.getSourcePlan(userId).catch(() => [] as any[])).find((item: any) =>
+            (item?.kbIds || []).includes(kbId),
           )?.sourceKey;
         if (sourceKey) sourceKeys.add(sourceKey);
       }),

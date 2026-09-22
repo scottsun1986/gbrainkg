@@ -9,6 +9,17 @@ export interface EmbeddingProviderConfig {
   dimensions: number | null;
 }
 
+export interface SparseEmbedding {
+  indices: number[];
+  values: number[];
+}
+
+export interface HybridEmbedding {
+  dense: number[] | null;
+  sparse: SparseEmbedding | null;
+  multiVector: number[][] | null;
+}
+
 /**
  * Thin, fail-open client for the configured OpenAI-compatible embedding
  * endpoint (BAAI/bge-m3 by default). Used to populate Chunk.embedding for
@@ -25,6 +36,20 @@ export class EmbeddingService {
   private readonly cacheTtlMs = Math.max(60000, Number(process.env.EMBEDDING_CACHE_TTL_MS || 3600000));
   private readonly inFlight = new Map<string, Promise<number[] | null>>();
 
+  /**
+   * Cache hit that refreshes recency. The Map is insertion-ordered, so
+   * re-inserting on hit turns the eviction policy from FIFO (evict whatever was
+   * written first, even if it is the hottest entry) into LRU.
+   */
+  private touchCache(key: string, entry: { vector: number[]; expiresAt: number }): void {
+    this.cache.delete(key);
+    this.cache.set(key, entry);
+    if (this.cache.size > this.maxCacheEntries) {
+      const oldest = this.cache.keys().next().value;
+      if (oldest) this.cache.delete(oldest);
+    }
+  }
+
   constructor(@Optional() private readonly modelConfigService?: ModelConfigService) {}
 
   private cacheKey(config: EmbeddingProviderConfig, text: string): string {
@@ -38,6 +63,10 @@ export class EmbeddingService {
 
   isEnabled(): boolean {
     return process.env.CHUNK_EMBEDDINGS_ENABLED !== 'false';
+  }
+
+  isHybridEnabled(): boolean {
+    return process.env.BGE_M3_HYBRID_ENABLED === 'true';
   }
 
   async getConfig(): Promise<EmbeddingProviderConfig | null> {
@@ -66,6 +95,7 @@ export class EmbeddingService {
     const now = Date.now();
     const cached = this.cache.get(cacheKey);
     if (cached && cached.expiresAt > now) {
+      this.touchCache(cacheKey, cached);
       return cached.vector;
     }
 
@@ -82,11 +112,7 @@ export class EmbeddingService {
         // migration.
         const [result] = await this.embedBatch([text], config);
         if (result) {
-          this.cache.set(cacheKey, { vector: result, expiresAt: Date.now() + this.cacheTtlMs });
-          if (this.cache.size > this.maxCacheEntries) {
-            const oldest = this.cache.keys().next().value;
-            if (oldest) this.cache.delete(oldest);
-          }
+          this.touchCache(cacheKey, { vector: result, expiresAt: Date.now() + this.cacheTtlMs });
         }
         return result ?? null;
       } finally {
@@ -117,6 +143,7 @@ export class EmbeddingService {
       const cacheKey = this.cacheKey(config, text);
       const cached = this.cache.get(cacheKey);
       if (cached && cached.expiresAt > now) {
+        this.touchCache(cacheKey, cached);
         results[i] = cached.vector;
       } else {
         missingIndices.push(i);
@@ -137,15 +164,97 @@ export class EmbeddingService {
         results[batchIndices[i]] = vec;
         if (vec) {
           const cacheKey = this.cacheKey(config, batchTexts[i]);
-          this.cache.set(cacheKey, { vector: vec, expiresAt: now + this.cacheTtlMs });
-          if (this.cache.size > this.maxCacheEntries) {
-            const oldest = this.cache.keys().next().value;
-            if (oldest) this.cache.delete(oldest);
-          }
+          this.touchCache(cacheKey, { vector: vec, expiresAt: now + this.cacheTtlMs });
         }
       }
     }
     return results;
+  }
+
+  /**
+   * BGE-M3 hybrid contract: dense, learned sparse and ColBERT-style token
+   * vectors in one request. It is opt-in because many OpenAI-compatible
+   * gateways expose BGE-M3 dense vectors only. Compatible providers may return
+   * `sparse_embedding` as {indices, values} or a token-id/weight object, and
+   * `colbert_vecs` / `multi_vector` for late interaction.
+   */
+  async embedHybrid(
+    texts: string[],
+    inputType: 'query' | 'document' = 'document',
+    options: { lateChunking?: boolean } = {},
+  ): Promise<HybridEmbedding[]> {
+    if (!texts.length) return [];
+    if (!this.isHybridEnabled()) {
+      return texts.map(() => ({ dense: null, sparse: null, multiVector: null }));
+    }
+    const config = await this.getConfig();
+    if (!config) return texts.map(() => ({ dense: null, sparse: null, multiVector: null }));
+    const endpoint = String(process.env.BGE_M3_HYBRID_ENDPOINT || `${config.baseUrl}/embeddings`);
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+        },
+        body: JSON.stringify({
+          model: config.modelName,
+          input: texts.map((text) => String(text || '').slice(0, this.maxChars)),
+          input_type: inputType,
+          return_dense: true,
+          return_sparse: true,
+          return_colbert_vecs: true,
+          late_chunking: options.lateChunking === true,
+        }),
+        signal: AbortSignal.timeout(Number(process.env.BGE_M3_HYBRID_TIMEOUT_MS || this.timeoutMs)),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload: any = await response.json();
+      const data = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload?.embeddings) ? payload.embeddings : [];
+      const output: HybridEmbedding[] = texts.map(() => ({ dense: null, sparse: null, multiVector: null }));
+      const maxTokenVectors = Math.max(1, Number(process.env.BGE_M3_MULTI_VECTOR_MAX_TOKENS || 128));
+      for (let position = 0; position < data.length; position += 1) {
+        const item = data[position] || {};
+        const index = Number.isInteger(item.index) ? item.index : position;
+        if (index < 0 || index >= output.length) continue;
+        const rawDense = item.embedding ?? item.dense_embedding ?? item.dense_vecs;
+        const dense = Array.isArray(rawDense) ? rawDense.map(Number).filter(Number.isFinite) : null;
+        const rawSparse = item.sparse_embedding ?? item.sparse ?? item.lexical_weights;
+        let sparse: SparseEmbedding | null = null;
+        if (rawSparse && Array.isArray(rawSparse.indices) && Array.isArray(rawSparse.values)) {
+          const pairs = rawSparse.indices
+            .map((tokenId: unknown, pairIndex: number) => ({ tokenId: Number(tokenId), value: Number(rawSparse.values[pairIndex]) }))
+            .filter((pair: any) => Number.isInteger(pair.tokenId) && Number.isFinite(pair.value) && pair.value !== 0);
+          sparse = { indices: pairs.map((pair: any) => pair.tokenId), values: pairs.map((pair: any) => pair.value) };
+        } else if (rawSparse && typeof rawSparse === 'object') {
+          const pairs = Object.entries(rawSparse)
+            .map(([tokenId, value]) => ({ tokenId: Number(tokenId), value: Number(value) }))
+            .filter((pair) => Number.isInteger(pair.tokenId) && Number.isFinite(pair.value) && pair.value !== 0);
+          sparse = { indices: pairs.map((pair) => pair.tokenId), values: pairs.map((pair) => pair.value) };
+        }
+        const rawMulti = item.colbert_vecs ?? item.multi_vector ?? item.token_embeddings;
+        const multiVector = Array.isArray(rawMulti)
+          ? rawMulti.slice(0, maxTokenVectors)
+              .filter(Array.isArray)
+              .map((vector: unknown[]) => vector.map(Number))
+              .filter((vector: number[]) => vector.length > 0 && vector.every(Number.isFinite))
+          : null;
+        output[index] = {
+          dense: dense && dense.length && (!config.dimensions || dense.length === config.dimensions) ? dense : null,
+          sparse: sparse?.indices.length ? sparse : null,
+          multiVector: multiVector?.length ? multiVector : null,
+        };
+      }
+      return output;
+    } catch (err) {
+      this.logger.warn(`BGE-M3 hybrid embedding failed: ${err instanceof Error ? err.message : String(err)}`);
+      return texts.map(() => ({ dense: null, sparse: null, multiVector: null }));
+    }
+  }
+
+  async embedHybridOne(text: string, inputType: 'query' | 'document' = 'query'): Promise<HybridEmbedding | null> {
+    const [result] = await this.embedHybrid([text], inputType);
+    return result && (result.dense || result.sparse || result.multiVector) ? result : null;
   }
 
   private async embedBatch(
@@ -174,10 +283,13 @@ export class EmbeddingService {
           const index = Number.isInteger(item?.index) ? item.index : i;
           if (embedding && embedding.length > 0 && index >= 0 && index < output.length) {
             if (config.dimensions && embedding.length !== config.dimensions) {
+              // Skip the offending item only. Discarding the whole batch made a
+              // single malformed vector cost a 32x retry and left 31 good
+              // vectors unwritten (the caller then re-requested all of them).
               this.logger.warn(
-                `Embedding dimension mismatch: got ${embedding.length}, expected ${config.dimensions}. Skipping batch.`,
+                `Embedding dimension mismatch on item ${index}: got ${embedding.length}, expected ${config.dimensions}. Skipping that item only.`,
               );
-              return output;
+              continue;
             }
             output[index] = embedding;
           }

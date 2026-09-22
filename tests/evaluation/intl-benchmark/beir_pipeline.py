@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import ssl
 import sys
@@ -129,6 +130,10 @@ class ApiClient:
             return exc.code, exc.read().decode("utf-8", "replace")
 
     def login(self):
+        preset = os.environ.get("LLMWIKI_TOKEN") or os.environ.get("EVAL_BEARER_TOKEN")
+        if preset:
+            self.token = preset
+            return self.token
         status, raw = self._request(
             "/api/v1/auth/login",
             "POST",

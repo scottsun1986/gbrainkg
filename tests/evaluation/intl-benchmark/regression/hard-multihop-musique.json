@@ -1,0 +1,268 @@
+[
+ {
+  "qid": "2hop__92051_827343",
+  "question": "Who is the sibling of the actress who played Susan Walker in Miracle on 34th street?",
+  "answer": "Lana Wood",
+  "gold_titles": [
+   "Five Finger Exercise",
+   "Miracle on 34th Street"
+  ],
+  "type": "2-hop",
+  "source_dataset": "musique"
+ },
+ {
+  "qid": "2hop__144150_82341",
+  "question": "In what part of Florida is Tom Denney's birthplace located?",
+  "answer": "in Northern Florida",
+  "gold_titles": [
+   "Ocala, Florida",
+   "Tom Denney"
+  ],
+  "type": "2-hop",
+  "source_dataset": "musique"
+ },
+ {
+  "qid": "2hop__9238_9237",
+  "question": "When did the first mosque in the place where Marshall Islands International Airport is located open?",
+  "answer": "September 2012",
+  "gold_titles": [
+   "Marshall Islands"
+  ],
+  "type": "2-hop",
+  "source_dataset": "musique"
+ },
+ {
+  "qid": "2hop__145203_34088",
+  "question": "Where does Ulysses Kay's birth city hold NASCAR races?",
+  "answer": "Tucson Raceway Park",
+  "gold_titles": [
+   "Tucson, Arizona",
+   "Ulysses Kay"
+  ],
+  "type": "2-hop",
+  "source_dataset": "musique"
+ },
+ {
+  "qid": "2hop__580231_162399",
+  "question": "When did the father of Dahyabhai Patel die?",
+  "answer": "15 December 1950",
+  "gold_titles": [
+   "Dahyabhai Patel",
+   "Vallabhbhai Patel"
+  ],
+  "type": "2-hop",
+  "source_dataset": "musique"
+ },
+ {
+  "qid": "2hop__822113_91104",
+  "question": "What is the experimental satellite which was the forerunner to the communication satellite of the operator of GSAT-7 called?",
+  "answer": "ATS - 6 (Applications Technology Satellite - 6)",
+  "gold_titles": [
+   "ATS-6",
+   "GSAT-7"
+  ],
+  "type": "2-hop",
+  "source_dataset": "musique"
+ },
+ {
+  "qid": "2hop__106864_80460",
+  "question": "What was the 2017 population of the country where Bedari was made?",
+  "answer": "207.77 million people",
+  "gold_titles": [
+   "Bedari",
+   "Demographics of Pakistan"
+  ],
+  "type": "2-hop",
+  "source_dataset": "musique"
+ },
+ {
+  "qid": "2hop__444265_82341",
+  "question": "In what part of Florida is Tom Denney's birthplace located?",
+  "answer": "in Northern Florida",
+  "gold_titles": [
+   "Ocala, Florida",
+   "Tom Denney"
+  ],
+  "type": "2-hop",
+  "source_dataset": "musique"
+ },
+ {
+  "qid": "3hop2__668732_223623_162182",
+  "question": "In what region of the country where An Phu is located is John Phan's birthplace?",
+  "answer": "South Central Coast",
+  "gold_titles": [
+   "An Phú District",
+   "John Phan",
+   "South Central Coast"
+  ],
+  "type": "3-hop",
+  "source_dataset": "musique"
+ },
+ {
+  "qid": "3hop2__655849_223623_162182",
+  "question": "In what region of the country containing A Lưới is the birthplace of John Phan located?",
+  "answer": "South Central Coast",
+  "gold_titles": [
+   "A Lưới District",
+   "John Phan",
+   "South Central Coast"
+  ],
+  "type": "3-hop",
+  "source_dataset": "musique"
+ },
+ {
+  "qid": "2hop__37656_160040",
+  "question": "Who is the guy defending this stuff from the highest authority in Protestantism for morals?",
+  "answer": "Josh McDowell",
+  "gold_titles": [
+   "Criticism of Christianity",
+   "Protestantism"
+  ],
+  "type": "2-hop",
+  "source_dataset": "musique"
+ },
+ {
+  "qid": "3hop1__584774_131926_87157",
+  "question": "What is the direction of flow of the body of water by the city where Uni-Systems is headquartered?",
+  "answer": "rises in northern Minnesota and meanders slowly southwards",
+  "gold_titles": [
+   "Minneapolis",
+   "Mississippi River",
+   "Uni-Systems"
+  ],
+  "type": "3-hop",
+  "source_dataset": "musique"
+ },
+ {
+  "qid": "2hop__598467_68489",
+  "question": "Who did the performer from Night Rocker play on Young and Restless?",
+  "answer": "Snapper Foster",
+  "gold_titles": [
+   "Night Rocker",
+   "Snapper Foster"
+  ],
+  "type": "2-hop",
+  "source_dataset": "musique"
+ },
+ {
+  "qid": "2hop__31326_31270",
+  "question": "What is the distance in miles from Nashville to the place where Hemlock Semiconductor produces electronic components?",
+  "answer": "45",
+  "gold_titles": [
+   "Tennessee"
+  ],
+  "type": "2-hop",
+  "source_dataset": "musique"
+ },
+ {
+  "qid": "2hop__31995_8583",
+  "question": "Who did the Slavs have contact with in the country that Steven Spielberg's grandparents were from?",
+  "answer": "Iranic Sarmatians and the Germanic Goths",
+  "gold_titles": [
+   "Slavs",
+   "Steven Spielberg"
+  ],
+  "type": "2-hop",
+  "source_dataset": "musique"
+ },
+ {
+  "qid": "2hop__804417_126089",
+  "question": "Who was in charge of the place where Bergen is located?",
+  "answer": "Johan Remkes",
+  "gold_titles": [
+   "Bergen, North Holland",
+   "North Holland"
+  ],
+  "type": "2-hop",
+  "source_dataset": "musique"
+ },
+ {
+  "qid": "2hop__156085_436709",
+  "question": "Who is the creator of Mickey Mouse's spouse?",
+  "answer": "Walt Disney",
+  "gold_titles": [
+   "Mickey Mouse",
+   "Mickey's Revue"
+  ],
+  "type": "2-hop",
+  "source_dataset": "musique"
+ },
+ {
+  "qid": "2hop__6827_86319",
+  "question": "Who is the CEO of FleetBoston Financial's purchaser?",
+  "answer": "Brian Thomas Moynihan",
+  "gold_titles": [
+   "Boston",
+   "Brian Moynihan"
+  ],
+  "type": "2-hop",
+  "source_dataset": "musique"
+ },
+ {
+  "qid": "2hop__450608_373421",
+  "question": "What is the county where Ukmergė District Municipality is located one of?",
+  "answer": "counties of Lithuania",
+  "gold_titles": [
+   "Ukmergė District Municipality",
+   "Vilnius County"
+  ],
+  "type": "2-hop",
+  "source_dataset": "musique"
+ },
+ {
+  "qid": "3hop1__857_846_7794",
+  "question": "In 2010, what was the population of the city where the Yongle emperor greeted the person to whom the edict was addressed?",
+  "answer": "8.005 million",
+  "gold_titles": [
+   "Nanjing",
+   "Sino-Tibetan relations during the Ming dynasty"
+  ],
+  "type": "3-hop",
+  "source_dataset": "musique"
+ },
+ {
+  "qid": "2hop__38030_23241",
+  "question": "According to Pew, in 2010, what percent of Nigeria's population practiced the religion dominant in the countries surrounding Armenia?",
+  "answer": "48.8 percent",
+  "gold_titles": [
+   "Armenians",
+   "Nigeria"
+  ],
+  "type": "2-hop",
+  "source_dataset": "musique"
+ },
+ {
+  "qid": "2hop__7855_7794",
+  "question": "What is the population in 2010 of they city popular with tourists?",
+  "answer": "8.005 million",
+  "gold_titles": [
+   "Nanjing"
+  ],
+  "type": "2-hop",
+  "source_dataset": "musique"
+ },
+ {
+  "qid": "3hop1__136129_87694_64412",
+  "question": "When did the place where the head of the catholic region named after the same saint as the Dakovo Cathedral become its own country?",
+  "answer": "11 February 1929",
+  "gold_titles": [
+   "St. Peter's Basilica",
+   "Vatican City",
+   "Đakovo Cathedral"
+  ],
+  "type": "3-hop",
+  "source_dataset": "musique"
+ },
+ {
+  "qid": "3hop2__67618_30587_44003",
+  "question": "Where does the ocean adjacent to Miami meet the body of water where the Mississippi River empties into the sea?",
+  "answer": "through the Florida Straits",
+  "gold_titles": [
+   "Gulf of Mexico",
+   "Miami",
+   "Mississippi River"
+  ],
+  "type": "3-hop",
+  "source_dataset": "musique"
+ }
+]

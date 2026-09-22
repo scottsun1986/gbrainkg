@@ -1,4 +1,5 @@
 import { estimateTokens } from '../chat/context-budget';
+import { classifyTableRole } from '../chat/section-align';
 
 export interface IndexedMarkdownChunk {
   ord: number;
@@ -11,6 +12,8 @@ export interface IndexedMarkdownChunk {
     breadcrumb?: string;
     heading_hierarchy?: string[];
     parentContext?: string;
+    parentChunkId?: string;
+    tableRole?: 'summary' | 'detail' | 'unknown';
     chunkStrategy: string;
     overlapChars: number;
     chapter_no?: number;
@@ -21,8 +24,30 @@ export interface IndexedMarkdownChunk {
   };
 }
 
-const MAX_CHARS = 1800;
-const OVERLAP_CHARS = 200;
+// 可通过 env 覆盖（也可在调用前 setOptions 覆盖）；避免硬编码导致不同语料无法调参。
+export interface ChunkSplitOptions {
+  maxChars: number;
+  overlapChars: number;
+}
+
+const defaultSplitOptions = (): ChunkSplitOptions => ({
+  maxChars: Number(process.env.CHUNK_MAX_CHARS || 1800),
+  overlapChars: Number(process.env.CHUNK_OVERLAP_CHARS || 200),
+});
+
+let activeSplitOptions: ChunkSplitOptions = defaultSplitOptions();
+
+export function setChunkSplitOptions(partial: Partial<ChunkSplitOptions>): void {
+  activeSplitOptions = { ...activeSplitOptions, ...partial };
+}
+
+export function resetChunkSplitOptions(): void {
+  activeSplitOptions = defaultSplitOptions();
+}
+
+export function getChunkSplitOptions(): ChunkSplitOptions {
+  return activeSplitOptions;
+}
 
 export function getHeadingHierarchyLevel(heading: string): number {
   if (!heading) return 99;
@@ -102,12 +127,12 @@ function findSections(markdown: string): Section[] {
 function chooseBoundary(markdown: string, start: number, targetEnd: number): number {
   if (targetEnd >= markdown.length) return markdown.length;
   const paragraph = markdown.lastIndexOf('\n\n', targetEnd);
-  if (paragraph > start + Math.floor(MAX_CHARS * 0.55)) return paragraph;
+  if (paragraph > start + Math.floor(activeSplitOptions.maxChars * 0.55)) return paragraph;
   const line = markdown.lastIndexOf('\n', targetEnd);
-  if (line > start + Math.floor(MAX_CHARS * 0.55)) return line;
+  if (line > start + Math.floor(activeSplitOptions.maxChars * 0.55)) return line;
 
   // Adaptive Semantic Boundary: search for sentence punctuation (。！？； or .!? followed by space)
-  const minPos = start + Math.floor(MAX_CHARS * 0.50);
+  const minPos = start + Math.floor(activeSplitOptions.maxChars * 0.50);
   const slice = markdown.slice(minPos, targetEnd);
   const sentenceMatches = Array.from(slice.matchAll(/[。！？；]|(?<=[.!?])\s+/gu));
   if (sentenceMatches.length > 0) {
@@ -259,7 +284,7 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
     while (start < section.end) {
       let end = section.end;
       if (!hasClauseStructure || (section.end - start > 5000)) {
-        end = chooseBoundary(cleanMarkdown, start, Math.min(start + MAX_CHARS, section.end));
+        end = chooseBoundary(cleanMarkdown, start, Math.min(start + activeSplitOptions.maxChars, section.end));
         // If the remaining fragment after this split is tiny (< 150 chars, e.g. 1-2 table rows or half a sentence),
         // absorb it into the current chunk rather than creating an isolated orphaned fragment.
         if (section.end - end < 150) {
@@ -347,8 +372,16 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
           breadcrumb: currentBreadcrumb || section.heading || '文档正文',
           heading_hierarchy: currentHeadingHierarchy,
           parentContext: sectionBody.length <= 4000 ? sectionBody : undefined,
+          parentChunkId: typeof section.start === "number" ? `section:${section.start}` : undefined,
+          tableRole: hasTableContent
+            ? classifyTableRole({
+                rowCount: tableRowsCount,
+                headerText: withHeading.slice(0, 400),
+                section: section.heading,
+              })
+            : undefined,
           chunkStrategy: hasClauseStructure ? 'clause-based' : 'parent-child-section-window',
-          overlapChars: first ? 0 : OVERLAP_CHARS,
+          overlapChars: first ? 0 : activeSplitOptions.overlapChars,
           has_table: hasTableContent,
           ...(tableHeaders ? { table_headers: tableHeaders } : {}),
           ...(tableRowsCount ? { table_rows_count: tableRowsCount } : {}),
@@ -377,7 +410,7 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
         });
       }
       if (end >= section.end) break;
-      const nextStart = Math.max(start + 1, end - OVERLAP_CHARS);
+      const nextStart = Math.max(start + 1, end - activeSplitOptions.overlapChars);
       start = nextStart;
       first = false;
     }

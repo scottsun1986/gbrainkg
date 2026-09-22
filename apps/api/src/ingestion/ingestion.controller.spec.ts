@@ -24,9 +24,13 @@ describe('IngestionController', () => {
   let mockAuthService: any;
   let mockCompilerService: any;
   let mockIngestionService: any;
+  let mockObjectStorage: any;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockObjectStorage = {
+      put: jest.fn().mockResolvedValue({ provider: 'local', objectKey: 'raw/test', size: 1, sha256: 'x' }),
+    };
 
     mockPermissionService = {
       getVisibleKnowledgeBases: jest.fn().mockResolvedValue(['kb-1']),
@@ -67,6 +71,7 @@ describe('IngestionController', () => {
       mockAuthService,
       mockCompilerService,
       mockIngestionService,
+      mockObjectStorage,
     );
   });
 

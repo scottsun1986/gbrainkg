@@ -1,5 +1,6 @@
 import { IndexedMarkdownChunk } from './markdown-chunker';
 import { estimateTokens } from '../chat/context-budget';
+import { createHash } from 'node:crypto';
 
 export interface ContextualRetrievalConfig {
   baseUrl: string;
@@ -14,6 +15,43 @@ export interface ContextualRetrievalOptions {
   timeoutMs?: number;        // default 30000
   retries?: number;          // default 1 (one retry after a failed attempt)
   batchSize?: number;        // default 1, can batch 2-3 adjacent chunks in the same section
+  /**
+   * Durable cache for contextual prefixes. Without it a re-ingest (version
+   * bump, worker retry, duplicate upload) re-pays the whole per-chunk LLM bill
+   * even when the input text is byte-identical.
+   */
+  cache?: ContextualPrefixCache;
+}
+
+/** Raw completion cache keyed by the exact request payload. */
+export interface ContextualPrefixCache {
+  get(keys: string[]): Promise<Map<string, string>>;
+  put(entries: Array<{ key: string; value: string }>): Promise<void>;
+}
+
+/**
+ * Prompt version salt. Bump it whenever the contextual-retrieval prompts or the
+ * parsing of their output change, so stale cached prefixes are not replayed
+ * after a prompt upgrade.
+ */
+const CONTEXT_CACHE_VERSION = process.env.CONTEXTUAL_RETRIEVAL_CACHE_VERSION || 'v1';
+
+/**
+ * Cache key = model + exact system/user prompt. Keying on the full payload (and
+ * not just the chunk text) keeps neighbouring-window differences and prompt
+ * changes from colliding, so a hit always means "this exact request was already
+ * answered".
+ */
+export function contextualRequestKey(
+  modelName: string,
+  systemPrompt: string,
+  userContent: string,
+): string {
+  return createHash('sha256')
+    .update(
+      `${CONTEXT_CACHE_VERSION}\u0000${modelName}\u0000${systemPrompt}\u0000${userContent}`,
+    )
+    .digest('hex');
 }
 
 const MIN_CHUNK_TOKENS = 50;
@@ -129,6 +167,7 @@ export async function enrichChunksWithContext(
   let successCount = 0;
   let skipCount = 0;
   let failCount = 0;
+  let cacheHitCount = 0;
   let totalCacheHitTokens = 0;
 
   // Filter out chunks that should be skipped prior to batching
@@ -141,9 +180,20 @@ export async function enrichChunksWithContext(
     }
     const skipStructured = process.env.CONTEXTUAL_RETRIEVAL_SKIP_STRUCTURED !== 'false';
     if (skipStructured) {
-      const hasRichSection = typeof chunk.metadata?.section === 'string' &&
-        chunk.metadata.section.includes('>') &&
-        chunk.metadata.section !== 'Default';
+      // The multi-level path lives in `breadcrumb` ("章 > 节 > 条"); `section`
+      // only holds the innermost heading. Testing `section` for '>' therefore
+      // never matched, so structured documents paid for a contextual prefix on
+      // every chunk instead of being skipped.
+      const breadcrumb = typeof chunk.metadata?.breadcrumb === 'string'
+        ? chunk.metadata.breadcrumb
+        : '';
+      const sectionText = typeof chunk.metadata?.section === 'string' ? chunk.metadata.section : '';
+      const hierarchyDepth = Array.isArray(chunk.metadata?.heading_hierarchy)
+        ? chunk.metadata.heading_hierarchy.length
+        : 0;
+      const hasRichSection =
+        (breadcrumb.includes('>') || hierarchyDepth >= 2) &&
+        sectionText !== 'Default';
       const hasChapterArticle = typeof chunk.metadata?.chapter_no === 'number' &&
         typeof chunk.metadata?.article_no === 'number';
       if (hasRichSection || hasChapterArticle) {
@@ -234,6 +284,40 @@ export async function enrichChunksWithContext(
           return null;
         };
 
+        const requestKey = contextualRequestKey(
+          config.modelName,
+          systemPromptSingle,
+          userContent,
+        );
+        // Durable-prefix cache first: an identical request (same chunk text,
+        // same section path, same neighbouring window, same model) must not pay
+        // the LLM again after a retry or a re-ingest.
+        try {
+          const cached = await options?.cache?.get([requestKey]);
+          const cachedValue = cached?.get(requestKey);
+          if (cachedValue) {
+            cacheHitCount++;
+            const prefix = `[上下文: ${cachedValue}]\n\n`;
+            enrichedChunks[originalIndex] = {
+              ...chunk,
+              content: prefix + chunk.content,
+              metadata: {
+                ...chunk.metadata,
+                rawText: chunk.content,
+                contextual_prefix: prefix,
+                contextPrefix: prefix,
+                contextual_retrieval: true,
+                contextual_prefix_cached: true,
+              } as IndexedMarkdownChunk['metadata'],
+            };
+            enrichedChunks[originalIndex].tokenCount = estimateTokens(enrichedChunks[originalIndex].content);
+            successCount++;
+            return;
+          }
+        } catch (error) {
+          console.warn('[ContextualRetrieval] Prefix cache lookup failed:', error);
+        }
+
         let contextDescription: string | null = null;
         try {
           for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -251,6 +335,9 @@ export async function enrichChunksWithContext(
         }
 
         if (contextDescription) {
+          void options?.cache
+            ?.put([{ key: requestKey, value: contextDescription }])
+            .catch(() => undefined);
           const prefix = `[上下文: ${contextDescription}]\n\n`;
           enrichedChunks[originalIndex] = {
             ...chunk,
@@ -324,19 +411,41 @@ export async function enrichChunksWithContext(
           }
         };
 
+        const batchRequestKey = contextualRequestKey(
+          config.modelName,
+          systemPromptBatch,
+          userContent,
+        );
         let parsedDescriptions: Record<string, string> | null = null;
         try {
-          for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-            try {
-              parsedDescriptions = await enrichBatchOnce();
-              if (parsedDescriptions) break;
-            } catch (error) {
-              if (attempt >= maxAttempts) throw error;
-              await new Promise((resolve) => setTimeout(resolve, 800 * attempt));
-            }
+          const cached = await options?.cache?.get([batchRequestKey]);
+          const cachedValue = cached?.get(batchRequestKey);
+          if (cachedValue) {
+            parsedDescriptions = JSON.parse(cachedValue);
+            cacheHitCount += chunkIndices.length;
           }
         } catch (error) {
-          console.warn(`[ContextualRetrieval] Error enriching batch:`, error);
+          console.warn('[ContextualRetrieval] Prefix cache lookup failed for batch:', error);
+        }
+        if (!parsedDescriptions) {
+          try {
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+              try {
+                parsedDescriptions = await enrichBatchOnce();
+                if (parsedDescriptions) break;
+              } catch (error) {
+                if (attempt >= maxAttempts) throw error;
+                await new Promise((resolve) => setTimeout(resolve, 800 * attempt));
+              }
+            }
+          } catch (error) {
+            console.warn(`[ContextualRetrieval] Error enriching batch:`, error);
+          }
+          if (parsedDescriptions) {
+            void options?.cache
+              ?.put([{ key: batchRequestKey, value: JSON.stringify(parsedDescriptions) }])
+              .catch(() => undefined);
+          }
         }
 
         chunkIndices.forEach((originalIndex, pos) => {
@@ -367,7 +476,7 @@ export async function enrichChunksWithContext(
     await Promise.allSettled(promises);
   }
 
-  console.log(`[ContextualRetrieval] Finished enrichment. Success: ${successCount}, Skipped: ${skipCount}, Failed: ${failCount}, Prompt Cache Hit Tokens: ${totalCacheHitTokens}`);
+  console.log(`[ContextualRetrieval] Finished enrichment. Success: ${successCount}, Skipped: ${skipCount}, Failed: ${failCount}, Durable Prefix Cache Hits: ${cacheHitCount}, Prompt Cache Hit Tokens: ${totalCacheHitTokens}`);
 
   return enrichedChunks;
 }

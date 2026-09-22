@@ -46,4 +46,10 @@ jobs:
           TEST_HOST: ${{ secrets.TEST_HOST }}
           TEST_PORT: ${{ secrets.TEST_PORT }}
       - name: Quality Gate Check
-        run: python tests/evaluation/quality_gate.py --threshold-hit-rate 0.80 --threshold-faithfulness 0.95
+        # Thresholds come from tests/evaluation/gate-thresholds.sh so this
+        # workflow can never disagree with ci-gate.sh / the self-hosted gate.
+        run: |
+          source tests/evaluation/gate-thresholds.sh
+          python tests/evaluation/quality_gate.py \
+            --threshold-hit-rate "$GATE_HIT_RATE" \
+            --threshold-faithfulness "$GATE_FAITHFULNESS"

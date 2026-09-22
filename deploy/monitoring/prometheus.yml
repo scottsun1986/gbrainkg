@@ -1,0 +1,48 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: gbrainkg-prod
+
+rule_files:
+  - /etc/prometheus/rules/gbrainkg-alerts.yml
+
+# Alertmanager optional: alerts also visible in /alerts UI when AM is absent.
+# alerting:
+#   alertmanagers:
+#     - static_configs: ['127.0.0.1:9093']
+
+scrape_configs:
+  - job_name: gbrainkg-api
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - '127.0.0.1:3000'
+          - '127.0.0.1:3002'
+          - '127.0.0.1:3004'
+        labels:
+          app: llmwiki-api
+
+  - job_name: gbrainkg-web
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - '127.0.0.1:3200'
+          - '127.0.0.1:3202'
+        labels:
+          app: llmwiki-web
+    # Web may not expose /metrics yet; keep scrape soft via honor and relabel drop on error is automatic.
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ['127.0.0.1:9090']
+
+  - job_name: node
+    static_configs:
+      - targets: ['127.0.0.1:9100']
+    # enabled after node_exporter install (optional)
+
+  - job_name: postgres
+    static_configs:
+      - targets: ['127.0.0.1:9187']
+    # postgres_exporter (optional)

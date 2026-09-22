@@ -1,0 +1,325 @@
+[
+ {
+  "qid": "100c512a0bde11eba7f7acde48001122",
+  "question": "Where was the place of burial of Charles Mathew's father?",
+  "answer": "Cork",
+  "gold_titles": [
+   "Charles Mathew",
+   "James Charles Mathew"
+  ],
+  "type": "compositional",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "e183fb620bda11eba7f7acde48001122",
+  "question": "What is the place of birth of Queen Jeongsun (Wonjong)'s husband?",
+  "answer": "Korea",
+  "gold_titles": [
+   "Queen Jeongsun (Wonjong)",
+   "Wonjong of Goryeo"
+  ],
+  "type": "compositional",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "ce98e6620bd911eba7f7acde48001122",
+  "question": "Where was the place of death of Alessandro Ruspoli, 2Nd Prince Of Cerveteri's father?",
+  "answer": "Rome",
+  "gold_titles": [
+   "Alessandro Ruspoli, 2nd Prince of Cerveteri",
+   "Francesco Maria Marescotti Ruspoli, 1st Prince of Cerveteri"
+  ],
+  "type": "compositional",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "2bd4454c0bda11eba7f7acde48001122",
+  "question": "Where did the composer of film Before Sunset study?",
+  "answer": "Tisch",
+  "gold_titles": [
+   "Before Sunset",
+   "Julie Delpy"
+  ],
+  "type": "compositional",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "97cee43a0baf11ebab90acde48001122",
+  "question": "Who is Magnus Julius De La Gardie's paternal grandmother?",
+  "answer": "Ebba Brahe",
+  "gold_titles": [
+   "Axel Julius De la Gardie",
+   "Magnus Julius De la Gardie"
+  ],
+  "type": "inference",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "140bbce00bdc11eba7f7acde48001122",
+  "question": "Which award the director of film Sad Song Of Yellow Skin received?",
+  "answer": "Fulbright Scholarship",
+  "gold_titles": [
+   "Michael Rubbo",
+   "Sad Song of Yellow Skin"
+  ],
+  "type": "compositional",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "18dadca00bb011ebab90acde48001122",
+  "question": "Who is the paternal grandfather of George Cochrane (Politician)?",
+  "answer": "William Cochrane",
+  "gold_titles": [
+   "George Cochrane (politician)",
+   "Thomas Cochrane, 8th Earl of Dundonald"
+  ],
+  "type": "inference",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "ded103fe0baf11ebab90acde48001122",
+  "question": "Who is the maternal grandfather of Vyacheslav Yaroslavich?",
+  "answer": "Olof Skötkonung",
+  "gold_titles": [
+   "Ingegerd Olofsdotter of Sweden",
+   "Vyacheslav Yaroslavich"
+  ],
+  "type": "inference",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "d15bca5e0bd911eba7f7acde48001122",
+  "question": "Where was the director of film The Autobiography Of Nicolae Ceaușescu born?",
+  "answer": "Timişoara",
+  "gold_titles": [
+   "Andrei Ujică",
+   "The Autobiography of Nicolae Ceaușescu"
+  ],
+  "type": "compositional",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "252694580bde11eba7f7acde48001122",
+  "question": "What is the place of birth of Gerard I, Count Of Guelders's wife?",
+  "answer": "Luxembourg",
+  "gold_titles": [
+   "Clementia of Aquitaine",
+   "Gerard I, Count of Guelders"
+  ],
+  "type": "compositional",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "6c7fb9160bb011ebab90acde48001122",
+  "question": "Who is Catherine Woodville, Duchess Of Buckingham's maternal grandmother?",
+  "answer": "Margherita del Balzo",
+  "gold_titles": [
+   "Catherine Woodville, Duchess of Buckingham",
+   "Jacquetta of Luxembourg"
+  ],
+  "type": "inference",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "59ad2d780bdd11eba7f7acde48001122",
+  "question": "Who is the spouse of the director of film The Imp (1919 Film)?",
+  "answer": "May Allison",
+  "gold_titles": [
+   "Robert Ellis (actor, born 1892)",
+   "The Imp (1919 film)"
+  ],
+  "type": "compositional",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "39bd87c80bde11eba7f7acde48001122",
+  "question": "When was the company that published The Rip Off Review Of Western Culture founded?",
+  "answer": "1969",
+  "gold_titles": [
+   "Rip Off Press",
+   "The Rip Off Review of Western Culture"
+  ],
+  "type": "compositional",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "b3bde51a0baf11ebab90acde48001122",
+  "question": "Who is the paternal grandfather of Duke Xuan Of Qin?",
+  "answer": "Duke Xian of Qin",
+  "gold_titles": [
+   "Duke De of Qin",
+   "Duke Xuan of Qin"
+  ],
+  "type": "inference",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "cd4ceac40bd911eba7f7acde48001122",
+  "question": "Where was the place of death of the composer of song Love Is Here To Stay?",
+  "answer": "Hollywood",
+  "gold_titles": [
+   "George Gershwin",
+   "Love Is Here to Stay"
+  ],
+  "type": "compositional",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "ee9346260baf11ebab90acde48001122",
+  "question": "Who is Cammán Mac Amlaíb's paternal grandfather?",
+  "answer": "Gofraid ua Ímair",
+  "gold_titles": [
+   "Cammán mac Amlaíb",
+   "Olaf Guthfrithson"
+  ],
+  "type": "inference",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "0a6ef71e0bb011ebab90acde48001122",
+  "question": "Who is Guy Of Ibelin (Died 1304)'s paternal grandfather?",
+  "answer": "Philip of Ibelin",
+  "gold_titles": [
+   "Guy of Ibelin (died 1304)",
+   "John of Ibelin (jurist)"
+  ],
+  "type": "inference",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "0cc584100bb011ebab90acde48001122",
+  "question": "Who is the father-in-law of Aemilia Tertia?",
+  "answer": "Publius Cornelius Scipio",
+  "gold_titles": [
+   "Aemilia Tertia",
+   "Scipio Africanus"
+  ],
+  "type": "inference",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "121ddeae0bdc11eba7f7acde48001122",
+  "question": "What nationality is Hypsicratea's husband?",
+  "answer": "Kingdom of Pontus",
+  "gold_titles": [
+   "Hypsicratea",
+   "Mithridates VI of Pontus"
+  ],
+  "type": "compositional",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "17505aa2089211ebbd73ac1f6bf848b6",
+  "question": "Do both films: Mr. Arkadin and Kick-Ass 2 (Film) have the directors from the same country?",
+  "answer": "yes",
+  "gold_titles": [
+   "Jeff Wadlow",
+   "Kick-Ass 2 (film)",
+   "Mr. Arkadin",
+   "Orson Welles"
+  ],
+  "type": "bridge_comparison",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "1ad2a7c20bdd11eba7f7acde48001122",
+  "question": "Where was the performer of song In Heaven born?",
+  "answer": "Missoula, Montana",
+  "gold_titles": [
+   "David Lynch",
+   "In Heaven"
+  ],
+  "type": "compositional",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "27f6eaa80bb011ebab90acde48001122",
+  "question": "Who is Edward Howard, 2Nd Earl Of Carlisle's paternal grandfather?",
+  "answer": "Sir William Howard",
+  "gold_titles": [
+   "Charles Howard, 1st Earl of Carlisle",
+   "Edward Howard, 2nd Earl of Carlisle"
+  ],
+  "type": "inference",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "6a3bb1220bde11eba7f7acde48001122",
+  "question": "Where did the director of film India Speaks die?",
+  "answer": "Pacific",
+  "gold_titles": [
+   "India Speaks",
+   "Richard Halliburton"
+  ],
+  "type": "compositional",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "725dc29a0bda11eba7f7acde48001122",
+  "question": "Where did the director of film Girl Rising (Film) graduate from?",
+  "answer": "Harvard",
+  "gold_titles": [
+   "Girl Rising (film)",
+   "Richard E. Robbins"
+  ],
+  "type": "compositional",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "7939c1460bd911eba7f7acde48001122",
+  "question": "When did the composer of film The Sparrow'S Fluttering die?",
+  "answer": "1 March 2012",
+  "gold_titles": [
+   "Lucio Dalla",
+   "The Sparrow's Fluttering"
+  ],
+  "type": "compositional",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "7c71892a08d711ebbd9aac1f6bf848b6",
+  "question": "Who lived longer, Sammy Drechsel or Wolfgang Fischer?",
+  "answer": "Sammy Drechsel",
+  "gold_titles": [
+   "Sammy Drechsel",
+   "Wolfgang Fischer"
+  ],
+  "type": "comparison",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "8985546c0bdd11eba7f7acde48001122",
+  "question": "What nationality is Clarice Orsini's husband?",
+  "answer": "Florentine Republic",
+  "gold_titles": [
+   "Clarice Orsini",
+   "Lorenzo de' Medici"
+  ],
+  "type": "compositional",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "ad4195740bdc11eba7f7acde48001122",
+  "question": "Where was the husband of Octavie Coudreau born?",
+  "answer": "Sonnac",
+  "gold_titles": [
+   "Henri Coudreau",
+   "Octavie Coudreau"
+  ],
+  "type": "compositional",
+  "source_dataset": "2wiki"
+ },
+ {
+  "qid": "c85f6a7a084e11ebbd56ac1f6bf848b6",
+  "question": "Do director of film Invisible Ghost and director of film Africa Texas Style have the same nationality?",
+  "answer": "yes",
+  "gold_titles": [
+   "Africa Texas Style",
+   "Andrew Marton",
+   "Invisible Ghost",
+   "Joseph H. Lewis"
+  ],
+  "type": "bridge_comparison",
+  "source_dataset": "2wiki"
+ }
+]

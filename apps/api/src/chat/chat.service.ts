@@ -20,50 +20,86 @@ import { compressConversationHistory } from "./history-compress";
 import { GraphRagService } from "../graph-rag/graph-rag.service";
 import { SemanticCacheService } from "./semantic-cache.service";
 import { AgenticRagService } from "./agentic-rag.service";
+import { resolveRelationSurfaceForms } from './corpus-agnostic-config';
+import { applySectionAlign, extractSectionAnchors } from './section-align';
+import { needsSectionRescue } from './section-rescue';
+import { ShadowRetrievalService } from '../experiments/shadow-retrieval.service';
+import { CONTROL_VARIANT } from '../experiments/retrieval-variants';
+import { extractRelationFromQuery as extractRelationFromQueryImpl } from './relation-extractor';
 import { RaptorService } from "../raptor/raptor.service";
 import { EmbeddingService } from "../embedding/embedding.service";
 import { buildDocumentPreviewUrl } from "../ingestion/preview-url";
 import { buildBm25Pool, bm25Scores } from "./lexical-bm25";
+import {
+  extractAnswerFromReasoning,
+  isPlanningLikeText,
+  isProviderErrorText,
+  looksLikeMetaDiscourse,
+  looksLikeQuestionEcho,
+} from "./output-hygiene";
+import {
+  answerTypeOf,
+  extractCapitalisedCandidates,
+  parseRetryMarkers,
+  planAspectPassageRescue,
+  planDocumentCompleteness,
+  planSecondHopRescue,
+  planTopRankGuarantee,
+  rewriteRetryMarkers,
+  selectRetrySentenceSources,
+  selectSupportingSentences,
+  selectTypedPassageSources,
+} from "./bridge-rescue";
 import { routeKnowledgeBasesByIntent } from "../retrieval/kb-intent-router";
+import { LexicalIndexService } from "../retrieval/lexical-index.service";
+import { tokenizeQuery } from "../retrieval/lexical-tokenizer";
+import { Bulkhead, RetrievalDeadline } from "../retrieval/retrieval-budget";
+import { HybridRetrievalService } from "../retrieval/hybrid-retrieval.service";
+import {
+  buildEvidenceReasoningGroups,
+  fitStructuredEvidenceToBudget,
+  formatEvidenceReasoningMap,
+  planStructuredEvidence,
+} from "./evidence-pack";
+import { RetrievalArmsService } from "./retrieval-arms";
+import { FusionRerankService } from "./fusion-rerank";
+import { CitationAssemblyService } from "./citation-assembly";
+import { QueryRewriterService, type RetrievalRequest } from "./query-rewriter";
 
-type RetrievalRequest = { query: string; breadth: boolean; operation: 'search' | 'query' };
+// Re-export shared pure helpers (moved to retrieval-arms) so the public API is unchanged.
+export {
+  calibratedScoreOf,
+  documentCurrentlyEffective,
+  extractRawChunkText,
+  hasPolarityConflict,
+  isRefusalAnswerText,
+  numericClaimsOf,
+  semanticCacheScopeKey,
+  statementSupportedBy,
+  stripInvalidCitationMarkers,
+} from "./retrieval-arms";
 
-function stripInvalidCitationMarkers(value: string, citationCount: number): string {
-  return value.replace(/\[(\d+)\]/g, (full, rawIndex) => {
-    const index = Number(rawIndex);
-    return index >= 1 && index <= citationCount ? full : '';
-  });
+// Local uses of the moved helpers (processChat grounding gate, stitching, etc.)
+import {
+  calibratedScoreOf,
+  documentCurrentlyEffective,
+  extractRawChunkText,
+  hasPolarityConflict,
+  isRefusalAnswerText,
+  numericClaimsOf,
+  semanticCacheScopeKey,
+  statementSupportedBy,
+  stripInvalidCitationMarkers,
+} from "./retrieval-arms";
+
+export interface CitationEvidenceLike {
+  context?: string;
+  snippet?: string;
 }
 
-/**
- * Extract the numeric claims (amounts, thresholds, counts, dates, IDs) that a
- * statement asserts. Citation markers are stripped first so their indices are
- * never mistaken for factual numbers.
- */
-export function numericClaimsOf(statement: string): string[] {
-  const body = statement.replace(/\[\d+\]/g, ' ');
-  return (body.match(/\d+(?:\.\d+)?/g) || []).filter((token) => token.replace(/[.\s]/g, '').length >= 1);
-}
-
-/**
- * Deterministic grounding check for one answer statement against the evidence
- * texts of the sources it cites (or, when untagged, the full evidence pool).
- * A valid citation marker alone is NOT proof:
- *  1. every numeric claim in the statement must literally appear (modulo
- *     whitespace) in the evidence — fabricated or mutated numbers with a real
- *     citation index are rejected;
- *  2. the statement needs lexical overlap with the evidence (0.5 when it
- *     carries a valid marker and the model only paraphrased, 0.7 when it
- *     carries none) so fully invented prose cannot ride on a real marker.
- */
-export function extractRawChunkText(text: string): string {
-  if (!text) return '';
-  return text
-    .replace(/^\[(?:上下文|Context):\s*[\s\S]*?\]\n*/i, '')
-    .replace(/<!--\s*大纲层级:[\s\S]*?-->/g, '')
-    .replace(/<!--\s*表格结构化行语义:[\s\S]*?-->/g, '')
-    .replace(/<!--\s*bbox:[\s\S]*?-->/g, '')
-    .trim();
+function evidenceTextOf(entry: CitationEvidenceLike | undefined | null): string {
+  if (!entry) return '';
+  return String(entry.context || entry.snippet || '');
 }
 
 /**
@@ -97,166 +133,175 @@ export function smartTruncateChunkText(rawText: string, maxChunkLen: number): st
   return `${candidateSlice.trimEnd()}...[内容超出篇幅限制截断]`;
 }
 
-export function hasPolarityConflict(statement: string, evidence: string): boolean {
-  const normStmt = statement.toLowerCase().replace(/\s+/g, '');
-  const normEv = evidence.toLowerCase().replace(/\s+/g, '');
+/** Fit a chunk to a token allowance without cutting through table rows when possible. */
+export function truncateChunkToTokenBudget(
+  rawText: string,
+  tokenBudget: number,
+  maxChunkChars = Number(process.env.CHAT_CHUNK_MAX_CHARS || 6000),
+): string {
+  const text = String(rawText || '');
+  const charBounded = smartTruncateChunkText(text, maxChunkChars);
+  if (estimateTokens(charBounded) <= tokenBudget) return charBounded;
 
-  // Directional bounds. `最低/最高` are anchored to a predicate (为/是/应/不/限)
-  // so the bare noun form ("最低工资标准") does not register as a bound.
-  const LOWER_BAR = /不低于|不得低于|至少|不少于|不小于|大于等于|下限|最低(?:为|是|应|不|限)|最少|起点(?:为|是)/;
-  const UPPER_BAR = /不高于|不得高于|至多|不超过|不得超过|不多于|不大于|上限|最高(?:为|是|应|不|限)|最多|封顶/;
-  const stmtHasLowerBar = LOWER_BAR.test(normStmt);
-  const stmtHasUpperBar = UPPER_BAR.test(normStmt);
-  const evHasLowerBar = LOWER_BAR.test(normEv);
-  const evHasUpperBar = UPPER_BAR.test(normEv);
-
-  // A lower bound and an upper bound only contradict when the lower bound
-  // exceeds the upper bound (e.g. "不得低于800" vs "不得高于100"). Two bounds
-  // that straddle a range ("下限5万" vs "上限10万") are compatible and must not
-  // be flagged. Numbers missing => keep the conservative conflict.
-  const boundExceeds = (lowerText: string, upperText: string): boolean => {
-    const lower = numberNearBound(lowerText, LOWER_BAR);
-    const upper = numberNearBound(upperText, UPPER_BAR);
-    return lower === null || upper === null ? true : lower >= upper;
-  };
-  if (stmtHasLowerBar && evHasUpperBar && !evHasLowerBar && boundExceeds(normStmt, normEv)) return true;
-  if (stmtHasUpperBar && evHasLowerBar && !evHasUpperBar && boundExceeds(normEv, normStmt)) return true;
-
-  const negPrefix = '(?<![不大至不严切]|不得|不能|严禁|切勿|不可)';
-  const stmtHigher = new RegExp(`${negPrefix}(?:高于|大于|超过)`).test(normStmt);
-  const stmtLower = new RegExp(`${negPrefix}(?:低于|小于)`).test(normStmt);
-  const evHigher = new RegExp(`${negPrefix}(?:高于|大于|超过)`).test(normEv);
-  const evLower = new RegExp(`${negPrefix}(?:低于|小于)`).test(normEv);
-
-  if (stmtHigher && evLower && !evHigher) return true;
-  if (stmtLower && evHigher && !evLower) return true;
-  // If evidence sets an upper limit (e.g. 不得超过800米) but statement asserts it can be higher
-  if (stmtHigher && !stmtHasUpperBar && evHasUpperBar && !evHigher) return true;
-  // If evidence sets a lower limit (e.g. 不得低于800米) but statement asserts it can be lower
-  if (stmtLower && !stmtHasLowerBar && evHasLowerBar && !evLower) return true;
-
-  // Explicit prohibition vs permission/mandate conflict
-  const stmtProhibit = /不得|严禁|禁止|不允许|不可|不能|切勿|严控/.test(normStmt);
-  const evProhibit = /不得|严禁|禁止|不允许|不可|不能|切勿|严控/.test(normEv);
-  const stmtAllow = /(?<![不严未得])允许|(?<![不严未得])可以|应当|必须|可自主|自愿|可选|非强制|酌情/.test(normStmt);
-  const evAllow = /(?<![不严未得])允许|(?<![不严未得])可以|应当|必须|可自主|自愿|可选|非强制|酌情/.test(normEv);
-
-  if (stmtProhibit && evAllow && !evProhibit) return true;
-  if (stmtAllow && evProhibit && !evAllow) return true;
-
-  // English directional thresholds
-  const enStmtHigher = /\b(?:no\s+less\s+than|at\s+least|greater\s+than|higher\s+than|more\s+than)\b/i.test(statement);
-  const enStmtLower = /\b(?:no\s+more\s+than|at\s+most|less\s+than|lower\s+than|fewer\s+than)\b/i.test(statement);
-  const enEvHigher = /\b(?:no\s+less\s+than|at\s+least|greater\s+than|higher\s+than|more\s+than)\b/i.test(evidence);
-  const enEvLower = /\b(?:no\s+more\s+than|at\s+most|less\s+than|lower\s+than|fewer\s+than)\b/i.test(evidence);
-
-  if (enStmtHigher && enEvLower && !enEvHigher) return true;
-  if (enStmtLower && enEvHigher && !enEvLower) return true;
-
-  // English prohibition vs permission
-  const enStmtProhibit = /\b(?:shall\s+not|must\s+not|is\s+prohibited|are\s+prohibited|cannot|may\s+not|strictly\s+forbidden)\b/i.test(statement);
-  const enEvProhibit = /\b(?:shall\s+not|must\s+not|is\s+prohibited|are\s+prohibited|cannot|may\s+not|strictly\s+forbidden)\b/i.test(evidence);
-  const enStmtAllow = /\b(?:is\s+allowed|are\s+allowed|is\s+permitted|are\s+permitted|is\s+required)\b|\b(?:shall|must)(?!\s+not)\b/i.test(statement);
-  const enEvAllow = /\b(?:is\s+allowed|are\s+allowed|is\s+permitted|are\s+permitted|is\s+required)\b|\b(?:shall|must)(?!\s+not)\b/i.test(evidence);
-
-  if (enStmtProhibit && enEvAllow && !enEvProhibit) return true;
-  if (enStmtAllow && enEvProhibit && !enEvAllow) return true;
-
-  return false;
-}
-
-export function statementSupportedBy(
-  statement: string,
-  evidenceTexts: string[],
-  hasValidTag: boolean,
-): boolean {
-  const evidence = evidenceTexts.map(extractRawChunkText).join('\n');
-  if (!evidence.trim()) return false;
-  if (hasPolarityConflict(statement, evidence)) return false;
-
-  const normalizedEvidence = evidence.replace(/\s+/g, '');
-  const body = statement.replace(/\[\d+\]/g, ' ');
-  const chars = Array.from(new Set(body.replace(/\s+/g, '').split('')));
-  if (chars.length === 0) return true;
-  let overlap = 0;
-  for (const ch of chars) {
-    if (normalizedEvidence.includes(ch)) overlap++;
-  }
-  const overlapRatio = overlap / chars.length;
-  // If statement has valid citation tag and no polarity conflict, allow 0.40 for natural synthesis
-  const overlapBar = hasValidTag ? 0.40 : 0.70;
-  if (overlapRatio < overlapBar) return false;
-
-  const isEn = !/[\u4e00-\u9fa5]/.test(body);
-  if (isEn) {
-    const stopWords = new Set([
-      'the', 'a', 'an', 'is', 'was', 'are', 'were', 'in', 'on', 'at', 'to', 'of', 'for', 'by', 'with', 'and', 'or', 'that', 'this', 'it',
-      'therefore', 'accordingly', 'based', 'from', 'also', 'which', 'who', 'whom', 'whose', 'where', 'when', 'details'
-    ]);
-    const words = (body.toLowerCase().match(/[a-z0-9'-]+/g) || []).filter((w) => w.length >= 3 && !stopWords.has(w));
-    if (words.length > 0) {
-      const hits = words.filter((w) => evidence.toLowerCase().includes(w)).length;
-      if (hits / words.length < overlapBar) return false;
+  let low = 1;
+  let high = Math.min(maxChunkChars, text.length);
+  let best = smartTruncateChunkText(text, 1);
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const candidate = smartTruncateChunkText(text, middle);
+    if (estimateTokens(candidate) <= tokenBudget) {
+      best = candidate;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
     }
   }
-
-  // Numeric grounding accepts literal matches AND unit-equivalent values so a
-  // correct conversion (0.8s = 800毫秒) is not mis-flagged as fabrication.
-  if (!numericClaimsSupportedBy(statement, evidence)) return false;
-  return true;
+  return best;
 }
 
 /**
- * Derive the semantic-cache scope key from the exact source set selected for
- * this request plus the ACL/knowledge epochs. The previous key used only the
- * user's full visible-source fingerprint, so a query narrowed to a subset of
- * knowledge bases could collide with (and be answered from) a cached answer
- * produced over a different scope. Embedding the selected sources and epochs
- * makes cache entries scope-exact and revokes them on any permission change.
+ * Find the evidence item in the prompt pool that actually supports a sentence.
+ *
+ * Used to repair a wrong citation marker. The model sometimes answers from the
+ * right source but stamps the wrong index (observed in production: a biography
+ * answer carried [1] - a weekly-report PDF - while the teacher's document was
+ * source 7). The pool that built the prompt is still available, so the correct
+ * attribution can be recovered deterministically: the candidate must pass the
+ * same support check as a real citation, and the highest character overlap wins
+ * so that a boilerplate-heavy table does not beat the document that truly
+ * contains the fact.
  */
-export function semanticCacheScopeKey(
-  sourceKeys: string[],
-  aclEpoch: number,
-  knowledgeEpoch: number,
-  modelName?: string,
-): string {
-  // The key version salt is bumped whenever the retrieval/answer pipeline
-  // changes materially, so cached answers produced by older logic are not
-  // replayed after an upgrade. v4: sentence-level grounding gate + temporal
-  // lifecycle filtering change answer content materially.
-  // Override with SEMANTIC_CACHE_KEY_VERSION.
-  const version = process.env.SEMANTIC_CACHE_KEY_VERSION || 'v4';
-  const modelSalt = modelName ? `|m:${modelName}` : '';
-  return createHash('sha256')
-    .update(`${version}|${[...sourceKeys].sort().join(',')}|acl:${aclEpoch}|kb:${knowledgeEpoch}${modelSalt}`)
-    .digest('hex')
-    .slice(0, 32);
+export function findSupportingEvidenceIndex(
+  sentence: string,
+  pool: CitationEvidenceLike[],
+  minOverlap = 0.5,
+): number | null {
+  const body = String(sentence || '').replace(/\[\d+\]/g, ' ');
+  const chars = Array.from(new Set(body.replace(/\s+/g, '').split('')));
+  if (!chars.length) return null;
+  let best: { index: number; overlap: number } | null = null;
+  for (let index = 0; index < (pool || []).length; index += 1) {
+    const text = evidenceTextOf(pool[index]);
+    if (!text) continue;
+    if (!statementSupportedBy(sentence, [text], true)) continue;
+    const normalized = extractRawChunkText(text).replace(/\s+/g, '');
+    let overlap = 0;
+    for (const ch of chars) if (normalized.includes(ch)) overlap += 1;
+    const ratio = overlap / chars.length;
+    if (!best || ratio > best.overlap) best = { index: index + 1, overlap: ratio };
+  }
+  return best && best.overlap >= minOverlap ? best.index : null;
 }
 
 /**
- * Temporal effectiveness of a document edition at a point in time (default
- * asOf = now): repealed editions and editions not yet in force must never
- * enter the candidate set. Missing date metadata is treated as unknown — the
- * edition stays eligible rather than being silently discarded.
+ * Re-point a sentence's citation markers at the evidence that supports it.
+ * Returns null when the sentence is already correctly attributed or when no
+ * selected evidence supports it (the caller then treats it as unsupported).
  */
-export function documentCurrentlyEffective(doc: any, now = Date.now()): boolean {
-  if (String(doc?.lifecycleStatus || 'current') === 'repealed') return false;
-  if (doc?.effectiveFrom) {
-    const from = new Date(doc.effectiveFrom).getTime();
-    if (Number.isFinite(from) && from > now) return false;
-  }
-  if (doc?.effectiveTo) {
-    const to = new Date(doc.effectiveTo).getTime();
-    if (Number.isFinite(to) && to < now) return false;
-  }
-  return true;
+export function rebindCitationMarkers(
+  sentence: string,
+  pool: CitationEvidenceLike[],
+  minOverlap = 0.5,
+): { sentence: string; index: number } | null {
+  const target = findSupportingEvidenceIndex(sentence, pool, minOverlap);
+  if (!target) return null;
+  const rewritten = String(sentence)
+    .replace(/\[\d+\]/g, `[${target}]`)
+    .replace(/(\[[0-9]+\])(\s*\[[0-9]+\])+/g, `[${target}]`);
+  if (rewritten === sentence) return null;
+  return { sentence: rewritten, index: target };
 }
 
-@Injectable()
+/**
+ * Budget for the GBrain federated retrieval arm.
+ *
+ * This arm is not a "nice to have": it is the only arm that returns multi-hop
+ * bridge evidence, i.e. the second/third gold paragraph of a multi-hop question.
+ * Cutting it off too early silently reduces the system to single-hop retrieval
+ * (measured regression on 2WikiMultiHopQA/HotpotQA/MuSiQue: Recall@10 1.00 → 0.79
+ * / 0.93 / 0.69). It was hardcoded at 2000ms in the agent search path and 2500ms
+ * in the chat path; a healthy GBrain answers in under ~1.5s, so the budget is now
+ * one configurable value with headroom for a busy instance.
+ */
+export function resolveGbrainRaceMs(): number {
+  const configured = Number(
+    process.env.GBRAIN_SEARCH_RACE_TIMEOUT_MS || process.env.GBRAIN_RACE_TIMEOUT_MS || 0,
+  );
+  if (Number.isFinite(configured) && configured > 0) return Math.max(500, Math.floor(configured));
+  return 6000;
+}
+
+/**
+ * Which retrieval arm sets the ranking when both answered.
+ *
+ * Measured on the three international multi-hop benchmarks (n=100 each, same corpus,
+ * 2026-09-20) with per-probe-group reranking enabled:
+ *
+ *   chunks_only  (default) 2Wiki 0.810  HotpotQA 0.955  MuSiQue 0.765  (221/169/125 s)
+ *   chunk_first            2Wiki 0.790  Hotpot 0.910*    MuSiQue 0.667* (~276 s)
+ *   engine_first           2Wiki 0.765  Hotpot 0.895*    MuSiQue 0.673* (~240 s)
+ *   (* without the probe-group reranker; all three were re-measured where it applies)
+ *
+ * `chunks_only` never consults the engine arm in the agent search path: it won every
+ * dataset and is ~2.4x faster because it skips the engine subprocess. The engine arm
+ * is still used by the user-facing chat path, where compiled-truth pages matter; an
+ * agent-facing deployment that depends on them can set RETRIEVAL_ARM_POLICY=chunk_first
+ * (engine evidence kept, banded below the chunk arm).
+ */
+export function resolveArmPolicy(): 'chunk_first' | 'engine_first' | 'chunks_only' {
+  const raw = String(process.env.RETRIEVAL_ARM_POLICY || '').trim().toLowerCase();
+  if (raw === 'engine_first' || raw === 'engine-first') return 'engine_first';
+  if (raw === 'chunk_first' || raw === 'chunk-first') return 'chunk_first';
+  return 'chunks_only';
+}
+
+/**
+ * Is this candidate shaped like a bridge *entity* rather than a prose fragment?
+ *
+ * Used to decide whether an entity named inside the first-hop evidence is worth a
+ * retrieval probe even when no document is titled exactly after it — the answer
+ * page often merely *mentions* the entity. Precision comes from the shape: two to
+ * four capitalised tokens ("David Gest", "Washington Island", "Door County
+ * Wisconsin"). Single words ("Life", "Jackson") and sentence fragments stay
+ * excluded, which is what the earlier rejections of regex-extracted probes were
+ * actually about.
+ */
+export function isStrongNameEntity(candidate: string): boolean {
+  const tokens = String(candidate || '').trim().split(/\s+/).filter(Boolean);
+  if (tokens.length < 2 || tokens.length > 4) return false;
+  return tokens.every((token) => /^[A-Z][\p{L}\p{M}'’.\-]*$/u.test(token));
+}
+
+export function evidenceConfidenceScores(citations: any[]): {
+  maxCalibrated: number | null;
+  maxSynthetic: number | null;
+} {
+  let maxCalibrated: number | null = null;
+  let maxSynthetic: number | null = null;
+  for (const citation of citations || []) {
+    const calibrated = calibratedScoreOf(citation);
+    if (calibrated !== null) {
+      maxCalibrated = maxCalibrated === null ? calibrated : Math.max(maxCalibrated, calibrated);
+      continue;
+    }
+    if (String(citation?.scoreSource || '') !== 'synthetic') continue;
+    const synthetic = Number(citation?.relevanceScore ?? citation?.rerankScore ?? citation?.score);
+    if (!Number.isFinite(synthetic)) continue;
+    maxSynthetic = maxSynthetic === null ? synthetic : Math.max(maxSynthetic, synthetic);
+  }
+  return { maxCalibrated, maxSynthetic };
+}
+
+export type CitationScoreSource = 'rerank' | 'native' | 'synthetic';
+
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
   private prisma = getPrismaClient();
   private gbrain: BrainRepoAdapter;
+  private readonly queryRewriter: QueryRewriterService;
+  private readonly retrievalArms: RetrievalArmsService;
+  private readonly fusionRerank: FusionRerankService;
+  private readonly citationAssembly: CitationAssemblyService;
 
   constructor(
     private readonly permissionService: PermissionService,
@@ -271,9 +316,368 @@ export class ChatService {
     @Optional() private readonly graphRagService?: GraphRagService,
     @Optional() private readonly raptorService?: RaptorService,
     @Optional() private readonly embeddingService?: EmbeddingService,
+    @Optional() private readonly lexicalIndexService?: LexicalIndexService,
+    @Optional() private readonly hybridRetrievalService?: HybridRetrievalService,
+    @Optional() private readonly shadowRetrievalService?: ShadowRetrievalService,
   ) {
     this.gbrain = gbrainAdapter ?? getSharedBrainRepoAdapter();
+    this.queryRewriter = new QueryRewriterService({
+      logger: this.logger,
+      modelConfigService: this.modelConfigService,
+      agenticRagService: this.agenticRagService,
+      recallPersonalFacts: (userId, query, limit) => this.recallPersonalFacts(userId, query, limit),
+    });
+    this.citationAssembly = new CitationAssemblyService({
+      logger: this.logger,
+      prisma: this.prisma,
+      permissionService: this.permissionService,
+      modelConfigService: this.modelConfigService,
+      semanticCacheService: this.semanticCacheService,
+    });
+    this.fusionRerank = new FusionRerankService({
+      logger: this.logger,
+      modelConfigService: this.modelConfigService,
+    });
+    this.retrievalArms = new RetrievalArmsService({
+      logger: this.logger,
+      prisma: this.prisma,
+      gbrain: this.gbrain,
+      raptorService: this.raptorService,
+      embeddingService: this.embeddingService,
+      graphRagService: this.graphRagService,
+      hybridRetrievalService: this.hybridRetrievalService,
+      lexicalIndexService: this.lexicalIndexService,
+      filterQueryResultByCurrentPermission: (result, visibleKbIds, derivedGuard) =>
+        this.citationAssembly.filterQueryResultByCurrentPermission(result, visibleKbIds, derivedGuard),
+    });
   }
+
+
+  // ---- thin delegates (moved to specialised services) ----
+
+  private async planEntityProbesWithLlm(question: string, evidenceTexts: string[]): Promise<string[]> {
+    return this.queryRewriter.planEntityProbesWithLlm(question, evidenceTexts);
+  }
+
+  private async planSearchProbes(query: string, alreadyPlanned: string[]): Promise<string[]> {
+    return this.queryRewriter.planSearchProbes(query, alreadyPlanned);
+  }
+
+  private async rewriteQueryForRetrieval(
+    question: string,
+    history: Array<{ role: "user" | "assistant"; content: string }>,
+    signal?: AbortSignal,
+  ): Promise<RetrievalRequest> {
+    return this.queryRewriter.rewriteQueryForRetrieval(question, history, signal);
+  }
+
+  private async loadPersonalMemoryContext(
+    userId: string,
+    query: string,
+    history: Array<{ role: "user" | "assistant"; content: string }>,
+    sessionId?: string,
+  ): Promise<{ text: string; count: number }> {
+    return this.queryRewriter.loadPersonalMemoryContext(userId, query, history, sessionId);
+  }
+
+  private shouldLoadPersonalMemory(
+    question: string,
+    history: Array<{ role: "user" | "assistant"; content: string }>,
+  ): boolean {
+    return this.queryRewriter.shouldLoadPersonalMemory(question, history);
+  }
+
+  private async rewriteQueryForRetry(query: string): Promise<string[]> {
+    return this.queryRewriter.rewriteQueryForRetry(query);
+  }
+
+  private fuseWithWeKnoraRRF(
+    baseCitations: any[],
+    weknoraEvidences: RetrievedEvidence[],
+    rrfK = 60,
+  ): any[] {
+    return this.fusionRerank.fuseWithWeKnoraRRF(baseCitations, weknoraEvidences, rrfK);
+  }
+
+  private bandProbeHits<T extends { score?: number }>(items: T[], probeHits: Set<any>): T[] {
+    return this.fusionRerank.bandProbeHits(items, probeHits);
+  }
+
+  private isMultiHopBridgeCandidate(
+    citation: any,
+    question: string,
+    breadth: boolean,
+    result: any,
+  ): boolean {
+    return this.fusionRerank.isMultiHopBridgeCandidate(citation, question, breadth, result);
+  }
+
+  private isSelfContainedQuery(query: string): boolean {
+    return this.fusionRerank.isSelfContainedQuery(query);
+  }
+
+  private normalizeTitleForMatch(value: string): string {
+    return this.fusionRerank.normalizeTitleForMatch(value);
+  }
+
+  private extractCapitalisedCandidates(text: string, limit = 8): string[] {
+    return this.fusionRerank.extractCapitalisedCandidates(text, limit);
+  }
+
+  private async rerankByProbeGroups(question: string, citations: any[]): Promise<void> {
+    return this.fusionRerank.rerankByProbeGroups(question, citations);
+  }
+
+  private async rerankPool(question: string, result: any, breadth = false): Promise<any> {
+    return this.fusionRerank.rerankPool(question, result, breadth);
+  }
+
+  private async applyRerank(
+    question: string,
+    result: any,
+    breadth = false,
+  ): Promise<any> {
+    return this.fusionRerank.applyRerank(question, result, breadth);
+  }
+
+  private reorderLostInTheMiddle<T>(items: T[]): T[] {
+    return this.fusionRerank.reorderLostInTheMiddle(items);
+  }
+
+  private async filterQueryResultByCurrentPermission(
+    result: any,
+    visibleKbIds: string[],
+    derivedGuard: {
+      scopeId: string;
+      sourceKeys: string[];
+      aclEpoch: number;
+      knowledgeEpoch: number;
+    },
+  ): Promise<any> {
+    return this.citationAssembly.filterQueryResultByCurrentPermission(result, visibleKbIds, derivedGuard);
+  }
+
+  private selectEvidence(
+    result: any,
+    opts: { breadth: boolean; tokenBudget: number; subQueries?: string[]; question?: string },
+  ): any {
+    return this.citationAssembly.selectEvidence(result, opts);
+  }
+
+  private assessWeakEvidence(result: any, breadth = false): {
+    shouldEscalate: boolean;
+    weak: boolean;
+    evidence: string;
+    topScore?: number | null;
+    scoreFloor?: number;
+    reason: string;
+  } {
+    return this.citationAssembly.assessWeakEvidence(result, breadth);
+  }
+
+  private async verifyPassageContainment(params: {
+    question: string;
+    passages: string[];
+    knownEvidence?: string;
+  }): Promise<Set<number>> {
+    return this.citationAssembly.verifyPassageContainment(params);
+  }
+
+  private async judgeEntailment(statements: string[], evidence: string): Promise<Set<number>> {
+    return this.citationAssembly.judgeEntailment(statements, evidence);
+  }
+
+  private normalizeTimelineEntry(cit: any) {
+    return this.citationAssembly.normalizeTimelineEntry(cit);
+  }
+
+  private async emitCitationsAndComplete(
+    userId: string,
+    citations: any[],
+    subscriber: Subscriber<MessageEvent>,
+    totalTokens: number,
+    fullAnswer = "",
+    trace: ChatTraceRecorder,
+    question?: string,
+    userScope?: { fingerprint: string; knowledgeEpoch: number; cacheable?: boolean },
+    modelName?: string,
+  ) {
+    return this.citationAssembly.emitCitationsAndComplete(userId, citations, subscriber, totalTokens, fullAnswer, trace, question, userScope, modelName);
+  }
+
+  cleanRetrievalQuery(query: string): string {
+    return this.retrievalArms.cleanRetrievalQuery(query);
+  }
+
+  decomposeComplexQuery(query: string): string[] {
+    return this.retrievalArms.decomposeComplexQuery(query);
+  }
+
+  private extractSearchKeywords(query: string, domainTerms: string[] = []): string[] {
+    return this.retrievalArms.extractSearchKeywords(query, domainTerms);
+  }
+
+  private async loadScopeDomainConfig(
+    scope: string[],
+  ): Promise<{ terms: string[]; mappings: TermMapping[] }> {
+    return this.retrievalArms.loadScopeDomainConfig(scope);
+  }
+
+  private async loadScopeDomainTerms(scope: string[]): Promise<string[]> {
+    return this.retrievalArms.loadScopeDomainTerms(scope);
+  }
+
+  private async augmentWithDocumentSummaries(
+    queryResult: any,
+    scope: string[],
+    question?: string,
+    complexity?: string,
+  ): Promise<any> {
+    return this.retrievalArms.augmentWithDocumentSummaries(queryResult, scope, question, complexity);
+  }
+
+  private async augmentWithRaptorGlobalTree(
+    queryResult: any,
+    scope: string[],
+    question: string,
+    complexity: string,
+    trace?: any,
+  ): Promise<any> {
+    return this.retrievalArms.augmentWithRaptorGlobalTree(queryResult, scope, question, complexity, trace);
+  }
+
+  private async augmentWithBrainDerivedIntelligence(
+    queryResult: any,
+    userScope: any,
+    question: string,
+    agenticComplexity: string,
+    trace?: any,
+  ): Promise<any> {
+    return this.retrievalArms.augmentWithBrainDerivedIntelligence(queryResult, userScope, question, agenticComplexity, trace);
+  }
+
+  private async retrieveHopProbes(
+    scope: string[],
+    sourceRefs: string[],
+    fallbackGitRepoUrl: string | undefined,
+    probes: string[],
+    signal?: AbortSignal,
+    userScope?: any,
+    selectedSourceKeys?: string[],
+    hopNumber = 2,
+  ): Promise<any[]> {
+    return this.retrievalArms.retrieveHopProbes(scope, sourceRefs, fallbackGitRepoUrl, probes, signal, userScope, selectedSourceKeys, hopNumber);
+  }
+
+  private async detectEmbeddingModelDrift(scope: string[]): Promise<string | null> {
+    return this.retrievalArms.detectEmbeddingModelDrift(scope);
+  }
+
+  private async searchChunksByVector(
+    scope: string[],
+    query: string,
+    limit: number,
+  ): Promise<Array<{
+    id: string;
+    documentId: string;
+    kbId: string;
+    ord: number;
+    content: string;
+    metadata: any;
+    document: { title: string; version: number };
+    score: number;
+  }>> {
+    return this.retrievalArms.searchChunksByVector(scope, query, limit);
+  }
+
+
+  /**
+   * A/B 影子检索：主路径结果不变；shadow 臂旁路跑 treatment 参数并 diff。
+   * treatment 臔则直接用 treatment 参数跑主检索（由 caller 在取 base 前判断）。
+   */
+  private abAssignment(userId: string, conversationId?: string) {
+    if (!this.shadowRetrievalService) return null;
+    try {
+      return this.shadowRetrievalService.assign('retrieval.fusion', userId, conversationId);
+    } catch {
+      return null;
+    }
+  }
+
+  private async runShadowRetrievalDiff(
+    userId: string,
+    conversationId: string | undefined,
+    scope: string[],
+    question: string,
+    controlHits: any[],
+  ): Promise<void> {
+    if (!this.shadowRetrievalService) return;
+    try {
+      await this.shadowRetrievalService.compare(
+        'retrieval.fusion',
+        userId,
+        conversationId,
+        question,
+        CONTROL_VARIANT,
+        async (variant) => {
+          const keys = Object.entries({
+            RETRIEVAL_RRF_K: String(variant.rrfK ?? 60),
+            RETRIEVAL_GRAPH_RRF_WEIGHT: String(variant.graphWeight ?? 0.8),
+            RETRIEVAL_BGE_M3_SPARSE_RRF_WEIGHT: String(variant.sparseWeight ?? 0.9),
+            RETRIEVAL_SUBQUERY_PROBES_MAX: String(variant.subqueryProbesMax ?? 4),
+          } as Record<string, string>);
+          const prev: Record<string, string | undefined> = {};
+          for (const [k, v] of keys) {
+            prev[k] = process.env[k];
+            process.env[k] = v;
+          }
+          try {
+            const hits = await this.retrievalArms.searchChunksFallback(scope, question, 8);
+            return { citations: hits as any[] };
+          } finally {
+            for (const [k, v] of Object.entries(prev)) {
+              if (v === undefined) delete process.env[k];
+              else process.env[k] = v;
+            }
+          }
+        },
+      );
+      this.logger.debug(
+        `A/B shadow diff recorded for retrieval.fusion (control hits=${controlHits.length})`,
+      );
+    } catch (err) {
+      this.logger.debug(
+        `shadow retrieval skipped: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  async searchChunksFallback(
+    scope: string[],
+    query: string,
+    limit = 15,
+    extraQueries: string[] = [],
+  ): Promise<
+    Array<{
+      documentId: string | null;
+      kbId: string | null;
+      title: string;
+      version?: number;
+      ord?: number;
+      pageNo?: number;
+      articleNo?: string;
+      evidence: string;
+      score?: number;
+      bbox?: { x: number; y: number; w: number; h: number; page?: number };
+      /** Structural section region id (documentId:anchorOrd) for group-preserving truncation. */
+      sectionGroup?: string;
+      previewUrl: string | null;
+    }>
+  > {
+    return this.retrievalArms.searchChunksFallback(scope, query, limit, extraQueries);
+  }
+
+  // ---- orchestration & retained responsibilities ----
 
   /**
    * Reject (HTTP 403) any requested retrieval scope that contains knowledge
@@ -502,21 +906,76 @@ export class ChatService {
           : scope.map((kbId) => `gbrain://source/${sourceKeyForKnowledgeBase(kbId)}`)
     ).filter(Boolean);
 
-    // 1. Fast-Path: Query PostgreSQL chunks concurrently (<10ms) with subquery decomposition & bridge entity recall
-    const subQueries = this.decomposeComplexQuery(query);
+    // 1. Fast-Path: Query PostgreSQL chunks concurrently (<10ms) with subquery decomposition & bridge entity recall.
+    //
+    // Probe generation is the multi-hop bottleneck: measured on MuSiQue, 36 of 40
+    // gold paragraphs that the pipeline missed were retrievable at rank 1 when used
+    // directly as the query, i.e. the corpus had them and the retriever could find
+    // them — no probe ever named them. The deterministic decomposer only covers a few
+    // shapes, so the LLM planner (already used by the chat path) contributes its
+    // sub-questions here too. Probe hits are banded below primary evidence, so this
+    // adds coverage without letting probe noise set the ranking.
+    const deterministicSubQueries = this.decomposeComplexQuery(query);
+    const llmSubQueries = await this.planSearchProbes(query, deterministicSubQueries);
+    const subQueries = Array.from(new Set([...deterministicSubQueries, ...llmSubQueries])).slice(0, 6);
     const rel = this.extractRelationFromQuery(query);
+    // Probe budget: how many decomposed sub-questions get their own retrieval probe.
+    // Each probe is a separate search and — with the probe-group rerank — a separate
+    // cross-encoding group, so the budget trades recall coverage against latency.
+    const maxSubQueryProbes = Math.max(1, Number(process.env.RETRIEVAL_SUBQUERY_PROBES_MAX || 4));
     const fallbackChunksPromise = (async () => {
-      const base = await this.searchChunksFallback(scope, query, limit).catch(() => []);
+      const base: any[] = await this.searchChunksFallback(scope, query, limit).catch(() => [] as any[]);
+      // Hits added by auxiliary probes (sub-questions, bridge entities) are tracked
+      // with the probes that produced them, so corroborated evidence can be promoted
+      // and single-probe noise banded below the primary query's evidence.
+      const probeHits = new Set<any>();
+      // Entity probes named by the LLM from the first-hop evidence.
+      //
+      // Regex-extracted entities were rejected twice (they are prose fragments, and a
+      // cross-encoder happily scores documents against a noisy probe). The measured
+      // ceiling for *named* entities is very different: on MuSiQue, 36 of the 40 gold
+      // paragraphs the pipeline misses are retrievable at rank 1 when used directly as
+      // the query — the corpus has them and nothing ever names them. So the naming step
+      // is delegated to the model (corpus-agnostic: it reads the question and the
+      // passages, no synonym tables), and each named entity becomes its own probe group
+      // with its own cross-encoding.
+      const llmEntityProbes = await this.planEntityProbesWithLlm(
+        query,
+        base.slice(0, 4).map((b: any) => String(b?.evidence || b?.snippet || '')),
+      );
+      if (llmEntityProbes.length) {
+        const entityChunks = await Promise.all(
+          llmEntityProbes.map((name) =>
+            this.searchChunksFallback(scope, name, Math.max(3, Math.floor(limit / 2)))
+              .then((hits) => hits.map((h: any) => ({ ...h, subQueryOrigin: name })))
+              .catch(() => [] as any[]),
+          ),
+        );
+        const seenEntity = new Set(base.map((b: any) => (b.documentId ? `${b.documentId}:${b.pageNo || 0}` : String(b.evidence).slice(0, 30))));
+        for (const hits of entityChunks) {
+          for (const hit of hits as any[]) {
+            const key = hit.documentId ? `${hit.documentId}:${hit.pageNo || 0}` : String(hit.evidence).slice(0, 30);
+            if (seenEntity.has(key)) {
+              const existing = base.find((b: any) => (b.documentId ? `${b.documentId}:${b.pageNo || 0}` : String(b.evidence).slice(0, 30)) === key);
+              if (existing && !(existing as any).subQueryOrigin) (existing as any).subQueryOrigin = hit.subQueryOrigin;
+              continue;
+            }
+            seenEntity.add(key);
+            base.push(hit);
+            probeHits.add(hit);
+          }
+        }
+      }
       if (subQueries.length > 0) {
         try {
           const subChunks = await Promise.all(
-            subQueries.slice(0, 4).map((sub) =>
+            subQueries.slice(0, maxSubQueryProbes).map((sub) =>
               this.searchChunksFallback(scope, sub, Math.max(3, Math.floor(limit / 2)))
                 .then((hits) => {
                   for (const h of hits) (h as any).subQueryOrigin = (h as any).subQueryOrigin || sub;
                   return hits;
                 })
-                .catch(() => [])
+                .catch(() => [] as any[])
             )
           );
           const seen = new Set(base.map((b) => b.documentId ? `${b.documentId}:${b.pageNo || 0}` : b.evidence.slice(0, 30)));
@@ -532,6 +991,7 @@ export class ChatService {
               } else {
                 seen.add(key);
                 base.push(h);
+                probeHits.add(h);
               }
             }
           }
@@ -540,7 +1000,16 @@ export class ChatService {
         }
       }
 
-      // Dynamic cascading bridge entity expansion from top evidence (Direction 2: 2~4 hop multi-hop cascade)
+      // Dynamic cascading bridge entity expansion from top evidence (2~4 hop cascade).
+      //
+      // Re-tested 2026-09-20 *with* the per-probe-group reranker in place, because the
+      // earlier rejection predated it: MuSiQue n=100 fell to R@10 0.6517 / FullEv 0.35 /
+      // MRR 0.778 (from 0.7617 / 0.50 / 0.947 without generic probes). A cross-encoder
+      // scores documents highly against a *noisy* probe, so the noise survives the
+      // rerank and the probe-group weight (0.9) is not enough to keep it out of the
+      // top-k. Generic entity probes therefore stay off unless a deployment explicitly
+      // sets RETRIEVAL_ENTITY_PROBES=true.
+      const entityProbesEnabled = process.env.RETRIEVAL_ENTITY_PROBES === 'true';
       if (rel && base.length > 0) {
         try {
           const visitedBridges = new Set<string>();
@@ -559,7 +1028,7 @@ export class ChatService {
             if (unseenBridges.length === 0) break;
 
             const bridgeResults = await Promise.all(
-              unseenBridges.map((br) => this.searchChunksFallback(scope, br, 5).catch(() => [])),
+              unseenBridges.map((br) => this.searchChunksFallback(scope, br, 5).catch(() => [] as any[])),
             );
 
             const newlyAddedChunks: any[] = [];
@@ -568,6 +1037,7 @@ export class ChatService {
               for (const bh of bridgeResults[i]) {
                 (bh as any).subQueryOrigin = br;
                 base.push(bh);
+                probeHits.add(bh);
                 newlyAddedChunks.push(bh);
               }
             }
@@ -579,7 +1049,7 @@ export class ChatService {
           this.logger.warn(`searchKnowledgeForAgent cascading bridge error: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
-      return base;
+      return this.bandProbeHits(base, probeHits);
     })();
 
     // 2. Query GBrain federated search concurrently
@@ -601,47 +1071,49 @@ export class ChatService {
     const fallbackChunks = await fallbackChunksPromise;
     let queryResult: BrainQueryResult;
     if (fallbackChunks.length > 0) {
-      const raceTimer = setTimeout(() => agentGbrainAbort.abort(), 2000);
-      const racedGBrain = await Promise.race([
-        gbrainSearchPromise,
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)),
-      ]);
-      clearTimeout(raceTimer);
-      if (racedGBrain && racedGBrain.citations && racedGBrain.citations.length > 0) {
-        queryResult = racedGBrain;
-        const existingEvidence = new Set(
-          racedGBrain.citations.map((c: any) => (c.evidence || c.snippet || "").replace(/\s+/g, "").slice(0, 30)),
-        );
-        for (const fb of fallbackChunks) {
-          const key = fb.evidence.replace(/\s+/g, "").slice(0, 30);
-          if (!existingEvidence.has(key)) {
-            existingEvidence.add(key);
-            queryResult.citations.push({
-              topic: fb.title || fb.documentId,
-              docId: fb.documentId,
-              kbId: fb.kbId,
-              version: fb.version,
-              ord: fb.ord,
-              pageNo: fb.pageNo,
-              articleNo: fb.articleNo,
-              evidence: fb.evidence,
-              snippet: fb.evidence,
-              context: fb.evidence,
-              score: typeof fb.score === "number" && fb.score > 0.5 ? fb.score : 0.88,
-              docTitle: fb.title,
-              sectionGroup: (fb as any).sectionGroup,
-              subQueryOrigin: (fb as any).subQueryOrigin,
-              bbox: fb.bbox,
-              previewUrl: fb.previewUrl,
-            } as any);
-          }
-        }
+      // The GBrain arm is what supplies multi-hop bridge evidence: for
+      // multi-hop benchmarks it contributes the *second* gold paragraph that the
+      // lexical/vector fallback arm does not contain. It used to get a hardcoded
+      // 2s budget here, and on a busy instance that budget expired on most
+      // requests ("GBrain search error: GBRAIN_CANCELLED"), silently degrading the
+      // answer to single-hop retrieval. Measured locally: a healthy GBrain search
+      // answers in 0.8-1.5s, so the arm must not be cut off at 2s under load.
+      const gbrainRaceMs = resolveGbrainRaceMs();
+      const armPolicy = resolveArmPolicy();
+      let racedGBrain: BrainQueryResult | null = null;
+      if (armPolicy === 'chunks_only') {
+        // Explicitly disabled for this deployment: stop the in-flight engine call
+        // instead of letting it occupy a subprocess slot for nothing.
+        agentGbrainAbort.abort();
       } else {
-        queryResult = {
-          topics: Array.from(new Set(fallbackChunks.map((fb) => fb.title || "相关条款"))),
-          answer: fallbackChunks.map((fb) => fb.evidence).join("\n\n"),
+        const raceTimer = setTimeout(() => agentGbrainAbort.abort(), gbrainRaceMs);
+        racedGBrain = await Promise.race([
+          gbrainSearchPromise,
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), gbrainRaceMs)),
+        ]);
+        clearTimeout(raceTimer);
+        if (!racedGBrain) {
+          this.logger.warn(
+            `GBrain arm lost the ${gbrainRaceMs}ms race; answering from chunk retrieval only (multi-hop bridge evidence may be missing). ` +
+              'Raise GBRAIN_SEARCH_RACE_TIMEOUT_MS or GBRAIN_QUERY_CONCURRENCY if this repeats.',
+          );
+        }
+      }
+      if (racedGBrain && racedGBrain.citations && racedGBrain.citations.length > 0) {
+        // Arm policy decides who sets the ranking. Measurements on the international
+        // multi-hop benchmarks (2026-09-20, n=100 each, same code and corpus):
+        //   engine-first (engine ranks, chunks appended):  2Wiki 0.765  Hotpot 0.895  MuSiQue 0.673
+        //   chunk-first  (chunks rank, engine appended):   2Wiki 0.7925 Hotpot 0.925  MuSiQue 0.692
+        // Rank fusion of the two arms was also tried and was worse still (2Wiki MRR
+        // 0.98 -> 0.55), because noisy paragraphs recalled by several probes accumulate
+        // rank mass. So the default is `chunk_first`: the chunk arm (whose sub-query and
+        // bridge probes supply multi-hop evidence) sets the order and the engine arm is
+        // merged underneath, keeping its native score for the confidence gates.
+        queryResult = armPolicy === 'engine_first' ? racedGBrain : {
+          topics: fallbackChunks.map((fb) => fb.title || '相关条款'),
+          answer: fallbackChunks.map((fb) => fb.evidence).join('\n\n'),
           citations: fallbackChunks.map((fb, idx) => ({
-            topic: fb.title || fb.documentId,
+            topic: fb.title || fb.documentId || "",
             docId: fb.documentId,
             kbId: fb.kbId,
             version: fb.version,
@@ -652,6 +1124,66 @@ export class ChatService {
             snippet: fb.evidence,
             context: fb.evidence,
             score: fb.score ?? Math.max(0.70, 0.95 - idx * 0.02),
+            scoreSource: 'synthetic',
+            docTitle: fb.title,
+            sectionGroup: (fb as any).sectionGroup,
+            subQueryOrigin: (fb as any).subQueryOrigin,
+            bbox: fb.bbox,
+            previewUrl: fb.previewUrl,
+            // Propagate the arm's provenance flags: the bridge scan below must be
+            // able to tell a real source page from a derived summary.
+            raptor: (fb as any).raptor === true,
+            isSummary: (fb as any).isSummary === true,
+          })),
+          reranked: (racedGBrain as any).reranked,
+        };
+        // Engine citations are appended below the chunk arm so the final score sort
+        // cannot interleave incomparable scales: the chunk arm's score is a min-max
+        // normalised 0.05-0.99, the engine's is its own rerank scale. `relevanceScore`
+        // keeps the engine's native value so the calibrated-confidence gates still see it.
+        const chunkScores = (queryResult.citations || [])
+          .map((c: any) => Number(c?.score))
+          .filter((n: number) => Number.isFinite(n));
+        const engineCeiling = chunkScores.length
+          ? Math.max(0.05, Math.min(...chunkScores) * Number(process.env.RETRIEVAL_ENGINE_ARM_SCALE || 0.9))
+          : 0.9;
+        const existingEvidence = new Set(
+          (queryResult.citations || []).map((c: any) => (c.evidence || c.snippet || "").replace(/\s+/g, "").slice(0, 30)),
+        );
+        const engineCitations = racedGBrain.citations.slice(0, Math.max(1, Number(process.env.RETRIEVAL_ENGINE_ARM_MAX || 20)));
+        engineCitations.forEach((citation: any, rank: number) => {
+          const key = String(citation.evidence || citation.snippet || "").replace(/\s+/g, "").slice(0, 30);
+          if (!existingEvidence.has(key)) {
+            existingEvidence.add(key);
+            queryResult.citations.push({
+              ...citation,
+              score: Math.max(0.01, engineCeiling - rank * 0.005),
+              relevanceScore: Number.isFinite(Number(citation.relevanceScore))
+                ? Number(citation.relevanceScore)
+                : (Number.isFinite(Number(citation.score)) ? Number(citation.score) : undefined),
+              scoreSource: citation.scoreSource || "native",
+              mergedFrom: "engine",
+            } as any);
+          }
+        });
+        (queryResult as any).fallbackMerged = true;
+      } else {
+        queryResult = {
+          topics: Array.from(new Set(fallbackChunks.map((fb) => fb.title || "相关条款"))),
+          answer: fallbackChunks.map((fb) => fb.evidence).join("\n\n"),
+          citations: fallbackChunks.map((fb, idx) => ({
+            topic: fb.title || fb.documentId || "",
+            docId: fb.documentId,
+            kbId: fb.kbId,
+            version: fb.version,
+            ord: fb.ord,
+            pageNo: fb.pageNo,
+            articleNo: fb.articleNo,
+            evidence: fb.evidence,
+            snippet: fb.evidence,
+            context: fb.evidence,
+            score: fb.score ?? Math.max(0.70, 0.95 - idx * 0.02),
+            scoreSource: "synthetic",
             docTitle: fb.title,
             sectionGroup: (fb as any).sectionGroup,
             subQueryOrigin: (fb as any).subQueryOrigin,
@@ -663,6 +1195,26 @@ export class ChatService {
       }
     } else {
       queryResult = await gbrainSearchPromise;
+    }
+
+    // Cross-encoder rerank of the merged candidate pool.
+    //
+    // Until now the agent search path returned whatever ordering the arms produced,
+    // which is why probe expansion could not pay off: measured on MuSiQue, probes
+    // recovered gold paragraphs (36/40 of the missed ones are retrievable at rank 1
+    // when named directly) but letting them into the top-10 cost more gold than it
+    // added (R@10 0.704 → 0.678 scaled, → 0.665 with generic entity probes). A
+    // cross-encoder scores every candidate on the question itself, so genuine
+    // second-hop evidence can enter the context while probe noise is pushed out.
+    if (process.env.RETRIEVAL_SEARCH_RERANK !== 'false' && this.isSelfContainedQuery(query)) {
+      try {
+        const citations = Array.isArray(queryResult?.citations) ? queryResult.citations : [];
+        await this.rerankByProbeGroups(query, citations);
+      } catch (err) {
+        this.logger.warn(
+          `Search path rerank failed, keeping arm order: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
 
     queryResult = await this.filterQueryResultByCurrentPermission(
@@ -724,150 +1276,9 @@ export class ChatService {
     };
   }
 
-  /**
-   * Pre-cleans natural language queries by removing polite prefixes and trailing
-   * interrogative particles ("由什么构成", "包含哪些", "是什么", etc.) to recover
-   * the highest-salience core terms for vector and keyword engines.
-   */
-  cleanRetrievalQuery(query: string): string {
-    if (!query) return "";
-    return query
-      .replace(/^(?:请问|请教一下|请详细介绍一下|请介绍一下|请说一下|我想知道|咨询一下|请说明|请解答|能否告诉我|请给出|请列出全部|请列出)\s*/gi, "")
-      .replace(/(?:由|是由)?(?:什么|哪些|何种|怎样|如何)(?:构成|组成|构成的|组成的|包括|涵盖|规定|要求|指标|部分|要素)[\?？。！!]*$/g, "")
-      .replace(/(?:主要|具体)?(?:包括|包含|涵盖|涉及|涵盖了|包含了|包括了)(?:由|是由)?(?:什么|哪些|何种|哪几项|哪几部分|哪些内容|什么内容|指标|要求)?[\?？。！!]*$/g, "")
-      .replace(/(?:一共有哪些章|请列出全部章名|有哪些章|有哪些|是什么|是多少|怎么做|如何规定|属于什么|怎么算|如何计算|是指什么|有什么要求|有什么规定|有什么后果|分别是什么|是多久|是多少分|是多少天|是什么编号|是多少号|包含什么|包括什么)[\?？。！!]*$/g, "")
-      .replace(/[\?？。！!]+$/g, "")
-      .trim();
-  }
-
-  /**
-   * Agentic Query Decomposition:
-   * Splits multi-condition, multi-chapter, or multi-objective composite questions
-   * into targeted sub-queries for high-precision parallel retrieval.
-   */
-  decomposeComplexQuery(query: string): string[] {
-    const raw = query.trim();
-    const subQueries = new Set<string>();
-
-    const subjectMatch = raw.match(/[\u4e00-\u9fa5A-Za-z0-9_-]{2,15}(?:条例|规范|总表|办法|手册|课件|白皮书|规划|纲要|系统|设备|无人机|算法|规程|标准|规章|协议|方案|文档)/);
-    const subject = subjectMatch ? subjectMatch[0] : "";
-
-    // 1. Cross-chapter patterns (第X章...第Y章...第Z章)
-    const chapterMatches = Array.from(raw.matchAll(/第[一二三四五六七八九十百0-9]+[章节]/g)).map((m) => m[0]);
-    if (chapterMatches.length >= 2) {
-      const themeMatch = raw.match(/关于(.+?)[，,]/);
-      const theme = themeMatch ? themeMatch[1].trim() : "";
-      for (const ch of chapterMatches) {
-        subQueries.add(theme ? `${ch} ${theme}` : ch);
-      }
-    }
-
-    // 2. Comparison patterns ("对比 A 与 B ...")
-    const compareMatch = raw.match(/对比\s*(?:本规范[中的]*)?(.+?)\s*与\s*(.+?)(?:在|关于|的)\s*(.+?)(?:差异|区别|指标|标准|$|。)/);
-    if (compareMatch) {
-      const itemA = compareMatch[1].trim();
-      const itemB = compareMatch[2].trim();
-      const aspect = compareMatch[3].trim().replace(/[，。！？；：、\s]+$/, "");
-      if (itemA) subQueries.add(`${itemA} ${aspect}`);
-      if (itemB) subQueries.add(`${itemB} ${aspect}`);
-    }
-
-    // 3. Multi-clause conjunctions (且, 并且, 和, 以及, 此时, 如何...如何...)
-    if (subQueries.size === 0) {
-      const conjunctions = /(?:，|。|；|\s)+(?:若|当|如果)?|且|并且|同时|此时|并在|以及|与|和/g;
-      const parts = raw
-        .split(conjunctions)
-        .map((p) => p.trim().replace(/^[，。！？；：、\s]+|[，。！？；：、\s]+$/g, ""))
-        .filter((p) => p.length >= 3);
-
-      if (parts.length >= 2 && parts.length <= 5) {
-        for (const p of parts) {
-          subQueries.add(subject && !p.includes(subject) ? `${subject} ${p}` : p);
-        }
-      }
-    }
-
-    // 4. Chapter listing pattern
-    if (subQueries.size === 0 && /哪些章|全部章|所有章|章名|一共有哪些章/.test(raw)) {
-      subQueries.add(subject ? `${subject} 章 目录` : "章 目录");
-      subQueries.add(subject ? `${subject} 第一章 第二章` : "第一章 第二章");
-    }
-
-    // 5. English multi-hop, comparison, and conjunction patterns
-    if (subQueries.size === 0 && !/[\u4e00-\u9fa5]/.test(raw)) {
-      // 5.1 Bridge comparison: e.g. "Which film has the director who died later, The More The Merrier or Sleep, My Love?"
-      const compMatch = raw.match(/(?:which|who|what)\s+([a-z\s]+?)\s+(?:has the|whose|with)\s+([a-z\s]+?)\s+(?:who|that|which)?\s*(?:is|was|died|born)?\s*(?:earlier|later|older|younger|more|less|first|after|before)[^,]*,\s*([^,]+?)\s+or\s+([^?]+)/i);
-      if (compMatch) {
-        const rel = compMatch[2].trim();
-        const item1 = compMatch[3].trim().replace(/^["']|["']$/g, "").trim();
-        const item2 = compMatch[4].trim().replace(/^["']|["']$/g, "").trim();
-        if (item1 && item2) {
-          subQueries.add(`${item1} ${rel}`);
-          subQueries.add(`${item2} ${rel}`);
-          subQueries.add(item1);
-          subQueries.add(item2);
-        }
-      }
-
-      // 5.2 Direct comparison: "Which of X and Y ...", "Did X and Y have the same ..."
-      if (subQueries.size === 0) {
-        const whichOfMatch = raw.match(/(?:which of|did)\s+([A-Z][a-zA-Z0-9\s'(),.-]+?)\s+(?:and|or)\s+([A-Z][a-zA-Z0-9\s'(),.-]+?)(?:\s+(?:have|has|are|were|been|both|share))?/i);
-        if (whichOfMatch) {
-          const item1 = whichOfMatch[1].trim().replace(/^["']|["']$/g, "");
-          const item2 = whichOfMatch[2].trim().replace(/^["']|["']$/g, "");
-          if (item1 && item2) {
-            subQueries.add(item1);
-            subQueries.add(item2);
-          }
-        }
-      }
-
-      // 5.3 Compositional possessive: e.g. "Where was the place of burial of Charles Mathew's father?"
-      if (subQueries.size === 0) {
-        const possMatch = raw.match(/(?:(?:where|what|when|who)\s+(?:is|was|are|were)\s+(?:the\s+)?(?:place of (?:birth|death|burial)\s+of\s+)?)?([A-Z][a-zA-Z0-9\s'(),.-]+?)'s\s+([a-z\s]+?)(?:\s+(?:born|die|died|buried|burial|birth|death|located|married|graduated))?(?:\?|$)/i);
-        if (possMatch) {
-          const entity = possMatch[1].trim();
-          const rel = possMatch[2].trim();
-          if (entity.length >= 3 && rel.length >= 2) {
-            subQueries.add(`${entity} ${rel}`);
-            subQueries.add(entity);
-          }
-        }
-      }
-
-      // 5.4 Compositional "of": e.g. "Where was the husband of Octavie Coudreau born?"
-      if (subQueries.size === 0) {
-        const ofMatch = raw.match(/(?:where|what|when|who)\s+(?:is|was|are|were|did)\s+(?:the\s+)?(?:place of (?:birth|death|burial)\s+of\s+)?([a-z\s]+?)\s+of\s+(?:film\s+|movie\s+|book\s+|the\s+)?([A-Z][a-zA-Z0-9\s'(),.-]+?)(?:\s+(?:born|die|died|live|lived|directed|written|created|founded|located|married|graduated))?(?:\?|$)/i);
-        if (ofMatch) {
-          const rel = ofMatch[1].trim();
-          const entity = ofMatch[2].trim();
-          if (entity.length >= 3 && rel.length >= 2) {
-            subQueries.add(`${entity} ${rel}`);
-            subQueries.add(entity);
-          }
-        }
-      }
-    }
-
-    // 6. Chinese compound noun & interrogative stripping pattern (run when no prior pattern matched)
-    if (subQueries.size === 0) {
-      const cleaned = this.cleanRetrievalQuery(raw);
-      if (cleaned && cleaned !== raw && cleaned.length >= 4) {
-        subQueries.add(cleaned);
-      }
-      // (Hardcoded domain sub-term expansion removed — superseded by
-      // KB-configured domainTerms and LLM query expansion.)
-    }
-
-    return Array.from(subQueries).filter((q) => q.length >= 2).slice(0, 6);
-  }
-
   extractRelationFromQuery(query: string): string | null {
-    if (!query) return null;
-    const m = query.match(
-      /\b(husband|wife|spouse|father|mother|parents|son|daughter|child|director|author|writer|creator|founder|composer|producer|born|birthplace|capital|headquarters|head office|graduated|alma mater|subsidiary|parent|starring|nationality|citizenship|country|died|place of death|cause of death|educated at|employer|owned by|publisher|distributor|original language|performer|genre|member of|team|located in)\b|配偶|妻子|丈夫|父亲|母亲|父母|儿子|女儿|导演|作者|编剧|创始人|成立时间|出生地|生于|毕业院校|母校|总部|省会|首都|所属|控股|主演|研发团队|国籍|出生国家|逝世地|去世地点|毕业学校|所属团队|效力于|雇主|母公司|子公司|位于|属于|发行商|出版社|演出|流派/i,
-    );
-    return m ? m[0].toLowerCase() : null;
+    // Corpus-agnostic: delegated to relation-extractor (configurable surface forms).
+    return extractRelationFromQueryImpl(query);
   }
 
   extractBridgeEntitiesFromEvidence(text: string, rel: string | null): string[] {
@@ -876,15 +1287,58 @@ export class ChatService {
 
     const cleanCandidate = (raw: string): string => {
       let cand = raw.replace(/^(?:Sir|Lord|Lady|Dame|Baron|Prince|Queen|King|the|a|an)\s+/i, '').trim();
-      cand = cand.replace(/\s+(?:in|at|and|or|of|to|for|with|by|on)$/i, '').trim();
+      // The regexes above are deliberately loose (they scan prose), so the match
+      // can carry sentence punctuation and the start of the next sentence. A
+      // candidate like "George Stevens. The" is then used as a *retrieval query*,
+      // which is why the cascading bridge hop quietly failed to fetch the very
+      // page it had just discovered. Strip punctuation and trailing function words
+      // in turns, because removing " The" can expose the "." that preceded it.
+      for (let pass = 0; pass < 3; pass += 1) {
+        const before = cand;
+        cand = cand.replace(/[.,;:!?"'“”„…]+$/g, '').trim();
+        cand = cand
+          .replace(
+            /\s+(?:the|a|an|in|at|and|or|of|to|for|with|by|on|from|was|were|is|are|it|he|she|they|this|that|these|those|his|her|their|its|who|which|where|when)$/i,
+            '',
+          )
+          .trim();
+        if (cand === before) break;
+      }
+      // A loose prose match often runs into the next sentence ("Douglas Sirk. It").
+      // Cut at the boundary and keep the entity; only discard when nothing name-like
+      // survives. Rejecting the whole candidate is what lost the second director in
+      // a bridge question: the hop then had nothing to search for.
+      const boundary = cand.search(/[.;:!?]\s/);
+      if (boundary > 0) cand = cand.slice(0, boundary).replace(/[.,;:!?"'“”„…]+$/g, '').trim();
+      if (/[.;:!?]/.test(cand)) return '';
+      if (cand.split(/\s+/).filter((token) => /[A-Za-z\u00C0-\u017F\u4e00-\u9fa5]/.test(token)).length < 1) return '';
       return cand;
     };
 
     // 1. Relational-targeted English patterns
     if (rel) {
       const escapedRel = rel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // Relation wording varies between question and source text: the question
+      // asks about the "director", the source says "directed by"; the question asks
+      // for the "author", the source says "written by". Expand each canonical
+      // relation into its surface forms so the bridge hop can find the entity the
+      // question is about (generic English morphology, not domain vocabulary).
+      // Corpus-agnostic: defaults are generic relation types (kinship/creator/
+      // location). Deployments extend via RELATION_SURFACE_FORMS_JSON; business
+      // vocabulary must live in KB domainTerms, never here.
+      const RELATION_SURFACE_FORMS: Record<string, string[]> = resolveRelationSurfaceForms();
+      const surfaceForms = Array.from(
+        new Set([rel, ...(RELATION_SURFACE_FORMS[rel] || [])]),
+      ).map((form) => form.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      const inflected = surfaceForms.map((form) => `${form}(?:s|es|ed|ing)?`);
+      // Relation words appear in prose in other inflections than the noun: a query
+      // asking for the "director" is answered by text saying "directed by X". Match
+      // the noun, its inflections, and a stem so the bridge hop can actually find
+      // the entity the question is about.
+      const stem = escapedRel.slice(0, Math.max(4, escapedRel.length - 2));
+      const relPattern = `(?:${inflected.join('|')}|${stem}\\w*)`;
       const directRe = new RegExp(
-        `(?:${escapedRel})(?:\\s+(?:is|was|named|called|of|,|in|at))*?(?:\\s+(?:the|a|an)?\\s*(?:[A-Za-z-]+\\s+){0,4})?([A-Z\u00C0-\u017F][a-zA-Z0-9\u00C0-\u017F\x27\.-]*(?:\\s+[A-Z\u00C0-\u017F][a-zA-Z0-9\u00C0-\u017F\x27\.-]*){1,3})`,
+        `(?:${relPattern})(?:\\s+(?:is|was|were|named|called|of|by|,|in|at))*?(?:\\s+(?:the|a|an)?\\s*(?:[A-Za-z-]+\\s+){0,4})?([A-Z\u00C0-\u017F][a-zA-Z0-9\u00C0-\u017F\x27\.-]*(?:\\s+[A-Z\u00C0-\u017F][a-zA-Z0-9\u00C0-\u017F\x27\.-]*){1,3})`,
         'g',
       );
       let m: RegExpExecArray | null;
@@ -901,9 +1355,17 @@ export class ChatService {
         }
       }
 
-      if (/director|directed|film/i.test(rel)) {
+      if (/director|directed|directs|film/i.test(rel)) {
         const invRe = /(?:directed\s+by|credited\s+to|directed\s+and\s+written\s+by|director\s+was)\s+(?:the\s+)?([A-Z\u00C0-\u017F][a-zA-Z0-9\u00C0-\u017F\x27\.-]*(?:\s+[A-Z\u00C0-\u017F][a-zA-Z0-9\u00C0-\u017F\x27\.-]*){1,3})/g;
         while ((m = invRe.exec(text)) !== null) {
+          const candidate = cleanCandidate(m[1]);
+          if (candidate) bridges.add(candidate);
+        }
+      }
+
+      if (/author|authored|writer|written|wrote|creator|created|publisher|published/i.test(rel)) {
+        const writtenRe = /(?:written\s+by|wrote|authored\s+by|created\s+by|published\s+by|author\s+was)\s+(?:the\s+)?([A-Z\u00C0-\u017F][a-zA-Z0-9\u00C0-\u017F\x27\.-]*(?:\s+[A-Z\u00C0-\u017F][a-zA-Z0-9\u00C0-\u017F\x27\.-]*){1,3})/g;
+        while ((m = writtenRe.exec(text)) !== null) {
           const candidate = cleanCandidate(m[1]);
           if (candidate) bridges.add(candidate);
         }
@@ -955,6 +1417,29 @@ export class ChatService {
     while ((bm = bracketRe.exec(text)) !== null) {
       const candidate = bm[1].trim();
       if (candidate && candidate.length >= 2 && candidate.length <= 25) bridges.add(candidate);
+    }
+
+    // 4. Generic capitalised-phrase probes (used when the question carries no relation
+    //    word, or the relational patterns found nothing).
+    //
+    //    Measured on MuSiQue: 36 of 40 gold paragraphs the pipeline missed are
+    //    retrievable at rank 1 when used directly as the query — nothing ever *named*
+    //    them. This branch extracts the salient capitalised spans of the already
+    //    retrieved evidence as probes. Language-level only (no domain vocabulary).
+    //    Rejected twice: first without a reranker (R@10 0.665 vs 0.704) and again with
+    //    per-probe-group reranking (0.6517 vs 0.7617) — a cross-encoder scores documents
+    //    highly against a noisy probe, so the noise survives. Off by default; enable
+    //    only with RETRIEVAL_ENTITY_PROBES=true and a benchmark that shows a gain.
+    if (process.env.RETRIEVAL_ENTITY_PROBES === 'true' && bridges.size < 3) {
+      const genericRe = /\b([A-Z][\w'\u00C0-\u017F-]*(?:\s+(?:of|the|de|van|von|al)?\s*[A-Z][\w'\u00C0-\u017F-]*){1,3})\b/g;
+      const GENERIC_STOP = new Set(['The', 'A', 'An', 'In', 'On', 'At', 'Of', 'And', 'Or', 'For', 'With', 'By', 'Is', 'Was', 'Were', 'Are', 'It', 'He', 'She', 'They', 'This', 'That', 'As', 'From', 'To', 'His', 'Her', 'Their', 'Its', 'Who', 'Which', 'When', 'Where', 'How']);
+      let gm: RegExpExecArray | null;
+      while ((gm = genericRe.exec(text)) !== null && bridges.size < 6) {
+        const candidate = cleanCandidate(
+          gm[1].split(/\s+/).filter((token) => !GENERIC_STOP.has(token)).join(' '),
+        );
+        if (candidate && candidate.length >= 4 && candidate.length <= 40) bridges.add(candidate);
+      }
     }
 
     return Array.from(bridges).slice(0, 6);
@@ -1009,1201 +1494,6 @@ export class ChatService {
       temporalNotice,
       hasVersionConflict: hasConflict,
     };
-  }
-
-  private extractSearchKeywords(query: string, domainTerms: string[] = []): string[] {
-    const cleaned = this.cleanRetrievalQuery(query);
-    const delimiterRegex = /[\s，。！？；：、“”（）《》【】\n\r\t,.;:?!"'()\[\]{}、\/\\|`~@#$%^&*+=<>——…]+/g;
-    const stopPhrases = [
-      "请问", "请教一下", "请详细介绍一下", "请介绍一下", "请说一下", "我想知道", "咨询一下", "请说明", "请解答",
-      "能否告诉我", "请给出", "请列出全部", "请列出", "一共有哪些", "有哪些", "分别是什么", "是什么", "是多少",
-      "如何处理", "具体要求", "详细对比", "此时情况", "何种", "怎样", "多少天", "是多少分", "是多久",
-      "根据", "按照", "关于", "对于", "在此期间", "针对", "有关", "中", "里", "的", "对"
-    ];
-
-    const allQueryTexts = [
-      query,
-      ...(cleaned && cleaned !== query ? [cleaned] : []),
-      ...this.decomposeComplexQuery(query),
-    ];
-    const set = new Set<string>();
-
-    for (const qText of allQueryTexts) {
-      // 1. Technical identifiers & codes: e.g. ΨOmega-7, EQ-0077, PRD-2026-8899, SUM-2026-5566, BIGDOC-VERIFY-7788, WP-2026-R9, EMP00077
-      const codeMatches = qText.match(/[\u0370-\u03FF\u2100-\u214FA-Za-z0-9_]+(?:-[\u0370-\u03FF\u2100-\u214FA-Za-z0-9_]+)*/g) || [];
-      for (const m of codeMatches) {
-        if (m.length >= 2 && !/^\d+$/.test(m)) {
-          set.add(m);
-          if (m.includes("-")) {
-            m.split("-").filter((p) => p.length >= 2).forEach((p) => {
-              if (!/^\d+$/.test(p)) set.add(p);
-            });
-          }
-        }
-      }
-
-      // 2. Structural/legal anchors
-      for (const m of qText.match(/第[一二三四五六七八九十百0-9]+[章节条款]/g) || []) set.add(m);
-      if (/附则/.test(qText)) set.add("附则");
-      if (/总则/.test(qText)) set.add("总则");
-      if (/罚则/.test(qText)) set.add("罚则");
-      if (/哪些章|所有章|全部章|章名/.test(qText)) {
-        ["第一章", "第二章", "第三章", "第四章", "第五章", "总则", "罚则", "附则"].forEach((t) => set.add(t));
-      }
-
-      // 3. Numbers with units
-      for (const m of qText.match(/\d+(?:\.\d+)?(?:位|毫秒|ms|秒|米|m|度|分|%|赫兹|Hz|小时|天|月|年|万|亿)/gi) || []) set.add(m);
-
-      // 4. Domain terms
-      for (const term of domainTerms) {
-        if (term && qText.includes(term)) set.add(term);
-      }
-
-      // 5. Natural language sub-tokens
-      let filteredText = qText;
-      for (const sp of stopPhrases) filteredText = filteredText.split(sp).join(" ");
-      const parts = filteredText.split(delimiterRegex).map((s) => s.trim()).filter((s) => s.length >= 2);
-      for (const p of parts) {
-        if (p.length >= 2 && p.length <= 30) set.add(p);
-        // Stride 1 n-gram extraction (4-grams, 3-grams, 2-grams) so words starting on odd indices or 3-char words are never skipped
-        for (let len = Math.min(4, p.length); len >= 2; len--) {
-          for (let i = 0; i <= p.length - len; i++) {
-            set.add(p.slice(i, i + len));
-          }
-        }
-      }
-    }
-    return Array.from(set);
-  }
-
-  /**
-   * Load admin-maintained KB-level retrieval hint terms for the current scope.
-   * Replaces the legacy hardcoded application-side domain vocabulary so that
-   * deployments stay corpus-agnostic. Terms are cached per process for a short
-   * window to avoid a KB query on every retrieval.
-   */
-  private scopeDomainTermsCache = new Map<
-    string,
-    { terms: string[]; mappings: TermMapping[]; expiresAt: number }
-  >();
-  private readonly subQueryChunkCache = new Map<string, { hits: any[]; expiresAt: number }>();
-
-  /**
-   * Load admin-maintained KB-level retrieval vocabulary. `domainTerms` accepts
-   * both the legacy flat hint-term array and the object form
-   * `{ "打车": ["交通费", "交通费用报销"] }`, which is a colloquial -> formal
-   * term mapping. No terms are hardcoded here; an empty/absent config yields
-   * nothing. Cached briefly to avoid a KB query on every retrieval.
-   */
-  private async loadScopeDomainConfig(
-    scope: string[],
-  ): Promise<{ terms: string[]; mappings: TermMapping[] }> {
-    if (!scope.length || !this.prisma || !(this.prisma as any).knowledgeBase?.findMany) {
-      return { terms: [], mappings: [] };
-    }
-    const cacheKey = [...scope].sort().join(",");
-    const cached = this.scopeDomainTermsCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
-      // Entries created by older processes/tests used the legacy terms-only
-      // shape. Treat a missing mapping list as empty during rolling upgrades.
-      return { terms: cached.terms || [], mappings: cached.mappings || [] };
-    }
-    try {
-      const rows = await (this.prisma as any).knowledgeBase.findMany({
-        where: { id: { in: scope } },
-        select: { domainTerms: true },
-      });
-      const terms: string[] = [];
-      const mappings: TermMapping[] = [];
-      for (const row of rows) {
-        const raw = row?.domainTerms;
-        if (Array.isArray(raw)) {
-          for (const term of raw) {
-            const value = String(term || "").trim();
-            if (value) terms.push(value);
-          }
-        } else if (raw && typeof raw === "object") {
-          const parsed = parseTermMappings(raw);
-          for (const mapping of parsed) {
-            mappings.push(mapping);
-            terms.push(mapping.from, ...mapping.to);
-          }
-        }
-      }
-      const dedupedTerms = Array.from(new Set(terms));
-      this.scopeDomainTermsCache.set(cacheKey, {
-        terms: dedupedTerms,
-        mappings,
-        expiresAt: Date.now() + 120_000,
-      });
-      return { terms: dedupedTerms, mappings };
-    } catch {
-      return { terms: [], mappings: [] };
-    }
-  }
-
-  private async loadScopeDomainTerms(scope: string[]): Promise<string[]> {
-    return (await this.loadScopeDomainConfig(scope)).terms;
-  }
-
-  /**
-   * Append document-level (level 1) RAPTOR summaries for documents already
-   * present in the candidate set. Guarantees whole-document coverage for
-   * macro questions without displacing concrete evidence.
-   */
-  private async augmentWithDocumentSummaries(
-    queryResult: any,
-    scope: string[],
-    question?: string,
-    complexity?: string,
-  ): Promise<any> {
-    if (!this.raptorService?.isEnabled()) return queryResult;
-    const citations = Array.isArray(queryResult?.citations) ? queryResult.citations : [];
-    if (!citations.length) return queryResult;
-
-    const q = String(question || "").trim();
-    const isMacroOrStructureQuery =
-      complexity === "global_synthesis" ||
-      /(?:包括那?几大?部分|主要内容|主要章节|有哪些章|目录|大纲|总体结构|全文架构|整体框架|总结|概述|全景|宏观)/u.test(q);
-
-    // Only inject document summaries/outlines when the user query is asking for macro or structural overview
-    if (!isMacroOrStructureQuery) return queryResult;
-
-    // Filter candidate documents: do NOT augment spreadsheet files
-    const candidateCitations = citations.filter((c: any) => {
-      const title = String(c.docTitle || c.topic || "");
-      const isSpreadsheet = /(?:\.xlsx?|\.csv|\.tsv)(?:\s*·|\s*$)/i.test(title);
-      return !isSpreadsheet;
-    });
-
-    const docIds = Array.from(
-      new Set(candidateCitations.map((c: any) => c.docId || c.documentId).filter(Boolean)),
-    ).slice(0, 3) as string[];
-    if (!docIds.length) return queryResult;
-
-    const [summaries, outlines] = await Promise.all([
-      this.raptorService.getDocumentSummaries(docIds, 3),
-      this.raptorService.getDocumentOutlines(docIds, 3),
-    ]);
-    const combined = [...summaries, ...outlines];
-    if (!combined.length) return queryResult;
-
-    const existing = new Set(candidateCitations.map((c: any) => c.docId || c.documentId));
-    const additions = combined
-      .filter((s) => s.documentId && existing.has(s.documentId))
-      .filter((s) => !citations.some((c: any) => (c.docId || c.documentId) === s.documentId && c.section === s.section))
-      .map((s) => {
-        // Calibrate summary score below parent matching chunks so concrete evidence is not displaced
-        const docMatchingCitations = citations.filter((c: any) => (c.docId || c.documentId) === s.documentId);
-        const parentScore = Math.max(...docMatchingCitations.map((c: any) => Number(c.relevanceScore ?? c.rerankScore ?? c.score ?? 0)));
-        const calibratedScore = parentScore > 0 ? Number((parentScore * 0.88).toFixed(4)) : (s.score ? Number((s.score * 0.8).toFixed(4)) : 0.6);
-
-        return {
-          topic: s.title,
-          docId: s.documentId,
-          kbId: s.kbId,
-          version: 1,
-          evidence: s.evidence,
-          snippet: s.evidence,
-          context: s.evidence,
-          score: calibratedScore,
-          relevanceScore: calibratedScore,
-          docTitle: s.title,
-          previewUrl: s.previewUrl,
-          section: s.section || "raptor-level1",
-          raptor: true,
-          isSummary: true,
-        };
-      });
-
-    if (!additions.length) return queryResult;
-    return { ...queryResult, citations: [...citations, ...additions] };
-  }
-
-  private async augmentWithRaptorGlobalTree(
-    queryResult: any,
-    scope: string[],
-    question: string,
-    complexity: string,
-    trace?: any,
-  ): Promise<any> {
-    if (!this.raptorService?.isEnabled() || !scope.length) return queryResult;
-    const isMacro =
-      complexity === "global_synthesis" ||
-      /总结|概述|全景|历程|演进|架构|体系|全库|全局|所有.*有哪些|主要.*有哪些|一共.*多少|共有.*几|多少条|几条|多少章|几章/u.test(question);
-    if (!isMacro) return queryResult;
-
-    try {
-      trace?.start?.(
-        "raptor_macro_retrieval",
-        "RAPTOR 全库宏观树召回",
-        "检测到全库宏观概括问题，自适应召回 Level 2 全局演进树与 Level 1 文档树摘要",
-      );
-      const hits = await this.raptorService.searchGlobal(scope, question, 4);
-      if (!hits.length) {
-        trace?.skip?.("raptor_macro_retrieval", "RAPTOR 全库宏观树召回", "知识库内尚未生成可用的全局宏观摘要节点");
-        return queryResult;
-      }
-
-      const citations = Array.isArray(queryResult?.citations) ? [...queryResult.citations] : [];
-      const existingEvidence = new Set(
-        citations.map((c: any) => String(c.evidence || c.snippet || "").replace(/\s+/g, "").slice(0, 30)),
-      );
-
-      let added = 0;
-      for (const h of hits) {
-        const key = String(h.evidence || "").replace(/\s+/g, "").slice(0, 30);
-        if (!key || existingEvidence.has(key)) continue;
-        existingEvidence.add(key);
-        citations.unshift({
-          topic: h.title,
-          docId: h.documentId,
-          kbId: h.kbId,
-          version: 1,
-          evidence: h.evidence,
-          snippet: h.evidence,
-          context: h.evidence,
-          score: h.score,
-          docTitle: h.title,
-          previewUrl: h.previewUrl,
-          section: h.section || (h.level === 2 ? "raptor-level2-global" : "raptor-level1"),
-          raptor: true,
-          isSummary: true,
-          level: h.level,
-        });
-        added++;
-      }
-
-      trace?.finish?.(
-        "raptor_macro_retrieval",
-        "success",
-        `成功召回 ${added} 条全局宏观演进树摘要 (Level 2/1)，置于优先候选集`,
-        { hits: added, totalGlobal: hits.length },
-      );
-
-      return { ...queryResult, citations };
-    } catch (err) {
-      trace?.finish?.(
-        "raptor_macro_retrieval",
-        "warning",
-        `RAPTOR 宏观召回降级: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      return queryResult;
-    }
-  }
-
-  private async augmentWithBrainDerivedIntelligence(
-    queryResult: any,
-    userScope: any,
-    question: string,
-    agenticComplexity: string,
-    trace?: any,
-  ): Promise<any> {
-    if (!userScope?.scopeId) return queryResult;
-    const isEnglishQuery = !/[\u4e00-\u9fa5]/.test(question);
-    const isMacroOrInventory =
-      agenticComplexity !== "simple" ||
-      /(?:总结|概述|全景|历程|演进|架构|体系|全库|全局|所有.*有哪些|主要.*有哪些|一共.*多少|共有.*几|多少条|几条|多少章|几章|清单|统计|列表|目录|关系|架构|层级|制度)/u.test(question);
-
-    const existingCitations = Array.isArray(queryResult?.citations) ? [...queryResult.citations] : [];
-    const needDerived = isMacroOrInventory || existingCitations.length === 0;
-    if (!needDerived) return queryResult;
-
-    try {
-      const dbClient = this.prisma as any;
-      if (!dbClient.brainDerivedPage?.findMany) return queryResult;
-
-      const derivedPages = await dbClient.brainDerivedPage.findMany({
-        where: {
-          scopeId: userScope.scopeId,
-          aclEpoch: userScope.aclEpoch,
-        },
-        take: 2,
-        orderBy: { updatedAt: "desc" },
-      });
-
-      if (!derivedPages || derivedPages.length === 0) return queryResult;
-
-      trace?.start?.(
-        "brain_derived_intelligence",
-        "编译派生智库直通",
-        "加载当前权限 Scope 专属离线编译综述与资产全景",
-      );
-
-      let added = 0;
-      for (const page of derivedPages) {
-        if (!page.content) continue;
-        const alreadyIncluded = existingCitations.some((c: any) => c.slug === page.slug || c.topic === page.title);
-        if (alreadyIncluded) continue;
-
-        const snippet = page.content.slice(0, 400);
-        const context = page.content.length > 2000 ? page.content.slice(0, 2000) + "\n..." : page.content;
-
-        existingCitations.unshift({
-          topic: page.title,
-          docTitle: page.title,
-          slug: page.slug,
-          kbId: "derived",
-          kbName: isEnglishQuery ? "Scope Derived Intelligence" : "Scope 编译派生智库",
-          section: "scope-derived-summary",
-          snippet,
-          context,
-          score: 0.96,
-          isCompiledDerived: true,
-          scopeId: page.scopeId,
-          aclEpoch: page.aclEpoch,
-          evidence: `[编译派生智库] 《${page.title}》 (Epoch: ${page.aclEpoch})`,
-        });
-        added++;
-      }
-
-      if (added > 0) {
-        trace?.finish?.(
-          "brain_derived_intelligence",
-          "success",
-          `成功直通注入 ${added} 篇权限 Scope 编译派生全景综述`,
-          { injectedCount: added },
-        );
-        return { ...queryResult, citations: existingCitations };
-      }
-      return queryResult;
-    } catch (err) {
-      trace?.finish?.(
-        "brain_derived_intelligence",
-        "warning",
-        `Scope 派生智库直通忽略: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      return queryResult;
-    }
-  }
-
-  private async retrieveHopProbes(
-    scope: string[],
-    sourceRefs: string[],
-    fallbackGitRepoUrl: string | undefined,
-    probes: string[],
-    signal?: AbortSignal,
-    userScope?: any,
-    selectedSourceKeys?: string[],
-    hopNumber = 2,
-  ): Promise<any[]> {
-    const hopCitations: any[] = [];
-    const probePromises = probes.map(async (probe) => {
-      // 1. Parallel search in fallback chunks (pgvector + BM25 keyword matching)
-      const fallbackHits = await this.searchChunksFallback(scope, probe, 10).catch(() => []);
-      const gbrainHits: any[] = [];
-
-      // 2. Query GBrain CLI if available
-      try {
-        const gbrainRes =
-          sourceRefs.length > 1
-            ? await this.gbrain.queryMany(sourceRefs, probe, { breadth: true, operation: "search", signal })
-            : await this.gbrain.query(sourceRefs[0] || fallbackGitRepoUrl || "", probe, {
-                breadth: true,
-                operation: "search",
-                signal,
-              });
-        if (gbrainRes?.citations?.length) {
-          gbrainHits.push(...gbrainRes.citations);
-        }
-      } catch {
-        // fail-open
-      }
-
-      // Format fallback hits
-      const mappedFallbacks = fallbackHits.map((fb, idx) => ({
-        topic: fb.title || fb.documentId,
-        docId: fb.documentId,
-        kbId: fb.kbId,
-        version: fb.version,
-        pageNo: fb.pageNo,
-        articleNo: fb.articleNo,
-        evidence: fb.evidence,
-        snippet: fb.evidence,
-        context: fb.evidence,
-        score: Math.max(0.72, 0.93 - idx * 0.02),
-        docTitle: fb.title,
-        sectionGroup: (fb as any).sectionGroup,
-        subQueryOrigin: probe,
-        hop: hopNumber,
-        bbox: fb.bbox,
-        previewUrl: fb.previewUrl,
-      }));
-
-      for (const cit of gbrainHits) {
-        (cit as any).subQueryOrigin = probe;
-        (cit as any).hop = hopNumber;
-      }
-
-      // 3. Multi-Hop GraphRAG Entity & Relation Probe:
-      // Query Knowledge Graph for bridge entity relationships when available
-      const graphHits: any[] = [];
-      if (this.graphRagService && scope.length > 0) {
-        try {
-          const localGraph = await this.graphRagService.searchLocalGraph(scope, probe, 3);
-          if (localGraph && Array.isArray(localGraph.relations)) {
-            for (const rel of localGraph.relations) {
-              const text = rel.snippet || (rel as any).description;
-              if (text) {
-                graphHits.push({
-                  topic: `实体关系：${rel.source} -[${rel.relationType}]-> ${rel.target}`,
-                  docId: (rel as any).provenanceDocId || `kg-${rel.source}`,
-                  kbId: scope[0] || null,
-                  evidence: text,
-                  snippet: text,
-                  context: text,
-                  score: 0.88,
-                  docTitle: `知识图谱·实体关系 (${rel.source})`,
-                  subQueryOrigin: probe,
-                  hop: hopNumber,
-                });
-              }
-            }
-          }
-        } catch {
-          // fail-open
-        }
-      }
-
-      return [...mappedFallbacks, ...gbrainHits, ...graphHits];
-    });
-
-    const settled = await Promise.allSettled(probePromises);
-    for (const res of settled) {
-      if (res.status === "fulfilled") {
-        hopCitations.push(...res.value);
-      }
-    }
-
-    // Permission filter
-    if (userScope && selectedSourceKeys) {
-      const filtered = await this.filterQueryResultByCurrentPermission(
-        { citations: hopCitations } as any,
-        scope,
-        {
-          scopeId: userScope.scopeId,
-          sourceKeys: selectedSourceKeys,
-          aclEpoch: userScope.aclEpoch,
-          knowledgeEpoch: userScope.knowledgeEpoch,
-        },
-      );
-      return filtered.citations || [];
-    }
-
-    return hopCitations;
-  }
-
-  /**
-   * Chunk-level semantic retrieval over Chunk.embedding (pgvector). Applies the
-   * knowledge-base ACL and published-document filter in SQL (pre-filtering), so
-   * unauthorized chunks can never enter the candidate set. Returns [] when no
-   * embedding route is configured or on any failure.
-   */
-  private async searchChunksByVector(
-    scope: string[],
-    query: string,
-    limit: number,
-  ): Promise<Array<{
-    id: string;
-    documentId: string;
-    kbId: string;
-    ord: number;
-    content: string;
-    metadata: any;
-    document: { title: string; version: number };
-    score: number;
-  }>> {
-    if (!this.embeddingService?.isEnabled() || !scope.length) return [];
-    const vector = await this.embeddingService.embedOne(query);
-    if (!vector || !vector.length) return [];
-    const literal = `[${vector.join(',')}]`;
-    const minScore = Number(process.env.VECTOR_MIN_SCORE || 0.30);
-    try {
-      const rows = scope.length === 1
-        ? await this.prisma.$queryRaw<any[]>`
-            SELECT c.id, c."documentId", c."kbId", c.ord, c.content, c.metadata,
-                   d.title AS "docTitle", d.version AS "docVersion",
-                   (1 - (c.embedding <=> ${literal}::vector)) AS similarity
-            FROM "Chunk" c
-            JOIN "Document" d ON d.id = c."documentId"
-            WHERE c."kbId" = ${scope[0]}::uuid
-              AND c.embedding IS NOT NULL
-              AND d.status = 'published'
-            ORDER BY c.embedding <=> ${literal}::vector
-            LIMIT ${limit}
-          `
-        : await this.prisma.$queryRaw<any[]>`
-            SELECT c.id, c."documentId", c."kbId", c.ord, c.content, c.metadata,
-                   d.title AS "docTitle", d.version AS "docVersion",
-                   (1 - (c.embedding <=> ${literal}::vector)) AS similarity
-            FROM "Chunk" c
-            JOIN "Document" d ON d.id = c."documentId"
-            WHERE c."kbId" = ANY(${scope}::uuid[])
-              AND c.embedding IS NOT NULL
-              AND d.status = 'published'
-            ORDER BY c.embedding <=> ${literal}::vector
-            LIMIT ${limit}
-          `;
-      return rows
-        .map((row) => ({
-          id: String(row.id),
-          documentId: String(row.documentId),
-          kbId: String(row.kbId),
-          ord: Number(row.ord),
-          content: String(row.content || ''),
-          metadata: row.metadata,
-          document: { title: String(row.docTitle || ''), version: Number(row.docVersion || 1) },
-          score: Number(row.similarity),
-        }))
-        .filter((row) => Number.isFinite(row.score) && row.score >= minScore);
-    } catch (err) {
-      this.logger.debug(`Vector search unavailable: ${err instanceof Error ? err.message : String(err)}`);
-      return [];
-    }
-  }
-
-  async searchChunksFallback(
-    scope: string[],
-    query: string,
-    limit = 15,
-    extraQueries: string[] = [],
-  ): Promise<
-    Array<{
-      documentId: string | null;
-      kbId: string | null;
-      title: string;
-      version?: number;
-      ord?: number;
-      pageNo?: number;
-      articleNo?: string;
-      evidence: string;
-      score?: number;
-      bbox?: { x: number; y: number; w: number; h: number; page?: number };
-      /** Structural section region id (documentId:anchorOrd) for group-preserving truncation. */
-      sectionGroup?: string;
-      previewUrl: string | null;
-    }>
-  > {
-    if (!scope.length || !this.prisma || !(this.prisma as any).chunk?.findMany) {
-      return [];
-    }
-
-    const subQueryCacheKey = extraQueries.length === 0
-      ? `${scope.slice().sort().join(",")}:${query.trim().toLowerCase()}:${limit}`
-      : null;
-    if (subQueryCacheKey) {
-      const cached = this.subQueryChunkCache.get(subQueryCacheKey);
-      if (cached && cached.expiresAt > Date.now()) {
-        return cached.hits.map((h) => ({ ...h }));
-      }
-    }
-
-    const { terms: domainTerms, mappings: termMappings } = await this.loadScopeDomainConfig(scope);
-    // KB-configured colloquial -> formal term mappings add recall arms carrying
-    // the document's own vocabulary (e.g. "打车" -> "交通费报销"). Corpus-agnostic:
-    // with no admin mapping this is empty and nothing changes.
-    const mappedVariants = expandQueryWithTermMappings(query, termMappings);
-    // Agentic sub-queries and HyDE passages are additional recall arms: union
-    // their keywords with the primary query so complex/compound questions can
-    // hit clauses that a single keyword extraction would miss.
-    const primaryKeywords = new Set(this.extractSearchKeywords(query, domainTerms));
-    const extraVariants = extraQueries.filter((q) => typeof q === "string" && q.trim().length >= 2);
-    const variantQueries = [query, ...extraVariants, ...mappedVariants];
-    const keywords = Array.from(new Set([
-      ...primaryKeywords,
-      ...extraVariants.flatMap((variant) => this.extractSearchKeywords(variant, domainTerms)),
-      ...mappedVariants.flatMap((variant) => this.extractSearchKeywords(variant, domainTerms)),
-    ])).slice(0, 40);
-    if (!keywords.length) {
-      return [];
-    }
-
-    // Optimization 6: Prime embedding cache in a single batch for primary query + subqueries
-    const subs = [...extraQueries, ...mappedVariants]
-      .filter((q) => typeof q === "string" && q.length >= 4 && q.length <= 80)
-      .slice(0, 3);
-    const embeddingTextsToPrime = [query, ...subs].filter((t) => typeof t === "string" && t.trim().length >= 2);
-    if (this.embeddingService?.isEnabled() && embeddingTextsToPrime.length > 0) {
-      await this.embeddingService.embed(embeddingTextsToPrime).catch(() => []);
-    }
-
-    // Semantic arm: embed the query and retrieve nearest chunks by cosine
-    // distance over Chunk.embedding (pgvector/HNSW). Already in memory cache from batch above!
-    const vectorHitsPromise = this.searchChunksByVector(
-      scope,
-      query,
-      Math.max(limit * 3, 40),
-    ).catch(() => []);
-    // Decomposed sub-queries get their own vector probes (also hitting memory cache!)
-    const subQueryVectorPromise = (async () => {
-      const perSub = Math.max(8, Number(process.env.RETRIEVAL_SUBQUERY_VECTOR_TAKE || 15));
-      const results = await Promise.all(
-        subs.map((sub) => this.searchChunksByVector(scope, sub, perSub).catch(() => [] as any[])),
-      );
-      const byId = new Map<string, any>();
-      results.forEach((hits, i) => {
-        for (const hit of hits || []) {
-          if (hit && !(hit as any).subQueryOrigin) (hit as any).subQueryOrigin = subs[i];
-          const prev = byId.get(hit.id);
-          if (!prev || hit.score > prev.score) byId.set(hit.id, hit);
-        }
-      });
-      return [...byId.values()];
-    })().catch(() => []);
-
-    try {
-      const isChapterListing = /哪些章|所有章|全部章|章名|一共有哪些章/.test(query);
-
-      // Tier 1: High Specificity Tokens (structural identifiers only). Domain
-      // vocabulary is deployment-specific and comes from KnowledgeBase.domainTerms
-      // (see the scoring boost below) instead of a hardcoded application list.
-      const highPriorityTokens = keywords.filter((kw) =>
-        /[\u0370-\u03FF]/.test(kw) || // Greek letters like ΨOmega-7
-        /^[A-Za-z0-9]+-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(kw) || // EQ-0077, PRD-2026-8899, SUM-2026-5566, BIGDOC-VERIFY, WP-2026-R9
-        /^EMP\d+$/i.test(kw) || // EMP00077
-        /第[0-9一二三四五六七八九十百]+[条款章节]/.test(kw),
-      );
-
-      const chunkMap = new Map<string, any>();
-      const vectorScoreById = new Map<string, number>();
-
-      // 1. High-priority token retrieval promise (exact structural guarantee)
-      const pChunksPromise = highPriorityTokens.length > 0
-        ? (this.prisma as any).chunk.findMany({
-            where: {
-              kbId: { in: scope },
-              document: { status: "published" },
-              OR: highPriorityTokens.map((kw) => ({
-                content: { contains: kw, mode: "insensitive" },
-              })),
-            },
-            select: {
-              id: true,
-              documentId: true,
-              kbId: true,
-              ord: true,
-              content: true,
-              metadata: true,
-              document: { select: { title: true, version: true } },
-            },
-            take: 100,
-          }).catch(() => [])
-        : Promise.resolve([]);
-
-      // 2. Chapter heading listing retrieval promise
-      const chChunksPromise = isChapterListing
-        ? (async () => {
-            let targetDocIds: string[] = [];
-            const cleanQuery = query.replace(/[？?。！!,，\s]+|一共有哪些章|有哪些章|所有章|全部章|章名|一共有几章|目录|结构/g, "").trim();
-            if (cleanQuery.length >= 2) {
-              const docRows = await (this.prisma as any).document.findMany({
-                where: {
-                  kbId: { in: scope },
-                  status: "published",
-                  title: { contains: cleanQuery },
-                },
-                select: { id: true },
-              }).catch(() => []);
-              if (docRows.length > 0) {
-                targetDocIds = docRows.map((d: any) => d.id);
-              }
-            }
-            return (this.prisma as any).chunk.findMany({
-              where: {
-                kbId: { in: scope },
-                document: { status: "published" },
-                ...(targetDocIds.length > 0 ? { documentId: { in: targetDocIds } } : {}),
-                OR: [
-                  { content: { startsWith: "## " } },
-                  { content: { contains: "## 第" } },
-                  { content: { contains: "## 附则" } },
-                  { content: { contains: "## 第一章" } },
-                  { content: { contains: "## 第二章" } },
-                  { content: { contains: "## 第三章" } },
-                  { content: { contains: "## 第四章" } },
-                  { content: { contains: "## 罚则" } },
-                ],
-              },
-              select: {
-                id: true,
-                documentId: true,
-                kbId: true,
-                ord: true,
-                content: true,
-                metadata: true,
-                document: { select: { title: true, version: true } },
-              },
-              take: 100,
-              orderBy: { ord: "asc" },
-            }).catch(() => []);
-          })()
-        : Promise.resolve([]);
-
-      const stopGeneralTokens = new Set(["记录", "表中", "内容", "部分", "情况", "要求", "相关", "规定", "文档", "系统", "什么", "怎么", "如何"]);
-
-      // 3. General keywords retrieval promise (concurrent token queries)
-      const generalTokens = keywords
-        .filter((kw) => !highPriorityTokens.includes(kw) && !stopGeneralTokens.has(kw))
-        .sort((a, b) => b.length - a.length)
-        .slice(0, 15);
-      const perTokenTake = Math.max(20, Number(process.env.RETRIEVAL_TOKEN_QUERY_TAKE || 25));
-
-      // Batch general tokens into small groups of 4 to prevent Prisma connection pool starvation
-      // and reduce DB roundtrips by up to 75% on large corpora
-      const tokenBatchSize = 4;
-      const tokenBatches: string[][] = [];
-      for (let i = 0; i < generalTokens.length; i += tokenBatchSize) {
-        tokenBatches.push(generalTokens.slice(i, i + tokenBatchSize));
-      }
-      const generalChunksPromise = Promise.all(
-        tokenBatches.map((tokens) =>
-          (this.prisma as any).chunk.findMany({
-            where: {
-              kbId: { in: scope },
-              document: { status: "published" },
-              OR: tokens.map((kw) => ({ content: { contains: kw, mode: "insensitive" } })),
-            },
-            select: {
-              id: true,
-              documentId: true,
-              kbId: true,
-              ord: true,
-              content: true,
-              metadata: true,
-              document: { select: { title: true, version: true } },
-            },
-            orderBy: [{ documentId: "asc" }, { ord: "asc" }],
-            take: perTokenTake * tokens.length,
-          }).catch(() => []),
-        ),
-      );
-
-      // 4. Title-affinity retrieval promise
-      const titleTokens = keywords
-        .filter((kw) => kw.length >= 2 && kw.length <= 12 && !stopGeneralTokens.has(kw) && !/^第[一二三四五六七八九十百0-9]+[章节条款]/.test(kw))
-        .slice(0, 6);
-
-      const affinityChunksPromise = titleTokens.length > 0
-        ? (async () => {
-            const affinityDocs = await (this.prisma as any).document.findMany({
-              where: {
-                kbId: { in: scope },
-                status: "published",
-                OR: titleTokens.map((kw) => ({ title: { contains: kw, mode: "insensitive" } })),
-              },
-              select: { id: true },
-              take: 20,
-            }).catch(() => []);
-            const affinityDocIds = affinityDocs.map((d: any) => d.id);
-            if (!affinityDocIds.length) return [];
-            return (this.prisma as any).chunk.findMany({
-              where: { kbId: { in: scope }, documentId: { in: affinityDocIds }, document: { status: "published" } },
-              select: {
-                id: true,
-                documentId: true,
-                kbId: true,
-                ord: true,
-                content: true,
-                metadata: true,
-                document: { select: { title: true, version: true } },
-              },
-              orderBy: { ord: "asc" },
-              take: Math.max(limit * 4, 120),
-            }).catch(() => []);
-          })()
-        : Promise.resolve([]);
-
-      // 5. Parallel Burst: Await all 6 retrieval channels simultaneously
-      const [pChunks, chChunks, generalBatches, aChunks, vectorHits, subVectorHits] = await Promise.all([
-        pChunksPromise,
-        chChunksPromise,
-        generalChunksPromise,
-        affinityChunksPromise,
-        vectorHitsPromise,
-        subQueryVectorPromise,
-      ]);
-
-      (pChunks || []).forEach((c: any) => chunkMap.set(c.id, c));
-      (chChunks || []).forEach((c: any) => chunkMap.set(c.id, c));
-      for (const batch of generalBatches || []) {
-        for (const c of batch || []) {
-          chunkMap.set(c.id, c);
-        }
-      }
-      (aChunks || []).forEach((c: any) => {
-        if (!chunkMap.has(c.id)) chunkMap.set(c.id, c);
-      });
-
-      // Merge the semantic arm into the candidate pool
-      for (const hit of [...(vectorHits || []), ...(subVectorHits || [])]) {
-        const prevScore = vectorScoreById.get(hit.id);
-        if (prevScore === undefined || hit.score > prevScore) vectorScoreById.set(hit.id, hit.score);
-        if (!chunkMap.has(hit.id)) chunkMap.set(hit.id, hit);
-      }
-
-      const allFound = Array.from(chunkMap.values());
-      if (allFound.length === 0) {
-        return [];
-      }
-
-      const lowQuery = query.toLowerCase();
-      const variantLowers = variantQueries.map((v) => v.toLowerCase());
-      const activeDomainTerms = domainTerms.filter((term) => {
-        const normalized = String(term || "").toLowerCase();
-        if (!normalized) return false;
-        return (
-          variantLowers.some((v) => v.includes(normalized)) ||
-          keywords.some((k) => k.toLowerCase() === normalized)
-        );
-      });
-      const isArticleCountQuery = /(?:一共|共有|总共|全部)?(?:有多少|几条|几章|哪些章节|全文结构).*(?:条|章|篇)/.test(query);
-
-      // Lexical channel scoring: local BM25 over the candidate pool (real
-      // IDF/TF/length normalisation) replaces the fixed per-keyword points.
-      // Structural boosts (第X条 anchors, title match, chapter listing) and
-      // the vector-similarity contribution stay as-is. Set
-      // LEXICAL_BM25=false to restore the legacy fixed scoring.
-      const useBm25 = process.env.LEXICAL_BM25 !== 'false';
-      const bm25Index = useBm25
-        ? buildBm25Pool(allFound.map((c: any) => ({ id: c.id, text: `${c.content || ''}\n${c.document?.title || ''}` })), keywords)
-        : null;
-      const bm25 = bm25Index ? bm25Scores(bm25Index) : null;
-
-      // Channel 1: Lexical Ranking
-      const lexicalRankMap = new Map<string, number>();
-      if (bm25) {
-        const sortedLexical = [...allFound]
-          .map((c) => ({ id: c.id, score: bm25.get(c.id) || 0 }))
-          .filter((x) => x.score > 0)
-          .sort((a, b) => b.score - a.score);
-        sortedLexical.forEach((x, idx) => lexicalRankMap.set(x.id, idx + 1));
-      } else {
-        const sortedKw = [...allFound].map((c) => {
-          let kwScore = 0;
-          const text = (c.content || "").toLowerCase();
-          for (const kw of keywords) {
-            const lowKw = kw.toLowerCase();
-            const isPrimary = primaryKeywords.has(kw);
-            const weightMultiplier = isPrimary ? 1.5 : 0.7;
-            if (text.includes(lowKw)) kwScore += (kw.length >= 4 ? 3.0 : 1.5) * weightMultiplier;
-          }
-          return { id: c.id, score: kwScore };
-        }).filter((x) => x.score > 0).sort((a, b) => b.score - a.score);
-        sortedKw.forEach((x, idx) => lexicalRankMap.set(x.id, idx + 1));
-      }
-
-      // Channel 2: Vector Ranking
-      const vectorRankMap = new Map<string, number>();
-      const sortedVector = [...allFound]
-        .map((c) => ({ id: c.id, score: vectorScoreById.get(c.id) || 0 }))
-        .filter((x) => x.score > 0)
-        .sort((a, b) => b.score - a.score);
-      sortedVector.forEach((x, idx) => vectorRankMap.set(x.id, idx + 1));
-
-      // Reciprocal Rank Fusion (RRF, k=60) with structural multipliers
-      const rrfK = Number(process.env.RETRIEVAL_RRF_K || 60);
-      const scored = allFound.map((c: any) => {
-        let rrfScore = 0;
-        const lRank = lexicalRankMap.get(c.id);
-        if (lRank) rrfScore += 1 / (rrfK + lRank);
-        const vRank = vectorRankMap.get(c.id);
-        if (vRank) rrfScore += 1 / (rrfK + vRank);
-
-        let boost = 1.0;
-        const text = (c.content || "").toLowerCase();
-        const docTitle = (c.document?.title || "").toLowerCase();
-        const baseTitle = docTitle.replace(/\.[a-z0-9]+$/i, "").trim();
-
-        // Exact high-priority token matches (specific IDs / numbers)
-        for (const tok of highPriorityTokens) {
-          if (text.includes(tok.toLowerCase())) boost += 0.8;
-        }
-
-        // Exact or base document title mentioned directly in user query
-        if (baseTitle.length >= 2 && lowQuery.includes(baseTitle)) {
-          boost += 1.0;
-        }
-
-        // Domain terms
-        for (const term of activeDomainTerms) {
-          const normalized = String(term || "").toLowerCase();
-          if (normalized && text.includes(normalized)) boost += 0.5;
-        }
-
-        if (isChapterListing && /(?:##\s*第[一二三四五六七八九十百0-9]+章|##\s*附则)/.test(c.content)) {
-          boost += 3.0;
-        }
-
-        if (isArticleCountQuery && baseTitle.length >= 2 && lowQuery.includes(baseTitle)) {
-          if (c.ord === 0 || /(?:##\s*第[一二三四五六七八九十百0-9]+章|##\s*附则|\*\*第[一二三四五六七八九十百0-9]+条\*\*)/.test(c.content)) {
-            boost += 1.2;
-          }
-        }
-
-        const score = (rrfScore > 0 ? rrfScore : 0.0005) * boost;
-        return { chunk: c, score };
-      }).filter((item) => item.score > 0);
-
-      scored.sort((a, b) => {
-        if (isChapterListing) {
-          const aIsHeading = /(?:##\s*第[一二三四五六七八九十百0-9]+章|##\s*附则)/.test(a.chunk.content);
-          const bIsHeading = /(?:##\s*第[一二三四五六七八九十百0-9]+章|##\s*附则)/.test(b.chunk.content);
-          if (aIsHeading && !bIsHeading) return -1;
-          if (!aIsHeading && bIsHeading) return 1;
-          if (aIsHeading && bIsHeading) {
-            if (b.score !== a.score) return b.score - a.score;
-            return (a.chunk.ord || 0) - (b.chunk.ord || 0);
-          }
-        }
-        return b.score - a.score;
-      });
-
-      // Document diversity quota: prevent single 3MB document from crowding out smaller documents
-      const maxPerDoc = Math.max(3, Number(process.env.RETRIEVAL_MAX_CHUNKS_PER_DOC || 5));
-      const perDocCount = new Map<string, number>();
-      const topSelected: typeof scored = [];
-
-      if (isChapterListing) {
-        for (const item of scored) {
-          topSelected.push(item);
-          if (topSelected.length >= Math.max(limit, 20)) break;
-        }
-      } else {
-        for (const item of scored) {
-          const docKey = item.chunk.documentId || "unknown";
-          const count = perDocCount.get(docKey) || 0;
-          const allowedForThisDoc = item.score >= 0.03 ? maxPerDoc + 2 : maxPerDoc;
-          if (count >= allowedForThisDoc) continue;
-          perDocCount.set(docKey, count + 1);
-          topSelected.push(item);
-          if (topSelected.length >= Math.max(limit, 15)) break;
-        }
-      }
-
-      if (!topSelected.length) return [];
-
-      // Bound the neighbor-expansion load. Previously every chunk of every
-      // matched document was fetched with no limit, so a single multi-megabyte
-      // document could exhaust memory and latency. Cap both the number of
-      // expanded documents and the chunks pulled per expansion.
-      const maxExpandDocs = Math.max(1, Number(process.env.RETRIEVAL_MAX_EXPAND_DOCS || 8));
-      const maxDocChunks = Math.max(200, Number(process.env.RETRIEVAL_MAX_DOC_CHUNKS || 3000));
-      const docIds = Array.from(new Set(topSelected.map((s: any) => s.chunk.documentId))).slice(0, maxExpandDocs);
-      const allDocChunks = await (this.prisma as any).chunk.findMany({
-        where: { documentId: { in: docIds }, document: { status: "published" } },
-        select: {
-          id: true,
-          documentId: true,
-          kbId: true,
-          ord: true,
-          content: true,
-          metadata: true,
-          document: { select: { title: true, version: true } },
-        },
-        orderBy: { ord: "asc" },
-        take: maxDocChunks,
-      });
-
-      const chunkByOrdAndDoc = new Map<string, any>();
-      allDocChunks.forEach((c: any) => {
-        chunkByOrdAndDoc.set(`${c.documentId}:${c.ord}`, c);
-      });
-
-      const chunkScores = new Map<string, number>();
-      scored.forEach((item) => chunkScores.set(item.chunk.id, item.score));
-
-      const expandedChunkIds = new Set<string>();
-      const expandedChunks: any[] = [];
-
-      for (const item of topSelected) {
-        const c = item.chunk;
-        const itemScore = item.score || 1;
-        if (!expandedChunkIds.has(c.id)) {
-          expandedChunkIds.add(c.id);
-          expandedChunks.push(c);
-          chunkScores.set(c.id, itemScore);
-        }
-
-        if (!isChapterListing) {
-          const meta = c.metadata || {};
-          const artNo = meta.article_no;
-          if (artNo !== undefined) {
-            allDocChunks
-              .filter((sib: any) => sib.documentId === c.documentId && sib.metadata?.article_no === artNo)
-              .forEach((sib: any) => {
-                if (!expandedChunkIds.has(sib.id)) {
-                  expandedChunkIds.add(sib.id);
-                  expandedChunks.push(sib);
-                  chunkScores.set(sib.id, itemScore * 0.85);
-                }
-              });
-          }
-          if (typeof meta.next_chunk_ord === "number") {
-            const next = chunkByOrdAndDoc.get(`${c.documentId}:${meta.next_chunk_ord}`);
-            if (next && !expandedChunkIds.has(next.id)) {
-              expandedChunkIds.add(next.id);
-              expandedChunks.push(next);
-              chunkScores.set(next.id, itemScore * 0.85);
-            }
-          }
-          if (typeof meta.prev_chunk_ord === "number") {
-            const prev = chunkByOrdAndDoc.get(`${c.documentId}:${meta.prev_chunk_ord}`);
-            if (prev && !expandedChunkIds.has(prev.id)) {
-              expandedChunkIds.add(prev.id);
-              expandedChunks.push(prev);
-              chunkScores.set(prev.id, itemScore * 0.85);
-            }
-          }
-        }
-      }
-
-      // Structural section expansion (query-independent, "small-to-big"):
-      // whatever chunk matched, bring back its WHOLE section region — walk
-      // backward to the nearest heading-like anchor, then forward through the
-      // member chunks until the next same-level heading. Bounded so a
-      // heading-dense document cannot explode the candidate pool. Downstream
-      // truncation stages treat each region as one unit and never split it.
-      // Two heading tiers: CHAPTER-level headings (（四）/ 一、/ 第X章) delimit
-      // section regions; CLAUSE-level numbering (12. / 第X条) stays inside the
-      // region. Treating clauses as headings would shatter the section.
-      const sectionStopRe = /^(?:#{1,3}\s+|（[一二三四五六七八九十百]{1,3}）|[一二三四五六七八九十百]{1,3}、|第[一二三四五六七八九十百0-9]+[章节]|\d+[\.、]\s*[\u4e00-\u9fa5])/;
-      const sectionHeadRe = sectionStopRe;
-      const sectionExpansionMax = Math.max(2, Number(process.env.RETRIEVAL_SECTION_EXPANSION_MAX || 12));
-      let regionBudget = sectionExpansionMax;
-      // Chunk objects exist as DUPLICATE instances (chunkMap from the token
-      // queries vs allDocChunks from the expansion query), so the group tag is
-      // recorded by chunk ID and applied to every expanded instance afterwards.
-      const sectionGroupByChunkId = new Map<string, string>();
-      const getLeadingLine = (x: any) => {
-        const raw = extractRawChunkText(String(x?.content || "")).trim();
-        return raw.split("\n")[0].trim();
-      };
-      for (const selected of topSelected.slice(0, 4)) {
-        if (regionBudget <= 0) break;
-        const anchor = selected.chunk;
-        const ordered = allDocChunks.filter((x: any) => x.documentId === anchor.documentId);
-        if (!ordered.length) continue;
-        const anchorIdx = ordered.findIndex((x: any) => x.id === anchor.id);
-        if (anchorIdx < 0) continue;
-        const isHeadingish = (x: any) => {
-          const line = getLeadingLine(x);
-          return line.length > 0 && line.length <= 80 && sectionHeadRe.test(line);
-        };
-        // Walk backward to the region anchor (nearest heading-like chunk).
-        let startIdx = anchorIdx;
-        let back = 0;
-        while (startIdx > 0 && back < 6 && !isHeadingish(ordered[startIdx])) {
-          startIdx--; back++;
-        }
-        if (!isHeadingish(ordered[startIdx])) startIdx = anchorIdx;
-        const groupKey = `${anchor.documentId}:${ordered[startIdx].ord}`;
-        // Include the anchor and all member chunks until the next heading.
-        const region: any[] = [ordered[startIdx]];
-        for (let i = startIdx + 1; i < ordered.length && region.length < 10; i++) {
-          const line = getLeadingLine(ordered[i]);
-          if (line && sectionStopRe.test(line)) break;
-          region.push(ordered[i]);
-        }
-        for (const member of region) {
-          if (regionBudget <= 0) break;
-          if (!sectionGroupByChunkId.has(member.id)) {
-            sectionGroupByChunkId.set(member.id, groupKey);
-          }
-          if (!sectionGroupByChunkId.has(anchor.id)) {
-            sectionGroupByChunkId.set(anchor.id, groupKey);
-          }
-          if (!expandedChunkIds.has(member.id)) {
-            expandedChunkIds.add(member.id);
-            expandedChunks.push(member);
-            chunkScores.set(member.id, (selected.score || 0.01) * 0.7);
-            regionBudget -= 1;
-          }
-        }
-      }
-      for (const c of expandedChunks) {
-        const g = sectionGroupByChunkId.get(c.id);
-        if (g) (c as any).sectionGroup = g;
-      }
-
-      const maxRrfScore = Math.max(...Array.from(chunkScores.values()), 0.0001);
-      const chnNums = ["", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"];
-      const results: any[] = expandedChunks.map((c: any) => {
-        const meta = c.metadata || {};
-        const chn = chnNums[meta.chapter_no] || meta.chapter_no || "";
-        const chPrefix = chn ? `【第${chn}章】` : "";
-        const artPrefix = meta.article_no ? `【第${meta.article_no}条】` : "";
-        const evidence = `${chPrefix}${artPrefix} ${c.content}`.trim();
-        const rawScore = chunkScores.get(c.id) || 0;
-        const relRatio = Math.max(0, rawScore / maxRrfScore);
-        const normalizedScore = Number(Math.min(0.99, Math.max(0.05, relRatio * 0.95)).toFixed(3));
-
-        return {
-          documentId: c.documentId,
-          kbId: c.kbId,
-          title: c.document?.title || "未知文档",
-          version: c.document?.version || 1,
-          ord: c.ord,
-          pageNo: meta.page_no || meta.pageNumber || c.ord + 1,
-          articleNo: meta.article_no ? `第${meta.article_no}条` : undefined,
-          evidence,
-          score: Number(normalizedScore.toFixed(3)),
-          sectionGroup: (c as any).sectionGroup,
-          subQueryOrigin: (c as any).subQueryOrigin,
-          bbox: meta.bbox,
-          previewUrl: buildDocumentPreviewUrl(c.kbId, c.documentId, {
-            page: meta.page_no || meta.pageNumber || c.ord + 1,
-            clause: artPrefix || "",
-            anchor: (c.content || "").slice(0, 30),
-          }),
-        };
-      });
-
-      // RAPTOR macro arm: add chapter/document-level summaries for global
-      // questions (or to fill an otherwise empty result set). Kept to a small
-      // number so precise clause evidence always dominates focused lookups.
-      // Macro arm is always queried (cheap keyword match over summary nodes);
-      // the unified selection stage decides relevance. This removes any
-      // dependence on the question's wording (e.g. "整体内容").
-      if (this.raptorService?.isEnabled()) {
-        try {
-          const raptorHits = await this.raptorService.search(scope, query, Math.min(3, Math.max(1, limit - results.length + 2)));
-          for (const hit of raptorHits) {
-            results.push({
-              documentId: hit.documentId,
-              kbId: hit.kbId,
-              title: hit.title,
-              version: undefined,
-              pageNo: undefined,
-              articleNo: undefined,
-              evidence: hit.evidence,
-              score: hit.score,
-              bbox: undefined,
-              sectionGroup: undefined,
-              subQueryOrigin: undefined,
-              previewUrl: hit.previewUrl,
-              raptor: true,
-              isSummary: true,
-            });
-          }
-        } catch (raptorErr) {
-          this.logger.debug(`RAPTOR arm omitted: ${raptorErr instanceof Error ? raptorErr.message : String(raptorErr)}`);
-        }
-      }
-      if (subQueryCacheKey) {
-        this.subQueryChunkCache.set(subQueryCacheKey, {
-          hits: results.map((r) => ({ ...r })),
-          expiresAt: Date.now() + Number(process.env.SUBQUERY_CACHE_TTL_MS || 120_000),
-        });
-        if (this.subQueryChunkCache.size > 500) {
-          const oldest = this.subQueryChunkCache.keys().next().value;
-          if (oldest) this.subQueryChunkCache.delete(oldest);
-        }
-      }
-      return results;
-    } catch (err) {
-      this.logger.warn(`searchChunksFallback error: ${err}`);
-      return [];
-    }
   }
 
   private async processChat(
@@ -2311,7 +1601,7 @@ export class ChatService {
             sourceFreshness?.rebuilt
               ? `查询前已同步重建 ${sourceFreshness.rebuilt} 个 Source`
               : `已核对 ${sourceFreshness?.checked || 0} 个 Source，索引新鲜`,
-            sourceFreshness,
+            sourceFreshness ?? undefined,
           );
         }
       } catch (error: any) {
@@ -2328,7 +1618,7 @@ export class ChatService {
     const userScopeSourceKeys = Array.isArray(userScope?.sourceKeys) ? userScope.sourceKeys : [];
     const wholeScopeSelected =
       selectedSourceKeys.length === userScopeSourceKeys.length &&
-      selectedSourceKeys.every((key, index) => key === userScopeSourceKeys.slice().sort()[index]);
+      selectedSourceKeys.every((key: string, index: number) => key === userScopeSourceKeys.slice().sort()[index]);
     const forceQueryRefresh = Boolean(sourceFreshness?.rebuilt);
 
     const llmReqEarly = this.modelConfigService
@@ -2341,6 +1631,7 @@ export class ChatService {
       userScope.aclEpoch,
       userScope.knowledgeEpoch,
       currentModelName,
+      userId,
     );
     if (this.semanticCacheService && !forceQueryRefresh) {
       try {
@@ -2375,7 +1666,7 @@ export class ChatService {
             subscriber.next({
               data: { type: "delta", content: cachedHit.responseContent, delta: cachedHit.responseContent },
             });
-            cachedCitations.forEach((cit, citIndex) => {
+            cachedCitations.forEach((cit: any, citIndex: any) => {
               subscriber.next({
                 data: { type: "citation", index: citIndex + 1, timeline_entry: this.normalizeTimelineEntry(cit) },
               });
@@ -2421,10 +1712,19 @@ export class ChatService {
 
     // Speculative Parallel Retrieval: Dispatch PostgreSQL chunk retrieval for the rewritten query
     // concurrently with Agentic query planning / decomposition, hiding DB latency behind LLM time.
+    // Candidate-pool depth for the answer path.
+    //
+    // Measured 2026-09-21: the `/chat/search` path retrieves 50 chunks and finds
+    // the gold bridge document for 95.8% of the MuSiQue hard failures, while the
+    // answer path only pulled 15 — so the doc the search path ranked 6th was
+    // never even a candidate for the answer, and no downstream guarantee could
+    // restore it. The pool depth is therefore a knob (RETRIEVAL_ANSWER_POOL_DOCS)
+    // instead of a literal, so pool depth and context depth stay independent.
+    const answerPoolDocs = Math.max(15, Number(process.env.RETRIEVAL_ANSWER_POOL_DOCS || 15));
     const speculativeBaseChunksPromise = this.searchChunksFallback(
       scope,
       retrieval.query || question,
-      15,
+      answerPoolDocs,
     ).catch((err) => {
       this.logger.warn(`searchChunksFallback speculative error: ${err.message}`);
       return [];
@@ -2457,7 +1757,7 @@ export class ChatService {
     });
     // Extra recall arms from the agentic plan: LLM-expanded retrieval terms,
     // decomposed sub-questions, and the HyDE passage. Fed to the keyword/DB
-    // fallback so vocabulary gaps (e.g. 夏天→夏令时) and compound questions
+    // fallback so vocabulary gaps (colloquial→formal register) and compound questions
     // are recovered without any hardcoded synonym table.
     const recallVariants = [...agenticSubQueries, ...agenticExpansions, ...(hydePassage ? [hydePassage] : [])];
     // Personal memory is a separate, private GBrain retrieval arm. It never
@@ -2550,7 +1850,7 @@ export class ChatService {
     gbrainHardTimer.unref?.();
     let rawCandidateCount = 0;
     let topEvidence = "";
-    let initialEvidenceAssessment: { weak: boolean; shouldEscalate: boolean; reason: string; evidence?: string; topScore?: number; scoreFloor?: number } = { weak: false, shouldEscalate: false, reason: "" };
+    let initialEvidenceAssessment: { weak: boolean; shouldEscalate: boolean; reason: string; evidence?: string; topScore?: number | null; scoreFloor?: number | null } = { weak: false, shouldEscalate: false, reason: "" };
 
     if (isInventoryQuery) {
       trace.start("gbrain_retrieval", "全景资产盘点", "从授权知识库检索全部已发布文档全景列表与统计");
@@ -2593,6 +1893,7 @@ export class ChatService {
         snippet: `${name}：共 ${titles.length} 篇文档（${titles.slice(0, 5).map((t) => `《${t}》`).join("、")}${titles.length > 5 ? " 等" : ""}）`,
         context: inventoryEvidence,
         score: Number((1.2 - index * 0.01).toFixed(3)),
+        scoreSource: "synthetic",
         kbId: kbIdByName.get(name) || scope[0],
         kbName: name,
         inventory: true,
@@ -2607,6 +1908,7 @@ export class ChatService {
           snippet: "当前授权范围内没有已发布的知识文档。",
           context: "当前授权范围内没有已发布的知识文档。",
           score: 1.2,
+          scoreSource: "synthetic",
           kbId: scope[0],
           inventory: true,
           rerankScore: 1.2,
@@ -2647,15 +1949,20 @@ export class ChatService {
         ? agenticSubQueries
         : this.decomposeComplexQuery(retrieval.query || question);
       const fallbackChunksPromise = (async () => {
-        let base = await speculativeBaseChunksPromise;
+        let base: any[] = await speculativeBaseChunksPromise;
         if (!base || base.length === 0) {
-          base = await this.searchChunksFallback(scope, question, 15, recallVariants).catch((err) => {
+          base = await this.searchChunksFallback(scope, question, Math.max(15, Number(process.env.RETRIEVAL_ANSWER_POOL_DOCS || 15)), recallVariants).catch((err) => {
             this.logger.warn(`searchChunksFallback early promise error: ${err.message}`);
             return [];
           });
+
+          // A/B shadow: observational only (control/shadow arms). Does not change
+          // the primary answer. No-op when ExperimentsModule is disabled.
+          void this.runShadowRetrievalDiff(userId, conversationId, scope, retrieval.query || question, base as any[]).catch(() => undefined);
+
         } else if (recallVariants.length > 0) {
           try {
-            const extraHits = await this.searchChunksFallback(scope, question, 10, recallVariants).catch(() => []);
+            const extraHits = await this.searchChunksFallback(scope, question, 10, recallVariants).catch(() => [] as any[]);
             const seen = new Set(base.map((b) => b.documentId ? `${b.documentId}:${b.pageNo || 0}` : b.evidence.slice(0, 30)));
             for (const h of extraHits) {
               const key = h.documentId ? `${h.documentId}:${h.pageNo || 0}` : h.evidence.slice(0, 30);
@@ -2675,7 +1982,7 @@ export class ChatService {
                     for (const h of hits) (h as any).subQueryOrigin = (h as any).subQueryOrigin || sub;
                     return hits;
                   })
-                  .catch(() => [])
+                  .catch(() => [] as any[])
               )
             );
             const seen = new Set(base.map((b) => b.documentId ? `${b.documentId}:${b.pageNo || 0}` : b.evidence.slice(0, 30)));
@@ -2719,7 +2026,7 @@ export class ChatService {
               if (unseenBridges.length === 0) break;
 
               const bridgeResults = await Promise.all(
-                unseenBridges.map((br) => this.searchChunksFallback(scope, br, 5).catch(() => [])),
+                unseenBridges.map((br) => this.searchChunksFallback(scope, br, 5).catch(() => [] as any[])),
               );
 
               const newlyAddedChunks: any[] = [];
@@ -2751,6 +2058,10 @@ export class ChatService {
       const stageAbortLink = () => stageAbort.abort();
       if (signal?.aborted) stageAbort.abort();
       else if (signal) signal.addEventListener("abort", stageAbortLink, { once: true });
+      // Resolved once for the whole retrieval stage: the arm policy decides both
+      // whether the main GBrain query is raced and whether the decomposed
+      // sub-query probes are launched at all.
+      const chatArmPolicy = resolveArmPolicy();
 
       const gbrainQueryOnce = (q: string) =>
         sourceRefs.length > 1
@@ -2818,7 +2129,12 @@ export class ChatService {
               q,
               { breadth: retrieval.breadth, operation: effectiveOp, signal: subProbeAbort.signal, ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
             );
-      const gbrainSubPromises = agenticSubQueries.length > 0
+      // When the engine arm is switched off (chunks_only), its sub-query probes
+      // must not be launched either. They used to run anyway and the stage then
+      // *waited* for them — up to the 12s sub-probe timeout — so every answer
+      // paid the engine arm's latency while receiving none of its evidence
+      // (measured: gbrain_retrieval 12011ms with the arm policy already off).
+      const gbrainSubPromises = agenticSubQueries.length > 0 && chatArmPolicy !== "chunks_only"
         ? agenticSubQueries.slice(0, 3).map((sub) =>
             gbrainSubQueryOnce(sub)
               .then((r: any) => {
@@ -2845,22 +2161,72 @@ export class ChatService {
         // Downstream stages (escalation, source reconcile) use their own
         // controllers (escalation) or `gbrainAbort` (reconcile), so this abort
         // does not poison them.
-        const raceTimer = setTimeout(() => {
+        const chatGbrainRaceMs = resolveGbrainRaceMs();
+        let racedGBrain: BrainQueryResult | null = null;
+        if (chatArmPolicy === "chunks_only") {
+          // The *search* path has honoured RETRIEVAL_ARM_POLICY=chunks_only for a
+          // while; this answer path did not. Consequences measured on the test
+          // environment: every answer still paid the full race window (up to 6s)
+          // and, whenever the engine arm did win inside it, the answer silently
+          // adopted the *engine-first* ordering — a ranking policy the retrieval
+          // benchmarks measure as worse (MuSiQue R@10 0.764 -> 0.752, FullEv
+          // 0.51 -> 0.48) and never intended here. Honour the switch: release the
+          // subprocess slot immediately and answer from chunk retrieval.
           stageAbort.abort();
-          trace.warn(
-            "gbrain_race_timeout",
-            "GBrain 竞速超时降级",
-            "GBrain 在 2.5s 竞赛窗口内未返回，已中止该路检索并沿用数据库分块召回",
-            { windowMs: 2500 },
+          trace.finish(
+            "gbrain_arm_policy",
+            "skipped",
+            "GBrain 引擎臂按策略关闭（RETRIEVAL_ARM_POLICY=chunks_only），本次仅使用数据库分块召回",
+            { policy: chatArmPolicy },
           );
-        }, 2500);
-        const racedGBrain = await Promise.race([
-          gbrainSearchPromise,
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
-        ]);
-        clearTimeout(raceTimer);
+        } else {
+          const raceTimer = setTimeout(() => {
+            stageAbort.abort();
+            trace.warn(
+              "gbrain_race_timeout",
+              "GBrain 竞速超时降级",
+              `GBrain 引擎臂在 ${chatGbrainRaceMs}ms 竞赛窗口内未返回，已中止该路检索并沿用数据库分块召回（多跳桥接证据可能缺失）`,
+              { windowMs: chatGbrainRaceMs },
+            );
+          }, chatGbrainRaceMs);
+          racedGBrain = await Promise.race([
+            gbrainSearchPromise,
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), chatGbrainRaceMs)),
+          ]);
+          clearTimeout(raceTimer);
+        }
 
-        if (racedGBrain && racedGBrain.citations && racedGBrain.citations.length > 0) {
+        const chunkArmResult = (): BrainQueryResult => ({
+          topics: Array.from(new Set(fallbackChunks.map((fb) => fb.title || "相关条款"))),
+          fallbackMerged: true,
+          answer: fallbackChunks.map((fb) => fb.evidence).join("\n\n"),
+          citations: fallbackChunks.map((fb, idx) => ({
+            topic: fb.title || fb.documentId || "",
+            docId: fb.documentId,
+            kbId: fb.kbId,
+            version: fb.version,
+            ord: fb.ord,
+            pageNo: fb.pageNo,
+            articleNo: fb.articleNo,
+            evidence: fb.evidence,
+            snippet: fb.evidence,
+            context: fb.evidence,
+            score: typeof fb.score === "number" && fb.score > 0 ? fb.score : Math.max(0.70, 0.95 - idx * 0.02),
+            scoreSource: "synthetic",
+            docTitle: fb.title,
+            sectionGroup: (fb as any).sectionGroup,
+            subQueryOrigin: (fb as any).subQueryOrigin,
+            bbox: fb.bbox,
+            previewUrl: fb.previewUrl,
+          })),
+          reranked: false,
+          ...({ isMultiHop: agenticComplexity !== "simple" } as any),
+        });
+        const evidenceKey = (c: any) =>
+          String(c?.evidence || c?.snippet || c?.context || "").replace(/\s+/g, "").slice(0, 30);
+
+        if (racedGBrain && racedGBrain.citations && racedGBrain.citations.length > 0
+            && chatArmPolicy === "engine_first") {
           queryResult = racedGBrain;
           const existingEvidence = new Set(
             racedGBrain.citations.map((c: any) => (c.evidence || c.snippet || "").replace(/\s+/g, "").slice(0, 30)),
@@ -2870,7 +2236,7 @@ export class ChatService {
             if (!existingEvidence.has(key)) {
               existingEvidence.add(key);
               queryResult.citations.push({
-                topic: fb.title || fb.documentId,
+                topic: fb.title || fb.documentId || "",
                 docId: fb.documentId,
                 kbId: fb.kbId,
                 version: fb.version,
@@ -2881,6 +2247,7 @@ export class ChatService {
                 snippet: fb.evidence,
                 context: fb.evidence,
                 score: typeof fb.score === "number" && fb.score > 0.5 ? fb.score : 0.88,
+                scoreSource: "synthetic",
                 docTitle: fb.title,
                 sectionGroup: (fb as any).sectionGroup,
           subQueryOrigin: (fb as any).subQueryOrigin,
@@ -2891,32 +2258,35 @@ export class ChatService {
           }
           queryResult.citations.sort((a: any, b: any) => (b.score || 0) - (a.score || 0));
           (queryResult as any).fallbackMerged = true;
-        } else {
+        } else if (racedGBrain && racedGBrain.citations && racedGBrain.citations.length > 0) {
+          // chunk_first: the chunk arm owns the ranking (it is the arm the
+          // retrieval benchmarks measure and the one whose sub-query/bridge
+          // probes supply multi-hop evidence). The engine arm may only *add*
+          // evidence the chunk arm missed, appended underneath, because every
+          // measured attempt at letting the second arm re-rank the first
+          // (equal-weight RRF, rank fusion, engine-first) destroyed MRR.
+          const chunkArm = chunkArmResult();
+          const known = new Set(chunkArm.citations.map(evidenceKey));
+          const chunkMinScore = chunkArm.citations.reduce(
+            (min, c: any) => Math.min(min, Number(c.score) || 0),
+            1,
+          );
+          const engineExtras = racedGBrain.citations.filter((c: any) => !known.has(evidenceKey(c)));
           queryResult = {
-            topics: Array.from(new Set(fallbackChunks.map((fb) => fb.title || "相关条款"))),
-            fallbackMerged: true,
-            answer: fallbackChunks.map((fb) => fb.evidence).join("\n\n"),
-            citations: fallbackChunks.map((fb, idx) => ({
-              topic: fb.title || fb.documentId,
-              docId: fb.documentId,
-              kbId: fb.kbId,
-              version: fb.version,
-              ord: fb.ord,
-              pageNo: fb.pageNo,
-              articleNo: fb.articleNo,
-              evidence: fb.evidence,
-              snippet: fb.evidence,
-              context: fb.evidence,
-              score: typeof fb.score === "number" && fb.score > 0 ? fb.score : Math.max(0.70, 0.95 - idx * 0.02),
-              docTitle: fb.title,
-              sectionGroup: (fb as any).sectionGroup,
-              subQueryOrigin: (fb as any).subQueryOrigin,
-              bbox: fb.bbox,
-              previewUrl: fb.previewUrl,
-            })),
-            reranked: false,
-            ...({ isMultiHop: agenticComplexity !== "simple" } as any),
+            ...chunkArm,
+            citations: [
+              ...chunkArm.citations,
+              ...engineExtras.map((c: any, idx: number) => ({
+                ...c,
+                score: Math.max(0.05, chunkMinScore - 0.01 - idx * 0.001),
+                scoreSource: "synthetic",
+                engineArmOnly: true,
+              })),
+            ],
+            ...({ engineExtrasMerged: engineExtras.length, armPolicy: "chunk_first" } as any),
           };
+        } else {
+          queryResult = chunkArmResult();
         }
       } else {
         // Fallback chunks yielded 0 results, wait for GBrain fully
@@ -2948,7 +2318,7 @@ export class ChatService {
       }
       // Merge sub-query probe citations into the candidate pool (evidence-
       // prefix dedupe, same rule as the fallback merge).
-      if (gbrainSubPromises.length > 0) {
+      if (gbrainSubPromises.length > 0 && chatArmPolicy !== "chunks_only") {
         const subSettled = await gbrainSubsAll;
         const seen = new Set(
           (queryResult.citations || []).map((c: any) =>
@@ -3192,7 +2562,7 @@ export class ChatService {
         queryResult.answer = fallbackChunks.map((fb) => fb.evidence).join("\n\n");
         (queryResult as any).fallbackMerged = true;
         queryResult.citations = fallbackChunks.map((fb, idx) => ({
-          topic: fb.title || fb.documentId,
+          topic: fb.title || fb.documentId || "",
           docId: fb.documentId,
           kbId: fb.kbId,
           version: fb.version,
@@ -3203,12 +2573,13 @@ export class ChatService {
           snippet: fb.evidence,
           context: fb.evidence,
           score: Math.max(0.70, 0.95 - idx * 0.02),
+          scoreSource: "synthetic",
           docTitle: fb.title,
           sectionGroup: (fb as any).sectionGroup,
           subQueryOrigin: (fb as any).subQueryOrigin,
           bbox: fb.bbox,
           previewUrl: fb.previewUrl,
-        }));
+        })) as any;
         trace.finish(
           "source_reconcile_retry",
           "success",
@@ -3267,14 +2638,14 @@ export class ChatService {
           const retryQueries = await this.rewriteQueryForRetry(retrieval.query || question);
           for (const qTry of retryQueries) {
             // Also search fallback chunks with retry query to recover vocabulary gaps
-            const retryFallbackHits = await this.searchChunksFallback(scope, qTry, 5).catch(() => []);
+            const retryFallbackHits = await this.searchChunksFallback(scope, qTry, 5).catch(() => [] as any[]);
             if (retryFallbackHits.length > 0) {
               if (!queryResult.citations) queryResult.citations = [];
               for (const fb of retryFallbackHits) {
                 const key = fb.documentId ? `${fb.documentId}:${fb.pageNo || 0}` : fb.evidence.slice(0, 30);
                 if (!queryResult.citations.some((c: any) => (c.docId ? `${c.docId}:${c.pageNo || 0}` : (c.evidence || '').slice(0, 30)) === key)) {
                   queryResult.citations.push({
-                    topic: fb.title || fb.documentId,
+                    topic: fb.title || fb.documentId || "",
                     docId: fb.documentId,
                     kbId: fb.kbId,
                     version: fb.version,
@@ -3285,6 +2656,7 @@ export class ChatService {
                     snippet: fb.evidence,
                     context: fb.evidence,
                     score: Math.max(0.70, 0.88),
+                    scoreSource: "synthetic",
                     docTitle: fb.title,
                     subQueryOrigin: qTry,
                   } as any);
@@ -3433,8 +2805,92 @@ export class ChatService {
     // reranker only as a fail-open recovery when GBrain reports no rerank
     // Always apply cross-encoder rerank & relevance filtering across candidate sources
     const beforeRerank = queryResult.citations?.length || 0;
+    // Structural section alignment (P2-03): when the question names a section
+    // (e.g. 汇总表) prefer matching summary chunks over same-doc detail tables.
+    try {
+      const sectionAlignChanged = applySectionAlign(
+        question,
+        (queryResult.citations || []) as any[],
+      );
+      if (sectionAlignChanged) {
+        (queryResult.citations as any[]).sort(
+          (a: any, b: any) => (Number(b?.score) || 0) - (Number(a?.score) || 0),
+        );
+        trace.start("section_align", "结构对齐偏置", "按问题点名的小节/表角色调整候选排序");
+        trace.finish("section_align", "success", "已应用 section/table-role 对齐乘子");
+      }
+    } catch (alignErr) {
+      this.logger.debug(
+        `section align skipped: ${alignErr instanceof Error ? alignErr.message : String(alignErr)}`,
+      );
+    }
+    // Section rescue (P2-03): pull same-doc summary chunks when the question
+    // names a section that the candidate pool failed to cover.
+    try {
+      const current = (queryResult.citations || []) as any[];
+      // Use the original question: rewritten retrieval.query often drops the
+      // structural noun (e.g. 汇总表 → 编号) that section-rescue keys on (P2-03).
+      const needRescue = needsSectionRescue(question, current);
+      if (needRescue) {
+        const rescued = await (this.retrievalArms as any).rescueSections(
+          question,
+          current,
+        );
+        const keyOf = (c: any) =>
+          `${c.documentId || c.docId || ''}:${(c.evidence || c.context || c.snippet || '').slice(0, 40)}`;
+        const existingKeys = new Set(current.map(keyOf));
+        const added = (rescued || []).filter((r: any) => !existingKeys.has(keyOf(r)));
+        // Promote existing pool members that are structurally the named section
+        // (they often already sit in the pool below detail-table rows).
+        const anchors = extractSectionAnchors(question);
+        const promoted = current.filter((c: any) => {
+          const evidence = String(c.evidence || c.context || c.snippet || '')
+            .replace(/^\s*\[\s*上下文[\s\S]*?\]\s*/u, '')
+            .replace(/^\s*\[\s*context[\s\S]*?\]\s*/iu, '');
+          const headings = evidence.match(/^#{1,6}\s*.+$/gm) || [];
+          const structural = `${c.section || ''} ${c.breadcrumb || ''} ${c.topic || ''} ${c.docTitle || c.doc_title || ''} ${headings.join(' ')}`;
+          const role = c.tableRole || c.table_role;
+          return role === 'summary' || anchors.some((a: string) => a.length >= 2 && structural.includes(a));
+        });
+        for (const c of promoted) {
+          const base = Number((c as any).score ?? 0);
+          (c as any).score = Number(Math.max(base, 0.96).toFixed(4));
+          (c as any).sectionRescuePromoted = true;
+        }
+        const rest = current.filter((c: any) => !(promoted as any[]).includes(c));
+        queryResult.citations = [...added, ...promoted, ...rest];
+        applySectionAlign(question, queryResult.citations as any[]);
+        (queryResult.citations as any[]).sort(
+          (a: any, b: any) => (Number(b?.score) || 0) - (Number(a?.score) || 0),
+        );
+        trace.start("section_rescue", "小节救援", "同文档补拉未覆盖的问题点名小节");
+        if (added.length > 0 || promoted.length > 0) {
+          trace.finish(
+            "section_rescue",
+            "success",
+            `补入 ${added.length} 条小节分片，提升 ${promoted.length} 条已有点名小节候选：${promoted
+              .slice(0, 3)
+              .map((c: any) => String(c.evidence || c.snippet || c.section || "").slice(0, 24).replace(/\n/g, " "))
+              .join(" | ")}`,
+          );
+        } else {
+          trace.finish(
+            "section_rescue",
+            "warning",
+            `未补入/提升小节分片（rescued=${(rescued || []).length}, pool=${current.length}）`,
+          );
+        }
+      } else {
+        trace.start("section_rescue", "小节救援", "同文档补拉未覆盖的问题点名小节");
+        trace.finish("section_rescue", "success", "候选池已覆盖问题小节，无需救援");
+      }
+    } catch (rescueErr) {
+      this.logger.warn(
+        `section rescue skipped: ${rescueErr instanceof Error ? rescueErr.message : String(rescueErr)}`,
+      );
+    }
     trace.start("rerank", "候选重排", "统一比较跨 Source 候选并执行相关性打分");
-    queryResult = await this.applyRerank(
+    queryResult = await this.rerankPool(
       retrieval.query || question,
       queryResult,
       retrieval.breadth,
@@ -3449,12 +2905,270 @@ export class ChatService {
       reranked: Boolean(queryResult.reranked),
       platformApplied: Boolean((queryResult as any).platformRerankApplied),
     });
+    // Re-apply structural alignment AFTER cross-encoder rerank so a summary
+    // section rescued from the same document is not re-buried by detail-table
+    // rows the encoder scored highly (P2-03).
+    try {
+      if (applySectionAlign(question, (queryResult.citations || []) as any[])) {
+        (queryResult.citations as any[]).sort(
+          (a: any, b: any) => (Number(b?.score) || 0) - (Number(a?.score) || 0),
+        );
+      }
+      // Pin structurally-matched summary/section hits to the head of the context
+      // after rerank. Cross-encoder scores favour long detail tables; without a
+      // pin the rescued summary is re-buried (P2-03).
+      {
+        const anchors = extractSectionAnchors(question);
+        const isPinned = (c: any) => {
+          if (c?.sectionRescuePromoted || c?.tableRole === 'summary' || c?.table_role === 'summary') {
+            return true;
+          }
+          const evidence = String(c?.evidence || c?.context || c?.snippet || '');
+          const headings = evidence.match(/^#{1,6}\s*.+$/gm) || [];
+          const structural = `${c?.section || ''} ${c?.breadcrumb || ''} ${c?.topic || ''} ${c?.docTitle || c?.doc_title || ''} ${headings.join(' ')}`;
+          return anchors.some((a: string) => a.length >= 2 && structural.includes(a));
+        };
+        const list = (queryResult.citations || []) as any[];
+        const pinned = list.filter((c) => isPinned(c));
+        const others = list.filter((c) => !isPinned(c));
+        if (pinned.length > 0) {
+          queryResult.citations = [...pinned, ...others];
+        }
+      }
+    } catch {
+      /* keep rerank order */
+    }
+
+    // Bounded DRIFT pass: community summaries select graph regions and entity
+    // probes only. Every returned hit still passes through ordinary retrieval,
+    // ACL filtering, reranking and provenance-bound citation assembly.
+    const driftProbes: string[] = [];
+    const shouldRunDrift =
+      process.env.GRAPHRAG_DRIFT_ENABLED !== 'false' &&
+      Boolean(this.graphRagService) &&
+      scope.length > 0 &&
+      (
+        agenticComplexity === 'global_synthesis' ||
+        ((agenticComplexity === 'multi_hop' || agenticComplexity === 'comparative') &&
+          ((queryResult.citations?.length || 0) < Number(process.env.GRAPHRAG_DRIFT_EVIDENCE_THRESHOLD || 8) || agenticSubQueries.length > 1))
+      );
+    if (shouldRunDrift) {
+      trace.start('graphrag_drift', 'GraphRAG DRIFT 导航检索', '从相关社区选择实体并执行有预算的原文补检');
+      try {
+        const plan = await this.graphRagService!.planDriftQueries(scope, retrieval.query || question, {
+          maxCommunities: Number(process.env.GRAPHRAG_DRIFT_MAX_COMMUNITIES || 2),
+          maxProbes: Number(process.env.GRAPHRAG_DRIFT_MAX_PROBES || 2),
+          maxEntities: Number(process.env.GRAPHRAG_DRIFT_MAX_ENTITIES || 16),
+        });
+        const seen = new Set([
+          (retrieval.query || question).trim().toLowerCase(),
+          ...agenticSubQueries.map((probe) => probe.trim().toLowerCase()),
+        ]);
+        driftProbes.push(...plan.probes.filter((probe) => {
+          const key = probe.trim().toLowerCase();
+          if (!key || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        }));
+        if (driftProbes.length) {
+          const driftHits = await this.retrieveHopProbes(
+            scope,
+            sourceRefs,
+            brainRepo?.gitRepoUrl,
+            driftProbes,
+            signal || undefined,
+            userScope,
+            selectedSourceKeys,
+            2,
+          );
+          const merged = [...(queryResult.citations || [])];
+          const seenEvidence = new Set(merged.map((citation: any) =>
+            `${citation.id || citation.docId || ''}:${String(citation.evidence || citation.snippet || '').replace(/\s+/g, '').slice(0, 80)}`,
+          ));
+          for (const citation of driftHits) {
+            const key = `${citation.id || citation.docId || ''}:${String(citation.evidence || citation.snippet || '').replace(/\s+/g, '').slice(0, 80)}`;
+            if (seenEvidence.has(key)) continue;
+            seenEvidence.add(key);
+            merged.push({ ...citation, driftNavigation: true });
+          }
+          queryResult = await this.rerankPool(
+            retrieval.query || question,
+            { ...queryResult, citations: merged },
+            true,
+          );
+        }
+        trace.finish('graphrag_drift', 'success', `DRIFT 生成 ${driftProbes.length} 个导航探针`, {
+          probes: driftProbes,
+          communityIds: plan.communityIds,
+          seedEntities: plan.seedEntities,
+        });
+      } catch (err) {
+        trace.finish('graphrag_drift', 'warning', 'DRIFT 导航检索失败，沿用已有证据', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    } else {
+      trace.skip('graphrag_drift', 'GraphRAG DRIFT 导航检索', '问题复杂度或证据状态无需启动 DRIFT');
+    }
 
     // Agentic Multi-Hop ReAct Loop:
     // Evaluate retrieval sufficiency for comparative and multi-hop queries.
     // Automatically executes 2-Hop / 3-Hop sub-query iterations when entity coverage or reasoning steps are missing.
-    const allHopProbes: string[] = [...agenticSubQueries];
-    if (this.agenticRagService && (agenticComplexity === 'multi_hop' || agenticComplexity === 'comparative' || agenticSubQueries.length > 0)) {
+    const allHopProbes: string[] = [...agenticSubQueries, ...driftProbes];
+    const executedProbeSet = new Set<string>([(retrieval.query || question).trim().toLowerCase()]);
+    // Enter the sufficiency loop for *relational* questions too, not only for ones the
+    // planner labels multi-hop/comparative. Measured failure: "When is the date of birth
+    // of the creator of A Burial at Ornans?" is classified 'simple' with no sub-queries,
+    // so no hop ran; the prompt held only the painting's page, the model named Gustave
+    // Courbet from it and then refused the birth date it could not see. Any question
+    // asking for an attribute of an entity named *inside* the documents needs the same
+    // treatment — that is what the relation term signals. The LLM sufficiency judge still
+    // decides whether another hop is actually required, so the cost is one bounded call.
+    const relationTerm = this.extractRelationFromQuery(retrieval.query || question);
+    // Deterministic bridge seed: when the question asks for an attribute (born / creator /
+    // director …), one probe naming the bridge entity found in the first-hop evidence is
+    // what supplies the second hop. Measured failure this fixes: "date of birth of the
+    // creator of A Burial at Ornans" — the sufficiency judge returned "sufficient (80%)"
+    // with only the painting's page in context, the model named Gustave Courbet from it
+    // and then refused the date it could not see. The search path has run this cascade for
+    // a long time; the chat path relied on the judge alone.
+    const bridgeSeeds: string[] = [];
+    if (relationTerm && process.env.RETRIEVAL_CHAT_BRIDGE_SEED !== 'false') {
+      // Deterministic, corpus-grounded candidate set: every capitalised name in the
+      // first-hop evidence that **has its own document** in the authorised scope and is
+      // not already in context. The document check is what makes this precise — regex
+      // extraction alone produced prose fragments (rejected twice on the search path),
+      // while "the evidence names X and a document titled X exists" is a property of the
+      // corpus, not of a regex. It also yields nothing on corpora whose documents are
+      // filenames, so it costs nothing there.
+      // Scan in *score* order, not pool order: pool order is polluted by probe
+      // candidates with ~0.000 scores, and the page that carries the next hop is
+      // often the highest-scoring one. Measured on the Bergen question: "Bergen,
+      // North Holland" scored 0.148 (the best of the pool) but sat at pool
+      // position 8, so the two seed slots went to lower-scored Norway/US pages.
+      // Derived summaries (RAPTOR level-2 / per-document 宏观摘要) are not source
+      // pages: they are machine-written digests that score high, carry no new
+      // entities, and in a bilingual corpus are written in the *other* language.
+      // Measured 2026-09-22 on "…the mother of the person who found the sacred
+      // writings…": the top-scoring citations were Chinese summaries, so the 12-slot
+      // scan produced Chinese prose fragments ("Jack London传记的早年家庭背景部分") and
+      // never reached the page that actually names the bridge entity — while the
+      // probe it would have produced ("Joseph Smith mother") returns the gold
+      // document at rank 1 (score 0.9986). Scan the real source pages first and only
+      // fall back to summaries if there is nothing else.
+      const bridgeScanPool = (queryResult.citations || []);
+      // Same summary test `selectEvidence` uses (text marker *or* provenance flag):
+      // the flags are set where summaries are created but do not survive every
+      // merge/stitch path, so the marker is the reliable signal. Measured
+      // 2026-09-22: at scan time the pool held 151 citations, 0 of them flagged,
+      // while the scan text was full of 【宏观摘要】 digests.
+      const isSummaryCitation = (c: any) =>
+        c?.isSummary === true ||
+        c?.raptor === true ||
+        /【宏观摘要[^】]*】/u.test(String(c?.evidence || c?.snippet || '')) ||
+        /·\s*(?:全文|章节)摘要/u.test(String(c?.docTitle || c?.topic || ''));
+      const sourceCitations = bridgeScanPool.filter((c: any) => !isSummaryCitation(c));
+      if (process.env.CHAT_LOG_BRIDGE_SEED === 'true') {
+        this.logger.log(
+          `[BRIDGE_SCAN] pool=${bridgeScanPool.length} source=${sourceCitations.length} ` +
+            `summaryFlagged=${bridgeScanPool.filter((c: any) => c?.isSummary === true || c?.raptor === true).length}`,
+        );
+      }
+      const bridgeScanOrder = (sourceCitations.length ? sourceCitations : bridgeScanPool)
+        .map((citation: any, index: number) => ({ citation, index, score: Number(citation?.score || 0) }))
+        .sort((a: any, b: any) => b.score - a.score || a.index - b.index)
+        .slice(0, 12);
+      // 16 (was 8): the first eight capitalised spans are often noise, and the real
+      // bridge entity can sit beyond them (measured: "…another work by the author of
+      // Miss Sara Sampson" never reached "Gotthold Ephraim Lessing").
+      const candidates = this.extractCapitalisedCandidates(
+        bridgeScanOrder
+          .map(({ citation }) => String(citation.evidence || citation.snippet || ''))
+          .join('\n'),
+        16,
+      );
+      if (process.env.CHAT_LOG_BRIDGE_SEED === 'true') {
+        this.logger.log(
+          `[BRIDGE_SEED_DEBUG] relation=${relationTerm} candidates=${JSON.stringify(candidates.slice(0, 6))}`,
+        );
+      }
+      const contextTitles = new Set(
+        // Only the evidence that actually formed the hop-1 context counts as "in
+        // context". Using the whole candidate pool meant a document that was
+        // merely *retrieved* (then dropped by selection) suppressed its own
+        // bridge probe — measured on "Who is Magnus Julius De La Gardie's paternal
+        // grandmother?": the father's page (which names Ebba Brahe) sat in the
+        // pool, the seed was skipped, and the answer was never reachable.
+        (queryResult.citations || [])
+          .slice(0, 4)
+          .map((citation: any) =>
+            this.normalizeTitleForMatch(String(citation.docTitle || citation.topic || '')),
+          ),
+      );
+      for (const candidate of candidates) {
+        if (bridgeSeeds.length >= 2) break;
+        if (!candidate || candidate.length < 3) continue;
+        const key = this.normalizeTitleForMatch(candidate);
+        if (!key || contextTitles.has(key) || executedProbeSet.has(candidate.toLowerCase())) {
+          if (process.env.CHAT_LOG_BRIDGE_SEED === 'true') {
+            this.logger.log(
+              `[BRIDGE_SEED_DEBUG] skip ${candidate} (inContext=${contextTitles.has(key)} probed=${executedProbeSet.has(candidate.toLowerCase())})`,
+            );
+          }
+          continue;
+        }
+        try {
+          const match = await this.prisma.document.findFirst({
+            where: {
+              kbId: { in: scope },
+              status: 'published',
+              title: { equals: candidate, mode: 'insensitive' },
+            },
+            select: { id: true },
+          });
+          if (match) {
+            bridgeSeeds.push(candidate);
+          } else if (
+            process.env.RETRIEVAL_CHAT_BRIDGE_MENTION_PROBE !== 'false' &&
+            isStrongNameEntity(candidate)
+          ) {
+            // The answer page is not always *titled* after the bridge entity.
+            //
+            // Measured 2026-09-22 on MuSiQue "Who is the wife of the man who
+            // produced the documentary of the pop star who sings I Want to Rock
+            // with You?": the first-hop page says "produced by his friend, David
+            // Gest", but no document is titled "David Gest" — the answer (Liza
+            // Minnelli) lives on "Liza and David" ("…and her then-husband, David
+            // Gest"). The exact-title gate therefore skipped the only entity that
+            // could reach the answer, and the probe that *does* find it — the
+            // existing "<entity> <relation>" wording — returned "Liza and David"
+            // at rank 1 (score 0.974) whenever it was issued by hand.
+            //
+            // So: a multi-token proper name is probe-worthy on its own. The
+            // precision guard is the shape of the candidate (≥2 capitalised
+            // tokens), not the existence of a same-titled document; single words
+            // and prose fragments stay excluded, which is what the earlier
+            // rejections on the search path were actually about.
+            bridgeSeeds.push(candidate);
+          }
+        } catch {
+          // Lookup failure simply means no seed for this candidate.
+        }
+      }
+      if (bridgeSeeds.length) {
+        trace.warn(
+          'bridge_seed',
+          '桥接实体定向补检',
+          `问题指向关系属性「${relationTerm}」，已准备对首跳证据中的实体定向补检：${bridgeSeeds.join('、')}`,
+          { relation: relationTerm, seeds: bridgeSeeds },
+        );
+      }
+    }
+    const needsHopProbe = Boolean(relationTerm) ||
+      agenticComplexity === 'multi_hop' ||
+      agenticComplexity === 'comparative' ||
+      agenticSubQueries.length > 0;
+    if (this.agenticRagService && needsHopProbe) {
       const executedProbes = new Set<string>([
         (retrieval.query || question).trim().toLowerCase(),
         ...agenticSubQueries.map((q) => q.trim().toLowerCase()),
@@ -3502,14 +3216,37 @@ export class ChatService {
           },
         );
 
-        if (judgment.status === 'sufficient' || judgment.status === 'irrelevant') {
-          break;
-        }
-
-        const nextProbes = (judgment.suggestedFollowUp || [])
+        let nextProbes = (judgment.suggestedFollowUp || [])
           .map((p) => p.trim())
           .filter((p) => p.length >= 2 && !executedProbes.has(p.toLowerCase()))
           .slice(0, 2);
+
+        if (judgment.status === 'sufficient' || judgment.status === 'irrelevant') {
+          // The judge can be wrong when the question asks for an attribute that the
+          // evidence never states (measured: "sufficient (80%)" with the asked fact
+          // absent). If a deterministic bridge seed exists, spend one hop on it before
+          // closing; after that the judge's verdict is respected.
+          // Relation-augmented queries: "North Holland in charge" retrieves the
+          // province page, and "Lessing author" retrieves sibling pages that merely
+          // *mention* the author. The bare entity name is kept as a fallback probe.
+          const relationSuffix = relationTerm ? ` ${relationTerm}` : '';
+          const seeded = bridgeSeeds
+            .filter((seed) => !executedProbes.has(seed.trim().toLowerCase()))
+            .slice(0, 2)
+            .map((seed) => `${seed}${relationSuffix}`.trim());
+          if (currentHop === 1 && seeded.length > 0) {
+            bridgeSeeds.length = 0;
+            nextProbes = seeded;
+            trace.warn(
+              'bridge_seed_probe',
+              '桥接实体补检（裁决保守化）',
+              `充分性裁决为「${judgment.status}」，但问题指向关系「${relationTerm}」的缺失属性，先执行定向补检：${seeded.join('、')}`,
+              { hop: currentHop, seeds: seeded, judgeStatus: judgment.status, confidence: judgment.confidence },
+            );
+          } else {
+            break;
+          }
+        }
 
         if (nextProbes.length === 0) {
           break;
@@ -3566,7 +3303,7 @@ export class ChatService {
         }
 
         // Re-rerank across the enriched candidate pool
-        queryResult = await this.applyRerank(
+        queryResult = await this.rerankPool(
           retrieval.query || question,
           queryResult,
           retrieval.breadth,
@@ -3591,6 +3328,39 @@ export class ChatService {
         queryResult = { ...queryResult, citations: stitchedInput };
       }
     }
+    // Snapshot of the candidate pool *before* the relevance-floor / group-MMR
+    // selection. The second-hop rescue below can only add back evidence that
+    // retrieval already found; it never invents or re-fetches anything.
+    const preSelectionCitations = (queryResult.citations || []).slice();
+    if (process.env.CHAT_LOG_CONTEXT_PREVIEW === 'true' && process.env.CHAT_LOG_POOL_PREVIEW === 'true') {
+      // Evaluation instrumentation: the answer path builds its own candidate pool
+      // (query decomposition + bridge probes + fallback chunks), which is *not*
+      // necessarily the pool /chat/search returns. Diagnosing "is the answering
+      // passage even in this path's pool?" needs this listing.
+      this.logger.log(
+        `[POOL_PREVIEW] size=${preSelectionCitations.length} :: ` +
+          preSelectionCitations
+            .slice(0, 15)
+            .map((c: any, i: number) => `${i + 1}.${String(c.docTitle || c.topic || '?').slice(0, 40)}(${Number(c.score || 0).toFixed(3)})`)
+            .join(' | '),
+      );
+      if (process.env.CHAT_LOG_POOL_TEXT_FULL === 'true') {
+        preSelectionCitations.slice(0, 25).forEach((c: any, i: number) => {
+          this.logger.log(
+            `[POOL_TEXT_FULL] #${i + 1} ${String(c.docTitle || c.topic || '?').slice(0, 30)} :: ` +
+              String(c.context || c.snippet || c.evidence || '').replace(/\s+/g, ' '),
+          );
+        });
+      }
+      if (process.env.CHAT_LOG_POOL_TEXT === 'true') {
+        preSelectionCitations.slice(0, 25).forEach((c: any, i: number) => {
+          this.logger.log(
+            `[POOL_TEXT] #${i + 1} ${String(c.docTitle || c.topic || '?').slice(0, 40)} :: ` +
+              String(c.context || c.snippet || c.evidence || '').replace(/\s+/g, ' ').slice(0, 300),
+          );
+        });
+      }
+    }
     queryResult = this.selectEvidence(queryResult, {
       breadth: retrieval.breadth,
       tokenBudget: resolveContextTokenBudget({
@@ -3600,7 +3370,226 @@ export class ChatService {
         evidenceCount: queryResult.citations?.length || 0,
       }),
       subQueries: allHopProbes,
+      question,
     });
+    // ── Second-hop rescue ────────────────────────────────────────────────
+    // The selection is driven by cross-encoder scores computed against the
+    // *whole* question, so hop-2 evidence (which is about the intermediate
+    // entity, not about the question) loses to hop-1 by an order of magnitude
+    // and is pruned. When the already-selected hop-1 text names an entity that
+    // has its own document still sitting in the pool, that document is the
+    // bridge the question needs — add it back (bounded, exact title match,
+    // never for names already in the question). See bridge-rescue.ts.
+    const preSelectionPool = preSelectionCitations;
+    if (process.env.RETRIEVAL_CHAT_BRIDGE_RESCUE !== 'false' && preSelectionPool.length) {
+      const selectedTexts = (queryResult.citations || [])
+        .slice(0, 4)
+        .map((c: any) => String(c.evidence || c.snippet || c.context || ''))
+        .filter(Boolean);
+      const plan = planSecondHopRescue({
+        selectedTexts,
+        pool: preSelectionPool.map((c: any) => ({
+          title: c.docTitle || c.topic || '',
+          text: String(c.evidence || c.snippet || c.context || ''),
+          ...c,
+        } as any)),
+        question,
+        maxRescue: Number(process.env.RETRIEVAL_BRIDGE_RESCUE_MAX || 2),
+      });
+      if (plan.indices.length) {
+        const alreadySelected = new Set(
+          (queryResult.citations || []).map((c: any) =>
+            String(c.evidence || c.snippet || '').replace(/\s+/g, '').slice(0, 30),
+          ),
+        );
+        const rescued: any[] = [];
+        for (const index of plan.indices) {
+          const citation = preSelectionPool[index];
+          const key = String(citation?.evidence || citation?.snippet || '').replace(/\s+/g, '').slice(0, 30);
+          if (!key || alreadySelected.has(key)) continue;
+          alreadySelected.add(key);
+          rescued.push({
+            ...citation,
+            floorExempt: true,
+            floorExemptReason: 'multi_hop_bridge',
+            bridgeRescue: true,
+          });
+        }
+        if (rescued.length) {
+          queryResult = { ...queryResult, citations: [...(queryResult.citations || []), ...rescued] };
+          this.logger.log(
+            `[BRIDGE_RESCUE] +${rescued.length} doc(s) from pool (${preSelectionPool.length}) for entities: ` +
+              `${plan.names.join(', ')} | missing aspects: ${plan.missingAspects.join(', ')} | ` +
+              `docs: ${rescued.map((c: any) => c.docTitle || c.topic).join(', ')}`,
+          );
+          trace.warn(
+            'bridge_rescue',
+            '第二跳桥接证据救援',
+            `首跳证据点名的实体 ${plan.names.join('、')} 在候选池中拥有独立文档，已补回答案上下文（${rescued.length} 条）`,
+            { names: plan.names, rescued: rescued.length, poolSize: preSelectionPool.length },
+          );
+        }
+      }
+    }
+    // ── Passage completeness for the documents selection already trusts ──
+    // The gold page can be in context (and cited) while the gold *passage*
+    // never is: the selected chunk is another section. For the leading
+    // documents, pull their next-best chunk from the same pool. No new
+    // document enters the context, so relevance ordering is untouched.
+    // OPT-IN: measured harmful on the targeted failure sets (HotpotQA 7/20 -> 2/20,
+    // MuSiQue 2/24 -> 1/24; only 2Wiki improved 1/16 -> 2/16). Adding more
+    // passages from the same page lengthens the context without adding a new
+    // document, and the extra text diluted the model's attention more than the
+    // recovered passage helped. Kept behind a flag as a documented negative
+    // result, not as a default.
+    if (process.env.RETRIEVAL_DOC_COMPLETENESS === 'true' && preSelectionPool.length > 1) {
+      const completion = planDocumentCompleteness({
+        selected: (queryResult.citations || []) as any[],
+        pool: preSelectionPool as any[],
+        maxDocs: Number(process.env.RETRIEVAL_DOC_COMPLETENESS_DOCS || 3),
+        maxPerDoc: Number(process.env.RETRIEVAL_DOC_COMPLETENESS_PER_DOC || 1),
+      });
+      const already = new Set(
+        (queryResult.citations || []).map((c: any) =>
+          String(c.evidence || c.snippet || '').replace(/\s+/g, '').slice(0, 30),
+        ),
+      );
+      const extras: any[] = [];
+      for (const index of completion.indices) {
+        const citation = preSelectionPool[index];
+        const key = String(citation?.evidence || citation?.snippet || '').replace(/\s+/g, '').slice(0, 30);
+        if (!key || already.has(key)) continue;
+        already.add(key);
+        extras.push({ ...citation, docCompleteness: true });
+      }
+      if (extras.length) {
+        queryResult = { ...queryResult, citations: [...(queryResult.citations || []), ...extras] };
+        this.logger.log(
+          `[DOC_COMPLETENESS] +${extras.length} chunk(s) from ${completion.docs.length} already-selected document(s): ` +
+            `${extras.map((c: any) => c.docTitle || c.topic).join(', ')}`,
+        );
+        trace.warn(
+          'doc_completeness',
+          '页面内段落补全',
+          `已选文档中补入 ${extras.length} 个次优片段（避免“页面进来了、关键段落没进来”）`,
+          { added: extras.length, docs: completion.docs },
+        );
+      }
+    }
+    // ── Rank-based safety net for leading documents ──────────────────────
+    // Measured (2026-09-21, two multi-hop questions): the answering chunk sat at
+    // pool rank 4 of 50 in a *second* document, and the score-ratio floor pruned
+    // it because bridge evidence scores ~0.06 against the full question while the
+    // hop-1 page scores ~0.8. The context was left with 3-6 chunks of the top
+    // document and the model correctly reported "not in the materials".
+    // Retrieval already ranked those documents inside the corpus top-5; dropping
+    // every chunk of a leading document is a much worse error than carrying one
+    // possibly-irrelevant document. Restore distinct leading documents only —
+    // never a second passage of a document already represented.
+    if (process.env.RETRIEVAL_TOP_RANK_GUARANTEE !== 'false' && preSelectionPool.length > 1) {
+      const plan = planTopRankGuarantee({
+        selected: (queryResult.citations || []) as any[],
+        pool: preSelectionPool as any[],
+        topDocs: Number(process.env.RETRIEVAL_TOP_RANK_DOCS || 5),
+      });
+      if (plan.indices.length) {
+        const already = new Set(
+          (queryResult.citations || []).map((c: any) =>
+            String(c.evidence || c.snippet || '').replace(/\s+/g, '').slice(0, 30),
+          ),
+        );
+        const restored: any[] = [];
+        for (const index of plan.indices) {
+          const citation = preSelectionPool[index] as any;
+          const key = String(citation?.evidence || citation?.snippet || '').replace(/\s+/g, '').slice(0, 30);
+          if (!key || already.has(key)) continue;
+          already.add(key);
+          restored.push({ ...citation, topRankGuarantee: true });
+        }
+        if (restored.length) {
+          queryResult = { ...queryResult, citations: [...(queryResult.citations || []), ...restored] };
+          this.logger.log(
+            `[TOP_RANK_GUARANTEE] +${restored.length} leading document(s) restored: ` +
+              `${restored.map((c: any) => c.docTitle || c.topic).join(', ')}`,
+          );
+          trace.warn(
+            'top_rank_guarantee',
+            '头部文档保底',
+            `检索前 ${Number(process.env.RETRIEVAL_TOP_RANK_DOCS || 5)} 名中有 ${restored.length} 篇文档被相关性地板剪掉，已恢复进上下文`,
+            { restored: restored.length, docs: plan.docs },
+          );
+        }
+      }
+    }
+    // ── Aspect-targeted passage rescue ───────────────────────────────────
+    // The answering passage often scores *low* against the full question (it is
+    // about the intermediate entity), so nothing score-based will reach it.
+    // This picks, inside documents selection already trusted, the chunk that
+    // covers the question aspects the context is currently missing. It never
+    // introduces a new document — only a different passage of the same one.
+    // OPT-IN: measured harmful in both forms on the 60-question targeted failure
+    // set (baseline 9 correct / append 5 / swap 5). Aspect-word matching finds
+    // passages that *mention* an aspect without answering the question, and the
+    // selection it perturbs was already better calibrated than the keyword
+    // signal. Kept behind a flag as a documented negative result.
+    if (process.env.RETRIEVAL_ASPECT_PASSAGE_RESCUE === 'true' && preSelectionPool.length > 1) {
+      const plan = planAspectPassageRescue({
+        selected: (queryResult.citations || []) as any[],
+        pool: preSelectionPool as any[],
+        question,
+        maxDocs: Number(process.env.RETRIEVAL_ASPECT_RESCUE_DOCS || 4),
+        maxAdditions: Number(process.env.RETRIEVAL_ASPECT_RESCUE_MAX || 2),
+      });
+      const already = new Set(
+        (queryResult.citations || []).map((c: any) =>
+          String(c.evidence || c.snippet || '').replace(/\s+/g, '').slice(0, 30),
+        ),
+      );
+      const passages: any[] = [];
+      for (const index of plan.indices) {
+        const citation = preSelectionPool[index] as any;
+        const key = String(citation?.evidence || citation?.snippet || '').replace(/\s+/g, '').slice(0, 30);
+        if (!key || already.has(key)) continue;
+        already.add(key);
+        passages.push({ ...citation, aspectRescue: true, docCompleteness: true });
+      }
+      if (passages.length) {
+        // Two ways to use the located passage, and the difference is measured:
+        //   append (default earlier): context grows — measured harmful on the
+        //     targeted failure sets (HotpotQA 5/20 → 3/20, MuSiQue 3/24 → 1/24);
+        //   swap: context length is unchanged, the *weakest* selected citations
+        //     are traded for passages that cover the missing question aspects.
+        // Keep the length constant and let the aspect signal decide what leaves.
+        const mode = String(process.env.RETRIEVAL_ASPECT_RESCUE_MODE || 'swap').toLowerCase();
+        if (mode === 'append') {
+          queryResult = { ...queryResult, citations: [...(queryResult.citations || []), ...passages] };
+        } else {
+          const kept = (queryResult.citations || []).slice();
+          const victims = kept
+            .map((citation: any, index: number) => ({ citation, index, score: Number(citation?.score || 0) }))
+            .sort((a: any, b: any) => a.score - b.score)
+            .slice(0, passages.length);
+          const victimIndexes = new Set(victims.map((v: any) => v.index));
+          const survivors = kept.filter((_: any, index: number) => !victimIndexes.has(index));
+          queryResult = { ...queryResult, citations: [...survivors, ...passages] };
+          this.logger.log(
+            `[ASPECT_RESCUE] swapped ${passages.length} citation(s) ` +
+              `(${victims.map((v: any) => v.citation?.docTitle || v.citation?.topic).join(', ')}) ` +
+              `for aspect-covering passages`,
+          );
+        }
+        this.logger.log(
+          `[ASPECT_RESCUE] ${passages.length} passage(s) for missing aspects [${plan.aspects.join(', ')}] from ` +
+            `${plan.docs.join(', ')} | docs: ${passages.map((c: any) => c.docTitle || c.topic).join(', ')}`,
+        );
+        trace.warn(
+          'aspect_rescue',
+          '要点定向段落补入',
+          `已选文档内按缺失要点 [${plan.aspects.join('、')}] 定位到 ${passages.length} 个段落并补入上下文`,
+          { added: passages.length, aspects: plan.aspects, docs: plan.docs },
+        );
+      }
+    }
     const afterSelect = queryResult.citations?.length || 0;
     trace.finish(
       "evidence_selection",
@@ -3702,6 +3691,7 @@ export class ChatService {
                 snippet: cd.chunks[0].content.slice(0, 300),
                 context: cd.chunks.map((c: any) => c.content).join("\n\n"),
                 score: 0.999,
+                scoreSource: "synthetic",
                 isCompiledTruth: true,
                 evidence: `[编译真理/即时直通] 《${cd.title}》已于当次会话完成最新编译并回填`,
               });
@@ -3959,11 +3949,60 @@ export class ChatService {
 
     trace.start("answer_context", "回答上下文组装", "从授权证据页组装可引用的回答上下文");
     const stitchedCitations = this.stitchContiguousCitations(citations);
-    const orderedCitations = stitchedCitations.length > 3 ? this.reorderLostInTheMiddle(stitchedCitations) : stitchedCitations;
+    const structuredEvidencePlan = planStructuredEvidence(stitchedCitations, {
+      complexity: agenticComplexity,
+      subQueries: allHopProbes,
+      enabled: process.env.CHAT_STRUCTURED_EVIDENCE !== 'false',
+    });
+    let orderedCitations = structuredEvidencePlan.groups.length > 0
+      ? structuredEvidencePlan.citations
+      : (stitchedCitations.length > 3 ? this.reorderLostInTheMiddle(stitchedCitations) : stitchedCitations);
+    // Hard cap on the assembled context.
+    //
+    // Evidence selection applies a token budget, but it is a soft one: the first
+    // group always fits, sub-query coverage injections may exceed it, and each
+    // citation is truncated to CHAT_CHUNK_MAX_CHARS (6000) independently. A
+    // pathological multi-hop query could therefore assemble a prompt far larger
+    // than the budget it was told it had. This is the final bound, applied to the
+    // exact string that goes to the model.
+    const contextBudget = resolveContextTokenBudget({
+      breadth: retrieval.breadth,
+      complexity: agenticComplexity,
+      subQueryCount: allHopProbes.length,
+      evidenceCount: orderedCitations.length,
+    });
+    const configuredHardCap = Number(process.env.RETRIEVAL_CONTEXT_TOKEN_HARD_CAP || 0);
+    const contextHardCap = configuredHardCap > 0
+      ? Math.max(1000, configuredHardCap)
+      : Math.ceil(contextBudget * Number(process.env.RETRIEVAL_CONTEXT_HARD_CAP_RATIO || 1.25));
+    const boundedEvidence = fitStructuredEvidenceToBudget(
+      orderedCitations,
+      buildEvidenceReasoningGroups(orderedCitations),
+      {
+        hardCap: contextHardCap,
+        structured: structuredEvidencePlan.groups.length > 0,
+        textOf: (citation: any) => String(citation?.context || citation?.snippet || citation?.evidence || ''),
+        normalizeText: extractRawChunkText,
+        truncate: (text, tokenBudget) => truncateChunkToTokenBudget(text, tokenBudget),
+      },
+    );
+    orderedCitations = boundedEvidence.citations;
+    const contextTokensUsed = boundedEvidence.usedTokens;
+    const hardCapDropped = boundedEvidence.dropped;
+    const hardCapTruncated = boundedEvidence.truncated;
+    if (hardCapDropped > 0 || hardCapTruncated > 0) {
+      this.logger.warn(
+        `Answer context bounded to ${contextHardCap} tokens: truncated ${hardCapTruncated} and dropped ${hardCapDropped} citation(s), keeping ${orderedCitations.length}.`,
+      );
+    }
     queryResult.citations = orderedCitations;
     this.logger.warn('[PROMPT_SOURCES] ' + orderedCitations.map((c: any, i: number) => `[${i + 1}] ${c.docTitle}`).join(' | '));
     const isEnglishQuery = !/[\u4e00-\u9fa5]/.test(question);
-    let compiledTruthContext = orderedCitations.length > 0
+    const evidenceReasoningGroups = buildEvidenceReasoningGroups(orderedCitations);
+    const evidenceReasoningMap = structuredEvidencePlan.groups.length > 0
+      ? formatEvidenceReasoningMap(evidenceReasoningGroups, isEnglishQuery)
+      : '';
+    const sourceContext = orderedCitations.length > 0
       ? orderedCitations
           .map((cit: any, idx: number) => {
             const title = cit.docTitle || cit.topic || (isEnglishQuery ? `Reference Document ${idx + 1}` : `参考文档 ${idx + 1}`);
@@ -3982,29 +4021,32 @@ export class ChatService {
                   ? (isEnglishQuery ? " [Scope Intelligence / 派生智库]" : " 【Scope派生智库】")
                   : "");
             const sourcePrefix = isEnglishQuery ? `【Source ${idx + 1} / 来源 ${idx + 1}】` : `【来源 ${idx + 1}】`;
+            if (process.env.CHAT_LOG_CONTEXT_PREVIEW === 'true') {
+              // Opt-in evaluation instrumentation: lets a failing multi-hop case
+              // be classified as "the passage never reached the context" versus
+              // "the passage was in the context but the model did not use it".
+              // Without this the two are indistinguishable from the outside and
+              // the next fix would be guesswork.
+              this.logger.log(
+                `[CTX_PREVIEW] [${idx + 1}] ${String(title).slice(0, 60)} :: ` +
+                  String(content || '')
+                    .replace(/\s+/g, ' ')
+                    .slice(0, Math.max(200, Number(process.env.CHAT_LOG_CONTEXT_PREVIEW_CHARS || 400))),
+              );
+            }
             return `${sourcePrefix}${truthTag}《${title}》${kbName}${pageInfo}${articleInfo}${section}\n${content}`;
           })
           .join("\n\n---\n\n")
       : (queryResult.answer || "No truth found for this topic.");
+    let compiledTruthContext = evidenceReasoningMap
+      ? `${evidenceReasoningMap}\n\n${sourceContext}`
+      : sourceContext;
     if (versionConflictNote) {
       compiledTruthContext += `\n\n${versionConflictNote.trim()}`;
     }
-    const isRelationshipQuery =
-      process.env.ENABLE_GRAPHRAG_CONTEXT === "true" ||
-      /(?:替代|废止|取代|作废|失效|继承|属于哪个|归哪个|哪个部门|主管|依赖|修订|修正|关系|架构|层级|下级|上级|包含)/u.test(question) ||
-      agenticComplexity === "comparative" ||
-      agenticComplexity === "multi_hop";
-    if (this.graphRagService && scope.length > 0 && isRelationshipQuery) {
-      try {
-        const localGraph = await this.graphRagService.searchLocalGraph(scope, retrieval.query || question, 4);
-        if (localGraph.formattedContext) {
-          const boundedGraph = localGraph.formattedContext.slice(0, 800);
-          compiledTruthContext += `\n\n${boundedGraph}`;
-        }
-      } catch (err) {
-        this.logger.debug(`GraphRAG search omitted: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
+    // GraphRAG participates through provenance-bound source chunks in the RRF
+    // and hop-retrieval arms. Never append formatted graph prose directly: it
+    // has no citation index and would bypass the sentence grounding gate.
     const stitchDiff = citations.length - stitchedCitations.length;
     trace.finish(
       "answer_context",
@@ -4012,7 +4054,20 @@ export class ChatService {
       orderedCitations.length > 0
         ? `已组装 ${orderedCitations.length} 条可引用证据${stitchDiff > 0 ? `（已自动缝合 ${stitchDiff} 个相邻切片）` : ""}`
         : "没有可引用证据，仅返回检索空结果说明",
-      { citationCount: orderedCitations.length, contextChars: compiledTruthContext.length, stitchedCount: stitchDiff },
+      {
+        citationCount: orderedCitations.length,
+        contextChars: compiledTruthContext.length,
+        stitchedCount: stitchDiff,
+        structuredEvidence: evidenceReasoningMap.length > 0,
+        evidenceGroups: evidenceReasoningGroups.map((group) => ({
+          kind: group.kind,
+          label: group.label,
+          sourceIndexes: group.sourceIndexes,
+        })),
+        hardCapDropped,
+        hardCapTruncated,
+        protectedEvidenceCount: boundedEvidence.protectedEvidenceCount,
+      },
     );
 
     this.logger.debug(
@@ -4027,16 +4082,42 @@ export class ChatService {
       !queryResult.answer.includes("No truth found");
 
     const fastRefusalFloor = Number(process.env.RETRIEVAL_FAST_REFUSAL_THRESHOLD || 0.25);
-    const maxEvidenceScore = orderedCitations.reduce((max: number, c: any) => {
-      // Missing scores are unknown, not perfect evidence. Treating them as 1
-      // allowed unscored candidates to bypass the hallucination refusal gate.
-      const s = Number(c?.relevanceScore ?? c?.rerankScore ?? c?.score ?? 0);
-      return Number.isFinite(s) ? Math.max(max, s) : max;
-    }, 0);
+    // Missing scores are unknown, not perfect evidence: treating them as 1 used
+    // to let unscored candidates bypass the hallucination gate.
+    //
+    // Synthetic scores (min-max normalised fallback arm, RAPTOR clamps, fixed
+    // 0.88/0.999 placement constants) are excluded here. They are comparable to
+    // each other for ordering, but the min-max arm always awards its top hit
+    // 0.95, so including them made this gate clearable by construction — i.e.
+    // the "fast refusal" never fired exactly when retrieval was weakest.
+    const { maxCalibrated, maxSynthetic } = evidenceConfidenceScores(orderedCitations);
+    const scoreCalibrated = maxCalibrated !== null;
+    // Without a calibrated score the deployment has no reranker configured (or
+    // it failed), so the only available number is a synthetic placement
+    // constant. The gate then degrades to "did retrieval return anything at
+    // all" and says so in the trace instead of pretending to be a confidence
+    // measurement.
+    const maxEvidenceScore = maxCalibrated ?? maxSynthetic ?? 0;
+    const evidenceFloor = scoreCalibrated
+      ? fastRefusalFloor
+      : Number(process.env.RETRIEVAL_FAST_REFUSAL_SYNTHETIC_THRESHOLD || fastRefusalFloor);
 
     const hasSufficientEvidence =
       hasMeaningfulPreAnswer ||
-      (orderedCitations.length > 0 && maxEvidenceScore >= fastRefusalFloor);
+      (orderedCitations.length > 0 && maxEvidenceScore >= evidenceFloor);
+
+    if (!scoreCalibrated && orderedCitations.length > 0) {
+      trace.warn(
+        "retrieval_confidence",
+        "置信度门禁降级",
+        "本次没有可用的重排分数（未配置重排模型或重排失败），拒答阈值只能作用于合成分，判定能力已降级",
+        {
+          evidenceCount: orderedCitations.length,
+          maxSyntheticScore: maxEvidenceScore,
+          syntheticThreshold: evidenceFloor,
+        },
+      );
+    }
 
     if (!hasSufficientEvidence) {
       const refusalMessage = isEnglishQuery
@@ -4054,7 +4135,8 @@ export class ChatService {
           fastRefusal: true,
           evidenceCount: orderedCitations.length,
           maxScore: maxEvidenceScore,
-          threshold: fastRefusalFloor,
+          threshold: evidenceFloor,
+          scoreCalibrated,
         },
       );
       await this.emitCitationsAndComplete(
@@ -4107,6 +4189,10 @@ export class ChatService {
       // Compress (not truncate) the conversation: recent turns stay verbatim
       // for pronoun resolution, older turns become short extractive digests so
       // facts/decisions from earlier in a long thread are not silently lost.
+      const priorConversationTurnCount = conversationHistory.filter(
+        (message) =>
+          !(message.role === "user" && message.content === question),
+      ).length;
       const priorConversation = compressConversationHistory(
         conversationHistory.filter(
           (message) =>
@@ -4138,7 +4224,7 @@ export class ChatService {
 1. [Citation Tags Required]: In your answer, every factual statement, entity relationship, metric, or core conclusion MUST end with citation tags like [1], [2], corresponding strictly to the provided sources (e.g. [1] for [Source 1], [2] for [Source 2]).
 2. [Language Consistency]: The user asked in English, so you MUST respond entirely in English. Preserve original entity names. Do NOT use Chinese.
 3. [Grounded & Layered Answers]:
-- If the reference materials contain partial or related facts (e.g. entity background, relationships, birth place, or known attributes), prioritize presenting all confirmed facts with citations. Clearly state what is confirmed. If a specific sub-attribute (e.g. exact burial place) is not mentioned in the text, state what IS known from the materials (e.g. the person's birth place or career) and note that the specific sub-detail is not explicitly recorded. Never refuse when relevant facts exist.
+- If the reference materials contain partial or related facts (for example a related item, an adjacent attribute, or a broader statement that covers the question), present every confirmed fact with citations and state plainly which part is confirmed. If one requested detail is absent, say what IS documented and note that the remaining detail is not recorded in the materials. Never refuse when relevant facts exist.
 - Only if the reference materials contain completely zero relevant information, reply: "Based on the provided reference materials, the relevant information is not available."
 4. [Counterfactual & Adversarial Robustness]: If the user query contains ungrounded assumptions, false premises, or fictional entities not attested in the reference materials, explicitly state that the reference materials do not support the premise or contain no such record. Never hallucinate to satisfy the premise.
 5. [Direct, Concise & Focused Answers (Direct Answer Inversion)]:
@@ -4148,11 +4234,11 @@ export class ChatService {
         : `你是一个专业的企业级知识库智能助手。请严格基于下方给出的【参考知识库资料】回答用户的问题。
 
 【重要回答规范】：
-1. 【必须标注引用角标】：在回答正文中，每一处陈述具体事实、业务范围、规章制度、技术指标、数据或核心结论时，必须在对应陈述的末尾标注对应的引用角标，格式为 [1]、[2] 等（严格与提供的【来源 1】、【来源 2】编号对应）。例如：“中通服节能的核心业务包括数据中心绿色化与液冷技术应用[1]。”
-2. 【证据收敛与指标完整性】：参考资料是候选证据，只使用直接支持当前问题的来源。在回答技术指标、响应时间、性能参数、数值或处罚标准时，若资料在同一规定或句子中说明了多项关联指标或条件（例如伴随的可用性百分比、阈值、连带责任等），必须完整列出全部关联指标和要求（如“响应时间800毫秒，可用性不低于99.95%”），严禁遗漏任何并列参数。
+1. 【必须标注引用角标】：在回答正文中，每一处陈述具体事实、业务范围、规章制度、技术指标、数据或核心结论时，必须在对应陈述的末尾标注对应的引用角标，格式为 [1]、[2] 等（严格与提供的【来源 1】、【来源 2】编号对应）。例如：“该项业务的范围包括……[1]。”（示例仅示范角标位置与格式，内容以参考资料为准。）
+2. 【证据收敛与指标完整性】：参考资料是候选证据，只使用直接支持当前问题的来源。当资料在同一规定或句子中说明了多项关联指标或条件（例如一个数值伴随的阈值、单位、百分比或连带条件等），必须完整列出全部关联指标和要求，严禁遗漏任何并列参数。
 3. 【章节目录全景列举】：当用户询问有哪些章、全部章名或结构目录时，请务必根据参考资料中出现的各章标题，完整列出全部章节序号与名称，直接给出明确清单，严禁使用“无法提供”、“未提供完整章名”等推脱或拒答词汇。
-4. 【表格行记录与关键锚点事实并存处理】：若参考资料中同时存在表格行记录与关键锚点事实说明（例如表格行中某员工绩效记录为B或设备周期为7天，而关键事实/锚点事实注明该员工绩效为A或设备周期为30天），必须在回答中完整陈述这两种事实（例如明确指出：花名册表格行记录显示绩效为B，但关键锚点事实说明其绩效为A），严禁漏提任一事实。
-5. 【多源对比与冲突完整呈现】：当参考资料中存在多份文件、不同版本或多项制度对同一事项（如上下班时间、作息安排、工时标准、审批权限、考勤规定等）存在不同规定或潜在冲突时，必须同时且完整列出各份文件的具体规定内容（包括具体时间、数值、标准与文档名称），并清晰对比其条文差异与适用背景（例如说明新旧版本差异、生效日期与适用范围）。严禁只选择其中一份而忽略另一份。
+4. 【表格行记录与关键锚点事实并存处理】：若参考资料中同时存在表格行记录与正文/关键锚点事实，且两者对同一事项的表述不一致，必须在回答中完整陈述这两种事实（明确说明“表格第 N 行记录为 X，而正文/锚点事实为 Y”），严禁只提到其中一处。
+5. 【多源对比与冲突完整呈现】：当参考资料中存在多份文件、不同版本或不同条款对同一事项存在不同规定或潜在冲突时，必须同时且完整列出各份文件的具体规定内容（包括具体数值、标准与文档名称），并清晰对比其差异与适用背景（例如说明版本差异、生效日期与适用范围）。严禁只选择其中一份而忽略另一份。
 6. 【多源合并】：若多个来源共同支持某一相同结论，可合并标注如 [1][2]。严禁捏造未在参考资料中提供的引用编号；可用编号严格限制在参考资料实际提供的来源序号范围内。
 7. 【客观真实与分层回答】：
 - 若参考资料完全不包含与问题相关的信息，请统一回复：“已知知识库资料中未包含相关信息，无法回答该问题。”严禁在拒答或未找到信息时复述、回显用户问题中的代号、机密编号或专有名词。
@@ -4160,7 +4246,7 @@ export class ChatService {
 8. 【语言一致性】：如果用户使用英文提问，请务必使用英文作答（如无法回答时使用 'Based on the provided reference materials, the relevant information is not available.'），并保留原实体英文名称。
 9. 【反事实与诱导性提问甄别】：若用户提问中包含假设性事实、诱导性错误前提（如询问不存在的人物关系、虚构的机构或篡改的事件时间），而参考资料中明确未提及或与事实相反，必须明确指出参考资料中无此记载或前提不成立，严禁顺从提问中的错误设定进行虚构脑补。
 10. 【开门见山、结论先行】：
-- 回答第一句必须开门见山，用简明直接的语言（10~30字以内）直接给出最核心的结论、明确答案、实体或具体数值，并紧随其标注引用角标（如“根据规定，差旅住宿标准为每日450元[1]。”）。
+- 回答第一句必须开门见山，用简明直接的语言（10~30字以内）直接给出最核心的结论、明确答案、实体或具体数值，并紧随其标注引用角标（示例格式：“根据规定，该项标准为……[1]。”，具体内容以参考资料为准）。
 - 严禁在开头堆砌“根据您提供的参考资料，我为您查询到以下信息……”等无意义的客套废话或免责套话。
 - 首句给出明确结论后，后续段落再展开陈述支撑依据、计算过程或细分条款说明。`;
 
@@ -4182,6 +4268,8 @@ export class ChatService {
       // Section 3: Dynamic directives (inventory / truth priority)
       // Section 4: Turn-varying prior conversation & personal memory (changes per turn, placed at tail)
       const systemMessageContent = `${staticSystemRules}
+
+${process.env.CHAT_REFUSAL_DISCIPLINE === 'true' ? `【拒答纪律·必须先核对再拒答】：在给出“未包含相关信息/无法回答”这类结论之前，必须先在参考资料中逐条核对：是否存在任何与问题主体相关的句子？只要存在哪怕部分相关的事实，就必须先完整陈述这些已证实的事实（标注角标），再明确指出资料未覆盖的部分；只有在参考资料与问题主体完全无关时才允许整句拒答。` : ''}
 
 ${isEnglishQuery ? "【Reference Knowledge Base Materials】" : "【参考知识库资料】"}：
 ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n${dynamicDirectives}` : ""}${priorConversation ? `\n\n历史对话参考（仅供消歧，以当前知识库资料为准）：\n${priorConversation}` : ""}${personalMemoryBlock ? `\n\n${personalMemoryBlock}` : ""}`;
@@ -4245,10 +4333,41 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
           tagged: valid.length > 0,
         };
       };
-      const isRefusalSentence = (sentence: string) =>
-        /(未包含相关信息|无法(?:根据知识库)?回答|不知道|无法提供(?:该信息)?|not available|cannot answer|not provided|no information|insufficient information|does not contain)/i.test(sentence);
+      // Citation re-binding.
+      //
+      // A model occasionally answers from the right source but stamps the
+      // wrong marker (observed in production: the 王群丽 answer cited [1] - a
+      // weekly-report PDF - while the teacher's document was 来源 7). The
+      // retrieval, the evidence selection and the prompt numbering were all
+      // correct; only the marker was wrong, and the user was shown a citation
+      // for a document that does not contain the fact.
+      //
+      // The pool used to build the prompt is still in memory, so the marker can
+      // be repaired deterministically instead of reported: find the evidence
+      // item that actually supports the sentence and re-point the marker at it.
+      // Only when no selected evidence supports the sentence is it treated as
+      // unsupported (held back in strict mode, warned about otherwise).
+      let reboundCitations = 0;
+      const rebindMarkers = (sentence: string): string | null => {
+        const rebound = rebindCitationMarkers(sentence, queryResult.citations || []);
+        if (!rebound) return null;
+        reboundCitations += 1;
+        return rebound.sentence;
+      };
+      // One refusal vocabulary for the whole pipeline: the gate used to run its
+      // own narrower regex, so answers phrased "is not recorded / not specified"
+      // were not even recognised as refusals — which silently disabled the
+      // refusal re-check (measured: 1 trigger in 9 refusal-shaped cases).
+      const isRefusalSentence = (sentence: string): boolean =>
+        sentence.trim().length > 0 && isRefusalAnswerText(sentence);
       const heldSentences: string[] = [];
+      // Refusals are held (not streamed) so a focused second pass can still
+      // replace them: measured on 30 failed multi-hop questions, 15 had the
+      // gold sentence inside the assembled context and the model refused anyway.
+      const heldRefusals: string[] = [];
       let gateVerifiedCount = 0;
+      let providerErrorSeen = false;
+      let synthesizedRefusal = false;
       const emitVerified = (sentence: string) => {
         gateVerifiedCount++;
         totalTokens += estimateTokens(sentence);
@@ -4256,8 +4375,33 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
         subscriber.next({ data: { type: 'delta', content: sentence, delta: sentence } });
       };
       const gateSentence = (sentence: string) => {
+        // Transport failures are not answers. An upstream gateway once returned
+        // "The request was rejected because it was considered high risk" inside
+        // the answer stream, and the sentence was displayed to the user as the
+        // answer to a MuSiQue question (see output-hygiene.ts).
+        if (isProviderErrorText(sentence)) {
+          this.logger.warn(`Provider error text intercepted before display: ${sentence.slice(0, 80)}`);
+          providerErrorSeen = true;
+          return;
+        }
+        if (isRefusalSentence(sentence)) {
+          heldRefusals.push(sentence);
+          return;
+        }
+        // Scratchpad voice and question echoes are not answers. Both reached users
+        // through the streaming gate (measured 2026-09-21: an answer ended with
+        // `First, the user asked: "Who was the first president …`). The same
+        // hygiene rules already guard the recovery paths; apply them per sentence.
+        if (
+          isPlanningLikeText(sentence) ||
+          looksLikeQuestionEcho(sentence, question) ||
+          looksLikeMetaDiscourse(sentence)
+        ) {
+          this.logger.warn(`Scratchpad/echo sentence dropped before display: ${sentence.slice(0, 80)}`);
+          return;
+        }
         const body = sentence.replace(/\[\d+\]/g, ' ');
-        if (body.replace(/\s+/g, '').length < 5 || isRefusalSentence(sentence)) {
+        if (body.replace(/\s+/g, '').length < 5) {
           emitVerified(sentence);
           return;
         }
@@ -4274,6 +4418,18 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
           tagged ? texts : allEvidenceTexts(),
           tagged,
         );
+        if (!supported && tagged) {
+          // Wrong marker, right source: repair the attribution instead of
+          // shipping a citation that does not contain the fact.
+          const rebound = rebindMarkers(sentence);
+          if (rebound) {
+            this.logger.warn(
+              `Rebound citation markers for an unsupported statement: ${sentence.slice(0, 60)}… -> ${rebound.match(/\[\d+\]/g)?.join('') || ''}`,
+            );
+            emitVerified(rebound);
+            return;
+          }
+        }
         if (supported || !strictGrounding) {
           // Non-strict mode keeps legacy behaviour (emit immediately; the
           // post-hoc coverage accounting at completion still reports gaps).
@@ -4362,14 +4518,255 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
 
       // Reasoning-model fallback: some models stream everything into
       // reasoning_content and never emit content. An empty answer must not
-      // end the turn — degrade to the model's reasoning tail (the gate still
-      // applies) rather than showing "未返回正文".
+      // end the turn — but the recovered text must be an *answer*, never the
+      // model's scratchpad. Measured on the MuSiQue/2Wiki end-to-end runs, the
+      // old "last 8 reasoning lines" fallback shipped planning voice as the
+      // answer in 11/50 and 15/100 cases respectively, which both leaked the
+      // scratchpad to users and inflated containment scores.
       gateFlush();
+      // Refusal-hold: the model said "the materials do not say" while the
+      // context contains sentences covering the question's own terms. Supply
+      // those sentences back in a focused pass before accepting the refusal.
+      // Enabled by default. Its first evaluation (before the top-rank guarantee
+      // existed) showed no gain — the context simply did not contain the answer
+      // sentence, so re-asking could not help. Once retrieval was fixed, the same
+      // mechanism flipped 4 of 6 "gold-in-context but refused" cases to correct
+      // answers (Ocala → Northern Florida, Da Nang → South Central Coast, …), and
+      // the unanswerable category went from 1 failure to 0 across 30 cases.
+      // It costs one extra LLM call, and only for answers that are pure refusals
+      // while the context holds supporting sentences.
+      if (!fullAnswer.trim() && heldRefusals.length && process.env.CHAT_REFUSAL_FOCUS_RETRY !== 'false') {
+        const evidenceTexts = (queryResult.citations || [])
+          .map((c: any) => String(c.context || c.snippet || c.evidence || ''))
+          .filter(Boolean);
+        // Offer sentences from the *whole leading pool*, not only from the
+        // documents that made the context. Measured 2026-09-21: widening the
+        // context itself (top-8 documents) recovered 3 of 7 hard multi-hop cases
+        // but cost 6 of 30 "unanswerable" cases, because a fuller context makes
+        // the model answer instead of refusing. Widening only this re-check keeps
+        // the strict "若无答案就说明资料未包含" instruction in force.
+        // OFF by default (CHAT_REFUSAL_FOCUS_POOL_DOCS=0): measured trade-off on
+        // 2026-09-21 — offering pool sentences recovers 7 more of the 60 hard
+        // multi-hop probes (HotpotQA 7->11, 2Wiki 6->10 of their failure sets)
+        // but makes the model answer 9 of 30 unanswerable questions instead of
+        // refusing (narrow re-check: 0 of 30). Shipping it needs a relevance gate
+        // that reliably separates "pool sentence answers the question" from
+        // "pool sentence merely shares two words with it"; the same failure mode
+        // appeared when the *context* was widened to 8 documents (6 of 30).
+        const deeperSources = preSelectionPool
+          .map((citation: any) => ({ citation, score: Number(citation?.score || 0) }))
+          .sort((a: any, b: any) => b.score - a.score)
+          .slice(0, Number(process.env.CHAT_REFUSAL_FOCUS_POOL_DOCS || 0))
+          .map((item: any) => ({
+            text: String(item.citation?.context || item.citation?.snippet || item.citation?.evidence || ''),
+            citation: item.citation,
+          }))
+          .filter((item: any) => item.text);
+        const allRetrySources = [
+          ...(queryResult.citations || []).map((citation: any) => ({
+            text: String(citation?.context || citation?.snippet || citation?.evidence || ''),
+            citation,
+          })),
+          ...deeperSources,
+        ].filter((item: any) => item.text);
+        // Prefer sentences that carry the asked fact *type* (year / date / number).
+        // Measured: the answering sentence ("the first one in 1978", pool rank 5)
+        // lost the old coverage-only ranking to a same-topic distractor
+        // ("Rugby League World Cup … in 1954").
+        const typed = process.env.CHAT_TYPED_PASSAGE_SELECTION === 'false'
+          ? []
+          : selectTypedPassageSources(allRetrySources, question, {
+              limit: Number(process.env.CHAT_REFUSAL_FOCUS_LIMIT || 3),
+              minTerms: Number(process.env.CHAT_REFUSAL_FOCUS_MIN_TERMS || 2),
+              answerType: answerTypeOf(question),
+              // Link against the *hop-1 evidence only*: the question itself contains
+              // generic domain words ("World Cup"), which would link every same-topic
+              // document and let distractors back in.
+              linkText: evidenceTexts.join('\n'),
+            });
+        const retrySources = typed.length
+          ? typed
+          : selectRetrySentenceSources(allRetrySources, question, {
+              limit: Number(process.env.CHAT_REFUSAL_FOCUS_LIMIT || 3),
+              minTerms: Number(process.env.CHAT_REFUSAL_FOCUS_MIN_TERMS || 2),
+            });
+        const supported = retrySources.map((source) => source.text);
+        // Strict containment gate before any re-ask. Verified measurements:
+        // without it the wide re-check invented answers for 9 of 30 unanswerable
+        // questions; the gate exists to keep that at zero while keeping the gain.
+        let gatedSources = retrySources;
+        if (supported.length && process.env.CHAT_PASSAGE_VERIFY !== 'false') {
+          const verified = await this.verifyPassageContainment({
+            question,
+            passages: supported,
+            knownEvidence: evidenceTexts.join('\n').slice(0, 2000),
+          });
+          gatedSources = retrySources.filter((_source, index) => verified.has(index));
+          this.logger.log(
+            `[PASSAGE_VERIFY] kept ${gatedSources.length}/${supported.length} offered passage(s) as directly answering the question`,
+          );
+          if (process.env.CHAT_LOG_PASSAGE_VERIFY_TEXT === 'true') {
+            supported.forEach((passage, index) => {
+              this.logger.log(
+                `[PASSAGE_VERIFY_TEXT] #${index + 1} ${verified.has(index) ? 'KEEP' : 'DROP'} :: ${passage.slice(0, 200)}`,
+              );
+            });
+          }
+          if (!gatedSources.length) {
+            trace.warn(
+              'passage_verify',
+              '证据严格审核',
+              `提供的 ${supported.length} 个片段都未“明确包含”答案，保持诚实拒答`,
+              { offered: supported.length, kept: 0 },
+            );
+          }
+        }
+        this.logger.log(
+          `[REFUSAL_FOCUS] heldRefusals=${heldRefusals.length} evidenceChunks=${evidenceTexts.length} ` +
+            `supportingSentences=${supported.length} verified=${gatedSources.length} ` +
+            `(minTerms=${Number(process.env.CHAT_REFUSAL_FOCUS_MIN_TERMS || 2)})`,
+        );
+        if (gatedSources.length) {
+          const sentences = gatedSources.map((source) => source.text);
+          const focused = await this.retryWithFocusedEvidence({
+            baseUrl,
+            modelName,
+            headers,
+            question,
+            sentences,
+          });
+          if (
+            focused &&
+            !isRefusalAnswerText(focused) &&
+            !isPlanningLikeText(focused) &&
+            !isProviderErrorText(focused) &&
+            !looksLikeQuestionEcho(focused, question)
+          ) {
+            this.logger.warn(
+              `Refusal replaced by a focused answer (${supported.length} supporting sentence(s) offered).`,
+            );
+            // Provenance: the retry may cite a pool document that never entered
+            // the answer context. Register exactly those documents and rewrite
+            // 【资料N】 into the [k] markers the citation pipeline understands, so
+            // the user still gets a resolvable source for every claim.
+            const mapping = new Map<number, number>();
+            const citations = [...(queryResult.citations || [])];
+            const keyOf = (citation: any) =>
+              String(citation?.evidence || citation?.snippet || '').replace(/\s+/g, '').slice(0, 30);
+            const known = new Set(citations.map(keyOf));
+            for (const marker of parseRetryMarkers(focused)) {
+              const source = retrySources[marker - 1];
+              if (!source) continue;
+              let index = citations.findIndex((citation) => keyOf(citation) === keyOf(source.citation));
+              if (index < 0) {
+                const key = keyOf(source.citation);
+                if (!key || known.has(key)) continue;
+                known.add(key);
+                citations.push(source.citation);
+                index = citations.length - 1;
+              }
+              mapping.set(marker, index + 1);
+            }
+            const answerText = mapping.size ? rewriteRetryMarkers(focused, mapping) : focused;
+            if (citations.length !== (queryResult.citations || []).length) {
+              queryResult = { ...queryResult, citations };
+            }
+            trace.warn(
+              'refusal_focus_retry',
+              '拒答复核',
+              `模型原答复为“资料未包含”，但上下文含 ${supported.length} 句与问题要点相关的证据，已定向重答`,
+              { sentences: supported.length },
+            );
+            gatePush(answerText);
+            gateFlush();
+            // The refusal this re-check was called to replace has now been
+            // replaced. Releasing it afterwards produced answers that state the
+            // fact and then deny it ("...he was married to May Allison. The
+            // reference materials do not record the spouse of Robert Ellis"),
+            // which reads as self-contradictory to the user and — measured on
+            // the MuSiQue hard set 2026-09-21 — let a refusal pass the strict
+            // containment grader 9 times out of 100 because the held sentence
+            // still mentioned the gold string. Clear it so the emitted turn is
+            // the focused answer alone.
+            heldRefusals.length = 0;
+          } else {
+            this.logger.log(
+              `[REFUSAL_FOCUS] focused retry did not produce a usable answer: ${focused.slice(0, 80) || '(empty)'}`,
+            );
+          }
+        }
+      }
       if (!fullAnswer.trim() && reasoningBuf.trim()) {
-        this.logger.warn('LLM returned no content; falling back to reasoning_content tail.');
-        const tail = reasoningBuf.trim().split(/\n+/).filter(Boolean).slice(-8).join('\n');
-        gatePush(tail);
-        gateFlush();
+        const drafted = extractAnswerFromReasoning(reasoningBuf);
+        if (drafted) {
+          this.logger.warn('LLM returned no content; using the sanitized reasoning draft.');
+          gatePush(drafted);
+          gateFlush();
+        } else {
+          this.logger.warn(
+            'LLM returned no content and the reasoning trace held no usable answer; nothing emitted.',
+          );
+        }
+      }
+      // Last resort before showing an empty turn: ask once more with an
+      // explicit answer-only instruction. Reasoning models that stream the
+      // whole turn into `reasoning_content` (reproduced on MuSiQue, 2026-09-20)
+      // otherwise produce no user-visible answer at all.
+      if (!fullAnswer.trim()) {
+        const retried = await this.retryAnswerOnly({
+          baseUrl,
+          modelName,
+          headers,
+          systemMessage: systemMessageContent,
+          userMessage: userMessageContent,
+        });
+        if (retried) {
+          // The retry is a model turn like any other: it must not smuggle
+          // scratchpad voice, an echo of the question, or a transport failure
+          // into the answer (all three were observed on this path).
+          const usable = !isPlanningLikeText(retried) &&
+            !looksLikeQuestionEcho(retried, userMessageContent) &&
+            !isProviderErrorText(retried);
+          if (usable) {
+            this.logger.warn('Recovered an answer with the answer-only retry.');
+            gatePush(retried);
+            gateFlush();
+          } else {
+            this.logger.warn(
+              'Answer-only retry returned non-answer text (scratchpad/echo/error); nothing emitted.',
+            );
+          }
+        }
+      }
+      // Every recovery path failed (no content, no usable draft, no usable
+      // The model's own refusal is part of its answer and must reach the user —
+      // held only so a (default-off) focused re-check could have replaced it.
+      // Releasing it *unconditionally* matters: when the model answered with
+      // related facts AND stated that the asked information is absent, the
+      // refusal sentence used to be emitted inline. Holding it without releasing
+      // silently dropped that statement, and the "unanswerable" category then
+      // failed its check (measured 2026-09-21: 7 of 30 cases, independent of the
+      // top-rank guarantee — a same-window control with the guarantee disabled
+      // reproduced the same 7 failures).
+      if (heldRefusals.length) {
+        for (const refusal of heldRefusals) emitVerified(refusal);
+      }
+      // Every recovery path failed (no content, no usable draft, no usable
+      // retry). An empty bubble helps nobody: answer with an honest, evidence-free
+      // refusal instead. Refusals are already excluded from the semantic cache,
+      // and the trace below still records that the turn was synthesised.
+      if (!fullAnswer.trim()) {
+        synthesizedRefusal = true;
+        this.logger.warn('No answer produced after draft recovery and retry; emitting an honest refusal.');
+        // Emit directly: refusals are held by the gate (so a focused re-check can
+        // replace them), and this template is produced *after* the held-refusal
+        // release point — routing it through the gate would swallow it and leave
+        // the user with an empty answer (measured: 2 empty answers per 100).
+        emitVerified(
+          /[\u4e00-\u9fa5]/.test(question)
+            ? '已知知识库资料中未包含相关信息，无法回答该问题。'
+            : 'Based on the provided reference materials, the relevant information is not available.',
+        );
       }
       // Held sentences get one batched entailment review; anything the judge
       // cannot support from the evidence is dropped and never shown.
@@ -4382,8 +4779,12 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
           : new Set<number>();
         let recoveredCount = 0;
         for (let i = 0; i < toJudge.length; i++) {
+          // A recovered sentence may still carry a wrong marker; repair the
+          // attribution before it reaches the client, exactly as the inline
+          // gate does for directly verified sentences.
+          const repaired = rebindMarkers(toJudge[i]) || toJudge[i];
           if (entailed.has(i)) {
-            emitVerified(toJudge[i]);
+            emitVerified(repaired);
             recoveredCount++;
           } else {
             // Balanced safety net: if judgeEntailment timed out/skipped or was uncertain,
@@ -4399,8 +4800,18 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
               if (normEv.includes(ch)) charOverlap++;
             }
             const ratio = chars.length ? charOverlap / chars.length : 0;
-            if (!hasConflict && numsOk && ratio >= 0.35) {
-              emitVerified(toJudge[i]);
+            // Character overlap is a crude support proxy, and it gets *easier* to
+            // pass as the evidence pool grows — which is exactly what the
+            // top-rank guarantee does. Measured consequence (2026-09-21): on the
+            // enterprise "unanswerable" questions the safety net started
+            // recovering the model's own narration ("我注意到用户在问题末尾加了
+            // 「24」…") and it was displayed as the answer, failing 15 of 30 cases.
+            // A sentence with no citation marker is not a knowledge-base answer:
+            // demand substantially more overlap before releasing it.
+            const hasMarker = /\[\d+\]/.test(toJudge[i]);
+            const requiredRatio = hasMarker ? 0.35 : 0.6;
+            if (!hasConflict && numsOk && ratio >= requiredRatio) {
+              emitVerified(repaired);
               recoveredCount++;
             }
           }
@@ -4412,20 +4823,34 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
           dropped > 0
             ? `${dropped} 句因缺乏证据支持被拦截，未向用户展示`
             : '暂扣语句经蕴含复核全部放行',
-          { verified: gateVerifiedCount, held: heldSentences.length, recovered: recoveredCount, dropped, strict: strictGrounding },
+          { verified: gateVerifiedCount, held: heldSentences.length, recovered: recoveredCount, dropped, strict: strictGrounding, providerError: providerErrorSeen },
         );
       }
+      // Observability for the marker repair: a warning here means the model
+      // stamped at least one wrong source index and the answer was corrected
+      // rather than shipped with a citation that does not contain the fact.
+      trace.finish(
+        "citation_rebinding",
+        reboundCitations > 0 ? "warning" : "success",
+        reboundCitations > 0
+          ? `纠正 ${reboundCitations} 处模型角标错误，已重绑定到真正支持该句的证据`
+          : "回答角标与证据一一对应",
+        { reboundCitations, evidencePool: (queryResult.citations || []).length },
+      );
 
       trace.finish(
         "llm_generation",
-        fullAnswer ? "success" : "warning",
-        fullAnswer
+        fullAnswer && !synthesizedRefusal ? "success" : "warning",
+        fullAnswer && !synthesizedRefusal
           ? `大模型回答生成完成${promptCacheHitTokens > 0 ? ` (Prompt Cache 命中 ${promptCacheHitTokens} tokens)` : ""}`
-          : "大模型连接正常但未返回正文",
+          : synthesizedRefusal
+            ? "模型未产出可用正文（草稿与重试均不可用），已按诚实拒答兜底"
+            : "大模型连接正常但未返回正文",
         {
           model: modelName,
           tokenEstimate: totalTokens,
           outputChars: fullAnswer.length,
+          synthesizedRefusal,
           promptCacheHitTokens,
           promptCacheMissTokens,
           cacheHitRate: promptCacheHitTokens + promptCacheMissTokens > 0
@@ -4442,7 +4867,13 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
         fullAnswer,
         trace,
         question,
-        { fingerprint: cacheScopeKey, knowledgeEpoch: userScope.knowledgeEpoch },
+        {
+          fingerprint: cacheScopeKey,
+          knowledgeEpoch: userScope.knowledgeEpoch,
+          // Answers built on top of private context (per-user long-term memory
+          // or earlier conversation turns) must never be replayed from cache.
+          cacheable: personalMemory.count === 0 && priorConversationTurnCount === 0,
+        },
         modelName,
       );
     } catch (error: any) {
@@ -4486,1227 +4917,92 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
     return history;
   }
 
-  private async rewriteQueryForRetrieval(
-    question: string,
-    history: Array<{ role: "user" | "assistant"; content: string }>,
-    signal?: AbortSignal,
-  ): Promise<RetrievalRequest> {
-    signal?.throwIfAborted();
-    const prior = history
-      .filter(
-        (message) => !(message.role === "user" && message.content === question),
-      )
-      .slice(-8)
-      .map(
-        (message) =>
-          `${message.role === "assistant" ? "assistant" : "user"}: ${message.content}`,
-      )
-      .join("\n");
-    const isExactClause = /第\s*[\d一二三四五六七八九十百千万〇零两]+\s*[章节条款项]|附件\s*[\d一二三四五六七八九十百千万〇零两]+/.test(question);
-    const isBroadQuery = /(一共有|总共|全部|清单|有哪些|所有|多少|几[个项条部篇]|对比|区别|概览|汇总)/.test(question);
-    const directRequest: RetrievalRequest = {
-      query: question,
-      breadth: isBroadQuery,
-      operation: isExactClause ? 'search' : 'query',
-    };
-    // A fresh turn has no antecedent to resolve. Calling an LLM to paraphrase
-    // it delays retrieval and can only add another interpretation layer; the
-    // original user wording is the highest-fidelity GBrain query. Historical
-    // turns still use the contextual rewrite below.
-    if (!prior) return directRequest;
-
-    // Anaphora / referential detection: if the question is self-contained (no pronouns or deictic references)
-    // and of sufficient length (>= 8 chars), it does not depend on prior history and does not need an LLM rewrite.
-    const hasReferentialMarkers = /(?:他|她|它|这|那|该|其|上述|前述|之前|刚才|继续|同一个|这个|那个|还有呢|第几|为什么|怎么回事)/u.test(question);
-    if (!hasReferentialMarkers && question.trim().length >= 8) {
-      return directRequest;
-    }
-
-    const llmRequest = this.modelConfigService
-      ? await this.modelConfigService.getLlmChatConfig('llmwiki-rewrite')
-      : null;
-    const apiKey = llmRequest?.apiKey || "";
-    const baseUrl = llmRequest?.baseUrl || "";
-    const modelName = llmRequest?.modelName || "";
-
-    if (!apiKey) {
-      return directRequest;
-    }
-    const historyWindow = prior.slice(-3000);
-    const prompt = `Analyze the current user question for knowledge-base retrieval. Rewrite it into one standalone query. Resolve references such as he/she/it/this policy/the previous item only when the conversation makes the referent unambiguous. If it starts a new topic, do not import unrelated history. Set breadth=true when answering requires broad coverage, enumeration, totals across a document, comparison of multiple sections, or "all/every/complete" evidence; otherwise false. Set operation="search" only for an exact known name, title, identifier, or structured-field lookup; otherwise operation="query" for semantic, paraphrased, relational, or cross-page questions. Do not answer the question. Return JSON only: {"query":"...","breadth":false,"operation":"query"}.\n\nUntrusted conversation history:\n${historyWindow || "(none)"}\n\nCurrent question:\n${question}`;
+  private async retryWithFocusedEvidence(params: {
+    baseUrl: string;
+    modelName: string;
+    headers: Record<string, string>;
+    question: string;
+    sentences: string[];
+  }): Promise<string> {
     try {
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      };
-      if (baseUrl.includes("opencode.ai")) {
-        headers["x-opencode-session"] = "llmwiki-rewrite";
-      }
-
-      const response = await fetch(`${baseUrl}/chat/completions`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          model: modelName,
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0,
-          max_tokens: 160,
-        }),
-        signal: AbortSignal.timeout(12000),
-      });
-      if (!response.ok) {
-        return directRequest;
-      }
-      const payload: any = await response.json();
-      const content = String(
-        payload?.choices?.[0]?.message?.content || "",
-      ).trim();
-      try {
-        const parsed = JSON.parse(
-          content.replace(/^```json\s*/i, "").replace(/\s*```$/, ""),
-        );
-        const rewritten = String(parsed?.query || "").trim();
-        const operation: 'search' | 'query' = isExactClause
-          ? 'search'
-          : parsed?.operation === 'search'
-          ? 'search'
-          : 'query';
-        const breadth = isBroadQuery || parsed?.breadth === true;
-        return {
-          query:
-            rewritten.length > 0 && rewritten.length <= 1000
-              ? rewritten
-              : question,
-          breadth,
-          operation,
-        };
-      } catch {
-        return directRequest;
-      }
-    } catch (error) {
-      this.logger.debug(
-        `Contextual retrieval rewrite unavailable: ${error?.message || "unknown error"}`,
-      );
-      return directRequest;
-    }
-  }
-
-  private async loadPersonalMemoryContext(
-    userId: string,
-    query: string,
-    history: Array<{ role: "user" | "assistant"; content: string }>,
-    sessionId?: string,
-  ): Promise<{ text: string; count: number }> {
-    try {
-      // context_pack is a session-boundary assembly operation. The web app
-      // does not maintain a trusted standing-entity bank yet, so passing an
-      // arbitrary whole user question as its `entities` argument is both
-      // semantically wrong and expensive. For an explicit memory need, the
-      // official recall verb is the precise, budgeted read primitive.
-      const result = await this.recallPersonalFacts(userId, query, 8);
-      const facts = Array.isArray(result?.facts) ? result.facts : [];
-      if (!facts.length) return { text: String(result?.text || "").trim(), count: 0 };
-      const text = facts
-        .slice(0, 8)
-        .map((fact: any) => {
-          const value = String(fact.fact || fact.content || "").trim();
-          const entity = String(fact.entity_slug || "").trim();
-          return value ? `- ${value}${entity ? ` [${entity}]` : ""}` : "";
-        })
-        .filter(Boolean)
-        .join("\n");
-      return { text: text || String(result?.text || "").trim(), count: facts.length };
-    } catch (error) {
-      // A user without a personal KB, or a temporarily unavailable memory
-      // verb, must not make ordinary knowledge retrieval fail.
-      this.logger.debug(`Personal memory retrieval unavailable: ${error?.message || "unknown error"}`);
-      return { text: "", count: 0 };
-    }
-  }
-
-  private shouldLoadPersonalMemory(
-    question: string,
-    history: Array<{ role: "user" | "assistant"; content: string }>,
-  ): boolean {
-    const normalized = question.trim();
-    if (!normalized) return false;
-    // Manual personal memories are private preferences/facts, not a second
-    // enterprise-document corpus. Consult them when the user explicitly asks
-    // about self/context, or when a follow-up is linguistically referential.
-    // Ordinary policy lookups stay on the authoritative knowledge Sources.
-    const asksPersonalMemory = /(?:我的|我自己|个人(?:偏好|习惯|信息|记忆)|记住(?:了|的)?|我(?:曾|之前|刚才).{0,12}(?:说|提|告诉)|偏好|习惯|账号|密码)/u.test(normalized);
-    const hasPriorTurns = history.some((message) => message.role === "assistant") || history.length > 1;
-    const refersToPriorContext = /^(?:他|她|它|这|那|该|上述|前面|之前|刚才|继续|同一个|这个|那个)/u.test(normalized);
-    return asksPersonalMemory || (hasPriorTurns && refersToPriorContext);
-  }
-
-  /**
-   * GBrain source 是按用户编译的缓存，权限变更与索引重建之间可能存在短暂延迟。
-   * 每次问答都用文档数据库再次校验命中文档，防止旧索引片段越权进入重排或 LLM 上下文。
-   */
-  private async filterQueryResultByCurrentPermission(
-    result: any,
-    visibleKbIds: string[],
-    derivedGuard: {
-      scopeId: string;
-      sourceKeys: string[];
-      aclEpoch: number;
-      knowledgeEpoch: number;
-    },
-  ): Promise<any> {
-    const citations = Array.isArray(result?.citations) ? result.citations : [];
-    const docIds = citations
-      .map((citation: any) => citation.docId)
-      .filter(
-        (id: any): id is string => typeof id === "string" && id.length > 0,
-      );
-
-    const docs = docIds.length
-      ? await this.prisma.document.findMany({
-          where: {
-            id: { in: docIds },
-            kbId: { in: visibleKbIds },
-            status: "published",
-          },
-          select: {
-            id: true,
-            kbId: true,
-            title: true,
-            version: true,
-            createdAt: true,
-            updatedAt: true,
-            effectiveFrom: true,
-            effectiveTo: true,
-            lifecycleStatus: true,
-            kb: { select: { name: true, type: true } },
-          },
-        })
-      : [];
-    // Temporal effectiveness gate (default asOf = now): repealed editions and
-    // editions not yet in force must never enter the candidate set, regardless
-    // of which retrieval arm produced them. Documents without effective-date
-    // metadata stay eligible (unknown is not asserted as invalid).
-    const now = Date.now();
-    const allowed = new Map<string, any>(
-      docs.filter((doc: any) => documentCurrentlyEffective(doc, now)).map((doc: any) => [doc.id, doc]),
-    );
-    const sourceKeys = [...new Set(derivedGuard.sourceKeys)].sort();
-    const derivedCandidates = citations.filter((citation: any) => !citation.docId && citation.slug);
-    const derivedPages = derivedCandidates.length
-      ? await (this.prisma as any).brainDerivedPage.findMany({
-          where: {
-            scopeId: derivedGuard.scopeId,
-            slug: { in: derivedCandidates.map((citation: any) => citation.slug) },
-            aclEpoch: derivedGuard.aclEpoch,
-            knowledgeEpoch: derivedGuard.knowledgeEpoch,
-          },
-          select: { slug: true, sourceKeys: true, derivedFrom: true },
-        })
-      : [];
-    const validDerived = new Set<string>();
-    for (const page of derivedPages) {
-      const pageSources = Array.isArray(page.sourceKeys) ? [...page.sourceKeys].sort() : [];
-      if (pageSources.length !== sourceKeys.length || pageSources.some((key: string, index: number) => key !== sourceKeys[index])) continue;
-      const docIds = (Array.isArray(page.derivedFrom) ? page.derivedFrom : [])
-        .map((item: any) => item?.docId)
-        .filter((id: any): id is string => typeof id === "string" && id.length > 0);
-      if (!docIds.length) continue;
-      const allowedCount = await this.prisma.document.count({
-        where: { id: { in: docIds }, kbId: { in: visibleKbIds }, status: "published" },
-      });
-      if (allowedCount === new Set(docIds).size) validDerived.add(page.slug);
-    }
-    const filtered = citations
-      .map((citation: any) => {
-        if (!citation.docId) {
-          // Synthetic inventory citations (per-KB document statistics) carry no
-          // document binding. Authorize them at the knowledge-base level: the
-          // source KB must be within the caller's visible set. Everything else
-          // without a docId (derived pages) must still match a derived page
-          // created under the exact same source set/epoch — a page created
-          // under a different source set or epoch is simply ignored.
-          if (citation.inventory && citation.kbId && visibleKbIds.includes(citation.kbId)) {
-            return citation;
-          }
-          // RAPTOR macro summaries (Level-2 KB-global nodes have documentId
-          // null by design) were retrieved with the caller's visible-KB scope,
-          // so KB-level membership IS their authorization boundary. Without
-          // this branch the permission guard deleted every Level-2 node and
-          // the global-recall arm contributed nothing to answers.
-          if (citation.raptor && citation.kbId && visibleKbIds.includes(citation.kbId)) {
-            return citation;
-          }
-          if (
-            citation.isCompiledDerived &&
-            citation.scopeId === derivedGuard.scopeId &&
-            citation.aclEpoch === derivedGuard.aclEpoch
-          ) {
-            return citation;
-          }
-          return citation.slug && validDerived.has(citation.slug) ? citation : null;
-        }
-        const doc = allowed.get(citation.docId);
-        return doc
-          ? {
-              ...citation,
-              kbId: doc.kbId,
-              docTitle: doc.title,
-              version: doc.version,
-              kbName: (doc as any).kb?.name || citation.kbName || "默认知识库",
-              kbType: (doc as any).kb?.type,
-            }
-          : null;
-      })
-      .filter(Boolean);
-    return {
-      ...result,
-      topics: filtered.map((citation: any) => citation.topic),
-      answer: filtered
-        .map((citation: any) => citation.context || citation.snippet)
-        .filter(Boolean)
-        .join("\n\n"),
-      citations: filtered,
-    };
-  }
-
-  /**
-   * Reciprocal Rank Fusion (RRF, Cormack et al., 2009) to federate candidates from
-   * the local/GBrain stack and external WeKnora cluster engine. Overlapping hits
-   * receive an additive rank boost, reflecting dual independent verification.
-   */
-  private fuseWithWeKnoraRRF(
-    baseCitations: any[],
-    weknoraEvidences: RetrievedEvidence[],
-    rrfK = 60,
-  ): any[] {
-    if (!weknoraEvidences.length) return baseCitations;
-    if (!baseCitations.length) {
-      return weknoraEvidences.map((we, rank) => ({
-        topic: we.documentId,
-        docId: we.documentId,
-        kbId: we.kbId,
-        version: we.documentVersion,
-        evidence: we.content,
-        snippet: we.content,
-        context: we.content,
-        score: we.score,
-        rrfScore: 1 / (rrfK + rank + 1),
-        externalProvider: "weknora",
-      }));
-    }
-
-    const fused = new Map<string, { citation: any; rrf: number; sources: Set<string> }>();
-
-    // 1. Ingest base citations (GBrain / local hybrid)
-    baseCitations.forEach((cit, rank) => {
-      const docKey = cit.docId || cit.documentId || cit.topic;
-      const rrf = 1 / (rrfK + rank + 1);
-      fused.set(docKey, {
-        citation: { ...cit },
-        rrf,
-        sources: new Set([cit.externalProvider || 'local_gbrain']),
-      });
-    });
-
-    // 2. Ingest WeKnora evidences with RRF weight
-    const weknoraWeight = Number(process.env.WEKNORA_RRF_WEIGHT || 1.0);
-    weknoraEvidences.forEach((we, rank) => {
-      const docKey = we.documentId;
-      const rrfIncrement = (1 / (rrfK + rank + 1)) * weknoraWeight;
-      const existing = fused.get(docKey);
-      if (existing) {
-        existing.rrf += rrfIncrement;
-        existing.sources.add('weknora');
-        if (we.content && !existing.citation.evidence?.includes(we.content.slice(0, 80))) {
-          existing.citation.evidence = `${existing.citation.evidence}\n\n${we.content}`.trim();
-        }
-        existing.citation.dualVerified = true;
-      } else {
-        fused.set(docKey, {
-          citation: {
-            topic: we.documentId,
-            docId: we.documentId,
-            kbId: we.kbId,
-            version: we.documentVersion,
-            evidence: we.content,
-            snippet: we.content,
-            context: we.content,
-            score: we.score,
-            externalProvider: "weknora",
-          },
-          rrf: rrfIncrement,
-          sources: new Set(['weknora']),
-        });
-      }
-    });
-
-    // 3. Sort by combined RRF score descending
-    return Array.from(fused.values())
-      .sort((a, b) => b.rrf - a.rrf)
-      .map(({ citation, rrf, sources }) => ({
-        ...citation,
-        rrfScore: rrf,
-        providers: Array.from(sources),
-      }));
-  }
-
-  private readonly rerankCache = new Map<string, { expiresAt: number; order: number[]; scores: number[] }>();
-
-  private async applyRerank(
-    question: string,
-    result: any,
-    breadth = false,
-  ): Promise<any> {
-    const citations = Array.isArray(result?.citations) ? result.citations : [];
-    const singleSourceNative =
-      result?.reranked === true &&
-      (result?.diagnostics?.sourceCount ?? 1) <= 1 &&
-      !result?.fallbackMerged;
-    // A single-source result already cross-encoded by GBrain is the same list
-    // on the same scale — re-scoring it is pure duplicate work. Any merged
-    // fallback arm or multiple federated sources requires one platform pass so
-    // every candidate lands on a single comparable score scale.
-    if (singleSourceNative && process.env.FORCE_PLATFORM_RERANK !== 'true') {
-      result.platformRerankApplied = false;
-      return result;
-    }
-    const config = this.modelConfigService
-      ? await this.modelConfigService.getDefault("rerank")
-      : null;
-    if (!config || citations.length < 2) return result;
-
-    // Memoize by (question, candidate-set) — section expansion makes candidate
-    // sets stable, so repeated questions reuse the same ranking.
-    const candidateHash = createHash("sha256")
-      .update(`${question}||${citations.map((c: any) => c.evidence || c.snippet || c.docId || c.topic || "").join("\u0001")}`)
-      .digest("hex")
-      .slice(0, 24);
-    const cacheKey = `${config.modelName}:${candidateHash}`;
-    const cached = this.rerankCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now() && cached.order.length === citations.length) {
-      const reranked = cached.order.map((idx, rank) => ({
-        ...citations[idx],
-        score: cached.scores[rank],
-        rerankScore: cached.scores[rank],
-        relevanceScore: cached.scores[rank],
-      }));
-      return { ...result, citations: reranked, topics: reranked.map((c: any) => c.topic), answer: reranked.map((c: any) => c.context || c.snippet).filter(Boolean).join("\n\n"), reranked: true, platformRerankApplied: true };
-    }
-
-    const documents = citations
-      .map((citation: any) => {
-        const text = String(citation.snippet || citation.context || citation.evidence || citation.docTitle || citation.topic || "");
-        const raw = extractRawChunkText(text);
-        return (raw || text).slice(0, 3000).trim();
-      })
-      .filter(Boolean);
-    if (documents.length < 2) return result;
-
-    // Build mapping from filtered document index → original citation index
-    // This is critical because filter(Boolean) compresses the array, so API
-    // indices won't match original citation positions.
-    const docIndexToCitationIdx = citations
-      .map((citation: any, i: number) => {
-        const text = String(citation.snippet || citation.context || citation.evidence || citation.docTitle || citation.topic || "");
-        const raw = extractRawChunkText(text);
-        const trimmed = (raw || text).slice(0, 3000).trim();
-        return trimmed ? i : null;
-      })
-      .filter((i): i is number => i !== null);
-    try {
-      const response = await fetch(`${config.provider.baseUrl.replace(/\/$/, "")}/rerank`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(config.provider.apiKey ? { Authorization: `Bearer ${config.provider.apiKey}` } : {}),
-        },
-        body: JSON.stringify({ model: config.modelName, query: question, documents, top_n: documents.length, return_documents: false }),
-        signal: AbortSignal.timeout(Number(process.env.RERANK_TIMEOUT_MS || 15000)),
-      });
-      if (!response.ok) throw new Error(`Rerank API ${response.status}`);
-      const payload: any = await response.json();
-      const ranked: Array<{ index: number; relevance_score?: number; score?: number }> =
-        Array.isArray(payload?.results) ? payload.results : [];
-      if (!ranked.length) return result;
-
-      const scoredItems = ranked
-        .map((item) => {
-          const docIdx = Number(item.index);
-          // Map filtered document index back to original citation index
-          const citIdx = docIndexToCitationIdx[docIdx];
-          if (citIdx === undefined) return null; // Should not happen if logic is correct
-          const cit = citations[citIdx];
-          const rawCrossScore = typeof item.relevance_score === "number" ? item.relevance_score
-            : typeof item.score === "number" ? item.score : 0;
-          // Multi-hop / bridge candidates recalled by a specific subquery probe should not be
-          // destroyed by cross-encoder comparing them against the original (hop-1) question.
-          // However, single-hop queries or sub-queries that are simply reformulations/substrings of the
-          // main question are competing on the EXACT same question, so the cross-encoder score is authoritative.
-          const origin = String(cit?.subQueryOrigin || "").trim().toLowerCase();
-          const qLower = question.trim().toLowerCase();
-          const isSubphraseOfQuery = origin.length > 0 && (qLower.includes(origin) || origin.includes(qLower));
-          const isTrueBridgeOrMultiHop = Boolean(
-            cit?.isBridgeEntity ||
-            (typeof cit?.hop === 'number' && cit.hop >= 2) ||
-            (cit?.subQueryOrigin && (breadth || Boolean((result as any)?.isMultiHop)) && !isSubphraseOfQuery)
-          );
-          const score = (isTrueBridgeOrMultiHop && rawCrossScore < 0.70)
-            ? Math.max(rawCrossScore, typeof cit.score === "number" ? cit.score : 0.85)
-            : rawCrossScore;
-          return { idx: citIdx, citation: cit, score };
-        })
-        .filter((item): item is { idx: number; citation: any; score: number } => item !== null);
-      if (!scoredItems.length) return result;
-      scoredItems.sort((a, b) => b.score - a.score);
-
-      const order = scoredItems.map((item) => item.idx);
-      const scores = scoredItems.map((item) => item.score);
-      this.rerankCache.set(cacheKey, { expiresAt: Date.now() + Number(process.env.RERANK_CACHE_TTL_MS || 300000), order, scores });
-      if (this.rerankCache.size > 200) {
-        const oldest = this.rerankCache.keys().next().value;
-        if (oldest) this.rerankCache.delete(oldest);
-      }
-
-      // No truncation here: the single evidence-selection stage decides what
-      // enters the answer context, using these comparable scores.
-      const reranked = scoredItems.map((item) => ({
-        ...item.citation,
-        score: item.score,
-        rerankScore: item.score,
-        relevanceScore: item.score,
-      }));
-      return {
-        ...result,
-        citations: reranked,
-        topics: reranked.map((c: any) => c.topic),
-        answer: reranked.map((c: any) => c.context || c.snippet).filter(Boolean).join("\n\n"),
-        reranked: true,
-        platformRerankApplied: true,
-      };
-    } catch (error) {
-      this.logger.warn(`Rerank unavailable; retaining GBrain ranking: ${error instanceof Error ? error.message : String(error)}`);
-      return result;
-    }
-  }
-
-  /**
-   * Single evidence-selection stage (replaces the former document_diversity and
-   * focused evidence_gate passes).
-   *
-   * Policy, all provider/scale independent:
-   *  1. Score truth = normalized cross-encoder relevance (min-max over the
-   *     batch). Falls back to rerankScore/score only when reranking was skipped.
-   *  2. Structural section groups (from section expansion) are ATOMIC units —
-   *     kept or dropped whole, never split.
-   *  3. Relative relevance floor (default 35% of the best group) removes
-   *     distractors without depending on any provider's absolute score scale.
-   *  4. Maximal-Marginal-Relevance greedy selection over groups balances
-   *     relevance against redundancy, then a token budget bounds the context.
-   */
-  private selectEvidence(
-    result: any,
-    opts: { breadth: boolean; tokenBudget: number; subQueries?: string[] },
-  ): any {
-    const citations = Array.isArray(result?.citations) ? result.citations : [];
-    if (citations.length <= 1) return result;
-
-    const rawScore = (c: any): number => {
-      const v = c?.relevanceScore ?? c?.rerankScore ?? c?.score;
-      const n = Number(v);
-      return Number.isFinite(n) ? n : 0;
-    };
-    const raw = citations.map(rawScore);
-    const max = Math.max(...raw);
-    const min = Math.min(...raw);
-    const norm = (v: number) => (max > 0 ? Math.max(0, v) / max : 1);
-
-    const groupKeyOf = (c: any, index: number) =>
-      typeof c?.sectionGroup === "string" && c.sectionGroup ? c.sectionGroup : `__single_${index}`;
-    const groups = new Map<
-      string,
-      { members: any[]; best: number; repText: string; isSummary: boolean; isSpreadsheetOrTable: boolean }
-    >();
-    citations.forEach((c, index) => {
-      const key = groupKeyOf(c, index);
-      const isSummaryItem = Boolean(
-        c.raptor ||
-        c.isSummary ||
-        String(c.section || "").startsWith("raptor") ||
-        String(c.section || "") === "doc-outline" ||
-        /【宏观摘要[^】]*】/u.test(String(c.evidence || c.snippet || ""))
-      );
-      const isTableItem = Boolean(
-        /(?:\.xlsx?|\.csv|\.tsv)(?:\s*·|\s*$)/i.test(String(c.docTitle || c.topic || "")) ||
-        /\|[^\n]+\|[^\n]+\|/g.test(String(c.evidence || c.snippet || c.context || ""))
-      );
-      const entry = groups.get(key) || {
-        members: [],
-        best: -Infinity,
-        repText: "",
-        isSummary: false,
-        isSpreadsheetOrTable: false,
-      };
-      entry.members.push(c);
-      entry.best = Math.max(entry.best, norm(rawScore(c)));
-      if (isSummaryItem) entry.isSummary = true;
-      if (isTableItem) entry.isSpreadsheetOrTable = true;
-      if (!entry.repText) entry.repText = String(c.context || c.snippet || c.docTitle || c.topic || "").slice(0, 400);
-      groups.set(key, entry);
-    });
-
-    // Relevance floor on RAW score ratios: min-max normalization stretches a
-    // long-tailed reranker distribution and makes a 0.35 relative floor cut
-    // genuinely relevant groups. Raw cross-encoder scores share one scale.
-    const rawBest = Math.max(...[...groups.values()].map((g) => g.best));
-    const relFloor = Math.max(0, Number(process.env.RETRIEVAL_RELEVANCE_FLOOR_RATIO || 0.35));
-    const hasSubQueries = (opts.subQueries || []).length > 0;
-    const maxGroups = hasSubQueries
-      ? Math.max(4, Math.min(8, Number(process.env.RETRIEVAL_MAX_GROUPS_MULTIHOP || (opts.subQueries!.length * 2 + 2))))
-      : opts.breadth
-        ? Math.max(8, Number(process.env.RETRIEVAL_MAX_GROUPS_BREADTH || 16))
-        : Math.max(2, Number(process.env.RETRIEVAL_MAX_GROUPS || 8));
-
-    const allEntries = [...groups.entries()].map(([key, g]) => ({ key, ...g }));
-    const entries = allEntries
-      .filter((g) => g.best >= rawBest * relFloor)
-      .sort((a, b) => b.best - a.best);
-
-    const tokenize = (text: string): Set<string> =>
-      new Set((String(text).toLowerCase().match(/[\p{L}\p{N}]{1,4}/gu) || []).slice(0, 400));
-    const jaccard = (a: Set<string>, b: Set<string>) => {
-      if (!a.size || !b.size) return 0;
-      let inter = 0;
-      for (const t of a) if (b.has(t)) inter++;
-      return inter / (a.size + b.size - inter);
-    };
-    const costOf = (c: any) => estimateTokens(String(c.context || c.snippet || ""));
-
-    const lambda = Math.min(1, Math.max(0, Number(process.env.RETRIEVAL_MMR_LAMBDA || 0.72)));
-    const selected: any[] = [];
-    const selectedSets: Array<{ tokens: Set<string>; docId: string; isSummary: boolean }> = [];
-    let usedTokens = 0;
-    const pool = entries.slice();
-    const docCounts = new Map<string, number>();
-    const normalizeDocId = (doc: any) => {
-      const rawId = doc?.docId || doc?.documentId;
-      if (rawId) return String(rawId);
-      const title = String(doc?.docTitle || doc?.topic || "").replace(/\s*·\s*全文摘要|\s*·\s*章节摘要|【宏观摘要[^】]*】/g, "").trim();
-      return title || String(doc?.key || "unknown");
-    };
-    const docIdOf = (g: any) => normalizeDocId(g.members?.[0] || g);
-    const totalDistinctDocs = new Set(pool.map(docIdOf)).size;
-    const maxPerDoc = totalDistinctDocs > 1 ? Math.max(2, Math.floor(maxGroups * 0.55)) : maxGroups;
-
-    while (pool.length && selectedSets.length < maxGroups) {
-      let pickIdx = -1;
-      let pickVal = -Infinity;
-      for (let i = 0; i < pool.length; i++) {
-        const g = pool[i];
-        const docId = docIdOf(g);
-        const countForDoc = docCounts.get(docId) || 0;
-        // Soft cap: if this document already reached its quota and other docs remain, give priority to other docs
-        const hasOtherDocsInPool = pool.some((other) => (docCounts.get(docIdOf(other)) || 0) < maxPerDoc);
-        if (countForDoc >= maxPerDoc && hasOtherDocsInPool) continue;
-
-        // Distinct document boost: if g brings a novel document into the context,
-        // it should not suffer the full vocabulary redundancy penalty from other documents.
-        const isNovelDoc = countForDoc === 0 && selected.length > 0;
-        const gTokens = tokenize(g.repText);
-
-        // When evaluating redundancy:
-        // A concrete chunk should NOT be penalized for redundancy against an auxiliary summary of the SAME document!
-        const relevantSelectedSets = selectedSets.filter(
-          (s) => !(s.docId === docId && s.isSummary && !g.isSummary),
-        );
-        const rawRedundancy = relevantSelectedSets.length
-          ? Math.max(0, ...relevantSelectedSets.map((s) => jaccard(gTokens, s.tokens)))
-          : 0;
-        const redundancy = isNovelDoc ? rawRedundancy * 0.25 : rawRedundancy;
-
-        // Concrete evidence priority boost:
-        // Real document text (and especially tables / spreadsheets) must not be displaced by secondary summaries.
-        const concreteBoost = !g.isSummary ? 0.15 : 0;
-        const tableBoost = g.isSpreadsheetOrTable ? 0.10 : 0;
-
-        const value = lambda * g.best - (1 - lambda) * redundancy + (isNovelDoc ? 0.15 : 0) + concreteBoost + tableBoost;
-        if (value > pickVal) { pickVal = value; pickIdx = i; }
-      }
-      if (pickIdx < 0) {
-        if (pool.length) pickIdx = 0;
-        else break;
-      }
-      const group = pool.splice(pickIdx, 1)[0];
-      const groupTokens = group.members.reduce((sum, m) => sum + costOf(m), 0);
-      // Token budget: the first (best) group always fits; later groups must fit.
-      if (selected.length > 0 && usedTokens + groupTokens > opts.tokenBudget) break;
-      for (const m of group.members) selected.push(m);
-      const dId = docIdOf(group);
-      selectedSets.push({
-        tokens: tokenize(group.repText),
-        docId: dId,
-        isSummary: group.isSummary,
-      });
-      usedTokens += groupTokens;
-      // Only concrete groups count towards document quota; auxiliary summaries do not block concrete evidence
-      if (!group.isSummary) {
-        docCounts.set(dId, (docCounts.get(dId) || 0) + 1);
-      }
-    }
-
-    // Sub-question coverage quota (compound questions): with a single global
-    // relevance ranking, the second hop of "A怎么样，另外B如何" loses to the
-    // dominant first-hop group and never reaches the answer context. For each
-    // decomposed sub-query, if no already-selected group covers it, inject its
-    // best-overlapping group (floor-eligible pool, budget permitting, immune
-    // to the MMR redundancy penalty).
-    // Sub-question affinity uses content-word containment to prevent dilution from large chunks
-    const extractContentTerms = (text: string): string[] => {
-      const str = String(text).toLowerCase();
-      const hasLatin = /[a-z]/i.test(str);
-      if (hasLatin) {
-        const stops = new Set(["who", "what", "where", "when", "why", "how", "was", "were", "is", "are", "the", "a", "an", "of", "in", "on", "at", "to", "for", "and", "or", "her", "his", "their", "its", "details"]);
-        return (str.match(/[a-z0-9]+/g) || []).filter((w) => w.length >= 3 && !stops.has(w));
-      }
-      return (str.match(/[\p{L}\p{N}]{2,}/gu) || []);
-    };
-
-    const queryCoverageOf = (queryTerms: string[], targetText: string): number => {
-      if (!queryTerms.length) return 0;
-      const targetLower = String(targetText || "").toLowerCase();
-      let hit = 0;
-      for (const t of queryTerms) {
-        if (targetLower.includes(t)) hit++;
-      }
-      return hit / queryTerms.length;
-    };
-
-    const subQueries = (opts.subQueries || []).filter((q) => typeof q === "string" && q.trim().length >= 3).slice(0, 5);
-    let subQueryCovered = 0;
-    let subQueryInjected = 0;
-    if (subQueries.length && selected.length) {
-      const selectedIds = new Set(selected.map((c: any) => c.id || `${c.docId}:${c.ord}`));
-      for (const sq of subQueries) {
-        const sqTerms = extractContentTerms(sq);
-        // Primary signal — provenance: candidates recalled BY this sub-query's
-        // own probes carry subQueryOrigin. If such a group survived selection,
-        // the hop is covered.
-        const originMatches = (origin: unknown) => {
-          if (typeof origin !== "string" || !origin.trim()) return false;
-          if (origin.trim().toLowerCase() === sq.trim().toLowerCase()) return true;
-          return queryCoverageOf(sqTerms, origin) >= 0.5;
-        };
-        const originCovered = selected.some((c: any) => originMatches(c.subQueryOrigin));
-        if (originCovered) { subQueryCovered += 1; continue; }
-        // Secondary signal — lexical/content affinity in already selected candidates
-        const contentCovered = sqTerms.length > 0 && selected.some((c: any) => {
-          const text = String(c.context || c.snippet || c.evidence || "");
-          return queryCoverageOf(sqTerms, text) >= 0.90;
-        });
-        if (contentCovered) { subQueryCovered += 1; continue; }
-        // Inject the best group for this hop: prefer provenance-tagged groups,
-        // then the highest term-coverage group.
-        let bestGroup: (typeof allEntries)[number] | null = null;
-        let bestScore = 0;
-        for (const g of allEntries) {
-          const fullySelected = g.members.every((m: any) => selectedIds.has(m.id || `${m.docId}:${m.ord}`));
-          if (fullySelected) continue;
-          const tagged = g.members.some((m: any) => originMatches(m.subQueryOrigin));
-          const cov = sqTerms.length ? queryCoverageOf(sqTerms, g.repText) : 0;
-          const score = tagged ? 2 + g.best : (cov >= 0.33 ? 1 + cov : 0);
-          if (score > bestScore) { bestScore = score; bestGroup = g; }
-        }
-        if (!bestGroup || bestScore < 1.0) continue;
-        const groupTokens = bestGroup.members.reduce((sum, m) => sum + costOf(m), 0);
-        if (usedTokens + groupTokens > opts.tokenBudget * 1.2) {
-          // Guaranteed per-hop representation: if the whole group exceeds budget,
-          // still inject at least the top chunk so this reasoning hop is never starved
-          const topMember = bestGroup.members[0];
-          if (topMember && !selectedIds.has(topMember.id || `${topMember.docId}:${topMember.ord}`)) {
-            selected.push(topMember);
-            selectedIds.add(topMember.id || `${topMember.docId}:${topMember.ord}`);
-            usedTokens += costOf(topMember);
-            subQueryInjected += 1;
-            subQueryCovered += 1;
-          }
-          continue;
-        }
-        for (const m of bestGroup.members) {
-          if (!selectedIds.has(m.id || `${m.docId}:${m.ord}`)) {
-            selected.push(m);
-            selectedIds.add(m.id || `${m.docId}:${m.ord}`);
-          }
-        }
-        selectedSets.push({
-          tokens: tokenize(bestGroup.repText),
-          docId: docIdOf(bestGroup),
-          isSummary: bestGroup.isSummary,
-        });
-        usedTokens += groupTokens;
-        subQueryInjected += 1;
-        subQueryCovered += 1;
-      }
-    }
-
-    // Guaranteed multi-hop representation: ensure every executed reasoning hop (hop >= 2)
-    // has at least one representative evidence item in the final context.
-    const hopsInCitations = new Set<number>();
-    citations.forEach((c: any) => { if (typeof c.hop === 'number' && c.hop >= 2) hopsInCitations.add(c.hop); });
-    for (const h of hopsInCitations) {
-      const hasHopSelected = selected.some((c: any) => c.hop === h);
-      if (!hasHopSelected) {
-        const topForHop = citations.find((c: any) => c.hop === h);
-        if (topForHop) {
-          const id = topForHop.id || `${topForHop.docId}:${topForHop.ord}`;
-          if (!selected.some((c: any) => (c.id || `${c.docId}:${c.ord}`) === id)) {
-            selected.push(topForHop);
-            usedTokens += costOf(topForHop);
-          }
-        }
-      }
-    }
-
-    if (!selected.length) return result;
-    const removed = citations.length - selected.length;
-    return {
-      ...result,
-      citations: selected,
-      topics: selected.map((c: any) => c.topic),
-      answer: selected.map((c: any) => c.context || c.snippet).filter(Boolean).join("\n\n"),
-      evidenceSelection: {
-        before: citations.length,
-        after: selected.length,
-        removed,
-        groups: selectedSets.length,
-        usedTokens,
-        relevanceFloorRatio: relFloor,
-        mmrLambda: lambda,
-        ...(subQueries.length ? { subQueries: subQueries.length, subQueryCovered, subQueryInjected } : {}),
-      },
-    };
-  }
-
-  private assessWeakEvidence(result: any, breadth = false): {
-    shouldEscalate: boolean;
-    weak: boolean;
-    evidence: string;
-    topScore: number | null;
-    scoreFloor: number;
-    reason: string;
-  } {
-    const citations = Array.isArray(result?.citations) ? result.citations : [];
-    const evidence = String(citations[0]?.evidence || "").toLowerCase();
-    const rawRerankScore = Number(citations[0]?.rerankScore);
-    const hasFallbackRerankScore = Number.isFinite(rawRerankScore);
-    const configuredFloor = Number(
-      hasFallbackRerankScore
-        ? process.env.GBRAIN_FALLBACK_RERANK_CONFIDENCE_FLOOR || 0.70
-        : process.env.GBRAIN_WEAK_EVIDENCE_SCORE_FLOOR || 0.75,
-    );
-    const scoreFloor = Number.isFinite(configuredFloor)
-      ? Math.max(0, Math.min(configuredFloor, 2))
-      : hasFallbackRerankScore ? 0.70 : 0.75;
-    const rawScore = hasFallbackRerankScore
-      ? rawRerankScore
-      : Number(citations[0]?.score);
-    const topScore = Number.isFinite(rawScore) ? rawScore : null;
-    // "weak" is an explicit upstream semantic label (the CLI marks uncertain
-    // semantic hits), while exact/keyword evidence is trusted regardless of
-    // score. The score only decides whether a weak hit needs one broad pass.
-    const weak = evidence.includes("weak") || Boolean((result as any)?.weak);
-    if (breadth) {
-      return { shouldEscalate: false, weak, evidence, topScore, scoreFloor, reason: "当前已是广覆盖检索" };
-    }
-    if (!citations.length) {
-      return { shouldEscalate: false, weak: false, evidence, topScore, scoreFloor, reason: "首轮没有候选，将由 Source 对账重试处理" };
-    }
-    if (!weak) {
-      return { shouldEscalate: false, weak, evidence, topScore, scoreFloor, reason: "首轮证据类型明确，无需扩检" };
-    }
-    if (topScore !== null && topScore >= scoreFloor) {
-      return {
-        shouldEscalate: false,
-        weak,
-        evidence,
-        topScore,
-        scoreFloor,
-        reason: `${hasFallbackRerankScore ? "交叉编码" : "语义命中"}分数 ${topScore.toFixed(3)} 已达到扩检门槛 ${scoreFloor.toFixed(3)}，交由证据门控验证`,
-      };
-    }
-    return {
-      shouldEscalate: true,
-      weak,
-      evidence,
-      topScore,
-      scoreFloor,
-      reason: topScore === null
-        ? "语义命中缺少可比较分数，需要扩检"
-        : `${hasFallbackRerankScore ? "交叉编码" : "语义命中"}分数 ${topScore.toFixed(3)} 低于扩检门槛 ${scoreFloor.toFixed(3)}`,
-    };
-  }
-
-  /**
-   * CRAG corrective step: one LLM call producing alternative search phrasings
-   * for a query that retrieved nothing (synonyms, broader terms, or the
-   * formal terminology a policy document would use). Returns at most 2
-   * queries; [] on any failure so callers fall through to honest refusal.
-   */
-  private async rewriteQueryForRetry(query: string): Promise<string[]> {
-    try {
-      const llmRequest = this.modelConfigService
-        ? await this.modelConfigService.getLlmChatConfig('llmwiki-retry-rewrite')
-        : null;
-      if (!llmRequest?.apiKey) return [];
-      const response = await fetch(`${llmRequest.baseUrl}/chat/completions`, {
+      const response = await fetch(`${params.baseUrl}/chat/completions`, {
         method: 'POST',
-        headers: llmRequest.headers,
+        headers: params.headers,
         body: JSON.stringify({
-          model: llmRequest.modelName,
-          messages: [
-            {
-              role: 'system',
-              content: '你是检索查询改写器。给定一个在知识库中检索不到任何结果的查询，给出 2 个替代检索措辞：同义词、更宽泛的上位词、或正式制度文档会使用的术语。只输出 JSON：{"queries":["...","..."]}',
-            },
-            { role: 'user', content: query },
-          ],
-          temperature: 0,
-          max_tokens: 600,
-          response_format: { type: 'json_object' },
-        }),
-        signal: AbortSignal.timeout(12000),
-      });
-      if (!response.ok) return [];
-      const payload: any = await response.json();
-      const message = payload?.choices?.[0]?.message || {};
-      let content = String(message.content || '').trim();
-      if (!content) content = String(message.reasoning_content || '').trim();
-      const parsed = JSON.parse((content.match(/\{[\s\S]*\}/) || [content])[0]);
-      return (Array.isArray(parsed?.queries) ? parsed.queries : [])
-        .map((q: any) => String(q || '').trim())
-        .filter((q: string) => q.length >= 2 && q.length <= 100)
-        .slice(0, 2);
-    } catch (err) {
-      this.logger.debug(`Retry rewrite unavailable: ${err instanceof Error ? err.message : String(err)}`);
-      return [];
-    }
-  }
-
-  /**
-   * NLI-style entailment judge used only when the deterministic overlap
-   * heuristic reports low semantic coverage. Returns the set of statement
-   * indices (0-based, into `statements`) that the evidence directly supports.
-   * Fail-open: returns an empty set on any error/timeout.
-   */
-  private async judgeEntailment(statements: string[], evidence: string): Promise<Set<number>> {
-    const supported = new Set<number>();
-    if (!statements.length || !evidence.trim()) return supported;
-    try {
-      const llmRequest = this.modelConfigService
-        ? (await this.modelConfigService?.getFastLlmChatConfig?.('llmwiki-entailment')) ??
-          (await this.modelConfigService?.getLlmChatConfig?.('llmwiki-entailment'))
-        : null;
-      if (!llmRequest) return supported;
-      const baseUrl = llmRequest.baseUrl;
-      const model = llmRequest.modelName;
-      const userContent = `【证据】\n${evidence}\n\n【陈述】\n${statements
-        .map((s, i) => `${i + 1}. ${s}`)
-        .join('\n')}`;
-      const response = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: llmRequest.headers,
-        body: JSON.stringify({
-          model,
+          model: params.modelName,
           messages: [
             {
               role: 'system',
               content:
-                '你是事实蕴含判定专家。给定【证据】与若干【陈述】，判断每条陈述是否能由证据直接支持（entailment），不得使用外部知识。只输出 json：{"supported":[陈述序号数组]}。',
+                '你是知识库问答助手。只依据用户给出的资料片段作答，不要使用外部知识，也不要解释你的推理过程。' +
+                '如果片段中包含问题的答案，直接给出最终答案正文，并在陈述出处时使用【资料N】标注（N 为片段编号）；' +
+                '如果片段确实与问题无关或不足以回答，只回复“资料未包含该信息”。',
             },
-            { role: 'user', content: userContent },
+            {
+              role: 'user',
+              content:
+                `问题：${params.question}\n\n资料片段：\n` +
+                params.sentences.map((sentence, index) => `【资料${index + 1}】${sentence}`).join('\n'),
+            },
           ],
           temperature: 0,
-          max_tokens: Number(process.env.SEMANTIC_COVERAGE_MAX_TOKENS || 1200),
-          response_format: { type: 'json_object' },
+          max_tokens: Number(process.env.CHAT_REFUSAL_FOCUS_MAX_TOKENS || 600),
         }),
-        signal: AbortSignal.timeout(Number(process.env.SEMANTIC_COVERAGE_TIMEOUT_MS || 6000)),
+        signal: AbortSignal.timeout(Number(process.env.CHAT_REFUSAL_FOCUS_TIMEOUT_MS || 45000)),
       });
-      if (!response.ok) return supported;
+      if (!response.ok) return '';
       const payload: any = await response.json();
       const message = payload?.choices?.[0]?.message || {};
-      let content = String(message.content || '').trim();
-      if (!content) {
-        content = String(message.reasoning_content || '').trim();
-        const match = content.match(/\{[\s\S]*\}/);
-        if (match) content = match[0];
-      }
-      const parsed = JSON.parse(content);
-      for (const raw of Array.isArray(parsed?.supported) ? parsed.supported : []) {
-        const index = Number(raw) - 1;
-        if (Number.isInteger(index) && index >= 0 && index < statements.length) supported.add(index);
-      }
+      const content = String(message.content || '').trim();
+      if (content) return content;
+      return extractAnswerFromReasoning(String(message.reasoning_content || ''));
     } catch (err) {
-      this.logger.debug(`Entailment judge skipped: ${err instanceof Error ? err.message : String(err)}`);
-    }
-    return supported;
-  }
-
-  /**
-   * Semantic-cache entries store raw citation objects (camelCase), while the
-   * SSE replay path must emit the snake_case timeline_entry contract the
-   * frontend reads (doc_title / document_id / kb_name / preview_url).
-   * Normalize defensively so replayed citations keep their title, preview
-   * link and KB attribution.
-   */
-  private normalizeTimelineEntry(cit: any) {
-    if (!cit || typeof cit !== "object") return cit;
-    const sourceKb = cit.source_kb ?? cit.kbId ?? cit.kb;
-    const documentId = cit.document_id ?? cit.docId;
-    return {
-      source_kb: sourceKb,
-      kb_name: cit.kb_name ?? cit.kbName ?? sourceKb,
-      document_id: documentId,
-      doc_title: cit.doc_title ?? cit.docTitle ?? cit.topic,
-      section: cit.section,
-      score: cit.score,
-      snippet: cit.snippet ?? cit.evidence ?? "",
-      preview_url:
-        cit.preview_url ??
-        buildDocumentPreviewUrl(sourceKb, documentId, {
-          page: cit.page_no ?? cit.pageNo,
-          clause: cit.section,
-        }) ??
-        undefined,
-      version: cit.version,
-      page_no: cit.page_no ?? cit.pageNo,
-      bbox: cit.bbox ?? cit.bboxes?.[0] ?? cit.metadata?.bbox,
-      version_conflict: cit.version_conflict ?? cit.versionConflict,
-    };
-  }
-
-  private async emitCitationsAndComplete(
-    userId: string,
-    citations: any[],
-    subscriber: Subscriber<MessageEvent>,
-    totalTokens: number,
-    fullAnswer = "",
-    trace: ChatTraceRecorder,
-    question?: string,
-    userScope?: { fingerprint: string; knowledgeEpoch: number },
-    modelName?: string,
-  ) {
-    trace.start("citation_validation", "引用校验与映射", "校验回答角标并绑定到原始文档预览");
-    // If the LLM cited specific [n] sources, match and retain them
-    const safeAnswer = stripInvalidCitationMarkers(fullAnswer, citations.length);
-    const citedMatches = safeAnswer.match(/\[(\d+)\]/g) || [];
-    const citedIndices = new Set(
-      citedMatches.map((m) => parseInt(m.replace(/\D/g, ""), 10)),
-    );
-
-    let finalCitations = citations.map((citation, index) => ({ citation, originalIndex: index + 1 }));
-    if (citedIndices.size > 0) {
-      const referenced = finalCitations.filter((item) => citedIndices.has(item.originalIndex));
-      if (referenced.length > 0) {
-        finalCitations = referenced;
-      }
-    } else if (citations.length > 8) {
-      finalCitations = finalCitations.slice(0, 8);
-    }
-
-    // Third-layer independent permission check
-    let validDocIdSet = new Set<string>();
-    const docIdsToCheck = finalCitations
-      .map((item) => item.citation.docId)
-      .filter((id): id is string => typeof id === "string" && id.length > 0);
-
-    if (docIdsToCheck.length > 0) {
-      const visibleKbs = await this.permissionService.getVisibleKnowledgeBases(userId);
-      const validDocs = await this.prisma.document.findMany({
-        where: {
-          id: { in: docIdsToCheck },
-          kbId: { in: visibleKbs },
-          status: "published",
-        },
-        select: { id: true },
-      });
-      validDocIdSet = new Set(validDocs.map((d) => d.id));
-    }
-
-    const preAclCount = finalCitations.length;
-    finalCitations = finalCitations.filter(({ citation, originalIndex }) => {
-      if (citation.docId && !validDocIdSet.has(citation.docId)) {
-        this.logger.warn(`Stripping citation [${originalIndex}] (docId: ${citation.docId}) due to independent ACL check failure.`);
-        return false;
-      }
-      return true;
-    });
-
-    const statements = safeAnswer.split(/(?:\n+|[。！？])/).map(s => s.trim()).filter(s => s.length >= 5);
-    const totalStatements = statements.length;
-    let groundedStatements = 0;
-    const ungroundedStatements: string[] = [];
-    for (const stmt of statements) {
-      const tags = stmt.match(/\[(\d+)\]/g) || [];
-      const validTagIndices = tags
-        .map((tag) => parseInt(tag.replace(/\D/g, ""), 10))
-        .filter((n) => citedIndices.has(n));
-      const hasValidTag = validTagIndices.length > 0;
-      // A valid marker alone is not grounding: numeric claims must appear in
-      // the cited evidence and the statement must overlap it lexically (see
-      // statementSupportedBy). This closes the "fabricated fact wearing a real
-      // citation index" hole.
-      const evidenceTexts = hasValidTag
-        ? validTagIndices.map((n) => {
-            const item = finalCitations.find((f) => f.originalIndex === n);
-            return String(item?.citation?.context || item?.citation?.snippet || "");
-          }).filter(Boolean)
-        : finalCitations.map((item: any) => String(item.citation?.context || item.citation?.snippet || ""));
-      if (evidenceTexts.length > 0 && statementSupportedBy(stmt, evidenceTexts, hasValidTag)) {
-        groundedStatements++;
-      } else {
-        ungroundedStatements.push(stmt);
-      }
-    }
-    // When the deterministic overlap heuristic reports weak coverage, confirm
-    // the ungrounded statements with an LLM entailment judge (NLI-style). This
-    // removes false positives from paraphrase without letting the model
-    // "support" statements that genuinely lack evidence.
-    if (
-      process.env.SEMANTIC_COVERAGE_JUDGE !== 'false' &&
-      finalCitations.length > 0 &&
-      ungroundedStatements.length > 0 &&
-      groundedStatements / Math.max(1, totalStatements) < 0.6
-    ) {
-      const evidenceText = finalCitations
-        .map((item: any) => String(item.citation.context || item.citation.snippet || ""))
-        .join('\n\n')
-        .slice(0, 6000);
-      const entailed = await this.judgeEntailment(ungroundedStatements, evidenceText);
-      groundedStatements += entailed.size;
-    }
-    let coverageRatio = totalStatements > 0 ? Number((groundedStatements / totalStatements).toFixed(2)) : 1.0;
-    // A standard refusal makes no factual claims, so the absence of citation
-    // markers is expected. Do not report it as low grounding (false alarm).
-    const isRefusalAnswer =
-      /(未包含相关信息|无法(?:根据知识库)?回答|不知道|无法提供(?:该信息)?)/.test(fullAnswer) &&
-      fullAnswer.trim().length <= 80;
-    const semanticCoverage = { totalStatements, groundedStatements, coverageRatio, refusalExempt: isRefusalAnswer };
-
-    let traceStatus = finalCitations.length > 0 ? "success" : "warning";
-    let traceMsg = finalCitations.length > 0
-        ? `回答引用 ${finalCitations.length} 个原始证据页面`
-        : "本次回答没有可绑定的原始证据";
-
-    if (isRefusalAnswer) {
-      traceMsg = finalCitations.length > 0
-        ? `标准拒答；仍返回 ${finalCitations.length} 个候选证据页面供人工核对`
-        : "标准拒答，未返回可绑定证据";
-    } else if (citations.length > 0 && coverageRatio < 0.5) {
-      traceStatus = "warning";
-      traceMsg += `，但证据语义覆盖率偏低 (${Math.round(coverageRatio * 100)}%)，部分结论缺少明确引用支撑`;
-    }
-
-    trace.finish(
-      "citation_validation",
-      traceStatus as "success" | "warning",
-      traceMsg,
-      {
-        candidateCitations: citations.length,
-        referencedCitations: finalCitations.map((item) => item.originalIndex),
-        invalidMarkersRemoved: safeAnswer !== fullAnswer,
-        aclStripped: preAclCount - finalCitations.length,
-        semanticCoverage,
-      },
-    );
-
-    finalCitations.forEach(({ citation: cit, originalIndex }: any) => {
-      subscriber.next({
-        data: {
-          type: "citation",
-          index: originalIndex,
-          topic_slug: cit.topic,
-          timeline_entry: {
-            source_kb: cit.kbId,
-            kb_name: cit.kbName || cit.kbId,
-            document_id: cit.docId,
-            doc_title: cit.docTitle,
-            section: cit.section,
-            score: cit.score,
-            snippet: cit.snippet || '',
-            preview_url: buildDocumentPreviewUrl(cit.kbId, cit.docId, { page: cit.pageNo || cit.page_no || cit.metadata?.page_no }) ?? undefined,
-            version: cit.version,
-            page_no: cit.pageNo || cit.page_no || cit.metadata?.page_no,
-            bbox: cit.bbox || cit.bboxes?.[0] || cit.metadata?.bbox,
-            version_conflict: cit.versionConflict,
-          },
-        },
-      });
-    });
-    subscriber.next({
-      data: { type: "done", total_tokens: totalTokens, latency_ms: 0 },
-    });
-    // Never cache refusals: weak evidence must not poison the cache, or every
-    // paraphrase of the question replays the refusal (observed in production).
-    // Low-grounding answers are equally excluded: only answers whose claims
-    // were verified against the cited evidence may serve later cache hits.
-    const refusalNotCacheable =
-      /(未包含相关信息|无法(?:根据知识库)?回答|不知道|无法提供(?:该信息)?)/.test(fullAnswer) ||
-      !fullAnswer.trim();
-    const cacheMinGrounding = Number(process.env.CACHE_MIN_GROUNDING || 0.8);
-    const groundingNotCacheable =
-      !isRefusalAnswer && totalStatements > 0 && coverageRatio < cacheMinGrounding;
-    if (groundingNotCacheable) {
       this.logger.warn(
-        `Answer not cached: grounding coverage ${coverageRatio} below threshold ${cacheMinGrounding}.`,
+        `Focused refusal retry unavailable: ${err instanceof Error ? err.message : String(err)}`,
       );
+      return '';
     }
-    if (
-      this.semanticCacheService &&
-      question &&
-      userScope?.fingerprint &&
-      fullAnswer.trim() &&
-      !refusalNotCacheable &&
-      !groundingNotCacheable
-    ) {
-      this.semanticCacheService.store(
-        question,
-        null,
-        // userScope.fingerprint here IS the semanticCacheScopeKey hash: the
-        // processChat call site passes { fingerprint: cacheScopeKey }, so
-        // lookup and store share the same salted scope key.
-        userScope.fingerprint,
-        userScope.knowledgeEpoch,
-        fullAnswer,
-        finalCitations.map((item: any) => item.citation),
-        modelName || null,
-        null,
-      ).catch((err) => {
-        this.logger.debug(`Semantic cache store failed: ${err instanceof Error ? err.message : String(err)}`);
-      });
-    }
-    subscriber.complete();
   }
 
-  /**
-   * Lost-in-the-middle context reordering (Liu et al., 2023):
-   * Places the most relevant evidence chunks at the beginning and end of the context
-   * prompt, avoiding the attention decay in the middle.
-   */
-  private reorderLostInTheMiddle<T>(items: T[]): T[] {
-    if (!items || items.length <= 4) return items ? [...items] : [];
-    // Keep the top 2 primary hop/evidence chunks anchored at the front so multi-hop reasoning
-    // is never severed by intervening distractors.
-    const topAnchors = items.slice(0, 2);
-    const rest = items.slice(2);
-    const result: T[] = new Array(rest.length);
-    let left = 0;
-    let right = rest.length - 1;
-    for (let i = 0; i < rest.length; i++) {
-      if (i % 2 === 0) {
-        result[left++] = rest[i];
-      } else {
-        result[right--] = rest[i];
-      }
+  private async retryAnswerOnly(params: {
+    baseUrl: string;
+    modelName: string;
+    headers: Record<string, string>;
+    systemMessage: string;
+    userMessage: string;
+  }): Promise<string> {
+    try {
+      const response = await fetch(`${params.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: params.headers,
+        body: JSON.stringify({
+          model: params.modelName,
+          messages: [
+            {
+              role: 'system',
+              content:
+                `${params.systemMessage}\n\n【本轮附加约束】：上一次回复没有产生正文。请只输出最终答案正文本身，` +
+                '不要输出思考过程、计划、步骤说明或对指令的复述；资料不足时按要求直接给出拒答句。',
+            },
+            { role: 'user', content: params.userMessage },
+          ],
+          temperature: 0,
+          max_tokens: Number(process.env.LLM_ANSWER_RETRY_MAX_TOKENS || 900),
+        }),
+        signal: AbortSignal.timeout(Number(process.env.LLM_ANSWER_RETRY_TIMEOUT_MS || 45000)),
+      });
+      if (!response.ok) return '';
+      const payload: any = await response.json();
+      const message = payload?.choices?.[0]?.message || {};
+      const content = String(message.content || '').trim();
+      if (content) return content;
+      return extractAnswerFromReasoning(String(message.reasoning_content || ''));
+    } catch (err) {
+      this.logger.warn(
+        `Answer-only retry unavailable: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return '';
     }
-    return [...topAnchors, ...result];
   }
 
   /**
@@ -5820,6 +5116,27 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
           prev.score = bestMergedScore;
           prev.rerankScore = bestMergedScore;
           prev.relevanceScore = bestMergedScore;
+          // A stitched span may have been recalled by more than one planned
+          // sub-question. Keep the complete provenance set so evidence routing
+          // does not accidentally erase a reasoning hop during assembly.
+          const mergedOrigins = [
+            prev.subQueryOrigin,
+            ...(Array.isArray(prev.subQueryOrigins) ? prev.subQueryOrigins : []),
+            curr.subQueryOrigin,
+            ...(Array.isArray(curr.subQueryOrigins) ? curr.subQueryOrigins : []),
+          ].map((value) => String(value || '').trim()).filter(Boolean);
+          if (mergedOrigins.length) {
+            prev.subQueryOrigin = prev.subQueryOrigin || mergedOrigins[0];
+            prev.subQueryOrigins = [...new Set(mergedOrigins)];
+          }
+          if (curr.bridgeRescue === true) prev.bridgeRescue = true;
+          if (curr.floorExemptReason === 'multi_hop_bridge') {
+            prev.floorExempt = true;
+            prev.floorExemptReason = 'multi_hop_bridge';
+          }
+          if (typeof curr.hop === 'number') {
+            prev.hop = Math.max(Number(prev.hop || 0), curr.hop);
+          }
           if (curr.pageNo && prev.pageNo !== curr.pageNo) {
             const startP = prev.startPage ?? prev.pageNo;
             const endP = curr.pageNo;

@@ -4,6 +4,28 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 export PATH="$HOME/.local/bin:$HOME/.hermes/node/bin:$HOME/.bun/bin:$PATH"
+
+# Dependency install policy:
+#   default              -> pnpm install --frozen-lockfile (lockfile must match
+#                           package.json; production-safe, no silent drift)
+#   --allow-lock-update  -> pnpm install --frozen-lockfile=false (explicit opt-in
+#                           when you intentionally want pnpm to refresh the lock)
+ALLOW_LOCK_UPDATE=false
+for arg in "$@"; do
+  case "$arg" in
+    --allow-lock-update) ALLOW_LOCK_UPDATE=true ;;
+    -h|--help)
+      echo "Usage: bash deploy/upgrade.sh [--allow-lock-update]"
+      echo "  --allow-lock-update  allow pnpm to update pnpm-lock.yaml (default: frozen)"
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $arg (see --help)" >&2
+      exit 1
+      ;;
+  esac
+done
+
 echo "=================================================="
 echo "            LLMWiki Production Upgrade            "
 echo "=================================================="
@@ -18,7 +40,14 @@ done
 
 # 2. Install Node dependencies
 echo "[1/5] Installing package dependencies..."
-pnpm install --frozen-lockfile=false
+if [[ "$ALLOW_LOCK_UPDATE" == true ]]; then
+  echo "  ! --allow-lock-update: lockfile may be modified (NOT frozen)."
+  pnpm install --frozen-lockfile=false
+else
+  # --frozen-lockfile: production dependencies must match pnpm-lock.yaml exactly.
+  # If this fails, commit an updated lockfile first (or pass --allow-lock-update).
+  pnpm install --frozen-lockfile
+fi
 
 # 3. Database migrations / sync
 echo "[2/5] Synchronizing database schema..."

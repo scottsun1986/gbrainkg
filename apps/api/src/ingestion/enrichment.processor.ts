@@ -7,6 +7,7 @@ import { RaptorService } from '../raptor/raptor.service';
 import { GraphRagService } from '../graph-rag/graph-rag.service';
 import { ModelConfigService } from '../model-config.service';
 import { BrainCompilerService } from '../brain-compiler/brain-compiler.service';
+import { LexicalIndexService } from '../retrieval/lexical-index.service';
 
 export interface EnrichmentJobData {
   documentId: string;
@@ -34,6 +35,7 @@ export class EnrichmentProcessor extends WorkerHost {
     private readonly raptorService: RaptorService,
     private readonly graphRagService: GraphRagService,
     private readonly modelConfigService: ModelConfigService,
+    @Optional() private readonly lexicalIndexService?: LexicalIndexService,
     @Optional() private readonly compilerService?: BrainCompilerService,
   ) {
     super();
@@ -71,6 +73,23 @@ export class EnrichmentProcessor extends WorkerHost {
               throw new Error(
                 `Chunk embedding incomplete for ${documentId}: ${coverage.missing}/${coverage.total} chunks missing vectors.`,
               );
+            }
+          })(),
+        );
+      }
+      // Full-corpus BM25 postings. Kept in the enrichment state machine (rather
+      // than fire-and-forget) so a failure marks the document degraded and is
+      // retried, and so the lexical arm of retrieval is complete exactly when
+      // indexReadiness turns ready.
+      if (this.lexicalIndexService?.isEnabled?.()) {
+        enrichmentTasks.push(
+          (async () => {
+            const result = await this.lexicalIndexService!.indexDocument(kbId, documentId);
+            if (result.indexed === 0) {
+              const stored = await this.prisma.chunk.count({ where: { documentId } });
+              if (stored > 0) {
+                throw new Error(`Lexical index incomplete for ${documentId}: 0/${stored} chunks indexed.`);
+              }
             }
           })(),
         );
@@ -176,7 +195,7 @@ export class EnrichmentProcessor extends WorkerHost {
         llmConfig = {
           baseUrl: (cfg.provider.baseUrl || process.env.LLM_BASE_URL || '').replace(/\/$/, ''),
           apiKey: cfg.provider.apiKey || process.env.DEEPSEEK_API_KEY || '',
-          modelName: cfg.modelName || process.env.LLM_MODEL ,
+          modelName: cfg.modelName || process.env.LLM_MODEL || "",
         };
       }
     } catch {

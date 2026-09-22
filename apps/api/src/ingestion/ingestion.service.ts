@@ -8,13 +8,18 @@ import { extname, join } from "node:path";
 import { BrainCompilerService } from "../brain-compiler/brain-compiler.service";
 import { ModelConfigService } from "../model-config.service";
 import { splitMarkdownIntoChunks } from "./markdown-chunker";
-import { assessContentQuality } from "./content-quality";
+import { assessContentQuality, assessExtendedQuality } from "./content-quality";
+import { isNearDuplicate, simhash64 } from "./content-dedupe";
 import { parserPollBudget } from "./parser-budget";
 import { ANYDOC_UPLOAD_EXTENSIONS, SUPPORTED_UPLOAD_EXTENSIONS } from './parser-capabilities';
 import { enrichChunksWithContext } from './contextual-retrieval';
+import { PrismaContextualPrefixCache } from './contextual-prefix-cache';
 import { GraphRagService } from "../graph-rag/graph-rag.service";
 import { RaptorService } from "../raptor/raptor.service";
 import { ChunkEmbeddingService } from "../embedding/chunk-embedding.service";
+import { LexicalIndexService } from "../retrieval/lexical-index.service";
+import { buildCanonicalBlock } from './canonical-block';
+import { withServiceContext } from '../db/tenant-context.service';
 
 // Thrown inside the save transaction when the document was re-ingested while
 // this run was parsing, so the caller can return instead of marking failed.
@@ -34,6 +39,14 @@ export class IngestionService implements OnModuleInit {
   private readonly parserUrl = (
     process.env.PARSER_WORKER_URL || "http://127.0.0.1:8100"
   ).replace(/\/$/, "");
+  // Durable Contextual Retrieval prefix memo, shared by every worker and
+  // instance: re-ingestion of unchanged chunks must not re-pay the LLM.
+  // Lazily constructed: instantiating it at module load would open a database
+  // client before Nest (or a test harness) has configured anything.
+  private static contextualPrefixCacheInstance?: PrismaContextualPrefixCache;
+  private static get contextualPrefixCache(): PrismaContextualPrefixCache {
+    return (IngestionService.contextualPrefixCacheInstance ??= new PrismaContextualPrefixCache());
+  }
   private static readonly parseCache = new Map<string, { parsed: any; conversionMetadata: Record<string, unknown> }>();
 
   constructor(
@@ -44,6 +57,7 @@ export class IngestionService implements OnModuleInit {
     @Optional() private readonly raptorService?: RaptorService,
     @Optional() private readonly chunkEmbeddingService?: ChunkEmbeddingService,
     @Optional() @InjectQueue("enrichment-queue") private readonly enrichmentQueue?: Queue,
+    @Optional() private readonly lexicalIndexService?: LexicalIndexService,
   ) {}
 
   async onModuleInit() {
@@ -166,6 +180,7 @@ export class IngestionService implements OnModuleInit {
         kbId: true,
         title: true,
         rawFileOid: true,
+        sourceType: true,
         status: true,
         version: true,
       },
@@ -202,14 +217,27 @@ export class IngestionService implements OnModuleInit {
     } else {
       // L2 Persistent cross-process deduplication cache
       try {
-        const matchingDoc = await this.prisma.document.findFirst({
-          where: {
-            id: { not: documentId },
-            status: "published",
-            parserMetadata: { path: ["contentHash"], equals: contentHash },
-          },
-          select: { mdPath: true, parserEngine: true, parserClassification: true, parserMetadata: true },
-        });
+        // Containment (`@>`) instead of a JSON path comparison: the table only
+        // has a GIN jsonb_path_ops index, which supports `@>`/`?`/`@@` but not
+        // the `#>`/`#>>` extraction predicate Prisma generates for
+        // `parserMetadata: { path: [...], equals: ... }`. Measured with
+        // EXPLAIN, that form degraded to a sequential scan of "Document" even
+        // with seq scan disabled, so every cache miss paid a full table scan.
+        const matchingRows = await withServiceContext(this.prisma, (tx) =>
+          tx.$queryRaw<Array<{
+          mdPath: string | null;
+          parserEngine: string | null;
+          parserClassification: string | null;
+          parserMetadata: any;
+        }>>`
+          SELECT "mdPath", "parserEngine", "parserClassification", "parserMetadata"
+          FROM "Document"
+          WHERE "id" <> ${documentId}::uuid
+            AND "status" = 'published'
+            AND "parserMetadata" @> ${JSON.stringify({ contentHash })}::jsonb
+          LIMIT 1
+        `);
+        const matchingDoc = Array.isArray(matchingRows) ? matchingRows[0] : undefined;
         if (matchingDoc && matchingDoc.mdPath) {
           const mdText = await readFile(join(this.uploadRoot, matchingDoc.mdPath), "utf8").catch(() => null);
           if (mdText && mdText.trim()) {
@@ -331,7 +359,22 @@ export class IngestionService implements OnModuleInit {
 
     // Inspect original output before control-character normalization can hide damage.
     const quality = assessContentQuality(String(parsed.markdown || ""), ext, parsed);
-    parsed = { ...parsed, ...quality };
+    // content-v2.1: language detection + PII scan + SimHash for near-dup gate.
+    const extended = assessExtendedQuality(String(parsed.markdown || ""));
+    if (extended.piiFindings.length > 0 && quality.quality_status === 'passed') {
+      (quality as any).quality_status = 'needs_review';
+      (quality as any).quality_issues = [
+        ...((quality as any).quality_issues || []),
+        ...extended.issues,
+      ];
+    }
+    parsed = {
+      ...parsed,
+      ...quality,
+      language: extended.language,
+      simhash: extended.simhash,
+      pii_count: extended.piiFindings.length,
+    };
     const markdown = String(parsed.markdown || "")
       .replace(/\0/g, "")
       .replace(/\u0000/g, "")
@@ -346,6 +389,33 @@ export class IngestionService implements OnModuleInit {
         const oldest = IngestionService.parseCache.keys().next().value;
         if (oldest) IngestionService.parseCache.delete(oldest);
       }
+    }
+    // Near-duplicate gate (SimHash): flag same-KB documents within Hamming<=3
+    // unless the content hash is identical (exact dedupe already handles that).
+    try {
+      const currentSim = simhash64(markdown);
+      const siblings = await this.prisma.document.findMany({
+        where: { kbId: document.kbId, id: { not: documentId }, status: 'published' },
+        select: { id: true, title: true, contentHash: true, parserMetadata: true },
+        take: 500,
+      });
+      const near = siblings.filter((s: any) => {
+        const other = s.parserMetadata?.simhash;
+        if (!other || s.contentHash === contentHash) return false;
+        try {
+          return isNearDuplicate(currentSim, BigInt(other));
+        } catch {
+          return false;
+        }
+      });
+      if (near.length > 0) {
+        parsed.near_duplicates = near.slice(0, 5).map((s: any) => ({ id: s.id, title: s.title }));
+        this.logger.warn(
+          `Document ${documentId} is near-duplicate of ${near.length} existing doc(s) in KB ${document.kbId}`,
+        );
+      }
+    } catch (dupErr) {
+      this.logger.debug(`near-dup check skipped: ${dupErr instanceof Error ? dupErr.message : String(dupErr)}`);
     }
     const chunks = splitMarkdownIntoChunks(markdown);
     if (!chunks.length)
@@ -365,12 +435,13 @@ export class IngestionService implements OnModuleInit {
             {
               baseUrl: (llmConfig.provider.baseUrl || process.env.FAST_LLM_BASE_URL || process.env.LLM_BASE_URL || '').replace(/\/$/, ''),
               apiKey: llmConfig.provider.apiKey || process.env.FAST_LLM_API_KEY || process.env.DEEPSEEK_API_KEY || '',
-              modelName: llmConfig.modelName || process.env.FAST_LLM_MODEL || process.env.LLM_MODEL,
+              modelName: llmConfig.modelName || process.env.FAST_LLM_MODEL || (process.env.LLM_MODEL ?? ""),
             },
             {
               concurrency: Number(process.env.CONTEXTUAL_RETRIEVAL_CONCURRENCY || 5),
               batchSize: Number(process.env.CONTEXTUAL_RETRIEVAL_BATCH_SIZE || 3),
               documentTitle: document.title,
+              cache: IngestionService.contextualPrefixCache,
             },
           );
           this.logger.log(
@@ -419,6 +490,8 @@ export class IngestionService implements OnModuleInit {
       }
     }
     parserMetadata["parsed_at"] = new Date().toISOString();
+    if (extended?.language) parserMetadata["language"] = extended.language;
+    if (extended?.simhash) parserMetadata["simhash"] = extended.simhash;
     const contentPath = join(this.uploadRoot, documentId, "content.md");
     const pendingContentPath = join(
       this.uploadRoot,
@@ -451,17 +524,29 @@ export class IngestionService implements OnModuleInit {
             );
           }
           await tx.chunk.deleteMany({ where: { documentId } });
-          const CHUNK_BATCH_SIZE = 500;
-          const chunkData = enrichedChunks.map((chunk) => ({
-            documentId,
-            kbId: document.kbId,
-            ord: chunk.ord,
-            content: chunk.content,
-            tokenCount: chunk.tokenCount,
-            charStart: chunk.charStart,
-            charEnd: chunk.charEnd,
-            metadata: chunk.metadata as any,
-          }));
+          const CHUNK_BATCH_SIZE = Number(process.env.INGESTION_CHUNK_BATCH || 2000);
+          const chunkData = enrichedChunks.map((chunk) => {
+            const canonicalBlock = buildCanonicalBlock({
+              document: {
+                id: documentId,
+                kbId: document.kbId,
+                title: document.title,
+                version: targetVersion ?? document.version ?? 1,
+                sourceType: document.sourceType,
+              },
+              chunk,
+            });
+            return {
+              documentId,
+              kbId: document.kbId,
+              ord: chunk.ord,
+              content: chunk.content,
+              tokenCount: chunk.tokenCount,
+              charStart: chunk.charStart,
+              charEnd: chunk.charEnd,
+              metadata: { ...(chunk.metadata || {}), canonical_block: canonicalBlock } as any,
+            };
+          });
           for (let i = 0; i < chunkData.length; i += CHUNK_BATCH_SIZE) {
             await tx.chunk.createMany({ data: chunkData.slice(i, i + CHUNK_BATCH_SIZE) });
           }
@@ -538,6 +623,14 @@ export class IngestionService implements OnModuleInit {
         where: { id: documentId },
         data: { status: "published" },
       });
+    // Lexical postings are written here as well as in the enrichment job so a
+    // freshly ingested document is searchable through the full-corpus BM25
+    // channel even if enrichment is still queued (or fails and retries later).
+    // Best effort: the service degrades to a warning and the enrichment job or
+    // the backfill CLI will repair the postings.
+    await this.lexicalIndexService
+      ?.indexDocument(document.kbId, documentId)
+      .catch(() => undefined);
     // Post-publish enrichment runs through a durable queue with retries and
     // maintains the Document.indexReadiness state machine. When the queue is
     // not assembled (unit tests), fall back to fire-and-forget behaviour.

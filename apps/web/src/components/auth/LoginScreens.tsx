@@ -2,7 +2,13 @@
 
 import React, { useState } from 'react';
 
-export function LoginScreen({ onSubmit, error, loading }: any) {
+export interface LoginScreenProps {
+  onSubmit: (username: string, password: string) => void;
+  error?: string;
+  loading?: boolean;
+}
+
+export function LoginScreen({ onSubmit, error, loading }: LoginScreenProps) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const inputStyle = { width: '100%', boxSizing: 'border-box' as const, padding: '11px 12px', borderRadius: 8, marginBottom: 16 };
@@ -26,7 +32,14 @@ export function LoginScreen({ onSubmit, error, loading }: any) {
   );
 }
 
-export function PasswordChangeScreen({ onSubmit, onLogout, error, loading }: any) {
+export interface PasswordChangeScreenProps {
+  onSubmit: (currentPassword: string, newPassword: string) => void;
+  onLogout: () => void;
+  error?: string;
+  loading?: boolean;
+}
+
+export function PasswordChangeScreen({ onSubmit, onLogout, error, loading }: PasswordChangeScreenProps) {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');

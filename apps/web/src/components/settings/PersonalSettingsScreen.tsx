@@ -14,6 +14,27 @@ interface CredentialItem {
   maskedSecret: string;
 }
 
+interface OrgMembership {
+  orgNode?: { name?: string } | null;
+}
+
+interface RoleMembership {
+  role?: { name?: string } | null;
+}
+
+interface SettingsUser {
+  email?: string | null;
+  displayName?: string | null;
+  username?: string | null;
+  orgs?: OrgMembership[] | null;
+  roles?: RoleMembership[] | null;
+}
+
+/** Narrow an unknown thrown value to a message we can show the user. */
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 export function PersonalSettingsScreen({
   user,
   apiBaseUrl,
@@ -21,7 +42,7 @@ export function PersonalSettingsScreen({
   onNotify,
   active = true,
 }: {
-  user: any;
+  user: SettingsUser | null;
   apiBaseUrl: string;
   apiHeaders: () => Record<string, string>;
   onNotify?: (msg: string, type?: 'success' | 'error' | 'info') => void;
@@ -67,8 +88,8 @@ export function PersonalSettingsScreen({
       } else {
         notify(json.msg || '获取凭证列表失败', 'error');
       }
-    } catch (e: any) {
-      notify(e.message || '网络请求错误', 'error');
+    } catch (e: unknown) {
+      notify(errorMessage(e, '网络请求错误'), 'error');
     } finally {
       setLoading(false);
     }
@@ -113,8 +134,8 @@ export function PersonalSettingsScreen({
       } else {
         notify(json.msg || '创建凭证失败', 'error');
       }
-    } catch (e: any) {
-      notify(e.message || '创建凭证出错', 'error');
+    } catch (e: unknown) {
+      notify(errorMessage(e, '创建凭证出错'), 'error');
     } finally {
       setAddLoading(false);
     }
@@ -138,8 +159,8 @@ export function PersonalSettingsScreen({
       } else {
         notify(json.msg || '更新状态失败', 'error');
       }
-    } catch (e: any) {
-      notify(e.message || '更新状态失败', 'error');
+    } catch (e: unknown) {
+      notify(errorMessage(e, '更新状态失败'), 'error');
     }
   };
 
@@ -168,8 +189,8 @@ export function PersonalSettingsScreen({
       } else {
         notify(json.msg || '重置密钥失败', 'error');
       }
-    } catch (e: any) {
-      notify(e.message || '重置密钥出错', 'error');
+    } catch (e: unknown) {
+      notify(errorMessage(e, '重置密钥出错'), 'error');
     }
   };
 
@@ -189,8 +210,8 @@ export function PersonalSettingsScreen({
       } else {
         notify(json.msg || '删除失败', 'error');
       }
-    } catch (e: any) {
-      notify(e.message || '删除出错', 'error');
+    } catch (e: unknown) {
+      notify(errorMessage(e, '删除出错'), 'error');
     }
   };
 
@@ -231,8 +252,8 @@ export function PersonalSettingsScreen({
       } else {
         notify(json.message || json.msg || '密码修改失败', 'error');
       }
-    } catch (e: any) {
-      notify(e.message || '修改密码网络错误', 'error');
+    } catch (e: unknown) {
+      notify(errorMessage(e, '修改密码网络错误'), 'error');
     } finally {
       setPwdLoading(false);
     }
@@ -890,13 +911,13 @@ curl -X POST ${getOrigin()}/open-api/v1/chat/completions \\
               <div>
                 <span style={{ color: 'var(--ink-3)', display: 'inline-block', width: 90 }}>所属组织：</span>
                 <span style={{ color: 'var(--ink)' }}>
-                  {user?.orgs?.map((o: any) => o.orgNode?.name).filter(Boolean).join('、') || '默认组织'}
+                  {user?.orgs?.map((o) => o.orgNode?.name).filter(Boolean).join('、') || '默认组织'}
                 </span>
               </div>
               <div>
                 <span style={{ color: 'var(--ink-3)', display: 'inline-block', width: 90 }}>角色身份：</span>
                 <span style={{ color: 'var(--ink)' }}>
-                  {user?.roles?.map((r: any) => r.role?.name).filter(Boolean).join('、') || '普通用户'}
+                  {user?.roles?.map((r) => r.role?.name).filter(Boolean).join('、') || '普通用户'}
                 </span>
               </div>
             </div>

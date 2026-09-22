@@ -1,11 +1,19 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { ChatService, hasPolarityConflict, smartTruncateChunkText, statementSupportedBy } from "./chat.service";
+import {
+  ChatService,
+  hasPolarityConflict,
+  isStrongNameEntity,
+  smartTruncateChunkText,
+  statementSupportedBy,
+  truncateChunkToTokenBudget,
+} from "./chat.service";
 import { PermissionService } from "../permission/permission.service";
 import { BrainCompilerService } from "../brain-compiler/brain-compiler.service";
 import { BrainScopeService } from "../brain-compiler/brain-scope.service";
 import { lastValueFrom, toArray } from "rxjs";
 import { GraphRagService } from "../graph-rag/graph-rag.service";
 import { ModelConfigService } from "../model-config.service";
+import { estimateTokens } from "./context-budget";
 
 const mockGraphRag = {
   searchLocalGraph: jest.fn().mockResolvedValue({
@@ -15,6 +23,7 @@ const mockGraphRag = {
   searchGlobalCommunities: jest.fn().mockResolvedValue({
     communities: [], formattedContext: "UNVERIFIED_WITHDRAWN_GRAPH_SECRET",
   }),
+  planDriftQueries: jest.fn().mockResolvedValue({ probes: [], communityIds: [], seedEntities: [] }),
 };
 
 // Mocks
@@ -44,6 +53,7 @@ const mockGbrainQuery = jest.fn().mockResolvedValue({
 });
 
 const mockPrisma = {
+  $queryRaw: jest.fn(),
   brainRepo: {
     findUnique: jest.fn(),
   },
@@ -168,6 +178,50 @@ describe("ChatService", () => {
       events.some((e) => (e.data as any).type === "citation"),
     ).toBeTruthy();
     expect(events.some((e) => (e.data as any).type === "done")).toBeTruthy();
+  });
+
+  it('turns graph relations into ACL-checked source citations instead of graph prose', async () => {
+    const chunkId = '11111111-1111-4111-8111-111111111111';
+    jest.spyOn((service as any).retrievalArms, 'searchChunksFallback').mockResolvedValue([]);
+    mockGbrainQuery.mockResolvedValueOnce({ citations: [], topics: [], answer: '', reranked: true });
+    mockGraphRag.searchLocalGraph.mockResolvedValueOnce({
+      entities: [],
+      relations: [{
+        source: '系统A', target: '制度B', relationType: 'references', weight: 1,
+        snippet: 'GRAPH_ONLY_PROSE',
+        provenance: [{ documentId: '22222222-2222-4222-8222-222222222222', chunkId }],
+      }],
+      formattedContext: 'GRAPH_ONLY_PROSE',
+    });
+    mockPrisma.$queryRaw.mockResolvedValueOnce([{
+      id: chunkId,
+      documentId: '22222222-2222-4222-8222-222222222222',
+      kbId: '33333333-3333-4333-8333-333333333333',
+      ord: 2,
+      content: '制度B原文明确说明系统A引用该制度。',
+      metadata: { page_no: 4 },
+      docTitle: '制度B.md',
+      docVersion: 3,
+    }]);
+
+    const hits = await (service as any).retrieveHopProbes(
+      ['33333333-3333-4333-8333-333333333333'],
+      ['gbrain://source/test'],
+      undefined,
+      ['系统A 制度B'],
+      undefined,
+      undefined,
+      undefined,
+      2,
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toMatchObject({
+      id: chunkId,
+      context: '制度B原文明确说明系统A引用该制度。',
+      graphProvenanceBound: true,
+      docTitle: '制度B.md',
+    });
+    expect(hits[0].context).not.toContain('GRAPH_ONLY_PROSE');
   });
 
   it("should preserve conversation context without sending stale assistant turns as live messages", async () => {
@@ -376,7 +430,7 @@ describe("ChatService", () => {
       ]),
       getDocumentOutlines: jest.fn().mockResolvedValue([]),
     };
-    (service as any).raptorService = mockRaptorService;
+    (service as any).retrievalArms.raptorService = mockRaptorService;
 
     // Non-macro query should NOT augment summaries
     const res1 = await (service as any).augmentWithDocumentSummaries(
@@ -809,11 +863,17 @@ describe("ChatService", () => {
       { provider: 'weknora' as const, externalChunkId: 'c2', documentId: 'doc-C', kbId: 'kb1', documentVersion: 1, content: 'weknora C', score: 0.85 },
     ];
     const fused = (service as any).fuseWithWeKnoraRRF(baseCitations, weknoraEvidences, 60);
-    expect(fused.length).toBe(3);
-    // doc-B is recalled by BOTH base and WeKnora, so its RRF score is additive and should rank 1st
+    // Fusion keeps passage-level granularity: the two engines returned different
+    // passages of doc-B, so doc-B contributes two candidates instead of one
+    // concatenated blob (doc-A, doc-B base, doc-B weknora, doc-C).
+    expect(fused.length).toBe(4);
+    // doc-B is surfaced by BOTH engines, so its entries are corroborated and its
+    // strongest passage carries the fusion bonus and ranks first.
     expect(fused[0].docId).toBe('doc-B');
     expect(fused[0].dualVerified).toBe(true);
     expect(fused[0].providers).toContain('weknora');
+    // A document corroborated by both engines marks every one of its passages.
+    expect(fused.filter((f: any) => f.docId === 'doc-B').every((f: any) => f.dualVerified)).toBe(true);
     // doc-C was discovered only by WeKnora, should be present
     expect(fused.some((f: any) => f.docId === 'doc-C')).toBe(true);
   });
@@ -834,7 +894,7 @@ describe("ChatService", () => {
         },
       ]),
     };
-    (service as any).raptorService = mockRaptor;
+    (service as any).retrievalArms.raptorService = mockRaptor;
 
     const mockTrace = { start: jest.fn(), finish: jest.fn(), skip: jest.fn() };
     const queryResult = {
@@ -859,7 +919,7 @@ describe("ChatService", () => {
   });
 
   it('retrieveHopProbes retrieves and tags candidates for subsequent hops', async () => {
-    jest.spyOn(service, 'searchChunksFallback').mockResolvedValue([
+    jest.spyOn((service as any).retrievalArms, 'searchChunksFallback').mockResolvedValue([
       {
         documentId: 'doc-hop',
         kbId: 'kb-1',
@@ -887,7 +947,7 @@ describe("ChatService", () => {
   });
 
   it('searchChunksFallback scopes domainTerms to query and prioritizes targeted document title', async () => {
-    (service as any).scopeDomainTermsCache.set('kb-target', {
+    (service as any).retrievalArms.scopeDomainTermsCache.set('kb-target', {
       terms: ['绩效考核', '指标体系', '总则', '处分', '安全偏航'],
       expiresAt: Date.now() + 60000,
     });
@@ -939,10 +999,10 @@ describe("ChatService", () => {
         ]),
       },
     };
-    (service as any).prisma = mockPrisma;
-    (service as any).searchChunksByVector = jest.fn().mockResolvedValue([]);
+    (service as any).retrievalArms.prisma = mockPrisma;
+    (service as any).retrievalArms.searchChunksByVector = jest.fn().mockResolvedValue([]);
 
-    const results = await (service as any).searchChunksFallback(['kb-target'], '公车管理办法第十条内容是什么。', 15);
+    const results = await (service as any).retrievalArms.searchChunksFallback(['kb-target'], '公车管理办法第十条内容是什么。', 15);
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].documentId).toBe('doc-target');
     expect(results[0].title).toBe('公车管理办法.docx');
@@ -1113,6 +1173,24 @@ describe("ChatService", () => {
       expect(result[0].context).toBe("第一部分内容介绍。\n\n第二部分内容深入讲解。");
     });
 
+    it("preserves sub-question and bridge provenance across stitched chunks", () => {
+      const citations = [
+        {
+          docId: "d1", ord: 0, score: 0.9, context: "第一跳。",
+          subQueryOrigin: "first hop",
+        },
+        {
+          docId: "d1", ord: 1, score: 0.8, context: "第二跳。",
+          subQueryOrigin: "second hop", bridgeRescue: true, hop: 2,
+        },
+      ];
+      const result = service.stitchContiguousCitations(citations);
+      expect(result).toHaveLength(1);
+      expect(result[0].subQueryOrigins).toEqual(["first hop", "second hop"]);
+      expect(result[0].bridgeRescue).toBe(true);
+      expect(result[0].hop).toBe(2);
+    });
+
     it("seamlessly resolves mid-sentence cutoff across chunk boundary when no punctuation ends the first chunk", () => {
       const citations = [
         { docId: "d1", docTitle: "Doc 1", ord: 0, pageNo: 1, context: "13. 强化融资服务保障：鼓励各地联合创" },
@@ -1178,5 +1256,49 @@ describe("ChatService", () => {
       expect((deltas[0].data as any).content).toContain("已知知识库资料中未包含与该问题直接相关的信息");
     });
   });
+
+  describe("truncateChunkToTokenBudget", () => {
+    it("fits CJK evidence inside the requested token allowance", () => {
+      const bounded = truncateChunkToTokenBudget("制度条款".repeat(500), 120, 2000);
+      expect(estimateTokens(bounded)).toBeLessThanOrEqual(120);
+      expect(bounded).toContain("截断");
+    });
+
+    it("does not alter evidence that already fits", () => {
+      expect(truncateChunkToTokenBudget("short evidence", 100)).toBe("short evidence");
+    });
+  });
 });
 
+describe("isStrongNameEntity", () => {
+  // The bridge probe for a *mention-only* entity (no document titled after it) is
+  // gated on this shape check, so it has to accept real multi-token names and
+  // reject the prose fragments that earlier, looser probes tripped over.
+  it("accepts multi-token capitalised names", () => {
+    for (const name of [
+      "David Gest",
+      "Washington Island",
+      "Door County Wisconsin",
+      "Ebba Brahe",
+      "Andrei Ujică",
+      "Jean-Luc Godard",
+    ]) {
+      expect(isStrongNameEntity(name)).toBe(true);
+    }
+  });
+
+  it("rejects single words, prose fragments and over-long spans", () => {
+    for (const value of [
+      "",
+      "Jackson",
+      "Life",
+      "O'Brien",
+      "the film was released",
+      "Gone with the Wind is a 1939",
+      "one two three four five",
+      "  ",
+    ]) {
+      expect(isStrongNameEntity(value)).toBe(false);
+    }
+  });
+});

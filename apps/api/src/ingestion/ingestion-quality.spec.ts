@@ -3,6 +3,10 @@ import { IngestionService } from './ingestion.service';
 const mockPrisma = {
   document: { findUnique: jest.fn(), findFirst: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
   chunk: { deleteMany: jest.fn(), createMany: jest.fn() },
+  // The L2 content-hash dedup lookup uses JSON containment (`@>`) through a raw
+  // query, because the Prisma `path/equals` form compiles to `#>`/`#>>`
+  // extraction which the GIN index cannot serve (verified with EXPLAIN).
+  $queryRaw: jest.fn(),
   $transaction: jest.fn(),
 };
 // Interactive-transaction client delegating to the shared mocks so specs keep
@@ -41,6 +45,7 @@ describe('ingestion publication boundary', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockPrisma.document.findFirst.mockReset().mockResolvedValue(null);
+    mockPrisma.$queryRaw.mockReset().mockResolvedValue([]);
     mockPrisma.document.updateMany.mockResolvedValue({ count: 1 });
     mockWriteFile.mockResolvedValue(undefined);
     mockRename.mockResolvedValue(undefined);
@@ -52,12 +57,14 @@ describe('ingestion publication boundary', () => {
       id: 'doc-1', kbId: 'kb-1', title: 'duplicate.pdf', status: 'uploaded',
       rawFileOid: '/duplicate.pdf', version: 1,
     });
-    mockPrisma.document.findFirst.mockResolvedValue({
-      mdPath: 'cached/content.md',
-      parserEngine: 'anydoc',
-      parserClassification: 'pdf',
-      parserMetadata: { contentHash: 'cached' },
-    });
+    mockPrisma.$queryRaw.mockResolvedValue([
+      {
+        mdPath: 'cached/content.md',
+        parserEngine: 'anydoc',
+        parserClassification: 'pdf',
+        parserMetadata: { contentHash: 'cached' },
+      },
+    ]);
     mockReadFile
       .mockResolvedValueOnce(Buffer.from('same binary payload'))
       .mockResolvedValueOnce('正常的缓存文档内容。'.repeat(30));

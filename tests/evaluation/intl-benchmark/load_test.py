@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import ssl
 import sys
 import threading
@@ -100,6 +101,10 @@ class Client:
             return resp.read()
 
     def login(self):
+        preset = os.environ.get("LLMWIKI_TOKEN") or os.environ.get("EVAL_BEARER_TOKEN")
+        if preset:
+            self.token = preset
+            return
         raw = self.request(
             "/api/v1/auth/login",
             {"username": self.user, "password": self.password},

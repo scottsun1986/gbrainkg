@@ -4,7 +4,7 @@ declare const process: any;
 const { existsSync } = require('node:fs');
 const { mkdir, writeFile, access, rename, unlink, readdir, readFile, stat, rm } = require('node:fs').promises;
 const { join, dirname, resolve, delimiter } = require('node:path');
-const { homedir } = require('node:os');
+const { homedir, tmpdir } = require('node:os');
 const { spawn } = require('node:child_process');
 
 export interface BrainEvidence {
@@ -422,6 +422,18 @@ export class BrainRepoAdapter {
 
   private async executeProcess(args: string[], input?: string, signal?: AbortSignal): Promise<{ stdout: string; stderr: string }> {
     signal?.throwIfAborted();
+    // Run the CLI from a small, source-specific directory instead of inheriting
+    // the API service's working directory.
+    //
+    // Measured on this repository: the identical `gbrain search` invocation takes
+    // ~8.8s when the child inherits `apps/api` (a directory inside a large git
+    // checkout) and ~0.7-0.8s when it runs from the source repository or /tmp —
+    // GBrain performs working-directory based discovery, and a big checkout makes
+    // that dominate the call. Because the caller races this arm against a budget,
+    // the inherited cwd silently turned every query into "GBrain timed out, use
+    // single-hop chunk retrieval only" (multi-hop Recall@10 1.00 -> 0.79/0.93/0.69
+    // on 2WikiMultiHopQA/HotpotQA/MuSiQue).
+    const cwd = this.resolveChildCwd(args);
     const env: Record<string, string> = {
       ...process.env,
       LANG: 'C.UTF-8',
@@ -447,7 +459,7 @@ export class BrainRepoAdapter {
       env.GBRAIN_DATABASE_URL = normalizedDatabaseUrl;
     }
     return new Promise((resolve, reject) => {
-      const child = spawn(this.gbrainBin, args, { env, stdio: 'pipe' });
+      const child = spawn(this.gbrainBin, args, { env, stdio: 'pipe', cwd });
       let stdout = '';
       let stderr = '';
       const configuredLimit = Number(process.env.GBRAIN_MAX_OUTPUT_BYTES || 8 * 1024 * 1024);
@@ -506,6 +518,31 @@ export class BrainRepoAdapter {
       signal?.addEventListener('abort', cancel, { once: true });
       child.stdin.end(input);
     });
+  }
+
+  /**
+   * Working directory for the GBrain child process.
+   *
+   * Prefer the source repository the command targets (`--source-id <key>` maps to
+   * `<sourceRoot>/<key>`), which is both small and semantically correct; fall back
+   * to GBRAIN_HOME (or the OS temp dir) for commands that run before a source
+   * exists, such as `sources add`. Never inherit the API service's cwd.
+   */
+  private resolveChildCwd(args: string[]): string {
+    const sourceFlag = args.indexOf('--source-id');
+    const sourceId = sourceFlag >= 0 ? args[sourceFlag + 1] : undefined;
+    const candidates = [
+      sourceId ? join(this.sourceRoot, sourceId) : '',
+      this.gbrainHome,
+    ].filter(Boolean);
+    for (const candidate of candidates) {
+      try {
+        if (existsSync(candidate)) return candidate;
+      } catch {
+        // Unreadable path: try the next candidate.
+      }
+    }
+    return tmpdir();
   }
 
   private parseSearchRows(raw: string): Array<{ slug: string; title: string; chunk_text?: string; source_id?: string; rerank_score?: number; score?: number; evidence?: string }> {

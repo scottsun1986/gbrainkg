@@ -1,15 +1,15 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef } from "react";
 
 export interface PptDeckViewerProps {
   rawBlob: Blob | null;
   rawBlobUrl: string;
-  docData: any;
+  docData: { markdown_content?: string; [key: string]: unknown } | null;
   filename: string;
   ext: string;
-  preview: any;
-  highlightPhrases?: any[];
+  preview: { pageNo?: number | string; snippet?: string; [key: string]: unknown } | null;
+  highlightPhrases?: string[];
   onSwitchToMd?: () => void;
 }
 
@@ -99,7 +99,6 @@ function parseMarkdownToSlides(md: string): { deckTitle: string; slides: SlideIt
     let notes = "";
     const paragraphs: { text: string; isBullet?: boolean; isBold?: boolean }[] = [];
     const tableRows: string[][] = [];
-    let inTable = false;
 
     for (const line of lines) {
       const pageMatch = line.match(/^##\s*(?:第\s*)?(\d+)\s*页/);
@@ -125,7 +124,6 @@ function parseMarkdownToSlides(md: string): { deckTitle: string; slides: SlideIt
           .slice(1, -1)
           .map((c) => c.trim());
         tableRows.push(cells);
-        inTable = true;
         continue;
       }
 
@@ -198,18 +196,18 @@ export function PptDeckViewer({
   // 1. Parse PPTX binary or Markdown
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
 
     // Clean previous object URLs
     objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
     objectUrlsRef.current = [];
 
     const doParse = async () => {
+      setLoading(true);
       // If we have rawBlob and it's pptx, attempt native OpenXML parse
       if (rawBlob && ext === "pptx") {
         try {
           const JSZipModule = await import("jszip");
-          const JSZip = (JSZipModule as any).default || JSZipModule;
+          const JSZip = ((JSZipModule as { default?: unknown }).default ?? JSZipModule) as typeof JSZipModule;
           const arrayBuffer = await rawBlob.arrayBuffer();
           const zip = await JSZip.loadAsync(arrayBuffer);
 
@@ -290,7 +288,9 @@ export function PptDeckViewer({
                     const extMatch = sRels[blip[1]].split(".").pop()?.toLowerCase();
                     const mime = extMatch === "jpg" || extMatch === "jpeg" ? "image/jpeg" : extMatch === "svg" ? "image/svg+xml" : "image/png";
                     const imgBuf = await mediaFile.async("uint8array");
-                    const imgBlob = new Blob([imgBuf], { type: mime });
+                    // Copy into a plain ArrayBufferView so the Blob constructor
+                    // accepts it under the stricter DOM typings.
+                    const imgBlob = new Blob([new Uint8Array(imgBuf)], { type: mime });
                     const imgUrl = URL.createObjectURL(imgBlob);
                     objectUrlsRef.current.push(imgUrl);
                     slideImages.push(imgUrl);
@@ -434,27 +434,32 @@ export function PptDeckViewer({
   // 2. Auto-locate to cited page or matching search snippet
   useEffect(() => {
     if (!slides.length) return;
-
-    // A. Explicit page number from preview
-    if (preview?.pageNo && preview.pageNo >= 1 && preview.pageNo <= slides.length) {
-      setCurrentSlideIndex(preview.pageNo - 1);
-      return;
-    }
-
-    // B. Match by highlight phrases or snippet
-    const snippetText = (preview?.snippet || "").trim();
-    if (!snippetText && (!highlightPhrases || highlightPhrases.length === 0)) return;
-
-    const phrasesToMatch = highlightPhrases.length > 0 ? highlightPhrases : [snippetText.slice(0, 30)];
-
-    for (let i = 0; i < slides.length; i++) {
-      const slide = slides[i];
-      const hay = (slide.title + " " + (slide.rawText || "")).toLowerCase();
-      if (phrasesToMatch.some((p) => hay.includes(p.toLowerCase()))) {
-        setCurrentSlideIndex(i);
-        break;
+    // Deferred by a tick so the location pass is not a synchronous setState
+    // during the effect body (which triggers cascading renders).
+    const timer = setTimeout(() => {
+      // A. Explicit page number from preview
+      const pageNo = typeof preview?.pageNo === 'number' ? preview.pageNo : Number(preview?.pageNo);
+      if (pageNo && pageNo >= 1 && pageNo <= slides.length) {
+        setCurrentSlideIndex(pageNo - 1);
+        return;
       }
-    }
+
+      // B. Match by highlight phrases or snippet
+      const snippetText = (preview?.snippet || "").trim();
+      if (!snippetText && (!highlightPhrases || highlightPhrases.length === 0)) return;
+
+      const phrasesToMatch = highlightPhrases.length > 0 ? highlightPhrases : [snippetText.slice(0, 30)];
+
+      for (let i = 0; i < slides.length; i++) {
+        const slide = slides[i];
+        const hay = (slide.title + " " + (slide.rawText || "")).toLowerCase();
+        if (phrasesToMatch.some((p) => hay.includes(p.toLowerCase()))) {
+          setCurrentSlideIndex(i);
+          break;
+        }
+      }
+    }, 0);
+    return () => clearTimeout(timer);
   }, [slides, preview?.pageNo, preview?.snippet, highlightPhrases]);
 
   // 3. Scroll active thumbnail into view

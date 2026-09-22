@@ -1,0 +1,222 @@
+[
+ {
+  "qid": "5a78bc6b554299148911f979",
+  "question": "Woman's Era and Naj are what kind of magazines?",
+  "answer": "fortnightly women interest magazine",
+  "gold_titles": [
+   "Naj",
+   "Woman's Era"
+  ],
+  "type": "comparison/hard",
+  "source_dataset": "hotpot"
+ },
+ {
+  "qid": "5abdd0f15542991f6610604d",
+  "question": "The Rome Protocols were signed by three Prime Ministers one of which was assassinated as part of what?",
+  "answer": "a failed coup attempt",
+  "gold_titles": [
+   "Engelbert Dollfuss",
+   "Rome Protocols"
+  ],
+  "type": "bridge/hard",
+  "source_dataset": "hotpot"
+ },
+ {
+  "qid": "5abd578a5542993062266c5d",
+  "question": "The W. H. Shipman House is in what Hawaii county?",
+  "answer": "Hawaii County",
+  "gold_titles": [
+   "Hilo, Hawaii",
+   "William Herbert Shipman"
+  ],
+  "type": "bridge/hard",
+  "source_dataset": "hotpot"
+ },
+ {
+  "qid": "5ac2758b55429963665199c3",
+  "question": "The organization that Nicolae Titulescu served two terms as president was founded on what date?",
+  "answer": "10 January 1920",
+  "gold_titles": [
+   "League of Nations",
+   "Nicolae Titulescu"
+  ],
+  "type": "bridge/hard",
+  "source_dataset": "hotpot"
+ },
+ {
+  "qid": "5ab6f7415542991d322236f4",
+  "question": "Sadok Sassi played for a national team that made its first World Cup in what year?",
+  "answer": "1978",
+  "gold_titles": [
+   "Sadok Sassi",
+   "Tunisia national football team"
+  ],
+  "type": "bridge/hard",
+  "source_dataset": "hotpot"
+ },
+ {
+  "qid": "5a8e60ca5542995a26add4d9",
+  "question": "In which movie the Stephanie Kay Panabaker was alongside with her elder sister Danielle Nicole Panabaker?",
+  "answer": "\"Read It and Weep\" (2006)",
+  "gold_titles": [
+   "Danielle Panabaker",
+   "Kay Panabaker"
+  ],
+  "type": "bridge/hard",
+  "source_dataset": "hotpot"
+ },
+ {
+  "qid": "5ac4db1d554299076e296e1a",
+  "question": "who is a British physicist  and also a  British government's chief scientific adviser",
+  "answer": "Frederick Alexander",
+  "gold_titles": [
+   "Dehousing",
+   "Frederick Lindemann, 1st Viscount Cherwell"
+  ],
+  "type": "bridge/hard",
+  "source_dataset": "hotpot"
+ },
+ {
+  "qid": "5ae7a8d35542994a481bbdbb",
+  "question": "Which contest in California pays homage to an American novelist that won the Novel Prize in Literature in 1954?",
+  "answer": "The Bad Hemingway Contest",
+  "gold_titles": [
+   "Ernest Hemingway",
+   "International Imitation Hemingway Competition"
+  ],
+  "type": "bridge/hard",
+  "source_dataset": "hotpot"
+ },
+ {
+  "qid": "5a8db348554299068b959dc2",
+  "question": "What is the subsidiary of the record company who released \"Love Incredible?\"",
+  "answer": "Vivendi S.A.",
+  "gold_titles": [
+   "Interscope Records",
+   "Love Incredible"
+  ],
+  "type": "bridge/hard",
+  "source_dataset": "hotpot"
+ },
+ {
+  "qid": "5a7a5b3a5542996c55b2dd71",
+  "question": "What building is opposite the ceremonial meeting place of the Accession Council in the United Kingdom?",
+  "answer": "Mark Masons' Hall",
+  "gold_titles": [
+   "Mark Masons' Hall, London",
+   "St James's Palace"
+  ],
+  "type": "bridge/hard",
+  "source_dataset": "hotpot"
+ },
+ {
+  "qid": "5ae6316d5542996de7b71b87",
+  "question": "Which FC Barcelona signee was a contender for the Rookie of the Year Award when he played for the Timberwolves?",
+  "answer": "Ricard Rubio i Vives",
+  "gold_titles": [
+   "2011–12 Minnesota Timberwolves season",
+   "Ricky Rubio"
+  ],
+  "type": "bridge/hard",
+  "source_dataset": "hotpot"
+ },
+ {
+  "qid": "5ade4801554299728e26c6ab",
+  "question": "Wolf and Sheep was screened at which 2016 film festival?",
+  "answer": "69th Cannes Film Festival",
+  "gold_titles": [
+   "2016 Cannes Film Festival",
+   "Wolf and Sheep"
+  ],
+  "type": "bridge/hard",
+  "source_dataset": "hotpot"
+ },
+ {
+  "qid": "5a9064c755429916514e74a6",
+  "question": "What is the first name of Jack Benny Binion's father?",
+  "answer": "Lester",
+  "gold_titles": [
+   "Benny Binion",
+   "Jack Binion"
+  ],
+  "type": "bridge/hard",
+  "source_dataset": "hotpot"
+ },
+ {
+  "qid": "5a79caad5542994f819ef09f",
+  "question": "Which professional baseball player was born in 1984 and played as a rookie for the Los Angeles Dogers in 2007?",
+  "answer": "Matthew Ryan Kemp",
+  "gold_titles": [
+   "2007 Los Angeles Dodgers season",
+   "Matt Kemp"
+  ],
+  "type": "bridge/hard",
+  "source_dataset": "hotpot"
+ },
+ {
+  "qid": "5ab700ca5542991d32223736",
+  "question": "Which other film did one of the supporting cast in \"Sleepless in Seattle\" appear?",
+  "answer": "\"Now and Then\" (1995)",
+  "gold_titles": [
+   "Rita Wilson",
+   "Sleepless in Seattle"
+  ],
+  "type": "bridge/hard",
+  "source_dataset": "hotpot"
+ },
+ {
+  "qid": "5a80071f5542992bc0c4a684",
+  "question": "Alice David is the voice of Lara Croft in a video game developed by which company ?",
+  "answer": "Crystal Dynamics",
+  "gold_titles": [
+   "Alice David",
+   "Tomb Raider (2013 video game)"
+  ],
+  "type": "bridge/hard",
+  "source_dataset": "hotpot"
+ },
+ {
+  "qid": "5ae199305542997b2ef7d20e",
+  "question": "In what european city is a location of the college from which the woman known as Comic Book Girl 19 received her degree?",
+  "answer": "Lacoste, France",
+  "gold_titles": [
+   "Comic Book Girl 19",
+   "Savannah College of Art and Design"
+  ],
+  "type": "bridge/hard",
+  "source_dataset": "hotpot"
+ },
+ {
+  "qid": "5adf95745542995534e8c7f8",
+  "question": "Where does Śivarāma Swami conduct courses on Vaishnava Theology?",
+  "answer": "in the village of Aldenham",
+  "gold_titles": [
+   "Bhaktivedanta Manor",
+   "Sivarama Swami"
+  ],
+  "type": "bridge/hard",
+  "source_dataset": "hotpot"
+ },
+ {
+  "qid": "5ac1a6bf5542991316484b8d",
+  "question": "In what state did this band form that is an American metalcore band, founded in mid-2009, and whose lead vocalist was Jerry Roush?",
+  "answer": "California",
+  "gold_titles": [
+   "Glass Cloud",
+   "Of Mice &amp; Men (band)"
+  ],
+  "type": "bridge/hard",
+  "source_dataset": "hotpot"
+ },
+ {
+  "qid": "5ab322b1554299194fa93570",
+  "question": "Which type of character is featured by the P.L. Travers's third book and last novel in the \"Mary Poppins\" series?",
+  "answer": "fictional character",
+  "gold_titles": [
+   "Mary Poppins (character)",
+   "Mary Poppins Opens the Door"
+  ],
+  "type": "bridge/hard",
+  "source_dataset": "hotpot"
+ }
+]

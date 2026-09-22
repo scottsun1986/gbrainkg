@@ -132,6 +132,16 @@ services:
       OCR_TIMEOUT_SECONDS: ${OCR_TIMEOUT_SECONDS:-900}
       DOCLING_TIMEOUT_SECONDS: ${DOCLING_TIMEOUT_SECONDS:-240}
       INGESTION_CONCURRENCY: ${INGESTION_CONCURRENCY:-2}
+      # Retrieval pipeline switches (compose does not forward the whole env file,
+      # so every new switch must be listed here explicitly).
+      AGENTIC_HYDE_ENABLED: ${AGENTIC_HYDE_ENABLED:-0}
+      RETRIEVAL_BENCHMARK_PATTERNS: ${RETRIEVAL_BENCHMARK_PATTERNS:-0}
+      RETRIEVAL_CONTEXT_TOKEN_HARD_CAP: ${RETRIEVAL_CONTEXT_TOKEN_HARD_CAP:-0}
+      # Prisma connection pool. The API shares PostgreSQL with the enrichment
+      # workers, so an unbounded pool is what produced "Unable to start a
+      # transaction in the given time" on 2 vCPU instances.
+      PRISMA_CONNECTION_LIMIT: ${PRISMA_CONNECTION_LIMIT:-10}
+      PRISMA_POOL_TIMEOUT_SECONDS: ${PRISMA_POOL_TIMEOUT_SECONDS:-20}
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-600}
       AUTH_LOGIN_THROTTLE_LIMIT: ${AUTH_LOGIN_THROTTLE_LIMIT:-10}
     volumes:

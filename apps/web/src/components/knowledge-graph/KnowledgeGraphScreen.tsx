@@ -6,7 +6,85 @@ import { Icon } from '@/components/common/Icon';
 
 /* ============== 知识图谱（Obsidian 风格力导向布局） ============== */
 
-export function runForceLayout(nodes: any[], edges: any[], options?: any) {
+export interface GraphNode {
+  id: string;
+  label: string;
+  type: string;
+  documentId?: string;
+  kbId?: string;
+}
+
+export interface GraphEdge {
+  id?: string;
+  source: string;
+  target: string;
+  type: string;
+  weight?: number;
+}
+
+export interface GraphData {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  stats?: { documents?: number; concepts?: number; relations?: number };
+  stale?: boolean;
+  snapshotAgeSeconds?: number;
+}
+
+export interface LayoutNode extends GraphNode {
+  x: number;
+  y: number;
+  /** Force-layout velocity, kept on the node while dragging. */
+  fx?: number;
+  fy?: number;
+}
+
+export interface GraphLayout {
+  nodes: LayoutNode[];
+  _root?: string | null;
+  _count?: number;
+  _w?: number;
+  _h?: number;
+  _charge?: number;
+  _link?: number;
+}
+
+export interface ForceLayoutOptions {
+  width?: number;
+  height?: number;
+  chargeStrength?: number;
+  linkDistance?: number;
+  iterations?: number;
+}
+
+interface NodeDragState {
+  node: DraggableNode;
+  startX: number;
+  startY: number;
+  startClientX: number;
+  startClientY: number;
+}
+
+interface PanState {
+  x: number;
+  y: number;
+  tx: number;
+  ty: number;
+}
+
+export interface KnowledgeGraphScreenProps {
+  onOpenDocument?: (kbId: string, documentId: string, title: string) => void;
+  onOpenKb?: (kbId: string) => void;
+  active?: boolean;
+}
+
+/** A node that the drag handler may move; the layout pass adds x/y/fx/fy. */
+type DraggableNode = GraphNode & Partial<Pick<LayoutNode, 'x' | 'y' | 'fx' | 'fy'>>;
+
+export function runForceLayout(
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  options?: ForceLayoutOptions,
+): LayoutNode[] {
   const opts = options || {};
   const width = opts.width ?? 900;
   const height = opts.height ?? 600;
@@ -17,7 +95,7 @@ export function runForceLayout(nodes: any[], edges: any[], options?: any) {
   const step = N > 300 ? Math.ceil(N / 150) : 1;
   const cx = width / 2;
   const cy = height / 2;
-  const radiusFor = (n: any) => (n.type === 'knowledge_base' ? 18 : n.type === 'document' ? 12 : 8);
+  const radiusFor = (n: GraphNode) => (n.type === 'knowledge_base' ? 18 : n.type === 'document' ? 12 : 8);
   const pos = nodes.map((_, i) => {
     const ratio = (i + 0.5) / Math.max(N, 1);
     const ring = Math.floor(Math.sqrt(ratio) * Math.sqrt(N));
@@ -81,14 +159,14 @@ export function runForceLayout(nodes: any[], edges: any[], options?: any) {
   return nodes.map((n, i) => ({ ...n, x: pos[i].x, y: pos[i].y }));
 }
 
-export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
-  const [graph, setGraph] = useState<any>(null);
+export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: KnowledgeGraphScreenProps){
+  const [graph, setGraph] = useState<GraphData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
-  const [layout, setLayout] = useState<any>(null);
+  const [layout, setLayout] = useState<GraphLayout | null>(null);
   const [transform, setTransform] = useState({ x: 0, y: 0, k: 1 });
   const [types, setTypes] = useState<Record<string, boolean>>({ knowledge_base: true, document: true, concept: true });
   const [localRoot, setLocalRoot] = useState<string | null>(null);
@@ -97,52 +175,60 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
   const [reloadToken, setReloadToken] = useState(0);
 
   const svgRef = useRef<SVGSVGElement>(null);
-  const dragRef = useRef<any>(null);
-  const panRef = useRef<any>(null);
+  const dragRef = useRef<NodeDragState | null>(null);
+  const panRef = useRef<PanState | null>(null);
   const [canvasSize, setCanvasSize] = useState({ w: 1100, h: 720 });
+  const [isPanning, setIsPanning] = useState(false);
 
   // 多屏常驻挂载下 display:none 也 mounted；图谱构建是重接口（冷调用秒级），
   // 必须等首次可见再拉取，避免拖慢其它页面。
   const [hasBeenActive, setHasBeenActive] = useState(Boolean(active));
-  useEffect(() => { if (active) setHasBeenActive(true); }, [active]);
+  // Latch state derived from props: once the screen has been shown it stays
+  // mounted so the graph is not rebuilt on every tab switch.
+  useEffect(() => {
+    if (!active) return;
+    const timer = setTimeout(() => setHasBeenActive(true), 0);
+    return () => clearTimeout(timer);
+  }, [active]);
 
   useEffect(() => {
     if (!hasBeenActive) return;
     let isMounted = true;
-    setLoading(true);
-    setError('');
-    // 手动刷新（reloadToken 变化）带 fresh=1 强制同步重建；首次进入走 SWR 快照
-    const qs = reloadToken > 0 ? '?fresh=1' : '';
-    fetch(`${API_BASE_URL}/api/v1/knowledge-graph${qs}`, {headers: apiHeaders()})
-      .then(async response => {
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(payload.message || `API ${response.status}`);
-        return payload;
-      })
-      .then(payload => {
-        if (isMounted) {
-          // 服务端已剥离冗余 edge.id，按 source|type|target 派生，供渲染 key 使用
-          if (Array.isArray(payload.edges)) {
-            payload.edges = payload.edges.map((edge: any) => ({
-              ...edge,
-              id: edge.id || `${edge.source}|${edge.type}|${edge.target}`,
-            }));
-          }
-          setGraph(payload);
-          setError('');
+    const load = async (): Promise<void> => {
+      setLoading(true);
+      setError('');
+      // 手动刷新（reloadToken 变化）带 fresh=1 强制同步重建；首次进入走 SWR 快照
+      const qs = reloadToken > 0 ? '?fresh=1' : '';
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/v1/knowledge-graph${qs}`, { headers: apiHeaders() });
+        const payload: unknown = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const message = (payload as { message?: string })?.message;
+          throw new Error(message || `API ${response.status}`);
         }
-      })
-      .catch(reason => {
-        if (isMounted) setError(reason.message || '知识图谱加载失败');
-      })
-      .finally(() => {
+        if (!isMounted) return;
+        const data = payload as GraphData;
+        // 服务端已剥离冗余 edge.id，按 source|type|target 派生，供渲染 key 使用
+        if (Array.isArray(data.edges)) {
+          data.edges = data.edges.map((edge) => ({
+            ...edge,
+            id: edge.id || `${edge.source}|${edge.type}|${edge.target}`,
+          }));
+        }
+        setGraph(data);
+        setError('');
+      } catch (reason) {
+        if (isMounted) setError(reason instanceof Error ? reason.message : '知识图谱加载失败');
+      } finally {
         if (isMounted) setLoading(false);
-      });
+      }
+    };
+    void load();
     return () => { isMounted = false; };
   }, [hasBeenActive, reloadToken]);
 
-  const allNodes = graph?.nodes || [];
-  const allEdges = graph?.edges || [];
+  const allNodes: GraphNode[] = graph?.nodes || [];
+  const allEdges: GraphEdge[] = graph?.edges || [];
 
   const visibleIds = useMemo(() => {
     const ids = new Set();
@@ -150,8 +236,8 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
     return ids;
   }, [allNodes, types]);
 
-  const filteredNodes = useMemo(() => allNodes.filter((n: any) => visibleIds.has(n.id)), [allNodes, visibleIds]);
-  const filteredEdges = useMemo(() => allEdges.filter((e: any) => visibleIds.has(e.source) && visibleIds.has(e.target)), [allEdges, visibleIds]);
+  const filteredNodes = useMemo(() => allNodes.filter((n) => visibleIds.has(n.id)), [allNodes, visibleIds]);
+  const filteredEdges = useMemo(() => allEdges.filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target)), [allEdges, visibleIds]);
 
   const degreeMap = useMemo(() => {
     const m = new Map<string, number>();
@@ -184,11 +270,11 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
           }
         }
       }
-      return filteredNodes.filter((n: any) => depthMap.has(n.id));
+      return filteredNodes.filter((n) => depthMap.has(n.id));
     }
 
     if (filteredNodes.length > 350) {
-      const sorted = [...filteredNodes].sort((a: any, b: any) => {
+      const sorted = [...filteredNodes].sort((a, b) => {
         if (a.type === 'knowledge_base' && b.type !== 'knowledge_base') return -1;
         if (b.type === 'knowledge_base' && a.type !== 'knowledge_base') return 1;
         const degA = degreeMap.get(a.id) || 0;
@@ -202,8 +288,8 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
   }, [filteredNodes, filteredEdges, localRoot, degreeMap]);
 
   const focusEdges = useMemo(() => {
-    const ids = new Set(focusNodes.map((n: any) => n.id));
-    return filteredEdges.filter((e: any) => ids.has(e.source) && ids.has(e.target));
+    const ids = new Set(focusNodes.map((n) => n.id));
+    return filteredEdges.filter((e) => ids.has(e.source) && ids.has(e.target));
   }, [focusNodes, filteredEdges]);
 
   useEffect(() => {
@@ -223,17 +309,20 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
   }, []);
 
   useEffect(() => {
-    if (!graph || filteredNodes.length === 0) { setLayout(null); return; }
+    if (!graph || filteredNodes.length === 0) {
+      const timer = setTimeout(() => setLayout(null), 0);
+      return () => clearTimeout(timer);
+    }
     const { w, h } = canvasSize;
     const t = setTimeout(() => {
-      setLayout((prev: any) => {
+      setLayout((prev: GraphLayout | null) => {
         if (prev && localRoot === prev._root && filteredNodes.length === prev._count && prev._w === w && prev._h === h) {
           const sameParams = prev._charge === params.charge && prev._link === params.link;
           if (sameParams) return prev;
         }
         const positioned = runForceLayout(focusNodes, focusEdges, { width: w, height: h, chargeStrength: params.charge, linkDistance: params.link });
         requestAnimationFrame(() => {
-          const xs = positioned.map((n: any) => n.x); const ys = positioned.map((n: any) => n.y);
+          const xs = positioned.map((n) => n.x); const ys = positioned.map((n) => n.y);
           if (xs.length > 0) {
             const minX = Math.min(...xs); const maxX = Math.max(...xs);
             const minY = Math.min(...ys); const maxY = Math.max(...ys);
@@ -251,7 +340,7 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
   }, [focusNodes, focusEdges, graph, localRoot, params.charge, params.link, canvasSize.w, canvasSize.h]);
 
   const positions = useMemo(() => {
-    const map = new Map();
+    const map = new Map<string, { x: number; y: number }>();
     if (layout) for (const n of layout.nodes) map.set(n.id, { x: n.x, y: n.y });
     return map;
   }, [layout]);
@@ -274,10 +363,10 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
     return s;
   }, [hoverId, filteredEdges]);
 
-  const selectedNode = allNodes.find((n: any) => n.id === selected);
-  const selectedEdges = selected ? allEdges.filter((e: any) => e.source === selected || e.target === selected) : [];
+  const selectedNode = allNodes.find((n) => n.id === selected);
+  const selectedEdges = selected ? allEdges.filter((e) => e.source === selected || e.target === selected) : [];
   const relatedByType = useMemo(() => {
-    const groups: Record<string, any[]> = { contains: [], mentions: [], related_to: [] };
+    const groups: Record<string, GraphEdge[]> = { contains: [], mentions: [], related_to: [] };
     for (const e of selectedEdges) {
       const key = e.type;
       const bucket = (groups[key] || (groups[key] = []));
@@ -287,22 +376,22 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
   }, [selectedEdges, selected]);
 
   const nodeColor: Record<string, string> = { knowledge_base: '#7C6CD9', document: '#3B82F6', concept: '#0D9488' };
-  const labelText = (n: any) => n.label.length > 14 ? `${n.label.slice(0, 14)}…` : n.label;
-  const nodeRadius = (n: any) => {
+  const labelText = (n: GraphNode) => n.label.length > 14 ? `${n.label.slice(0, 14)}…` : n.label;
+  const nodeRadius = (n: GraphNode) => {
     const base = n.type === 'knowledge_base' ? 18 : n.type === 'document' ? 13 : 8;
     const deg = degreeMap.get(n.id) || 0;
     return base + Math.min(8, deg * 0.6);
   };
-  const showLabel = (n: any) => {
+  const showLabel = (n: GraphNode) => {
     if (params.showLabels === 'always') return true;
     if (params.showLabels === 'off') return false;
     if (hoverId && neighborIds && neighborIds.has(n.id)) return true;
     if (matchIds && matchIds.has(n.id)) return true;
     return transform.k > 1.05;
   };
-  const edgeActive = (e: any) => !hoverId || e.source === hoverId || e.target === hoverId;
+  const edgeActive = (e: GraphEdge) => !hoverId || e.source === hoverId || e.target === hoverId;
 
-  const onWheel = (event: React.WheelEvent) => {
+  const onWheel = (event: React.WheelEvent<SVGSVGElement>) => {
     event.preventDefault();
     if (!svgRef.current) return;
     const rect = svgRef.current.getBoundingClientRect();
@@ -313,30 +402,41 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
     setTransform({ k: next, x: cx - (cx - transform.x) * ratio, y: cy - (cy - transform.y) * ratio });
   };
 
-  const onMouseDown = (event: React.MouseEvent) => {
+  const onMouseDown = (event: React.MouseEvent<SVGSVGElement>) => {
     if ((event.target as Element).closest('.graph-node')) return;
     panRef.current = { x: event.clientX, y: event.clientY, tx: transform.x, ty: transform.y };
+    setIsPanning(true);
   };
   const onMouseMove = (event: React.MouseEvent) => {
     if (dragRef.current) {
       const d = dragRef.current;
       d.node.fx = d.node.x = d.startX + (event.clientX - d.startClientX) / transform.k;
       d.node.fy = d.node.y = d.startY + (event.clientY - d.startClientY) / transform.k;
-      setLayout({ ...layout, nodes: [...layout.nodes] });
+      if (layout) setLayout({ ...layout, nodes: [...layout.nodes] });
       return;
     }
     if (panRef.current) {
       setTransform({ ...transform, x: panRef.current.tx + (event.clientX - panRef.current.x), y: panRef.current.ty + (event.clientY - panRef.current.y) });
     }
   };
-  const onMouseUp = () => { dragRef.current = null; panRef.current = null; };
+  const onMouseUp = () => { dragRef.current = null; panRef.current = null; setIsPanning(false); };
 
-  const startNodeDrag = (event: React.MouseEvent, node: any) => {
+  const startNodeDrag = (event: React.MouseEvent, node: GraphNode) => {
     event.stopPropagation();
-    dragRef.current = { node, startX: node.x, startY: node.y, startClientX: event.clientX, startClientY: event.clientY };
+    // The dragged node must be the layout instance the renderer reads its
+    // coordinates from, otherwise moving it would not be visible.
+    const layoutNode = layout?.nodes.find((candidate) => candidate.id === node.id);
+    const target: DraggableNode = layoutNode ?? node;
+    dragRef.current = {
+      node: target,
+      startX: target.x ?? 0,
+      startY: target.y ?? 0,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+    };
   };
-  const onNodeClick = (event: React.MouseEvent, node: any) => { event.stopPropagation(); setSelected(node.id); };
-  const onNodeDouble = (event: React.MouseEvent, node: any) => {
+  const onNodeClick = (event: React.MouseEvent, node: GraphNode) => { event.stopPropagation(); setSelected(node.id); };
+  const onNodeDouble = (event: React.MouseEvent, node: GraphNode) => {
     event.stopPropagation();
     if (node.type === 'document' && node.documentId && node.kbId) onOpenDocument?.(node.kbId, node.documentId, node.label);
     else if (node.type === 'knowledge_base' && node.kbId) onOpenKb?.(node.kbId);
@@ -381,7 +481,7 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
     if (!selected || !positions.has(selected)) return;
     const p = positions.get(selected);
     const canvas = svgRef.current?.parentElement;
-    if (canvas) {
+    if (canvas && p) {
       setTransform({ ...transform, x: canvas.clientWidth / 2 - p.x * transform.k, y: canvas.clientHeight / 2 - p.y * transform.k });
     }
   };
@@ -516,9 +616,9 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
               preserveAspectRatio="xMidYMid meet"
               role="img"
               aria-label="个人知识图谱"
-              onWheel={onWheel as any}
-              onMouseDown={onMouseDown as any}
-              style={{ cursor: panRef.current ? 'grabbing' : 'grab' }}
+              onWheel={onWheel}
+              onMouseDown={onMouseDown}
+              style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
             >
               <defs>
                 <marker id="graph-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
@@ -526,7 +626,7 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
                 </marker>
               </defs>
               <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.k})`}>
-                {focusEdges.map((edge: any) => {
+                {focusEdges.map((edge) => {
                   const a = positions.get(edge.source); const b = positions.get(edge.target);
                   if (!a || !b) return null;
                   const active = edgeActive(edge);
@@ -543,7 +643,7 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
                     </g>
                   );
                 })}
-                {focusNodes.map((node: any) => {
+                {focusNodes.map((node) => {
                   const p = positions.get(node.id); if (!p) return null;
                   const dimmed = hoverId && neighborIds && !(neighborIds.has(node.id));
                   const isMatch = matchIds && matchIds.has(node.id);
@@ -597,12 +697,12 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
               <h3>{selectedNode.label}</h3>
               <div className="graph-detail-actions">
                 {selectedNode.type === 'document' && selectedNode.documentId && selectedNode.kbId && (
-                  <button type="button" className="btn primary" onClick={() => onOpenDocument?.(selectedNode.kbId, selectedNode.documentId, selectedNode.label)}>
+                  <button type="button" className="btn primary" onClick={() => { if (selectedNode.kbId && selectedNode.documentId) onOpenDocument?.(selectedNode.kbId, selectedNode.documentId, selectedNode.label); }}>
                     打开文档
                   </button>
                 )}
                 {selectedNode.type === 'knowledge_base' && selectedNode.kbId && (
-                  <button type="button" className="btn primary" onClick={() => onOpenKb?.(selectedNode.kbId)}>
+                  <button type="button" className="btn primary" onClick={() => { if (selectedNode.kbId) onOpenKb?.(selectedNode.kbId); }}>
                     进入知识库
                   </button>
                 )}
@@ -622,9 +722,9 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: any){
                 return (
                   <div className="graph-related" key={type}>
                     <b>{label} <em>· {list.length}</em></b>
-                    {list.slice(0, 8).map((edge: any) => {
+                    {list.slice(0, 8).map((edge) => {
                       const otherId = edge.source === selected ? edge.target : edge.source;
-                      const other = allNodes.find((n: any) => n.id === otherId);
+                      const other = allNodes.find((n) => n.id === otherId);
                       return (
                         <div key={edge.id} className="graph-related-row" onClick={() => setSelected(otherId)}>
                           <span style={{ color: nodeColor[type === 'contains' ? 'document' : 'concept'] }}>·</span>

@@ -2,9 +2,17 @@
 
 import React from 'react';
 
-export const Icon = ({name, size=16, stroke=1.6, color='currentColor', ...svgProps}: any) => {
+export interface IconProps extends Omit<React.SVGProps<SVGSVGElement>, 'name' | 'color' | 'stroke'> {
+  name: string;
+  size?: number;
+  /** Stroke width in user units (not the SVG stroke paint attribute). */
+  stroke?: number;
+  color?: string;
+}
+
+export const Icon = ({name, size=16, stroke=1.6, color='currentColor', ...svgProps}: IconProps) => {
   const s = size, sw = stroke;
-  const paths: Record<string, any> = {
+  const paths: Record<string, React.ReactNode> = {
     chat: <><path d="M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 0 1-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></>,
     book: <><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></>,
     shield: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></>,

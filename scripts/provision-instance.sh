@@ -19,6 +19,15 @@ if [[ -z "$INST_NUM" || ! "$INST_NUM" =~ ^[0-9]+$ || "$INST_NUM" -lt 2 ]]; then
   exit 1
 fi
 
+# Redis 默认只提供 16 个逻辑库（0-15），实例号必须留出 inst1 占用的 DB 0。
+# 越界会让 BullMQ 在 SELECT 时报 "DB index is out of range" 并静默丢掉任务。
+if [[ "$INST_NUM" -gt 16 ]]; then
+  echo "ERROR: 实例编号 $INST_NUM 超出 Redis 逻辑库上限（REDIS_DB=$((INST_NUM - 1)) 越界）。"
+  echo "       请在 deploy/docker-compose.prod.yml 为 redis 增加 --databases N 后重试，"
+  echo "       或改用 Redis Cluster（需同步调整隔离方案）。"
+  exit 1
+fi
+
 OFFSET=$((INST_NUM - 1))
 INST_NAME="inst${INST_NUM}"
 API_PORT=$((3000 + 2 * OFFSET))
@@ -32,6 +41,22 @@ SYMLINK_DIR="/home/ubuntu/gbrainkg-inst${INST_NUM}"
 ENV_FILE="/home/ubuntu/.config/llmwiki/production-inst${INST_NUM}.env"
 API_SERVICE="llmwiki-api-inst${INST_NUM}"
 WEB_SERVICE="llmwiki-web-inst${INST_NUM}"
+
+# ---- 每实例独立密钥（P0 安全加固）----
+# 原因：此前 provision 从 inst1 的 production.env 直接 cp，导致 AUTH_SECRET /
+# MODEL_CONFIG_KEY / PARSER_AUTH_TOKEN / AUTH_TOKEN / DB_PASS 跨实例共享。任一
+# 实例泄露即可伪造其它实例的 JWT 会话、篡改模型配置或直连其它实例数据库。
+# 现改为 openssl rand 各自独立生成，禁止从基座/inst1 复制任何凭据。
+INST_DB_PASS="$(openssl rand -hex 32)"
+INST_APP_DB_PASS="$(openssl rand -hex 32)"
+INST_AUTH_SECRET="$(openssl rand -hex 32)"
+INST_MODEL_CONFIG_KEY="$(openssl rand -hex 32)"
+INST_PARSER_AUTH_TOKEN="$(openssl rand -hex 32)"
+INST_AUTH_TOKEN="$(openssl rand -hex 32)"
+# 运行时角色：NOBYPASSRLS，RLS 策略实际生效；迁移/GBrain 仍用 llmwiki(BYPASSRLS)。
+INST_APP_USER="llmwiki_app_inst${INST_NUM}"
+# 每实例迁移/GBrain 角色（BYPASSRLS），DB_PASS 独立，不再共享 llmwiki 口令。
+INST_MIGRATE_USER="llmwiki_inst${INST_NUM}"
 
 log() { echo "[provision-instance $(date '+%F %T')] $*"; }
 
@@ -55,19 +80,39 @@ ssh "$PROD_HOST" "
 "
 
 # ---- 2. 创建独立数据库与赋权 ----
-log "[2/5] Initializing PostgreSQL database $DB_NAME..."
+# DB_PASS 各实例独立：为本实例创建专属角色，禁止复用 inst1 的 llmwiki 口令。
+log "[2/5] Initializing PostgreSQL database $DB_NAME (isolated roles)..."
 ssh "$PROD_HOST" "
   set -e
-  # 确保角色具备 BYPASSRLS
-  sudo -u postgres psql -tAc \"SELECT rolbypassrls FROM pg_roles WHERE rolname='llmwiki'\" | grep -q 't' || {
-    echo 'Granting BYPASSRLS to role llmwiki...'
-    sudo -u postgres psql -c 'ALTER ROLE llmwiki BYPASSRLS;'
+  # 迁移/GBrain 角色保留 BYPASSRLS（GBrain 迁移硬性依赖，见 MULTI_INSTANCE_GUIDE）
+  sudo -u postgres psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname='$INST_MIGRATE_USER'\" | grep -q 1 || {
+    echo 'Creating migration role $INST_MIGRATE_USER (BYPASSRLS)...'
+    sudo -u postgres psql -c \"CREATE USER $INST_MIGRATE_USER WITH PASSWORD '$INST_DB_PASS' BYPASSRLS;\"
   }
-  # 创建新实例专属独立数据库
+  sudo -u postgres psql -c \"ALTER ROLE $INST_MIGRATE_USER WITH PASSWORD '$INST_DB_PASS' BYPASSRLS;\"
+  # 运行时角色 NOBYPASSRLS：RLS 租户隔离在此角色上真正生效
+  sudo -u postgres psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname='$INST_APP_USER'\" | grep -q 1 || {
+    echo 'Creating runtime role $INST_APP_USER (NOBYPASSRLS)...'
+    sudo -u postgres psql -c \"CREATE USER $INST_APP_USER WITH PASSWORD '$INST_APP_DB_PASS' NOBYPASSRLS;\"
+  }
+  sudo -u postgres psql -c \"ALTER ROLE $INST_APP_USER WITH PASSWORD '$INST_APP_DB_PASS' NOBYPASSRLS;\"
+  # 创建新实例专属独立数据库（owner 用迁移角色，便于 gbrain/prisma migrate）
   sudo -u postgres psql -tAc \"SELECT 1 FROM pg_database WHERE datname='$DB_NAME'\" | grep -q 1 || {
     echo 'Creating database $DB_NAME...'
-    sudo -u postgres psql -c \"CREATE DATABASE $DB_NAME OWNER llmwiki;\"
+    sudo -u postgres psql -c \"CREATE DATABASE $DB_NAME OWNER $INST_MIGRATE_USER;\"
   }
+  # 运行时角色授权（表由迁移角色创建，DEFAULT PRIVILEGES 让后续表自动可读写）
+  sudo -u postgres psql -c \"GRANT CONNECT,TEMPORARY ON DATABASE $DB_NAME TO $INST_APP_USER;\"
+  sudo -u postgres psql -d '$DB_NAME' -c \"GRANT USAGE,CREATE ON SCHEMA public TO $INST_APP_USER;\"
+  sudo -u postgres psql -d '$DB_NAME' -c \"GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO $INST_APP_USER;\"
+  sudo -u postgres psql -d '$DB_NAME' -c \"GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO $INST_APP_USER;\"
+  sudo -u postgres psql -d '$DB_NAME' -c \"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO $INST_APP_USER;\"
+  sudo -u postgres psql -d '$DB_NAME' -c \"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE,SELECT ON SEQUENCES TO $INST_APP_USER;\"
+  # 过滤 HNSW 召回参数必须逐库设置（new instance DB would otherwise fall back
+  # to pgvector defaults ef_search=40 / iterative_scan=off => Recall@10 0.21）。
+  sudo -u postgres psql -d '$DB_NAME' -c \"ALTER DATABASE $DB_NAME SET hnsw.ef_search = 200;\"
+  sudo -u postgres psql -d '$DB_NAME' -c \"ALTER DATABASE $DB_NAME SET hnsw.iterative_scan = 'relaxed_order';\"
+  sudo -u postgres psql -d '$DB_NAME' -c \"ALTER DATABASE $DB_NAME SET hnsw.max_scan_tuples = 20000;\"
 "
 
 # ---- 3. 创建持久化数据盘目录与软链 ----
@@ -81,16 +126,42 @@ ssh "$PROD_HOST" "
 
 # ---- 4. 生成专属配置文件与 Systemd 服务 ----
 log "[4/5] Generating isolated environment and systemd service files..."
+# 安全：禁止 `cp production.env` 继承 inst1/基座密钥。仅提取非敏感通用配置做模板，
+# 所有凭据（AUTH_SECRET / MODEL_CONFIG_KEY / PARSER_AUTH_TOKEN / AUTH_TOKEN / DB_PASS）
+# 一律用上方 openssl rand 生成的本实例独立值覆写。
 ssh "$PROD_HOST" "
   set -e
-  # 从现有 production.env 提取密码与通用配置，覆写专属端口与库号
   if [[ ! -f '$ENV_FILE' ]]; then
-    cp /home/ubuntu/.config/llmwiki/production.env '$ENV_FILE'
-    
-    # 替换数据库 URL
-    sed -i 's|/llmwiki?|/$DB_NAME?|g' '$ENV_FILE'
-    sed -i 's|/llmwiki$|/$DB_NAME|g' '$ENV_FILE'
-    
+    # 仅复制非敏感基座配置（功能开关/版本号等），显式剔除一切密钥行
+    if [[ -f /home/ubuntu/.config/llmwiki/production.env ]]; then
+      grep -Ev '^(AUTH_SECRET|MODEL_CONFIG_KEY|PARSER_AUTH_TOKEN|AUTH_TOKEN|DB_PASS|DB_USER|DB_NAME|DATABASE_URL|GBRAIN_DATABASE_URL|DATABASE_URL_APP|REDIS_PASS)=' \
+        /home/ubuntu/.config/llmwiki/production.env > '$ENV_FILE' || true
+    else
+      touch '$ENV_FILE'
+    fi
+
+    # 强制写入本实例独立密钥与连接串（不从任何既有 env 复制）
+    cat <<SECRETS >> '$ENV_FILE'
+
+# ---- instance-unique credentials (openssl rand, never copied from inst1) ----
+DB_USER=$INST_MIGRATE_USER
+DB_PASS=$INST_DB_PASS
+DB_NAME=$DB_NAME
+# 迁移/GBrain 用 BYPASSRLS 角色
+DATABASE_URL=postgresql://$INST_MIGRATE_USER:$INST_DB_PASS@127.0.0.1:5432/$DB_NAME?schema=public
+GBRAIN_DATABASE_URL=postgresql://$INST_MIGRATE_USER:$INST_DB_PASS@127.0.0.1:5432/$DB_NAME?schema=public
+# 运行时用 NOBYPASSRLS 角色（RLS_ENFORCE=1 时租户隔离真正生效）
+DB_USER_APP=$INST_APP_USER
+DB_PASS_APP=$INST_APP_DB_PASS
+DATABASE_URL_APP=postgresql://$INST_APP_USER:$INST_APP_DB_PASS@127.0.0.1:5432/$DB_NAME?schema=public
+RLS_ENFORCE=1
+
+AUTH_SECRET=$INST_AUTH_SECRET
+MODEL_CONFIG_KEY=$INST_MODEL_CONFIG_KEY
+PARSER_AUTH_TOKEN=$INST_PARSER_AUTH_TOKEN
+AUTH_TOKEN=$INST_AUTH_TOKEN
+SECRETS
+
     # 强制设置专属 REDIS_DB（杜绝队列冲突）
     grep -q '^REDIS_DB=' '$ENV_FILE' && sed -i 's/^REDIS_DB=.*/REDIS_DB=$REDIS_DB/' '$ENV_FILE' || echo 'REDIS_DB=$REDIS_DB' >> '$ENV_FILE'
     
@@ -108,7 +179,7 @@ ssh "$PROD_HOST" "
     grep -q '^CHAT_CHUNK_MAX_CHARS=' '$ENV_FILE' && sed -i 's/^CHAT_CHUNK_MAX_CHARS=.*/CHAT_CHUNK_MAX_CHARS=6000/' '$ENV_FILE' || echo 'CHAT_CHUNK_MAX_CHARS=6000' >> '$ENV_FILE'
     
     chmod 600 '$ENV_FILE'
-    echo 'Created $ENV_FILE with REDIS_DB=$REDIS_DB and PORT=$API_PORT'
+    echo 'Created $ENV_FILE with REDIS_DB=$REDIS_DB and PORT=$API_PORT (unique credentials)'
   else
     echo '$ENV_FILE already exists, keeping existing file.'
   fi

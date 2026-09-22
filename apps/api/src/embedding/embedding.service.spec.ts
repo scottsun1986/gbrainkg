@@ -147,4 +147,31 @@ describe('EmbeddingService', () => {
       (global as any).fetch = originalFetch;
     }
   });
+
+  it('parses BGE-M3 dense, sparse and multi-vector output', async () => {
+    const originalFetch = global.fetch;
+    const originalFlag = process.env.BGE_M3_HYBRID_ENABLED;
+    process.env.BGE_M3_HYBRID_ENABLED = 'true';
+    (global as any).fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [{
+          index: 0,
+          embedding: [1, 0, 0, 0],
+          sparse_embedding: { indices: [11, 22], values: [0.8, 0.4] },
+          colbert_vecs: [[1, 0], [0, 1]],
+        }],
+      }),
+    });
+    try {
+      const [result] = await service.embedHybrid(['hybrid text']);
+      expect(result.dense).toEqual([1, 0, 0, 0]);
+      expect(result.sparse).toEqual({ indices: [11, 22], values: [0.8, 0.4] });
+      expect(result.multiVector).toEqual([[1, 0], [0, 1]]);
+    } finally {
+      if (originalFlag === undefined) delete process.env.BGE_M3_HYBRID_ENABLED;
+      else process.env.BGE_M3_HYBRID_ENABLED = originalFlag;
+      (global as any).fetch = originalFetch;
+    }
+  });
 });

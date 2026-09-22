@@ -18,6 +18,7 @@ import { FileInterceptor } from "@nestjs/platform-express";
 import { getPrismaClient } from "../prisma";
 import { randomUUID } from "node:crypto";
 import { mkdir, rm, unlink, writeFile } from "node:fs/promises";
+import { ObjectStorageService } from "../storage/object-storage.service";
 import { extname, join } from "node:path";
 import { PermissionService } from "../permission/permission.service";
 import { AuthService } from "../auth/auth.service";
@@ -26,6 +27,7 @@ import { AuthGuard } from "../auth/auth.guard";
 import { GraphRagService } from "../graph-rag/graph-rag.service";
 import { IngestionService } from "./ingestion.service";
 import { RaptorService } from "../raptor/raptor.service";
+import { LexicalIndexService } from "../retrieval/lexical-index.service";
 
 function normalizeUploadFilename(value: unknown): string {
   const raw = String(value || "upload.bin")
@@ -70,8 +72,10 @@ export class IngestionController {
     private readonly authService: AuthService,
     private readonly compilerService: BrainCompilerService,
     private readonly ingestionService: IngestionService,
+    private readonly objectStorage: ObjectStorageService,
     @Optional() private readonly graphRagService?: GraphRagService,
     @Optional() private readonly raptorService?: RaptorService,
+    @Optional() private readonly lexicalIndexService?: LexicalIndexService,
   ) {}
 
   @Post(":kbId/documents")
@@ -138,6 +142,13 @@ export class IngestionController {
         const rawPath = `${childDocId}/${childFilename}`;
         await mkdir(join(this.uploadRoot, childDocId), { recursive: true });
         await writeFile(join(this.uploadRoot, rawPath), item.buffer);
+        let objectKey: string | undefined;
+        let storageProvider = "local";
+        try {
+          const stored = await this.objectStorage.put(`raw/${childDocId}`, item.buffer);
+          objectKey = stored.objectKey;
+          storageProvider = stored.provider;
+        } catch { /* fail-open to local raw path */ }
         const document = await this.prisma.document.create({
           data: {
             id: childDocId,
@@ -146,6 +157,8 @@ export class IngestionController {
             title: childFilename,
             sourceType: "upload",
             rawFileOid: join(this.uploadRoot, rawPath),
+            objectKey,
+            storageProvider,
             uploadedById: userId,
             status: "parsing",
           },
@@ -176,6 +189,13 @@ export class IngestionController {
     const rawPath = `${documentId}/${filename}`;
     await mkdir(join(this.uploadRoot, documentId), { recursive: true });
     await writeFile(join(this.uploadRoot, rawPath), file.buffer);
+    let objectKey: string | undefined;
+    let storageProvider = "local";
+    try {
+      const stored = await this.objectStorage.put(`raw/${documentId}`, file.buffer);
+      objectKey = stored.objectKey;
+      storageProvider = stored.provider;
+    } catch { /* fail-open to local raw path */ }
     const document = await this.prisma.document.create({
       data: {
         id: documentId,
@@ -184,6 +204,8 @@ export class IngestionController {
         title: filename,
         sourceType: "upload",
         rawFileOid: join(this.uploadRoot, rawPath),
+            objectKey,
+            storageProvider,
         uploadedById: userId,
         status: "parsing",
       },
@@ -236,6 +258,13 @@ export class IngestionController {
     const rawPath = `${documentId}/${normalizeUploadFilename(`${title}.txt`)}`;
     await mkdir(join(this.uploadRoot, documentId), { recursive: true });
     await writeFile(join(this.uploadRoot, rawPath), content, "utf8");
+    let objectKey: string | undefined;
+    let storageProvider = "local";
+    try {
+      const stored = await this.objectStorage.put(`raw/${documentId}`, Buffer.from(content, "utf8"));
+      objectKey = stored.objectKey;
+      storageProvider = stored.provider;
+    } catch { /* fail-open to local raw path */ }
     const document = await this.prisma.document.create({
       data: {
         id: documentId,
@@ -244,6 +273,8 @@ export class IngestionController {
         title,
         sourceType: "text",
         rawFileOid: join(this.uploadRoot, rawPath),
+            objectKey,
+            storageProvider,
         uploadedById: userId,
         status: "parsing",
       },
@@ -350,6 +381,11 @@ export class IngestionController {
       select: { id: true, rawFileOid: true },
     });
     if (!document) throw new NotFoundException("Document not found.");
+    // Repair the BM25 corpus statistics BEFORE the row (and its cascading
+    // ChunkLexicalDoc postings) disappear: df/N are maintained incrementally,
+    // so a delete that skipped this step left every later query scored against
+    // a corpus that still contained the deleted document.
+    await this.lexicalIndexService?.removeDocument(kbId, docId);
     await this.compilerService.onKnowledgeDeleted(kbId, docId);
     await this.prisma.document.delete({ where: { id: docId } });
     // Accuracy first: stale graph/global-summary facts must be invalidated
