@@ -59,7 +59,12 @@ curl -s 127.0.0.1:9090/api/v1/rules | python3 -m json.tool | head
 ```
 
 
-## 知识库域名入口（生产）
+## 知识库域名入口（已下线）
+
+> 2026-09-23 应要求停用生产监控：容器已移除、nginx `/monitor/*` 入口已撤销。
+> 配置与安装脚本保留在本目录，需要时可重新 `install-monitoring-docker.sh` + `expose-monitoring-vhost.sh`。
+
+### 历史参考
 
 ```
 https://knowledge.5gsailor.com:20080/monitor/            落地页（Grafana / Prometheus 导航）
@@ -67,7 +72,8 @@ https://knowledge.5gsailor.com:20080/monitor/grafana/    Grafana 看板
 https://knowledge.5gsailor.com:20080/monitor/prometheus/ Prometheus
 ```
 
-- 全部走 **HTTP Basic Auth**（默认用户 `ops`，密码安装时打印）。
+- 全部走 **HTTP Basic Auth**（用户 `ops`）。
+- 当前统一口令见运维私信；改密：`sudo MONITOR_USER=ops MONITOR_PASS='…' bash deploy/monitoring/expose-monitoring-vhost.sh`。
 - 一键发布/改密：
 
 ```bash
