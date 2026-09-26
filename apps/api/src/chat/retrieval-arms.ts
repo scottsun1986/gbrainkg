@@ -8,6 +8,7 @@ import { parseTermMappings, expandQueryWithTermMappings, type TermMapping } from
 import { numericClaimsSupportedBy, numberNearBound } from "./grounding-numeric";
 import { buildDocumentPreviewUrl } from "../ingestion/preview-url";
 import { buildBm25Pool, bm25Scores } from "./lexical-bm25";
+import { loadCorpusConfig } from "./corpus-agnostic-config";
 import { tokenizeQuery } from "../retrieval/lexical-tokenizer";
 import { Bulkhead, RetrievalDeadline } from "../retrieval/retrieval-budget";
 import type { EmbeddingService } from "../embedding/embedding.service";
@@ -144,6 +145,43 @@ export function statementSupportedBy(
   // If statement has valid citation tag and no polarity conflict, allow 0.40 for natural synthesis
   const overlapBar = hasValidTag ? 0.40 : 0.70;
   if (overlapRatio < overlapBar) return false;
+
+  // Character overlap alone is weak for Chinese: a fabricated sentence that
+  // reuses common characters scores high without containing a single real
+  // phrase. Require phrase-level (Han bigram) overlap too whenever the
+  // statement is long enough to have one. The bar is slightly below the
+  // character bar so ordinary paraphrase still passes.
+  //
+  // Paraphrase exemption: a correct answer legitimately introduces wording the
+  // evidence never uses (asking 汇总表编号 for a table whose row says
+  // 锚点事实|XLSX-KEY-…), which lands *just below* the bigram bar and used to
+  // be replaced with a refusal. Such a statement is accepted on the relaxed
+  // branch only when every alphanumeric token it asserts (codes, identifiers,
+  // numbers) literally appears in the evidence — fabricating an identifier or
+  // a wrong number keeps the sentence rejected, while honest paraphrase of a
+  // verbatim anchor passes. Numeric claims remain checked separately below.
+  const hanBigrams: string[] = [];
+  for (const run of body.match(/[\u4e00-\u9fff]+/g) || []) {
+    for (let i = 0; i + 1 < run.length; i += 1) hanBigrams.push(run.slice(i, i + 2));
+  }
+  if (hanBigrams.length >= 2) {
+    const uniqueGrams = new Set(hanBigrams);
+    let gramHits = 0;
+    for (const gram of uniqueGrams) {
+      if (normalizedEvidence.includes(gram)) gramHits += 1;
+    }
+    const gramRatio = gramHits / uniqueGrams.size;
+    const gramBar = hasValidTag ? 0.45 : 0.65;
+    const relaxedBar = hasValidTag ? 0.25 : 0.45;
+    if (gramRatio < gramBar) {
+      const tokens = body.match(/[A-Za-z0-9][A-Za-z0-9-]{2,}/g) || [];
+      const normalizedEvidenceLower = normalizedEvidence.toLowerCase();
+      const claimsGrounded =
+        tokens.length > 0 &&
+        tokens.every((token) => normalizedEvidenceLower.includes(token.toLowerCase()));
+      if (gramRatio < relaxedBar || !claimsGrounded) return false;
+    }
+  }
 
   const isEn = !/[\u4e00-\u9fa5]/.test(body);
   if (isEn) {
@@ -317,12 +355,24 @@ export class RetrievalArmsService {
   decomposeComplexQuery(query: string): string[] {
     const raw = query.trim();
     const subQueries = new Set<string>();
+    // Legal/clause structure is a corpus shape, not a business fact: a Chinese
+    // regulation has 章/节/条 while a technical manual or English contract does
+    // not. It is therefore opt-out via ENABLE_LEGAL_STRUCTURE_BOOST rather than
+    // hardcoded into the decomposition rules (AGENTS.md §2).
+    const legalStructure = loadCorpusConfig().enableLegalStructureBoost;
 
-    const subjectMatch = raw.match(/[\u4e00-\u9fa5A-Za-z0-9_-]{2,15}(?:条例|规范|总表|办法|手册|课件|白皮书|规划|纲要|系统|设备|无人机|算法|规程|标准|规章|协议|方案|文档)/);
+    // Document-FORM nouns only (条例/规范/办法/指引 …). No industry or scenario
+    // vocabulary (e.g. a specific device, department or product) may appear
+    // here: those belong to per-KB configuration, never to application code.
+    const subjectMatch = raw.match(
+      /[\u4e00-\u9fa5A-Za-z0-9_-]{2,15}(?:条例|规范|办法|手册|规程|标准|规章|指引|细则|章程|方案|预案|白皮书|规划|纲要|总表|文档)/,
+    );
     const subject = subjectMatch ? subjectMatch[0] : "";
 
     // 1. Cross-chapter patterns (第X章...第Y章...第Z章)
-    const chapterMatches = Array.from(raw.matchAll(/第[一二三四五六七八九十百0-9]+[章节]/g)).map((m) => m[0]);
+    const chapterMatches = legalStructure
+      ? Array.from(raw.matchAll(/第[一二三四五六七八九十百0-9]+[章节]/g)).map((m) => m[0])
+      : [];
     if (chapterMatches.length >= 2) {
       const themeMatch = raw.match(/关于(.+?)[，,]/);
       const theme = themeMatch ? themeMatch[1].trim() : "";
@@ -356,8 +406,12 @@ export class RetrievalArmsService {
       }
     }
 
-    // 4. Chapter listing pattern
-    if (subQueries.size === 0 && /哪些章|全部章|所有章|章名|一共有哪些章/.test(raw)) {
+    // 4. Chapter listing pattern (legal/clause-shaped corpora only)
+    if (
+      legalStructure &&
+      subQueries.size === 0 &&
+      /哪些章|全部章|所有章|章名|一共有哪些章/.test(raw)
+    ) {
       subQueries.add(subject ? `${subject} 章 目录` : "章 目录");
       subQueries.add(subject ? `${subject} 第一章 第二章` : "第一章 第二章");
     }
@@ -442,6 +496,7 @@ export class RetrievalArmsService {
   }
 
   extractSearchKeywords(query: string, domainTerms: string[] = []): string[] {
+    const legalStructure = loadCorpusConfig().enableLegalStructureBoost;
     const cleaned = this.cleanRetrievalQuery(query);
     const delimiterRegex = /[\s，。！？；：、“”（）《》【】\n\r\t,.;:?!"'()\[\]{}、\/\\|`~@#$%^&*+=<>——…]+/g;
     const stopPhrases = [
@@ -472,13 +527,18 @@ export class RetrievalArmsService {
         }
       }
 
-      // 2. Structural/legal anchors
-      for (const m of qText.match(/第[一二三四五六七八九十百0-9]+[章节条款]/g) || []) set.add(m);
-      if (/附则/.test(qText)) set.add("附则");
-      if (/总则/.test(qText)) set.add("总则");
-      if (/罚则/.test(qText)) set.add("罚则");
-      if (/哪些章|所有章|全部章|章名/.test(qText)) {
-        ["第一章", "第二章", "第三章", "第四章", "第五章", "总则", "罚则", "附则"].forEach((t) => set.add(t));
+      // 2. Structural/legal anchors — only when the corpus is clause-shaped.
+      //    A technical manual or an English contract has no 第X章/附则, and
+      //    emitting chapter terms for it only injects noise into the lexical
+      //    arm. Controlled by ENABLE_LEGAL_STRUCTURE_BOOST (AGENTS.md §2).
+      if (legalStructure) {
+        for (const m of qText.match(/第[一二三四五六七八九十百0-9]+[章节条款]/g) || []) set.add(m);
+        if (/附则/.test(qText)) set.add("附则");
+        if (/总则/.test(qText)) set.add("总则");
+        if (/罚则/.test(qText)) set.add("罚则");
+        if (/哪些章|所有章|全部章|章名/.test(qText)) {
+          ["第一章", "第二章", "第三章", "第四章", "第五章", "总则", "罚则", "附则"].forEach((t) => set.add(t));
+        }
       }
 
       // 3. Numbers with units
@@ -852,10 +912,12 @@ export class RetrievalArmsService {
 
       // Format fallback hits
       const mappedFallbacks = fallbackHits.map((fb, idx) => ({
+        id: (fb as any).id,
         topic: fb.title || fb.documentId || "",
         docId: fb.documentId,
         kbId: fb.kbId,
         version: fb.version,
+        ord: (fb as any).ord,
         pageNo: fb.pageNo,
         articleNo: fb.articleNo,
         evidence: fb.evidence,
@@ -1187,6 +1249,7 @@ export class RetrievalArmsService {
     variant?: RetrievalVariantParams,
   ): Promise<
     Array<{
+      id?: string;
       documentId: string | null;
       kbId: string | null;
       title: string;
@@ -1964,6 +2027,9 @@ export class RetrievalArmsService {
         const normalizedScore = Number(Math.min(0.99, Math.max(0.05, relRatio * 0.95)).toFixed(3));
 
         return {
+          // Chunk identity: lets downstream dedup key on the actual chunk
+          // instead of collapsing every chunk on a page into one candidate.
+          id: String(c.id),
           documentId: c.documentId,
           kbId: c.kbId,
           title: c.document?.title || "未知文档",
@@ -2004,6 +2070,7 @@ export class RetrievalArmsService {
               || String(hit.evidence || '').match(/《([^》]{2,80})》/)?.[1]
               || (String((hit as any).section || '').includes('level2') ? '全库演进全景摘要' : '宏观摘要');
             results.push({
+              id: (hit as any).id ? String((hit as any).id) : undefined,
               documentId: hit.documentId,
               kbId: hit.kbId,
               title: summaryTitle,

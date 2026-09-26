@@ -10,6 +10,8 @@ const mockPrisma = {
 const tx = {
   document: { findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
   chunk: { deleteMany: jest.fn(), createMany: jest.fn() },
+  enrichmentStage: { deleteMany: jest.fn() },
+  brainChangeEvent: { create: jest.fn() },
 };
 const mockReadFile = jest.fn();
 jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => mockPrisma) }));
@@ -107,6 +109,7 @@ describe('ingestion version fencing', () => {
     }));
     expect(tx.chunk.deleteMany).toHaveBeenCalledWith({ where: { documentId: 'doc-1' } });
     expect(tx.chunk.createMany).toHaveBeenCalledTimes(1);
+    expect(tx.enrichmentStage.deleteMany).toHaveBeenCalledWith({ where: { documentId: 'doc-1', version: 3 } });
     expect(enrichQueue.add).toHaveBeenCalledWith(
       'enrich',
       expect.objectContaining({ documentId: 'doc-1', kbId: 'kb-1', expectedVersion: 3 }),
@@ -134,6 +137,9 @@ describe('ingestion version fencing', () => {
 
     expect(result.status).toBe('indexing');
     expect(tx.chunk.createMany).toHaveBeenCalledTimes(1);
+    expect(tx.brainChangeEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ eventType: 'doc_change', resourceId: 'doc-1', payload: expect.objectContaining({ version: 2 }) }),
+    }));
   });
 
   it('derives real file extension from rawFileOid when title lacks extension', async () => {

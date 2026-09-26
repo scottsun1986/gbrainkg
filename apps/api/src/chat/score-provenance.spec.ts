@@ -1,4 +1,4 @@
-import { calibratedScoreOf, evidenceConfidenceScores, resolveArmPolicy, resolveGbrainRaceMs } from './chat.service';
+import { calibratedScoreOf, decideEvidenceSufficiency, evidenceConfidenceScores, resolveArmPolicy, resolveGbrainRaceMs, retrievalCandidateKey } from './chat.service';
 
 describe('citation score provenance', () => {
   it('treats rerank and native engine scores as calibrated', () => {
@@ -37,6 +37,77 @@ describe('citation score provenance', () => {
     const scores = evidenceConfidenceScores([{ score: undefined }, { scoreSource: 'synthetic' }]);
     expect(scores.maxCalibrated).toBeNull();
     expect(scores.maxSynthetic).toBeNull();
+  });
+});
+
+describe('decideEvidenceSufficiency', () => {
+  const opts = { calibratedFloor: 0.25, syntheticFloor: 0.25 };
+
+  it('refuses when a calibrated scorer ran and the best score is below the floor', () => {
+    // The previous gate was bypassed whenever `queryResult.answer` was long,
+    // which the fallback arm always made true. A low calibrated maximum must
+    // now win over the length of the pre-answer.
+    const decision = decideEvidenceSufficiency(
+      [
+        { score: 0.12, scoreSource: 'rerank' },
+        { score: 0.95, scoreSource: 'synthetic' },
+      ],
+      opts,
+    );
+    expect(decision.scoreCalibrated).toBe(true);
+    expect(decision.maxEvidenceScore).toBe(0.12);
+    expect(decision.hasSufficientEvidence).toBe(false);
+  });
+
+  it('accepts evidence once the calibrated maximum clears the floor', () => {
+    const decision = decideEvidenceSufficiency(
+      [{ score: 0.61, scoreSource: 'rerank' }],
+      opts,
+    );
+    expect(decision.hasSufficientEvidence).toBe(true);
+  });
+
+  it('degrades to the synthetic floor when no calibrated scorer ran', () => {
+    const decision = decideEvidenceSufficiency(
+      [{ score: 0.95, scoreSource: 'synthetic' }],
+      opts,
+    );
+    expect(decision.scoreCalibrated).toBe(false);
+    expect(decision.maxEvidenceScore).toBe(0.95);
+    expect(decision.hasSufficientEvidence).toBe(true);
+  });
+
+  it('refuses without citations even when a synthetic threshold is configured', () => {
+    expect(decideEvidenceSufficiency([], opts).hasSufficientEvidence).toBe(false);
+  });
+
+  it('treats an unmarked engine score as calibrated', () => {
+    const decision = decideEvidenceSufficiency([{ score: 0.3 }], opts);
+    expect(decision.scoreCalibrated).toBe(true);
+    expect(decision.hasSufficientEvidence).toBe(true);
+  });
+});
+
+describe('retrievalCandidateKey', () => {
+  it('keys on chunk identity when present', () => {
+    expect(retrievalCandidateKey({ id: 'c-1', documentId: 'd-1', pageNo: 3 })).toBe('id:c-1');
+    expect(retrievalCandidateKey({ chunkId: 'c-2' })).toBe('id:c-2');
+  });
+
+  it('distinguishes chunks of the same document/page (old key collapsed them)', () => {
+    // Keying on (documentId, pageNo) silently merged every chunk of a page
+    // into one candidate; two distinct chunks must now produce distinct keys.
+    const a = { documentId: 'd-1', ord: 4, pageNo: 3 };
+    const b = { documentId: 'd-1', ord: 5, pageNo: 3 };
+    expect(retrievalCandidateKey(a)).not.toBe(retrievalCandidateKey(b));
+    expect(retrievalCandidateKey(a)).toBe('doc:d-1:ord:4');
+  });
+
+  it('falls back to page then text prefix when no chunk identity exists', () => {
+    expect(retrievalCandidateKey({ documentId: 'd-1', pageNo: 2 })).toBe('doc:d-1:page:2');
+    expect(retrievalCandidateKey({ evidence: '第一段 证据' })).toBe('text:第一段证据');
+    // GBrain citations use docId + evidence.
+    expect(retrievalCandidateKey({ docId: 'g-1', evidence: 'abc' })).toBe('doc:g-1:page:0');
   });
 });
 

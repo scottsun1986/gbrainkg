@@ -16,7 +16,7 @@ import {
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { getPrismaClient } from "../prisma";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, rm, unlink, writeFile } from "node:fs/promises";
 import { ObjectStorageService } from "../storage/object-storage.service";
 import { extname, join } from "node:path";
@@ -86,6 +86,7 @@ export class IngestionController {
     @Param("kbId") kbId: string,
     @UploadedFile() file: any,
     @Req() req: any,
+    @Body() body?: { duplicateMode?: 'skip' | 'copy' },
   ) {
     const userId = await this.authService.userIdFromRequest(req);
     if (!file) throw new BadRequestException("A file is required.");
@@ -132,13 +133,25 @@ export class IngestionController {
         "Only the knowledge base owner or administrator can upload.",
       );
 
+    const duplicateMode = body?.duplicateMode ?? 'skip';
+    if (!['skip', 'copy'].includes(duplicateMode))
+      throw new BadRequestException("duplicateMode must be skip or copy.");
+
     const isArchive = isArchiveFilename(filename);
     if (isArchive) {
       const extractedFiles = await extractArchiveDocuments(file.buffer, filename);
       const createdDocuments = [];
+      let reusedCount = 0;
       for (const item of extractedFiles) {
-        const childDocId = randomUUID();
         const childFilename = normalizeUploadFilename(item.filename);
+        const contentHash = createHash('sha256').update(item.buffer).digest('hex');
+        if (duplicateMode === 'skip') {
+          const existing = await this.prisma.document.findFirst({
+            where: { kbId, title: childFilename, contentHash, lifecycleStatus: 'current', status: { not: 'failed' } },
+          });
+          if (existing) { createdDocuments.push(existing); reusedCount += 1; continue; }
+        }
+        const childDocId = randomUUID();
         const rawPath = `${childDocId}/${childFilename}`;
         await mkdir(join(this.uploadRoot, childDocId), { recursive: true });
         await writeFile(join(this.uploadRoot, rawPath), item.buffer);
@@ -155,6 +168,7 @@ export class IngestionController {
             kbId,
             mdPath: `${childDocId}/content.md`,
             title: childFilename,
+            contentHash,
             sourceType: "upload",
             rawFileOid: join(this.uploadRoot, rawPath),
             objectKey,
@@ -176,6 +190,7 @@ export class IngestionController {
       return {
         documents: createdDocuments,
         total: createdDocuments.length,
+        reusedCount,
         status: "accepted",
         isArchive: true,
         archiveName: filename,
@@ -185,6 +200,13 @@ export class IngestionController {
     const documentId = randomUUID();
     if (!SUPPORTED_UPLOAD_EXTENSIONS.has(extension)) {
       throw new BadRequestException("Unsupported file type.");
+    }
+    const contentHash = createHash('sha256').update(file.buffer).digest('hex');
+    if (duplicateMode === 'skip') {
+      const existing = await this.prisma.document.findFirst({
+        where: { kbId, title: filename, contentHash, lifecycleStatus: 'current', status: { not: 'failed' } },
+      });
+      if (existing) return { documents: [existing], status: 'accepted', reused: true };
     }
     const rawPath = `${documentId}/${filename}`;
     await mkdir(join(this.uploadRoot, documentId), { recursive: true });
@@ -202,10 +224,11 @@ export class IngestionController {
         kbId,
         mdPath: `${documentId}/content.md`,
         title: filename,
+        contentHash,
         sourceType: "upload",
         rawFileOid: join(this.uploadRoot, rawPath),
-            objectKey,
-            storageProvider,
+        objectKey,
+        storageProvider,
         uploadedById: userId,
         status: "parsing",
       },
@@ -224,7 +247,7 @@ export class IngestionController {
   @Post(":kbId/documents/text")
   async addTextDocument(
     @Param("kbId") kbId: string,
-    @Body() body: { title?: string; content?: string },
+    @Body() body: { title?: string; content?: string; duplicateMode?: 'skip' | 'copy' },
     @Req() req: any,
   ) {
     const userId = await this.authService.userIdFromRequest(req);
@@ -254,6 +277,16 @@ export class IngestionController {
       String(body?.title || "")
         .trim()
         .slice(0, 200) || "未命名文本知识";
+    const duplicateMode = body?.duplicateMode ?? 'skip';
+    if (!['skip', 'copy'].includes(duplicateMode))
+      throw new BadRequestException("duplicateMode must be skip or copy.");
+    const contentHash = createHash('sha256').update(content, 'utf8').digest('hex');
+    if (duplicateMode === 'skip') {
+      const existing = await this.prisma.document.findFirst({
+        where: { kbId, title, contentHash, lifecycleStatus: 'current', status: { not: 'failed' } },
+      });
+      if (existing) return { documents: [existing], status: 'accepted', reused: true };
+    }
     const documentId = randomUUID();
     const rawPath = `${documentId}/${normalizeUploadFilename(`${title}.txt`)}`;
     await mkdir(join(this.uploadRoot, documentId), { recursive: true });
@@ -271,10 +304,11 @@ export class IngestionController {
         kbId,
         mdPath: `${documentId}/content.md`,
         title,
+        contentHash,
         sourceType: "text",
         rawFileOid: join(this.uploadRoot, rawPath),
-            objectKey,
-            storageProvider,
+        objectKey,
+        storageProvider,
         uploadedById: userId,
         status: "parsing",
       },

@@ -143,4 +143,11 @@ describe("output hygiene: question echo", () => {
       ),
     ).toBe(true);
   });
+
+  it("keeps a Chinese answer that repeats the subject but supplies the missing fact", () => {
+    expect(looksLikeQuestionEcho(
+      "银色海豚在蓝色灯塔旁记录了三次潮汐。",
+      "银色海豚在蓝色灯塔旁记录了什么？",
+    )).toBe(false);
+  });
 });

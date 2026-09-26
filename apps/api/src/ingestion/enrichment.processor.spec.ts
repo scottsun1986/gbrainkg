@@ -2,6 +2,7 @@ import { EnrichmentProcessor } from './enrichment.processor';
 
 const mockPrisma = {
   document: { findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
+  enrichmentStage: { findMany: jest.fn(), upsert: jest.fn() },
 };
 jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => mockPrisma) }));
 
@@ -22,6 +23,8 @@ describe('EnrichmentProcessor readiness gating', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockPrisma.document.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.enrichmentStage.findMany.mockResolvedValue([]);
+    mockPrisma.enrichmentStage.upsert.mockResolvedValue({});
     delete process.env.AUTO_GRAPH_EXTRACT_ENABLED;
     raptor.isEnabled.mockReturnValue(false);
     processor = new EnrichmentProcessor(
@@ -119,5 +122,26 @@ describe('EnrichmentProcessor readiness gating', () => {
     await expect(processor.process(job({ documentId: 'doc-1', kbId: 'kb-1', expectedVersion: 4 })))
       .resolves.toEqual({ readiness: 'superseded' });
     expect(chunkEmbedding.embedDocumentChunks).not.toHaveBeenCalled();
+  });
+
+  it('retries only the failed enrichment stage for the same document version', async () => {
+    chunkEmbedding.isEnabled.mockReturnValue(true);
+    chunkEmbedding.embedDocumentChunks.mockResolvedValue({ requested: 1, embedded: 1, failed: 0, missing: 0 });
+    chunkEmbedding.documentCoverage.mockResolvedValue({ total: 1, missing: 0 });
+    mockPrisma.document.findUnique.mockResolvedValue({ version: 4 });
+    raptor.isEnabled.mockReturnValue(true);
+    raptor.indexDocument.mockRejectedValueOnce(new Error('temporary RAPTOR failure')).mockResolvedValueOnce(undefined);
+
+    await expect(processor.process(job({ documentId: 'doc-1', kbId: 'kb-1', expectedVersion: 4 })))
+      .rejects.toThrow('temporary RAPTOR failure');
+    expect(mockPrisma.enrichmentStage.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { documentId_version_stage: { documentId: 'doc-1', version: 4, stage: 'embedding' } },
+    }));
+    mockPrisma.enrichmentStage.findMany.mockResolvedValue([{ stage: 'embedding' }]);
+
+    await expect(processor.process(job({ documentId: 'doc-1', kbId: 'kb-1', expectedVersion: 4 })))
+      .resolves.toEqual({ readiness: 'ready' });
+    expect(chunkEmbedding.embedDocumentChunks).toHaveBeenCalledTimes(1);
+    expect(raptor.indexDocument).toHaveBeenCalledTimes(2);
   });
 });

@@ -411,4 +411,44 @@ describe('GraphRagService', () => {
       await expect(service.searchRelatedChunkIds(['kb-1'], '完全无关的问题', 10)).resolves.toEqual([]);
     });
   });
+
+  describe('scheduleCommunityRebuild (coalesced per-KB rebuild)', () => {
+    it('enqueues a single deduplicated delayed job instead of rebuilding inline', async () => {
+      const add = jest.fn().mockResolvedValue({ id: 'job-1' });
+      // @ts-expect-error optional injection
+      const queued = new GraphRagService(undefined, undefined, { add });
+      mockPrisma.graphEntity.findMany.mockResolvedValueOnce([]);
+
+      await queued.scheduleCommunityRebuild('kb-1');
+
+      expect(add).toHaveBeenCalledTimes(1);
+      const [name, payload, opts] = add.mock.calls[0];
+      expect(name).toBe('rebuild');
+      expect(payload).toEqual({ kbId: 'kb-1' });
+      // Same jobId deduplicates a burst of per-document triggers in Redis.
+      expect(opts.jobId).toBe('graph-community-kb-1');
+      expect(opts.delay).toBeGreaterThanOrEqual(0);
+      // The full-KB scan must NOT have run inline.
+      expect(mockPrisma.graphEntity.findMany).not.toHaveBeenCalled();
+    });
+
+    it('falls back to an inline rebuild when no queue is assembled', async () => {
+      mockPrisma.graphEntity.findMany.mockResolvedValueOnce([]);
+      await service.scheduleCommunityRebuild('kb-1');
+      expect(mockPrisma.graphEntity.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { kbId: 'kb-1' } }),
+      );
+    });
+
+    it('falls back to an inline rebuild when the queue errors', async () => {
+      const add = jest.fn().mockRejectedValue(new Error('redis down'));
+      // @ts-expect-error optional injection
+      const broken = new GraphRagService(undefined, undefined, { add });
+      mockPrisma.graphEntity.findMany.mockResolvedValueOnce([]);
+      await broken.scheduleCommunityRebuild('kb-1');
+      expect(mockPrisma.graphEntity.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { kbId: 'kb-1' } }),
+      );
+    });
+  });
 });

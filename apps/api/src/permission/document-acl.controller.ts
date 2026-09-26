@@ -108,6 +108,6 @@ export class DocumentAclController {
     if (!(await this.documentAcl.canManageAcl(userId, id))) {
       throw new ForbiddenException('kb admin or system admin required');
     }
-    return this.documentAcl.remove(aclId);
+    return this.documentAcl.remove(id, aclId);
   }
 }

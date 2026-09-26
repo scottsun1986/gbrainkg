@@ -13,6 +13,7 @@ const mockPrisma = {
     delete: jest.fn(),
     deleteMany: jest.fn(),
   },
+  brainChangeEvent: { create: jest.fn() },
   kbAdmin: {
     findFirst: jest.fn(),
     findMany: jest.fn(),
@@ -155,6 +156,18 @@ describe('DocumentAclService mutation helpers', () => {
       where: { documentId: 'doc-1' },
     });
     expect(mockPrisma.documentAcl.create).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.brainChangeEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ eventType: 'doc_acl_change', resourceId: 'doc-1' }),
+    }));
+  });
+
+  it('cannot remove an ACL entry through a different document', async () => {
+    mockPrisma.documentAcl.deleteMany.mockResolvedValue({ count: 0 });
+    await expect(service.remove('doc-1', 'other-doc-acl')).rejects.toThrow(/not found on this document/);
+    expect(mockPrisma.documentAcl.deleteMany).toHaveBeenCalledWith({
+      where: { id: 'other-doc-acl', documentId: 'doc-1' },
+    });
+    expect(mockPrisma.brainChangeEvent.create).not.toHaveBeenCalled();
   });
 
   it('add skips duplicates for the same subject', async () => {

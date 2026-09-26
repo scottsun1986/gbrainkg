@@ -293,7 +293,93 @@ export function evidenceConfidenceScores(citations: any[]): {
   return { maxCalibrated, maxSynthetic };
 }
 
+export interface EvidenceSufficiency {
+  hasSufficientEvidence: boolean;
+  maxCalibrated: number | null;
+  maxSynthetic: number | null;
+  maxEvidenceScore: number;
+  evidenceFloor: number;
+  scoreCalibrated: boolean;
+}
+
+/**
+ * Decide whether the selected evidence clears the fast-refusal floor.
+ *
+ * The decision is driven only by a *measured* score. A long pre-answer is not
+ * evidence of relevance (the fallback arm concatenates every retrieved chunk
+ * into `answer`, so text length alone would clear the gate by construction).
+ * When a calibrated scorer ran, its maximum must reach the calibrated floor;
+ * when none ran, the synthetic placement constant is compared against the
+ * documented degraded floor so the gate still says something honest.
+ */
+export function decideEvidenceSufficiency(
+  citations: any[],
+  options: { calibratedFloor: number; syntheticFloor: number },
+): EvidenceSufficiency {
+  const { maxCalibrated, maxSynthetic } = evidenceConfidenceScores(citations || []);
+  const scoreCalibrated = maxCalibrated !== null;
+  const maxEvidenceScore = maxCalibrated ?? maxSynthetic ?? 0;
+  const evidenceFloor = scoreCalibrated ? options.calibratedFloor : options.syntheticFloor;
+  const hasSufficientEvidence =
+    (citations?.length || 0) > 0 && maxEvidenceScore >= evidenceFloor;
+  return {
+    hasSufficientEvidence,
+    maxCalibrated,
+    maxSynthetic,
+    maxEvidenceScore,
+    evidenceFloor,
+    scoreCalibrated,
+  };
+}
+
+/**
+ * Identity key for a retrieval candidate, used to merge arms without dropping
+ * distinct evidence. Prefer the chunk id — a single page can hold many relevant
+ * chunks, and keying on (document, page) silently collapsed them into one, so a
+ * long detail table monopolised the page's single candidate slot. Falls back to
+ * per-document `ord` (unique and sequential), then page, then a text prefix for
+ * sources that carry no chunk identity at all.
+ */
+export function retrievalCandidateKey(item: any): string {
+  if (!item) return '';
+  const id = item.id || item.chunkId;
+  if (id) return `id:${id}`;
+  const doc = item.documentId || item.docId;
+  if (doc) {
+    const ord = item.ord;
+    if (ord !== undefined && ord !== null && Number.isFinite(Number(ord))) {
+      return `doc:${doc}:ord:${Number(ord)}`;
+    }
+    return `doc:${doc}:page:${item.pageNo || 0}`;
+  }
+  return `text:${String(item.evidence || item.snippet || item.context || '')
+    .replace(/\s+/g, '')
+    .slice(0, 40)}`;
+}
+
 export type CitationScoreSource = 'rerank' | 'native' | 'synthetic';
+
+/**
+ * Document-inventory intent: the user wants the list of documents themselves
+ * (titles/count/catalogue), not facts from them. Purely generic document
+ * vocabulary — no business terms. Matched shapes:
+ *   - 有哪些/有多少 + 知识文档|知识库|文档库|所有文档 (either order)
+ *   - 列出/统计 + 知识文档|知识库|文档 (imperative)
+ *   - 列出/枚举 + (本)知识库(中/里) + 所有|全部 + 文档 + 标题|清单|列表
+ * The last shape ("请列出本知识库中所有文档的标题") used to miss and fall
+ * through to chunk retrieval, where macro summaries crowded out the actual
+ * doc list (E2E gap "全景列举").
+ */
+export function isDocumentInventoryQuery(question: string): boolean {
+  const q = String(question || '');
+  return (
+    /(有多少|有哪些|几篇|几本|几份|清单|统计|全景|列表|目录).*(知识文档|知识库|文档库|制度文档|全部文档|所有文档)/.test(q) ||
+    /(知识文档|知识库|文档库|制度文档|全部文档|所有文档).*(有多少|有哪些|几篇|几本|几份|清单|统计|全景|列表|目录)/.test(q) ||
+    /^(?:搜索)?(?:有多少|查看有哪些|列出所有|统计)\s*(?:知识文档|知识库|制度文档|文档)/.test(q) ||
+    /(?:列出|枚举|罗列|展示)[^。！？?？]{0,16}(?:知识库|库中|库里)[^。！？?？]{0,16}(?:文档|文件)[^。！？?？]{0,8}(?:标题|清单|列表|名称|名)/.test(q) ||
+    /(?:列出|枚举|罗列)[^。！？?？]{0,8}(?:所有|全部)(?:文档|文件)(?:的)?(?:标题|清单|列表|名称|都有哪些)/.test(q)
+  );
+}
 
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
@@ -304,6 +390,30 @@ export class ChatService {
   private readonly fusionRerank: FusionRerankService;
   private readonly citationAssembly: CitationAssemblyService;
   private readonly documentAclService: DocumentAclService;
+  private readonly sourceFreshnessChecks = new Map<string, {
+    expiresAt: number;
+    promise: Promise<{ checked: number; rebuilt: number; fresh: boolean; staleSources: string[]; sourceKeys: string[] }>;
+  }>();
+
+  private checkSourceFreshness(userId: string, kbIds: string[], aclEpoch: number, knowledgeEpoch: number) {
+    const key = `${userId}:${[...kbIds].sort().join(',')}:${aclEpoch}:${knowledgeEpoch}`;
+    const cached = this.sourceFreshnessChecks.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.promise;
+    const promise = this.compilerService.ensureSourcesFreshForQuery(userId, kbIds);
+    const interval = Math.max(0, Number(process.env.SOURCE_FRESHNESS_CHECK_INTERVAL_MS || 30_000));
+    this.sourceFreshnessChecks.set(key, { expiresAt: Date.now() + interval, promise });
+    if (this.sourceFreshnessChecks.size > 500) this.sourceFreshnessChecks.delete(this.sourceFreshnessChecks.keys().next().value!);
+    void promise.then((result) => {
+      // A stale result or a synchronous rebuild must be checked again on the
+      // next query; only a confirmed fresh state is worth memoizing.
+      if ((!result.fresh || result.rebuilt) && this.sourceFreshnessChecks.get(key)?.promise === promise) {
+        this.sourceFreshnessChecks.delete(key);
+      }
+    }).catch(() => {
+      if (this.sourceFreshnessChecks.get(key)?.promise === promise) this.sourceFreshnessChecks.delete(key);
+    });
+    return promise;
+  }
 
   constructor(
     private readonly permissionService: PermissionService,
@@ -847,10 +957,7 @@ export class ChatService {
       return { success: true, query, total: 0, results: [] };
     }
 
-    const isInventoryQuery =
-      /(有多少|有哪些|几篇|几本|几份|清单|统计|全景|列表|目录).*(知识文档|知识库|文档库|制度文档|全部文档|所有文档)/.test(query) ||
-      /(知识文档|知识库|文档库|制度文档|全部文档|所有文档).*(有多少|有哪些|几篇|几本|几份|清单|统计|全景|列表|目录)/.test(query) ||
-      /^(?:搜索)?(?:有多少|查看有哪些|列出所有|统计)\s*(?:知识文档|知识库|制度文档|文档)/.test(query);
+    const isInventoryQuery = isDocumentInventoryQuery(query);
 
     if (isInventoryQuery) {
       const accessibleDocs = await this.prisma.document.findMany({
@@ -957,12 +1064,12 @@ export class ChatService {
               .catch(() => [] as any[]),
           ),
         );
-        const seenEntity = new Set(base.map((b: any) => (b.documentId ? `${b.documentId}:${b.pageNo || 0}` : String(b.evidence).slice(0, 30))));
+        const seenEntity = new Set(base.map((b: any) => retrievalCandidateKey(b)));
         for (const hits of entityChunks) {
           for (const hit of hits as any[]) {
-            const key = hit.documentId ? `${hit.documentId}:${hit.pageNo || 0}` : String(hit.evidence).slice(0, 30);
+            const key = retrievalCandidateKey(hit);
             if (seenEntity.has(key)) {
-              const existing = base.find((b: any) => (b.documentId ? `${b.documentId}:${b.pageNo || 0}` : String(b.evidence).slice(0, 30)) === key);
+              const existing = base.find((b: any) => retrievalCandidateKey(b) === key);
               if (existing && !(existing as any).subQueryOrigin) (existing as any).subQueryOrigin = hit.subQueryOrigin;
               continue;
             }
@@ -984,11 +1091,11 @@ export class ChatService {
                 .catch(() => [] as any[])
             )
           );
-          const seen = new Set(base.map((b) => b.documentId ? `${b.documentId}:${b.pageNo || 0}` : b.evidence.slice(0, 30)));
+          const seen = new Set(base.map((b) => retrievalCandidateKey(b)));
           for (const hits of subChunks) {
             for (const h of hits) {
-              const key = h.documentId ? `${h.documentId}:${h.pageNo || 0}` : h.evidence.slice(0, 30);
-              const existing = base.find((b) => (b.documentId ? `${b.documentId}:${b.pageNo || 0}` : b.evidence.slice(0, 30)) === key);
+              const key = retrievalCandidateKey(h);
+              const existing = base.find((b) => retrievalCandidateKey(b) === key);
               if (existing) {
                 (existing as any).subQueryOrigin = (existing as any).subQueryOrigin || (h as any).subQueryOrigin;
                 if (typeof h.score === 'number' && h.score > (existing.score || 0)) {
@@ -1584,9 +1691,8 @@ export class ChatService {
     if (typeof (this.compilerService as any).ensureSourcesFreshForQuery === "function") {
       trace.start("source_freshness", "Source 新鲜度校验", "核对业务文档与 GBrain 可检索页是否一致");
       try {
-        sourceFreshness = await (this.compilerService as any).ensureSourcesFreshForQuery(
-          userId,
-          scope,
+        sourceFreshness = await this.checkSourceFreshness(
+          userId, scope, userScope.aclEpoch, userScope.knowledgeEpoch,
         );
         if (sourceFreshness && (sourceFreshness.fresh === false || (sourceFreshness.staleSources && sourceFreshness.staleSources.length > 0))) {
           this.logger.warn(
@@ -1799,10 +1905,7 @@ export class ChatService {
         { matchedFacts: 0, reason: "not_memory_relevant" },
       );
     }
-    const isInventoryQuery =
-      /(有多少|有哪些|几篇|几本|几份|清单|统计|全景|列表|目录).*(知识文档|知识库|文档库|制度文档|全部文档|所有文档)/.test(question) ||
-      /(知识文档|知识库|文档库|制度文档|全部文档|所有文档).*(有多少|有哪些|几篇|几本|几份|清单|统计|全景|列表|目录)/.test(question) ||
-      /^(?:搜索)?(?:有多少|查看有哪些|列出所有|统计)\s*(?:知识文档|知识库|制度文档|文档)/.test(question);
+    const isInventoryQuery = isDocumentInventoryQuery(question);
 
     // A derived page is valid only for the exact permission/source set from
     // which it was built. Never add a full-scope summary to a user-selected
@@ -1972,9 +2075,9 @@ export class ChatService {
         } else if (recallVariants.length > 0) {
           try {
             const extraHits = await this.searchChunksFallback(scope, question, 10, recallVariants).catch(() => [] as any[]);
-            const seen = new Set(base.map((b) => b.documentId ? `${b.documentId}:${b.pageNo || 0}` : b.evidence.slice(0, 30)));
+            const seen = new Set(base.map((b) => retrievalCandidateKey(b)));
             for (const h of extraHits) {
-              const key = h.documentId ? `${h.documentId}:${h.pageNo || 0}` : h.evidence.slice(0, 30);
+              const key = retrievalCandidateKey(h);
               if (!seen.has(key)) {
                 seen.add(key);
                 base.push(h);
@@ -1994,11 +2097,11 @@ export class ChatService {
                   .catch(() => [] as any[])
               )
             );
-            const seen = new Set(base.map((b) => b.documentId ? `${b.documentId}:${b.pageNo || 0}` : b.evidence.slice(0, 30)));
+            const seen = new Set(base.map((b) => retrievalCandidateKey(b)));
             for (const hits of subChunks) {
               for (const h of hits) {
-                const key = h.documentId ? `${h.documentId}:${h.pageNo || 0}` : h.evidence.slice(0, 30);
-                const existing = base.find((b) => (b.documentId ? `${b.documentId}:${b.pageNo || 0}` : b.evidence.slice(0, 30)) === key);
+                const key = retrievalCandidateKey(h);
+                const existing = base.find((b) => retrievalCandidateKey(b) === key);
                 if (existing) {
                   (existing as any).subQueryOrigin = (existing as any).subQueryOrigin || (h as any).subQueryOrigin;
                   if (typeof h.score === 'number' && h.score > (existing.score || 0)) {
@@ -2653,8 +2756,8 @@ export class ChatService {
             if (retryFallbackHits.length > 0) {
               if (!queryResult.citations) queryResult.citations = [];
               for (const fb of retryFallbackHits) {
-                const key = fb.documentId ? `${fb.documentId}:${fb.pageNo || 0}` : fb.evidence.slice(0, 30);
-                if (!queryResult.citations.some((c: any) => (c.docId ? `${c.docId}:${c.pageNo || 0}` : (c.evidence || '').slice(0, 30)) === key)) {
+                const key = retrievalCandidateKey(fb);
+                if (!queryResult.citations.some((c: any) => retrievalCandidateKey(c) === key)) {
                   queryResult.citations.push({
                     topic: fb.title || fb.documentId || "",
                     docId: fb.documentId,
@@ -2740,17 +2843,21 @@ export class ChatService {
     if (this.weknoraClient) {
       trace.start("weknora_retrieval", "WeKnora 外部检索灰度", "使用 WeKnora 执行只读外部分支检索与双路对齐");
       try {
+        const bindingLimit = Math.max(1, Number(process.env.WEKNORA_QUERY_BINDING_LIMIT || 500));
         const publishedDocs = await this.prisma.document.findMany({
           where: { kbId: { in: scope }, status: "published", qualityStatus: "passed" },
           select: { id: true, kbId: true, version: true },
+          take: bindingLimit + 1,
         });
-        const bindings: WeKnoraBinding[] = publishedDocs.map((doc) => ({
+        const bindings: WeKnoraBinding[] = publishedDocs.slice(0, bindingLimit).map((doc) => ({
           knowledgeId: doc.id,
           documentId: doc.id,
           kbId: doc.kbId,
           version: doc.version,
         }));
-        if (bindings.length === 0) {
+        if (publishedDocs.length > bindingLimit) {
+          trace.skip("weknora_retrieval", "WeKnora 外部检索灰度", `授权文档超过在线绑定上限 ${bindingLimit}，请使用离线灰度评测`);
+        } else if (bindings.length === 0) {
           trace.skip("weknora_retrieval", "WeKnora 外部检索灰度", "当前知识库范围内无有效已发布文档绑定");
         } else {
           const weknoraEvidences = await this.weknoraClient.search(
@@ -4008,7 +4115,9 @@ export class ChatService {
       );
     }
     queryResult.citations = orderedCitations;
-    this.logger.warn('[PROMPT_SOURCES] ' + orderedCitations.map((c: any, i: number) => `[${i + 1}] ${c.docTitle}`).join(' | '));
+    // Diagnostic only: the selected-source list repeats on every turn, so it
+    // must not pollute warn-level logs (operators triage warns as incidents).
+    this.logger.debug('[PROMPT_SOURCES] ' + orderedCitations.map((c: any, i: number) => `[${i + 1}] ${c.docTitle}`).join(' | '));
     const isEnglishQuery = !/[\u4e00-\u9fa5]/.test(question);
     const evidenceReasoningGroups = buildEvidenceReasoningGroups(orderedCitations);
     const evidenceReasoningMap = structuredEvidencePlan.groups.length > 0
@@ -4102,21 +4211,21 @@ export class ChatService {
     // each other for ordering, but the min-max arm always awards its top hit
     // 0.95, so including them made this gate clearable by construction — i.e.
     // the "fast refusal" never fired exactly when retrieval was weakest.
-    const { maxCalibrated, maxSynthetic } = evidenceConfidenceScores(orderedCitations);
-    const scoreCalibrated = maxCalibrated !== null;
+    const sufficiency = decideEvidenceSufficiency(orderedCitations, {
+      calibratedFloor: fastRefusalFloor,
+      syntheticFloor: Number(
+        process.env.RETRIEVAL_FAST_REFUSAL_SYNTHETIC_THRESHOLD || fastRefusalFloor,
+      ),
+    });
     // Without a calibrated score the deployment has no reranker configured (or
     // it failed), so the only available number is a synthetic placement
     // constant. The gate then degrades to "did retrieval return anything at
     // all" and says so in the trace instead of pretending to be a confidence
     // measurement.
-    const maxEvidenceScore = maxCalibrated ?? maxSynthetic ?? 0;
-    const evidenceFloor = scoreCalibrated
-      ? fastRefusalFloor
-      : Number(process.env.RETRIEVAL_FAST_REFUSAL_SYNTHETIC_THRESHOLD || fastRefusalFloor);
-
-    const hasSufficientEvidence =
-      hasMeaningfulPreAnswer ||
-      (orderedCitations.length > 0 && maxEvidenceScore >= evidenceFloor);
+    const scoreCalibrated = sufficiency.scoreCalibrated;
+    const maxEvidenceScore = sufficiency.maxEvidenceScore;
+    const evidenceFloor = sufficiency.evidenceFloor;
+    const hasSufficientEvidence = sufficiency.hasSufficientEvidence;
 
     if (!scoreCalibrated && orderedCitations.length > 0) {
       trace.warn(
@@ -4127,6 +4236,7 @@ export class ChatService {
           evidenceCount: orderedCitations.length,
           maxSyntheticScore: maxEvidenceScore,
           syntheticThreshold: evidenceFloor,
+          hasMeaningfulPreAnswer,
         },
       );
     }
@@ -4149,6 +4259,7 @@ export class ChatService {
           maxScore: maxEvidenceScore,
           threshold: evidenceFloor,
           scoreCalibrated,
+          hasMeaningfulPreAnswer,
         },
       );
       await this.emitCitationsAndComplete(

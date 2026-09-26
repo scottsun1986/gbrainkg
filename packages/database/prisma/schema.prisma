@@ -187,6 +187,7 @@ model Document {
 
   kb           KnowledgeBase @relation(fields: [kbId], references: [id], onDelete: Cascade)
   chunks       Chunk[]
+  enrichmentStages EnrichmentStage[]
   citations    Citation[]
   brainSourceDocuments BrainSourceDocument[]
   raptorNodes  RaptorNode[]
@@ -195,9 +196,21 @@ model Document {
   versionTo    DocumentVersionLink[] @relation("VersionTo")
 
   @@index([kbId, status])
+  @@index([kbId, contentHash])
   @@index([kbId, status, updatedAt(sort: Desc)])
   @@index([kbId, lifecycleStatus, effectiveFrom])
   @@index([indexReadiness])
+}
+
+model EnrichmentStage {
+  documentId String @db.Uuid
+  version Int
+  stage String
+  completedAt DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@id([documentId, version, stage])
 }
 
 model Chunk {

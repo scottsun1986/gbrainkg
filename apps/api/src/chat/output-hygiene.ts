@@ -131,7 +131,11 @@ export function looksLikeQuestionEcho(text: string, question: string): boolean {
   }
   // CJK (and other unsegmented scripts): compare on characters.
   if (!/\s/.test(prompt) && prompt.length >= 8) {
-    return body.includes(prompt.slice(0, Math.ceil(prompt.length * 0.6)));
+    // A factual answer often repeats the question's subject and verb but
+    // replaces the interrogative tail with the fact. Prefix-only matching
+    // would discard exactly that answer; require the full question wording.
+    const wording = prompt.replace(/[。？！?!]+$/u, '').trim();
+    return wording.length >= 8 && lower.includes(wording.toLowerCase());
   }
   return false;
 }

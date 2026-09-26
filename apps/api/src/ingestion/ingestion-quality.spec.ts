@@ -3,6 +3,8 @@ import { IngestionService } from './ingestion.service';
 const mockPrisma = {
   document: { findUnique: jest.fn(), findFirst: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
   chunk: { deleteMany: jest.fn(), createMany: jest.fn() },
+  enrichmentStage: { deleteMany: jest.fn() },
+  brainChangeEvent: { create: jest.fn() },
   // The L2 content-hash dedup lookup uses JSON containment (`@>`) through a raw
   // query, because the Prisma `path/equals` form compiles to `#>`/`#>>`
   // extraction which the GIN index cannot serve (verified with EXPLAIN).
@@ -20,6 +22,12 @@ const tx = {
   chunk: {
     deleteMany: (...args: unknown[]) => mockPrisma.chunk.deleteMany(...(args as [])),
     createMany: (...args: unknown[]) => mockPrisma.chunk.createMany(...(args as [])),
+  },
+  enrichmentStage: {
+    deleteMany: (...args: unknown[]) => mockPrisma.enrichmentStage.deleteMany(...(args as [])),
+  },
+  brainChangeEvent: {
+    create: (...args: unknown[]) => mockPrisma.brainChangeEvent.create(...(args as [])),
   },
 };
 mockPrisma.$transaction.mockImplementation(async (arg: unknown) => {
@@ -48,6 +56,7 @@ describe('ingestion publication boundary', () => {
     mockPrisma.document.findFirst.mockReset().mockResolvedValue(null);
     mockPrisma.$queryRaw.mockReset().mockResolvedValue([]);
     mockPrisma.document.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.brainChangeEvent.create.mockResolvedValue({ id: 'event-1' });
     mockWriteFile.mockResolvedValue(undefined);
     mockRename.mockResolvedValue(undefined);
     mockUnlink.mockResolvedValue(undefined);
@@ -101,7 +110,9 @@ describe('ingestion publication boundary', () => {
     const service = new IngestionService({} as any, compiler as any, models as any);
     const result = await service.processDocument('doc-1');
     expect(result.status).toBe('indexing');
-    expect(compiler.onKnowledgePublished).toHaveBeenCalled();
+    expect(mockPrisma.brainChangeEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ eventType: 'doc_change', resourceId: 'doc-1' }),
+    }));
     expect(mockPrisma.document.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         qualityStatus: 'passed',
@@ -117,7 +128,9 @@ describe('ingestion publication boundary', () => {
     mockReadFile.mockResolvedValue(Buffer.from('正常的合同条款内容'));
     const service = new IngestionService({} as any, compiler as any, models as any);
     expect((await service.processDocument('doc-1')).status).toBe('indexing');
-    expect(compiler.onKnowledgePublished).toHaveBeenCalledWith('kb-1', 'doc-1', ['fixture']);
+    expect(mockPrisma.brainChangeEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ eventType: 'doc_change', resourceId: 'doc-1' }),
+    }));
   });
 
   it('does not publish canonical Markdown when a newer version wins the save fence', async () => {

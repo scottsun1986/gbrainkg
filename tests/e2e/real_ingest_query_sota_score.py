@@ -18,6 +18,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -337,9 +338,11 @@ def build_questions(kb_id: str) -> list[dict[str, Any]]:
         # 跨文档
         {"kind": "multi_doc", "q": "华北区和华南区一季度回款目标分别是多少？",
          "must_all": ["1200", "900"], "kb": [kb_id]},
-        # 全景清单
+        # 全景清单 — gold 对齐夹具实际文件名 stem（历史关键词 差旅/巡检/预算…
+        # 与本套件生成的 E2ESCORE-*-score.xlsx 等标题永不匹配，属评测设计缺陷）
         {"kind": "summary_list", "q": "请列出本知识库中所有文档的标题。",
-         "must_any": ["差旅", "巡检", "预算", "安全", "项目立项", "合规", "考勤"],
+         "must_any": ["policy.md", "inspect.txt", "budget.csv", "safety.html", "score.xlsx",
+                      "project.docx", "compliance.pdf", "kaoqin", "north.md", "south.md"],
          "kb": [kb_id], "min_any": 4},
         # 拒答
         {"kind": "refusal", "q": "2028 年奥运会金牌榜第一名是哪个国家？",
@@ -396,6 +399,46 @@ def score_answer(item: dict, result: dict) -> dict:
     total_kw = len(must_all) + max(min_any, 1) if must_any else len(must_all)
     rec["hit"] = bool(hit)
     rec["keyword_coverage"] = round(len(covered) / max(total_kw, 1), 3)
+
+    # Retrieval-layer IR metrics. The citations carry (doc_title, snippet, score),
+    # so the gold anchor's presence/rank inside the *evidence set* can be scored
+    # independently of generation. hit_rate alone conflates retrieval and
+    # generation; these separate the two failure modes.
+    gold_tokens = [m for m in (must_all + must_any) if m]
+    if gold_tokens and cit:
+        rec["retrieval_hit"] = any(
+            any(m in ((c.get("snippet") or "") + (c.get("doc_title") or "")) for m in gold_tokens)
+            for c in cit
+        )
+        rec["retrieval_rank"] = next(
+            (
+                idx + 1
+                for idx, c in enumerate(cit)
+                if any(
+                    m in ((c.get("snippet") or "") + (c.get("doc_title") or ""))
+                    for m in gold_tokens
+                )
+            ),
+            None,
+        )
+    else:
+        rec["retrieval_hit"] = None if not gold_tokens else False
+        rec["retrieval_rank"] = None
+
+    # Claim support: every gold anchor the answer asserts must also appear in
+    # the cited evidence. An anchor in the answer with no citation backing is an
+    # unsupported claim even when the keyword check passed (mirrors the API's
+    # own grounding gate, measured independently here).
+    asserted = [m for m in must_all if m in answer]
+    if asserted and cit:
+        rec["claim_support"] = round(
+            sum(1 for m in asserted if m in cit_blob) / len(asserted), 3
+        )
+    elif not cit:
+        rec["claim_support"] = None
+    else:
+        rec["claim_support"] = 1.0
+
     # citation accuracy: if answer asserts a value, some citation snippet should
     # contain one of the must tokens (or answer itself is grounded by citations)
     if must_all:
@@ -499,6 +542,31 @@ def main() -> int:
 
     # 4) ask questions
     questions = build_questions(kb_id)
+
+    # Reproducibility fingerprint: hash the exact fixtures + gold answers that
+    # produced this score so a future run can prove it scored the same corpus.
+    # The KB id is excluded (it is random per run); fixture bytes and question
+    # gold tokens are the part that defines the measurement.
+    dataset_hasher = hashlib.sha256()
+    for fx in fixtures:
+        dataset_hasher.update(fx["name"].encode())
+        dataset_hasher.update(b"\x00")
+        dataset_hasher.update(fx["content"])
+        dataset_hasher.update(b"\x00")
+    for q in questions:
+        dataset_hasher.update(
+            json.dumps({k: v for k, v in q.items() if k != "kb"}, ensure_ascii=False).encode()
+        )
+        dataset_hasher.update(b"\x00")
+    dataset_sha256 = dataset_hasher.hexdigest()
+    git_commit = ""
+    try:
+        import subprocess
+        git_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=5
+        ).stdout.strip()
+    except Exception:
+        git_commit = ""
     print(f"[4/4] running {len(questions)} real Q/A turns ...")
     for item in questions:
         r = chat(item["q"], item.get("kb"))
@@ -529,6 +597,26 @@ def main() -> int:
     lat = sorted(r["latency_s"] for r in RESULTS if isinstance(r.get("latency_s"), (int, float)))
     p50 = lat[len(lat) // 2] if lat else 0
 
+    # Retrieval-layer IR metrics over the answerable set. n is small (15), so
+    # these are directional signals, not benchmark-grade numbers; they exist so
+    # a hit_rate regression can be attributed to retrieval vs generation.
+    ir_rows = [r for r in answerable if isinstance(r.get("retrieval_hit"), bool)]
+    retrieval_hit_rate = (
+        sum(1 for r in ir_rows if r["retrieval_hit"]) / len(ir_rows) if ir_rows else None
+    )
+    retrieval_mrr = (
+        sum(1.0 / r["retrieval_rank"] for r in ir_rows if r.get("retrieval_rank")) / len(ir_rows)
+        if ir_rows else None
+    )
+    recall_at_3 = (
+        sum(1 for r in ir_rows if r.get("retrieval_rank") and r["retrieval_rank"] <= 3) / len(ir_rows)
+        if ir_rows else None
+    )
+    claim_rows = [r for r in RESULTS if isinstance(r.get("claim_support"), (int, float))]
+    claim_support_rate = (
+        sum(r["claim_support"] for r in claim_rows) / len(claim_rows) if claim_rows else None
+    )
+
     # SOTA 对照：gate-thresholds + intl baseline 简表
     gates = {
         "GATE_HIT_RATE": float(os.environ.get("GATE_HIT_RATE", "0.90")),
@@ -551,6 +639,11 @@ def main() -> int:
         "permission_rate": permission_rate,
         "latency_p50_s": p50,
         "n_questions": n,
+        # Retrieval-vs-generation attribution. Small n — directional only.
+        "retrieval_hit_rate": None if retrieval_hit_rate is None else round(retrieval_hit_rate, 3),
+        "retrieval_mrr": None if retrieval_mrr is None else round(retrieval_mrr, 3),
+        "retrieval_recall_at_3": None if recall_at_3 is None else round(recall_at_3, 3),
+        "claim_support_rate": None if claim_support_rate is None else round(claim_support_rate, 3),
     }
 
     def cmp(key: str, value: float, threshold: float, higher_better=True) -> str:
@@ -589,6 +682,15 @@ def main() -> int:
     for row in sota_compare:
         print(f"{row['metric']:28} {row['value']:>8.3f} {row['gate']:>8.3f} {row['status']:>8}")
     print(f"\np50 latency {p50}s | n={n}")
+
+    def fmt(value: float | None) -> str:
+        return "n/a" if value is None else f"{value:.3f}"
+
+    if retrieval_hit_rate is not None:
+        print(
+            f"retrieval: hit_rate={fmt(retrieval_hit_rate)} mrr={fmt(retrieval_mrr)} "
+            f"recall@3={fmt(recall_at_3)} | claim_support={fmt(claim_support_rate)}"
+        )
     print("\nby kind:")
     for k, v in sorted(kind_scores.items()):
         print(f"  {k:16} n={v['n']}  hit={v['hit']}")
@@ -604,6 +706,19 @@ def main() -> int:
         "kind_scores": kind_scores,
         "per_question": RESULTS,
         "gates": gates,
+        # Reproducibility: dataset + code identity for this score. A score
+        # without these cannot be compared against a future run.
+        "reproducibility": {
+            "dataset_sha256": dataset_sha256,
+            "git_commit": git_commit,
+            "n_questions": n,
+            "fixture_count": len(fixtures),
+            "note": (
+                "n=15 hand-authored questions; hit_rate is keyword-containment. "
+                "retrieval_* and claim_support_rate separate retrieval vs "
+                "generation failures. Numbers are directional, not benchmark-grade."
+            ),
+        },
     }
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2)

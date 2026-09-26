@@ -21,6 +21,11 @@ const BANNED_BUSINESS_TOKENS = [
   '考勤管理制度',
   '作息时间',
   '绩效为B',
+  // Industry nouns must not seed retrieval heuristics either: the decomposition
+  // subject lexicon used to hardcode a specific device ("无人机") which biased
+  // sub-query planning towards one industry's corpus. Document-form nouns
+  // (条例/规范/办法…) are generic and remain allowed.
+  '无人机',
 ];
 
 function sourceFiles(root: string, out: string[] = []): string[] {

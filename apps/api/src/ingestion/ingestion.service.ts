@@ -612,6 +612,10 @@ export class IngestionService implements OnModuleInit {
               -1,
             );
           }
+          // A repeated parse can replace chunks even when it retains the same
+          // document version (for example after a worker crash). Completed
+          // stages for the old chunk set must not suppress re-indexing.
+          await tx.enrichmentStage.deleteMany({ where: { documentId, version: targetVersion ?? document.version ?? 1 } });
           await tx.chunk.deleteMany({ where: { documentId } });
           const CHUNK_BATCH_SIZE = Number(process.env.INGESTION_CHUNK_BATCH || 2000);
           const chunkData = enrichedChunks.map((chunk) => {
@@ -638,6 +642,19 @@ export class IngestionService implements OnModuleInit {
           });
           for (let i = 0; i < chunkData.length; i += CHUNK_BATCH_SIZE) {
             await tx.chunk.createMany({ data: chunkData.slice(i, i + CHUNK_BATCH_SIZE) });
+          }
+          if (qualityStatus === "passed") {
+            // The document and its synchronization intent commit together. A
+            // crash after this transaction cannot strand a published version.
+            await tx.brainChangeEvent.create({
+              data: {
+                eventType: "doc_change",
+                resourceType: "document",
+                resourceId: documentId,
+                status: "pending",
+                payload: { kbId: document.kbId, version: targetVersion },
+              },
+            });
           }
         },
         // Chunk replacement for large documents can exceed the default 5s
@@ -676,29 +693,10 @@ export class IngestionService implements OnModuleInit {
       };
     }
 
-    const topic =
-      document.title
-        .replace(/\.[^.]+$/, "")
-        .replace(/[^\p{L}\p{N}\-_ ]/gu, "")
-        .trim() || documentId;
-    const queuedJobs = await this.compilerService.onKnowledgePublished(
-      document.kbId,
-      documentId,
-      [topic],
-    );
-    if (!queuedJobs)
-      await this.prisma.document.update({
-        where: { id: documentId },
-        data: { status: "published" },
-      });
-    // Lexical postings are written here as well as in the enrichment job so a
-    // freshly ingested document is searchable through the full-corpus BM25
-    // channel even if enrichment is still queued (or fails and retries later).
-    // Best effort: the service degrades to a warning and the enrichment job or
-    // the backfill CLI will repair the postings.
-    await this.lexicalIndexService
-      ?.indexDocument(document.kbId, documentId)
-      .catch(() => undefined);
+    // BrainOutboxService dispatches the doc_change event written above. Keep
+    // source synchronization out of the request/parse path.
+    // Post-publish enrichment owns lexical postings and the other derived
+    // indexes. Running lexical indexing here as well paid twice per document.
     // Post-publish enrichment runs through a durable queue with retries and
     // maintains the Document.indexReadiness state machine. When the queue is
     // not assembled (unit tests), fall back to fire-and-forget behaviour.
@@ -733,7 +731,7 @@ export class IngestionService implements OnModuleInit {
     }
     return {
       documentId,
-      status: queuedJobs ? "indexing" : "published",
+      status: "indexing",
       chunks: chunks.length,
       parser: parsed.engine || "unknown",
       qualityStatus,

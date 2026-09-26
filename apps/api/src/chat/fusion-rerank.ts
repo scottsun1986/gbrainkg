@@ -534,6 +534,13 @@ export class FusionRerankService {
 
       // No truncation here: the single evidence-selection stage decides what
       // enters the answer context, using these comparable scores.
+      //
+      // Candidates the cross-encoder did not score (never sent because the
+      // candidate list exceeded RERANK_MAX_DOCS, or dropped for empty text) are
+      // appended in their original order instead of being deleted. Dropping
+      // them silently removed recall nothing downstream could restore — a gold
+      // chunk ranked below the cap could never re-enter the evidence set. They
+      // keep their own provenance and carry no fabricated cross-encoder score.
       const reranked = scoredItems.map((item) => ({
         ...item.citation,
         score: item.score,
@@ -543,6 +550,13 @@ export class FusionRerankService {
         // threshold (refusal floor, relevance floor) may be compared against.
         scoreSource: "rerank",
       }));
+      if (process.env.RERANK_KEEP_UNSCORED !== 'false') {
+        const scoredIndexes = new Set(scoredItems.map((item) => item.idx));
+        for (let index = 0; index < citations.length; index += 1) {
+          if (scoredIndexes.has(index)) continue;
+          reranked.push({ ...citations[index], rerankSkipped: true });
+        }
+      }
       return {
         ...result,
         citations: reranked,

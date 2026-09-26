@@ -47,6 +47,7 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
   const [confirmKb, setConfirmKb] = useState<KbInfo | null>(null);
   const [newPersonalOpen, setNewPersonalOpen] = useState(false);
   const [newTextOpen, setNewTextOpen] = useState(false);
+  const [duplicateMode, setDuplicateMode] = useState<'skip' | 'copy'>('skip');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // 过滤条件变化后，不能继续沿用不属于当前分类的旧选中项；否则“个人库”为空
   // 时仍会渲染上一库的详情，并在后续操作中访问失效的 kbId。
@@ -176,6 +177,7 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
     try {
       const form = new FormData();
       form.append('file', file);
+      form.append('duplicateMode', duplicateMode);
       const response = await fetch(`${API_BASE_URL}/api/v1/kbs/${current.id}/documents`, {
         method: 'POST',
         headers: apiHeaders(),
@@ -189,9 +191,10 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
         // 压缩包已在后端自动解压，压缩包本身已物理删除；移除压缩包占位行并提示提取的文档数量
         setDocs((ds) => ds.filter((d) => d.id !== tempId));
         const count = result.documents?.length || result.total || 0;
+        const reused = Number(result.reusedCount || 0);
         window.dispatchEvent(
           new CustomEvent('app-toast', {
-            detail: `「${tempName}」解压成功，已提取 ${count} 篇文档并开始逐一解析`,
+            detail: `「${tempName}」解压成功，提取 ${count} 篇文档；${reused} 篇复用，${count - reused} 篇进入解析`,
           }),
         );
       } else {
@@ -199,7 +202,7 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
         if (doc) {
           setDocs((ds) => ds.map((d) => (d.id === tempId ? { ...d, id: doc.id, status: doc.status || 'parsing' } : d)));
         }
-        window.dispatchEvent(new CustomEvent('app-toast', { detail: `「${tempName}」已上传，后台正在解析与索引` }));
+        window.dispatchEvent(new CustomEvent('app-toast', { detail: result.reused ? `「${tempName}」内容未变，已复用现有文档` : `「${tempName}」已上传，后台正在解析与索引` }));
       }
       await loadDocuments(current.id);
     } catch (error: unknown) {
@@ -302,13 +305,13 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/kbs/${current.id}/documents/text`, {
         method: 'POST', headers: {'Content-Type':'application/json', ...apiHeaders()},
-        body: JSON.stringify({title, content}),
+        body: JSON.stringify({title, content, duplicateMode}),
       });
       const result = await response.json().catch(()=>({}));
       if (!response.ok) throw new Error(result.message || '文本知识保存失败');
       setNewTextOpen(false);
       await loadDocuments(current.id);
-      window.dispatchEvent(new CustomEvent('app-toast',{detail:'文本知识已保存并进入解析与索引流程'}));
+      window.dispatchEvent(new CustomEvent('app-toast',{detail:result.reused ? '内容未变，已复用现有文本知识' : '文本知识已保存并进入解析与索引流程'}));
     } catch (error) { window.dispatchEvent(new CustomEvent('app-toast',{detail:errorMessage(error) || '文本知识保存失败'})); }
   };
 
@@ -377,6 +380,10 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
             {current.type==='industry' && current.canGrant && <button className="btn" onClick={()=>onManageGrant?.(current)}>管理授权</button>}
             {current.type==='personal' && <button className="btn" onClick={()=>window.dispatchEvent(new CustomEvent('app-toast',{detail:'个人库不可共享，权限仅随账号生效'}))}>查看权限</button>}
             {current.type==='personal' && current.canDelete && <button className="btn danger" onClick={()=>setConfirmKb(current)}>删除知识库</button>}
+            {current.canWrite && <select aria-label="重复内容处理" title="重复内容处理" value={duplicateMode} onChange={(event)=>setDuplicateMode(event.target.value as 'skip' | 'copy')}>
+              <option value="skip">重复时复用</option>
+              <option value="copy">始终创建副本</option>
+            </select>}
             <input
               ref={fileInputRef}
               type="file"

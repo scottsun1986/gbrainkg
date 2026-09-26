@@ -1,4 +1,6 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { detectCommunitiesLouvain } from './louvain';
 import { getPrismaClient } from '../prisma';
 import { EmbeddingService } from '../embedding/embedding.service';
@@ -79,7 +81,54 @@ export class GraphRagService {
   constructor(
     @Optional() private readonly embeddingService?: EmbeddingService,
     @Optional() private readonly modelConfigService?: ModelConfigService,
+    @Optional() @InjectQueue('graph-community-queue') private readonly communityQueue?: Queue,
   ) {}
+
+  /**
+   * Coalesced, durable community rebuild for one knowledge base.
+   *
+   * Community detection reads *every* entity and relation of a KB
+   * (`buildCommunitiesForKb`), so invoking it once per ingested document is an
+   * O(documents × graph)² cost. During a bulk import that is the dominant
+   * enrichment cost and a memory spike. Instead, every document marks the KB
+   * dirty by enqueuing a single delayed job keyed by `graph-community-<kbId>`;
+   * BullMQ deduplicates the jobId (Redis-backed, so across every instance), so
+   * a burst of N documents collapses to one rebuild after the debounce window.
+   *
+   * Falls back to a direct synchronous rebuild when no queue is assembled
+   * (unit tests, or a deployment without Redis) so behaviour is unchanged there.
+   */
+  async scheduleCommunityRebuild(kbId: string): Promise<void> {
+    const debounceMs = Math.max(
+      0,
+      Number(process.env.GRAPHRAG_COMMUNITY_DEBOUNCE_MS || 15_000),
+    );
+    if (!this.communityQueue || typeof this.communityQueue.add !== 'function') {
+      await this.buildCommunitiesForKb(kbId, { incremental: true }).catch(() => undefined);
+      return;
+    }
+    try {
+      await this.communityQueue.add(
+        'rebuild',
+        { kbId },
+        {
+          jobId: `graph-community-${kbId}`,
+          delay: debounceMs,
+          removeOnComplete: true,
+          removeOnFail: 100,
+          attempts: Number(process.env.GRAPHRAG_COMMUNITY_ATTEMPTS || 2),
+          backoff: { type: 'exponential', delay: 30_000 },
+        },
+      );
+    } catch (err) {
+      // A queue outage must not fail document enrichment: fall back to the
+      // (more expensive but correct) synchronous rebuild.
+      this.logger.warn(
+        `Community rebuild enqueue failed for KB ${kbId}, rebuilding inline: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      await this.buildCommunitiesForKb(kbId, { incremental: true }).catch(() => undefined);
+    }
+  }
 
   /**
    * The configured chat route, used for community summaries. Returns null when
@@ -104,17 +153,71 @@ export class GraphRagService {
   }
 
   /**
+   * Naming-affix lexicons used by the regex fallback extraction.
+   *
+   * These are generic language affixes (Chinese organisation / system / policy
+   * nouns), not deployment-specific facts, but the exact set is corpus-shaped:
+   * an English corpus or a non-organisational corpus wants a different list.
+   * They are therefore environment-overridable instead of compiled in, so a
+   * deployment can tune extraction without a code change (AGENTS.md §2).
+   */
+  private entitySuffixes(): { organization: string[]; system: string[]; policy: string[] } {
+    const parse = (value: string | undefined, fallback: string): string[] =>
+      String(value ?? fallback)
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    return {
+      organization: parse(
+        process.env.GRAPHRAG_ORG_SUFFIXES,
+        '公司,集团,部门,中心,小组,委员会,团队,部,处,室',
+      ),
+      system: parse(
+        process.env.GRAPHRAG_SYSTEM_SUFFIXES,
+        '系统,平台,服务,引擎,数据库,架构,网关,模块,中间件',
+      ),
+      policy: parse(
+        process.env.GRAPHRAG_POLICY_SUFFIXES,
+        '规范,制度,标准,规程,办法,指南,方案,条例,守则,准则',
+      ),
+    };
+  }
+
+  private readonly suffixRegexCache = new Map<string, RegExp>();
+
+  private suffixRegex(kind: string, suffixes: string[]): RegExp {
+    const key = `${kind}:${suffixes.join('|')}`;
+    const cached = this.suffixRegexCache.get(key);
+    if (cached) return cached;
+    const escaped = suffixes
+      .map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .sort((a, b) => b.length - a.length);
+    const re = escaped.length ? new RegExp(`(?:${escaped.join('|')})$`, 'u') : /$^/;
+    this.suffixRegexCache.set(key, re);
+    if (this.suffixRegexCache.size > 32) {
+      const oldest = this.suffixRegexCache.keys().next().value;
+      if (oldest) this.suffixRegexCache.delete(oldest);
+    }
+    return re;
+  }
+
+  /**
    * Determine entity semantic category by naming heuristics and patterns.
+   * The affix lists are corpus-configurable (see `entitySuffixes`).
    */
   classifyEntityType(name: string): EntityType {
     const trimmed = name.trim();
-    if (/(?:公司|集团|部门|中心|小组|委员会|团队|部|处|室)$/u.test(trimmed)) {
+    const suffixes = this.entitySuffixes();
+    if (this.suffixRegex('org', suffixes.organization).test(trimmed)) {
       return 'organization';
     }
-    if (/(?:系统|平台|服务|引擎|数据库|架构|网关|模块|中间件)$/u.test(trimmed)) {
+    if (this.suffixRegex('system', suffixes.system).test(trimmed)) {
       return 'system';
     }
-    if (/^[《「].+[》」]$/u.test(trimmed) || /(?:规范|制度|标准|规程|办法|指南|方案|条例|守则|准则)$/u.test(trimmed)) {
+    if (
+      /^[《「].+[》」]$/u.test(trimmed) ||
+      this.suffixRegex('policy', suffixes.policy).test(trimmed)
+    ) {
       return 'policy';
     }
     return 'concept';
@@ -193,8 +296,18 @@ export class GraphRagService {
         }
       }
 
-      // 3. Organization and system entities
-      for (const match of content.matchAll(/([\p{L}\p{N}]{2,32}(?:公司|中心|部门|医院|集团|平台|系统|项目|规范|制度|管理|评估|安全|组织|小组))/gu)) {
+      // 3. Organization and system entities. The affix list is corpus-tunable
+      //    (GRAPHRAG_ORG_SUFFIXES / GRAPHRAG_SYSTEM_SUFFIXES); the regex is
+      //    compiled from the same lexicons used by classifyEntityType.
+      const suffixes = this.entitySuffixes();
+      const orgSystemAffixes = [...suffixes.organization, ...suffixes.system]
+        .map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        .sort((a, b) => b.length - a.length)
+        .join('|');
+      const orgSystemRegex = orgSystemAffixes
+        ? new RegExp(`([\\p{L}\\p{N}]{2,32}(?:${orgSystemAffixes}))`, 'gu')
+        : null;
+      for (const match of orgSystemRegex ? content.matchAll(orgSystemRegex) : []) {
         const termName = registerEntity(match[1]);
         if (termName && termName !== docCleanTitle) {
           relations.push({

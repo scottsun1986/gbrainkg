@@ -28,6 +28,7 @@ describe('IngestionController', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockPrisma.document.findFirst.mockResolvedValue(null);
     mockObjectStorage = {
       put: jest.fn().mockResolvedValue({ provider: 'local', objectKey: 'raw/test', size: 1, sha256: 'x' }),
       delete: jest.fn().mockResolvedValue(undefined),
@@ -92,6 +93,17 @@ describe('IngestionController', () => {
       expect(res.documents[0].title).toBe('readme.md');
       expect(mockPrisma.document.create).toHaveBeenCalledTimes(1);
       expect(mockIngestionService.enqueue).toHaveBeenCalledTimes(1);
+    });
+
+    it('reuses an exact same-title upload unless a copy is requested', async () => {
+      const file = { originalname: 'readme.md', buffer: Buffer.from('# Hello'), size: 7 };
+      mockPrisma.document.findFirst.mockResolvedValue({ id: 'existing', title: 'readme.md', version: 1 });
+      const reused = await controller.uploadDocument('kb-1', file, {} as any);
+      expect(reused).toEqual(expect.objectContaining({ reused: true }));
+      expect(mockPrisma.document.create).not.toHaveBeenCalled();
+      expect(mockIngestionService.enqueue).not.toHaveBeenCalled();
+      await controller.uploadDocument('kb-1', file, {} as any, { duplicateMode: 'copy' });
+      expect(mockPrisma.document.create).toHaveBeenCalledTimes(1);
     });
 
     it('rejects unsupported file extension', async () => {

@@ -107,6 +107,26 @@ describe('withServiceContext', () => {
     expect(seen).toEqual(['fn']);
     const configs = mockTx.$executeRaw.mock.calls.map((c) => String(c[0]));
     expect(configs.some((s) => s.includes("set_config('app.service'"))).toBe(true);
+    expect(configs.some((s) => s.includes("'on'"))).toBe(true);
+  });
+
+  it('keeps the request user context instead of downgrading to service scope', async () => {
+    // Request-path arms (BGE-M3 sparse recall, semantic cache lookups) call
+    // this helper from inside an HTTP request. Forcing app.service=on there
+    // silently bypassed row-level security for those queries; the request
+    // user's visibility must be preserved.
+    const { runWithRequestContext } = require('../observability/request-context');
+    await runWithRequestContext(
+      { requestId: 'req-1', userId: 'user-9' },
+      async () => {
+        await withServiceContext(mockPrisma, async () => 'ok');
+      },
+    );
+    const configs = mockTx.$executeRaw.mock.calls.map((c) => String(c[0]));
+    expect(configs.some((s) => s.includes("set_config('app.user_id'"))).toBe(true);
+    expect(mockTx.$executeRaw.mock.calls[0][1]).toBe('user-9');
+    expect(configs.some((s) => s.includes("'off'"))).toBe(true);
+    expect(configs.some((s) => s.includes("'on'"))).toBe(false);
   });
 
   it('falls back to a direct call for unit-test doubles without $transaction', async () => {

@@ -168,12 +168,19 @@ export class BrainCompilerProcessor extends WorkerHost {
         }
 
         // 如果是文档变更，触发增量同步
+        if (event.eventType === "doc_acl_change" && event.resourceId) {
+          const doc = await this.prisma.document.findUnique({
+            where: { id: event.resourceId }, select: { kbId: true },
+          });
+          if (doc) await this.scopeService.invalidateKbScope(doc.kbId, "acl");
+        }
+
         if (event.eventType === "doc_change" && event.resourceId) {
           const doc = await this.prisma.document.findUnique({
             where: { id: event.resourceId },
-            select: { id: true, kbId: true },
+            select: { id: true, kbId: true, version: true },
           });
-          if (doc) {
+          if (doc && (!event.payload?.version || event.payload.version === doc.version)) {
             await this.scopeService.invalidateKbScope(doc.kbId, "knowledge");
             await this.compilerService.onKnowledgePublished(
               doc.kbId,

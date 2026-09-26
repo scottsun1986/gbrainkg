@@ -6,6 +6,7 @@ import { getPrismaClient } from '../prisma';
 export type ChangeEventType =
   | 'doc_change'
   | 'doc_delete'
+  | 'doc_acl_change'
   | 'perm_grant'
   | 'perm_revoke'
   | 'org_change'
@@ -66,7 +67,7 @@ export class BrainOutboxService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async enqueueEvent(eventId: string, eventType: string) {
-    const isRevoke = eventType === 'perm_revoke' || eventType === 'doc_delete';
+    const isRevoke = eventType === 'perm_revoke' || eventType === 'doc_delete' || eventType === 'doc_acl_change';
     await this.compilerQueue.add('process-outbox-event', { eventId }, {
       jobId: `outbox-event-${eventId}`, priority: isRevoke ? 1 : 3,
       attempts: 3, backoff: { type: 'exponential', delay: 2000 },

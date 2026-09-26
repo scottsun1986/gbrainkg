@@ -76,6 +76,28 @@ export class EnrichmentProcessor extends WorkerHost {
       return { readiness: 'superseded' };
     }
     try {
+      const stageStore = (this.prisma as any).enrichmentStage;
+      const completed = new Set<string>();
+      if (stageStore && expectedVersion !== undefined) {
+        const rows = await stageStore.findMany({
+          where: { documentId, version: expectedVersion }, select: { stage: true },
+        });
+        for (const row of rows) completed.add(row.stage);
+      }
+      const runStage = (stage: string, work: () => Promise<unknown>): Promise<unknown> => {
+        if (completed.has(stage)) return Promise.resolve();
+        return (async () => {
+          const result = await work();
+          if (stageStore && expectedVersion !== undefined) {
+            await stageStore.upsert({
+              where: { documentId_version_stage: { documentId, version: expectedVersion, stage } },
+              create: { documentId, version: expectedVersion, stage },
+              update: {},
+            });
+          }
+          return result;
+        })();
+      };
       // Parallel Enrichment Pipeline: dispatch chunk embedding, RAPTOR summary hierarchy,
       // and GraphRAG extraction concurrently to cut document ingestion latency by up to 60%.
       // Uses allSettled to ensure all parallel tasks complete even if one fails,
@@ -83,7 +105,7 @@ export class EnrichmentProcessor extends WorkerHost {
       const enrichmentTasks: Promise<any>[] = [];
       if (this.chunkEmbeddingService.isEnabled()) {
         enrichmentTasks.push(
-          (async () => {
+          runStage('embedding', async () => {
             const embeddingResult = await this.chunkEmbeddingService.embedDocumentChunks(documentId);
             // Verify coverage instead of trusting the embed pass: null vectors are
             // swallowed by the fail-open embedding client.
@@ -96,7 +118,7 @@ export class EnrichmentProcessor extends WorkerHost {
             if (embeddingResult.hybridMissing) {
               throw new Error(`BGE-M3 hybrid index incomplete for ${documentId}: ${embeddingResult.hybridMissing} chunks missing sparse or multi-vector data.`);
             }
-          })(),
+          }),
         );
       }
       // Full-corpus BM25 postings. Kept in the enrichment state machine (rather
@@ -105,7 +127,7 @@ export class EnrichmentProcessor extends WorkerHost {
       // indexReadiness turns ready.
       if (this.lexicalIndexService?.isEnabled?.()) {
         enrichmentTasks.push(
-          (async () => {
+          runStage('lexical', async () => {
             const result = await this.lexicalIndexService!.indexDocument(kbId, documentId);
             if (result.indexed === 0) {
               const stored = await this.prisma.chunk.count({ where: { documentId } });
@@ -113,14 +135,14 @@ export class EnrichmentProcessor extends WorkerHost {
                 throw new Error(`Lexical index incomplete for ${documentId}: 0/${stored} chunks indexed.`);
               }
             }
-          })(),
+          }),
         );
       }
       if (this.raptorService.isEnabled()) {
-        enrichmentTasks.push(this.raptorService.indexDocument(kbId, documentId));
+        enrichmentTasks.push(runStage('raptor', () => this.raptorService.indexDocument(kbId, documentId)));
       }
       if (process.env.AUTO_GRAPH_EXTRACT_ENABLED === 'true') {
-        enrichmentTasks.push(this.extractGraph(kbId, documentId));
+        enrichmentTasks.push(runStage('graph', () => this.extractGraph(kbId, documentId)));
       }
       const settled = await Promise.allSettled(enrichmentTasks);
       const firstError = settled.find((r): r is PromiseRejectedResult => r.status === 'rejected');
@@ -239,7 +261,10 @@ export class EnrichmentProcessor extends WorkerHost {
     );
     const result = await this.graphRagService.persistGraphElements(kbId, elements);
     if (result.entityCount > 0) {
-      await this.graphRagService.buildCommunitiesForKb(kbId, { incremental: true }).catch(() => undefined);
+      // Coalesced per-KB rebuild: a bulk import would otherwise trigger an
+      // O(KB) full-graph scan for every document. The delay + jobId dedup
+      // collapses the whole import into one rebuild.
+      await this.graphRagService.scheduleCommunityRebuild(kbId).catch(() => undefined);
     }
     this.logger.log(
       `Graph extraction for ${documentId}: ${result.entityCount} entities, ${result.relationCount} relations.`,

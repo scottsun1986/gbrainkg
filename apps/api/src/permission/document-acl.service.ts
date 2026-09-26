@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { getPrismaClient } from '../prisma';
 import { withServiceContext } from '../db/tenant-context.service';
@@ -105,6 +105,7 @@ export class DocumentAclService {
           },
         });
       }
+      await this.recordAclChange(tx, documentId);
     });
     this.logger.log(
       `document ${documentId} ACL replaced with ${normalized.length} entr(ies)`,
@@ -123,24 +124,39 @@ export class DocumentAclService {
       },
     });
     if (existing) return existing;
-    return withServiceContext(this.prisma, (tx) => tx.documentAcl.create({
-      data: {
-        id: randomUUID(),
-        documentId,
-        subjectType: normalized.subjectType,
-        subjectId: normalized.subjectId,
-        permission: normalized.permission ?? 'read',
-      },
-    }));
+    return withServiceContext(this.prisma, async (tx) => {
+      const created = await tx.documentAcl.create({
+        data: {
+          id: randomUUID(), documentId,
+          subjectType: normalized.subjectType,
+          subjectId: normalized.subjectId,
+          permission: normalized.permission ?? 'read',
+        },
+      });
+      await this.recordAclChange(tx, documentId);
+      return created;
+    });
   }
 
-  async remove(aclId: string): Promise<{ id: string }> {
-    const row = await this.prisma.documentAcl.findUnique({
-      where: { id: aclId },
+  async remove(documentId: string, aclId: string): Promise<{ id: string }> {
+    await withServiceContext(this.prisma, async (tx) => {
+      const deleted = await tx.documentAcl.deleteMany({ where: { id: aclId, documentId } });
+      if (deleted.count !== 1) throw new NotFoundException('ACL entry not found on this document');
+      await this.recordAclChange(tx, documentId);
     });
-    if (!row) return { id: aclId };
-    await withServiceContext(this.prisma, (tx) => tx.documentAcl.delete({ where: { id: aclId } }));
     return { id: aclId };
+  }
+
+  private async recordAclChange(tx: any, documentId: string): Promise<void> {
+    await tx.brainChangeEvent.create({
+      data: {
+        eventType: 'doc_acl_change',
+        resourceType: 'document',
+        resourceId: documentId,
+        status: 'pending',
+        payload: {},
+      },
+    });
   }
 
   /**
