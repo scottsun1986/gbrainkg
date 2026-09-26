@@ -32,12 +32,11 @@ def classify_pdf(
 
 
 def assess_content_quality(markdown: str, suffix: str, task: dict[str, Any]) -> dict[str, Any]:
-    """Return a conservative quality signal before a document is published.
+    """Publication quality signal.
 
-    The parser may produce non-empty but unusable output (font encoding
-    damage, a blank image, or a PPTX with only unrecognised shapes). Quality is
-    therefore persisted separately from parser success. A review result keeps
-    the Markdown/chunks available for inspection but never enters GBrain.
+    Operator policy (option D): the ONLY hard stop is empty extraction.
+    Encoding damage, OCR confidence, image placeholders, and engine notes are
+    recorded for observability but never block publication.
     """
     text = str(markdown or "")
     placeholder_count = len(re.findall(r"<!--\s*(?:image|picture|figure)(?:[^\n>]*)\s*-->", text, flags=re.IGNORECASE))
@@ -50,44 +49,21 @@ def assess_content_quality(markdown: str, suffix: str, task: dict[str, Any]) -> 
     replacement_ratio = replacement_count / max(len(text), 1)
     control_ratio = control_count / max(len(text), 1)
     issues: list[str] = []
-    binary_input = suffix not in {".md", ".txt", ".csv", ".html", ".htm"}
     if meaningful_count == 0:
         issues.append("没有提取到可检索文字")
-    if binary_input and meaningful_count < 20:
-        issues.append("提取文字过少，可能是空白文件或解析不完整")
-    if replacement_ratio > 0.01:
-        issues.append("存在较多字体编码替换字符")
-    if control_ratio > 0.02:
-        issues.append("存在异常控制字符")
-    if placeholder_count and suffix in {".pptx", ".png", ".jpg", ".jpeg"}:
-        issues.append("版面解析只返回图片占位符，图片文字尚未完成 OCR")
     confidence = task.get("ocr_average_confidence")
-    if confidence is not None:
-        try:
-            if float(confidence) < 0.75:
-                issues.append("OCR 平均置信度低于 0.75")
-        except (TypeError, ValueError):
-            pass
-    if isinstance(task.get("quality_issues"), list):
-        for issue in task["quality_issues"]:
-            if isinstance(issue, str) and issue not in issues:
-                issues.append(issue)
     score = 1.0
     score -= min(replacement_ratio * 4, 0.45)
     score -= min(control_ratio * 2, 0.2)
-    if binary_input and meaningful_count < 20:
-        score -= 0.45
     if confidence is not None:
         try:
             score = min(score, max(0.0, float(confidence)))
         except (TypeError, ValueError):
             pass
     score = round(max(0.0, min(1.0, score)), 4)
-    status = "passed" if not issues else "needs_review"
+    status = "passed"
     if meaningful_count == 0 or task.get("quality_status") == "rejected":
         status = "rejected"
-    elif task.get("quality_status") == "needs_review":
-        status = "needs_review"
     return {
         "quality_status": status,
         "quality_score": score,

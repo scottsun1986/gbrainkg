@@ -37,6 +37,12 @@ function parseChineseNumber(str: string): number {
 }
 export type QualityStatus = 'passed' | 'needs_review' | 'rejected';
 
+/**
+ * Publication gate. Per operator decision (option D), the ONLY hard stop is
+ * "no extractable text". Encoding damage, OCR confidence, PII, clause
+ * numbering, table shape, page coverage, and residual image placeholders are
+ * recorded as metrics/issues for observability but never block publication.
+ */
 export function assessContentQuality(markdown: string, suffix: string, facts: Record<string, unknown> = {}) {
   const chars = Array.from(markdown);
   const count = chars.length || 1;
@@ -45,126 +51,22 @@ export function assessContentQuality(markdown: string, suffix: string, facts: Re
   const replacementRatio = chars.filter(c => c === '\ufffd').length / count;
   const controlRatio = chars.filter(c => c.charCodeAt(0) < 32 && !'\n\r\t'.includes(c)).length / count;
   const placeholders = (markdown.match(/<!--\s*(?:image|picture|figure)(?:[^\n>]*)\s*-->/gi) || []).length;
-  const binary = !['.md', '.txt', '.csv', '.html', '.htm'].includes(suffix.toLowerCase());
+
+  // Informational notes only — these no longer gate publication.
   const issues: string[] = [];
   if (!meaningful) issues.push('没有提取到可检索文字');
-  if (binary && meaningful < 20) issues.push('提取文字过少，可能是空白文件或解析不完整');
-  if (replacementRatio > 0.01) issues.push('存在较多字体编码替换字符');
-  if (controlRatio > 0.02) issues.push('存在异常控制字符');
-  if (placeholders && ['.pptx', '.png', '.jpg', '.jpeg'].includes(suffix.toLowerCase())) {
-    issues.push('版面解析只返回图片占位符，图片文字尚未完成 OCR');
-  }
 
-  // 1. Clause Numbering Continuity Check (match section headings / line-initial clauses, avoiding mid-sentence cross-references)
-  const articleRegex = /(?:^|\n)\s*(?:#+\s*)?第([一二三四五六七八九十百千万〇零两\d]+)条(?:\s+|[【（\[]|$)/g;
-  const articles: { str: string; num: number }[] = [];
-  let match;
-  while ((match = articleRegex.exec(markdown)) !== null) {
-    const str = match[1];
-    const num = parseChineseNumber(str);
-    articles.push({ str, num });
-  }
-
-  if (articles.length >= 3) {
-    const seen = new Set<number>();
-    let duplicateNumStr: string | null = null;
-    
-    for (const a of articles) {
-      if (seen.has(a.num)) {
-        duplicateNumStr = a.str;
-        break;
-      }
-      seen.add(a.num);
-    }
-
-    if (duplicateNumStr) {
-      issues.push(`存在重复的条款编号（如第${duplicateNumStr}条）`);
-    }
-
-    const sortedNums = [...new Set(articles.map(a => a.num))].sort((a, b) => a - b);
-    let hasGap = false;
-    for (let i = 1; i < sortedNums.length; i++) {
-      if (sortedNums[i] - sortedNums[i - 1] > 10) {
-        hasGap = true;
-        break;
-      }
-    }
-    if (hasGap) {
-      issues.push('条款编号存在明显跳空断层');
-    }
-  }
-
-  // 2. Table Structure Integrity Check
-  const lines = markdown.split('\n');
-  let inTable = false;
-  let headerColCount = 0;
-  let hasTableIssue = false;
-  
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (line.includes('|')) {
-      const getColCount = (l: string) => {
-        let s = l.trim();
-        if (s.startsWith('|')) s = s.slice(1);
-        if (s.endsWith('|')) s = s.slice(0, -1);
-        return s.split('|').length;
-      };
-      
-      if (!inTable) {
-        const nextLine = (lines[i + 1] || '').trim();
-        if (nextLine.includes('|') && /^[|\s\-:]+$/.test(nextLine)) {
-          inTable = true;
-          headerColCount = getColCount(line);
-          i++; // Skip separator
-        }
-      } else {
-        const rowColCount = getColCount(line);
-        if (headerColCount >= 4 && rowColCount <= 1) {
-          hasTableIssue = true;
-        }
-      }
-    } else {
-      inTable = false;
-    }
-  }
-  
-  if (hasTableIssue) {
-    issues.push('检测到表格结构不完整或存在截断');
-  }
-
-  // 3. Page Coverage Ratio Check
-  if (facts.page_count !== undefined) {
-    const pageCount = Number(facts.page_count);
-    if (pageCount > 1 && facts.text_pages !== undefined) {
-      let textPages = Number(facts.text_pages);
-      if (facts.ocr_cost_pages !== undefined && facts.ocr_cost_pages !== null) {
-        textPages = Math.min(pageCount, textPages + Number(facts.ocr_cost_pages));
-      } else if (facts.ocr_provider && !facts.ocr_error && (facts.ocr_words_result_num || String(facts.engine || '').startsWith('ocr-'))) {
-        textPages = pageCount;
-      }
-      if (textPages / pageCount < 0.4) {
-        issues.push(`页面文字覆盖率偏低 (${textPages}/${pageCount})，可能存在未识别的扫描页面`);
-      }
-    }
-  }
   let score = 1 - Math.min(replacementRatio * 4, 0.45) - Math.min(controlRatio * 2, 0.2);
-  if (binary && meaningful < 20) score -= 0.45;
   if (facts.ocr_average_confidence !== undefined && facts.ocr_average_confidence !== null) {
     const raw = facts.ocr_average_confidence;
     const confidence = typeof raw === 'number' || (typeof raw === 'string' && raw.trim()) ? Number(raw) : NaN;
-    if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
-      issues.push('OCR 置信度格式无效');
-    } else {
+    if (Number.isFinite(confidence) && confidence >= 0 && confidence <= 1) {
       score = Math.min(score, confidence);
-      if (confidence < 0.75) issues.push('OCR 平均置信度低于 0.75');
     }
   }
-  // Engine warnings may make the decision stricter, never bypass this gate.
-  if (Array.isArray(facts.quality_issues)) {
-    issues.push(...facts.quality_issues.filter((v): v is string => typeof v === 'string').slice(0, 20));
-  }
-  let status: QualityStatus = issues.length || facts.quality_status === 'needs_review' ? 'needs_review' : 'passed';
-  if (!meaningful || facts.quality_status === 'rejected') status = 'rejected';
+
+  // Only empty extraction rejects. Everything else publishes.
+  const status: QualityStatus = !meaningful || facts.quality_status === 'rejected' ? 'rejected' : 'passed';
   return {
     quality_status: status,
     quality_score: Number(Math.max(0, Math.min(1, score)).toFixed(4)),
@@ -178,7 +80,7 @@ export function assessContentQuality(markdown: string, suffix: string, facts: Re
   };
 }
 
-// ---------- 扩展质量门禁：PII / 语言 / 近重复（content-v2.1） ----------
+// ---------- 扩展质量信息：语言 / 近重复（PII 不再作为门禁） ----------
 
 export const QUALITY_RULE_VERSION_EXT = 'content-v2.1';
 
@@ -191,19 +93,13 @@ export interface ExtendedQualityResult {
 }
 
 /**
- * 与 assessContentQuality 叠加使用：
- * - PII 命中不直接拒稿，记 needs_review（由管理员决定是否脱敏发布）
- * - 语言写入 Document.language
- * - simhash 供入库前近重复比对（见 isNearDuplicate）
+ * Language + simhash for near-dup detection. PII is still scanned for
+ * metadata only and NEVER blocks publication (operator policy).
  */
 export function assessExtendedQuality(markdown: string): ExtendedQualityResult {
-  const issues: string[] = [];
   const language = detectLanguage(markdown);
   const piiFindings = scanPii(markdown);
-  if (piiFindings.length > 0) {
-    issues.push(`检测到 ${piiFindings.length} 处可能的个人信息（邮箱/手机号/身份证/银行卡）`);
-  }
   const simhash = '0x' + simhash64(markdown).toString(16);
-  const status: QualityStatus = piiFindings.length > 0 ? 'needs_review' : 'passed';
-  return { language, piiFindings, simhash, issues, status };
+  return { language, piiFindings, simhash, issues: [], status: 'passed' };
 }
+

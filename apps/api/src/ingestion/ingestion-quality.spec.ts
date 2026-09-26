@@ -15,6 +15,7 @@ const tx = {
   document: {
     findUnique: (...args: unknown[]) => mockPrisma.document.findUnique(...(args as [])),
     update: (...args: unknown[]) => mockPrisma.document.update(...(args as [])),
+    updateMany: (...args: unknown[]) => mockPrisma.document.updateMany(...(args as [])),
   },
   chunk: {
     deleteMany: (...args: unknown[]) => mockPrisma.chunk.deleteMany(...(args as [])),
@@ -90,7 +91,7 @@ describe('ingestion publication boundary', () => {
     expect(compiler.onKnowledgePublished).not.toHaveBeenCalled();
   });
 
-  it.each(['txt', 'pdf'])('holds corrupt %s fast-path output without compilation', async extension => {
+  it.each(['txt', 'pdf'])('publishes corrupt %s fast-path output (encoding no longer gates)', async extension => {
     mockPrisma.document.findUnique.mockResolvedValue({
       id: 'doc-1', kbId: 'kb-1', title: `fixture.${extension}`, status: 'uploaded', rawFileOid: `/fixture.${extension}`,
     });
@@ -99,11 +100,11 @@ describe('ingestion publication boundary', () => {
     mockToMarkdown.mockResolvedValue(corrupt);
     const service = new IngestionService({} as any, compiler as any, models as any);
     const result = await service.processDocument('doc-1');
-    expect(result.status).toBe('needs_review');
-    expect(compiler.onKnowledgePublished).not.toHaveBeenCalled();
-    expect(mockPrisma.document.update).toHaveBeenLastCalledWith(expect.objectContaining({
+    expect(result.status).toBe('indexing');
+    expect(compiler.onKnowledgePublished).toHaveBeenCalled();
+    expect(mockPrisma.document.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
       data: expect.objectContaining({
-        status: 'needs_review', qualityStatus: 'needs_review',
+        qualityStatus: 'passed',
         parserMetadata: expect.objectContaining({ quality_rule_version: 'content-v2' }),
       }),
     }));
@@ -127,6 +128,9 @@ describe('ingestion publication boundary', () => {
       })
       .mockResolvedValueOnce({ version: 4 });
     mockReadFile.mockResolvedValue(Buffer.from('正常的合同条款内容'));
+    mockPrisma.document.updateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
     const service = new IngestionService({} as any, compiler as any, models as any);
 
     await expect(service.processDocument('doc-1', 3)).resolves.toMatchObject({
@@ -134,8 +138,8 @@ describe('ingestion publication boundary', () => {
       reason: 'superseded-version',
     });
     expect(mockWriteFile).toHaveBeenCalledWith(expect.stringContaining('.tmp'), expect.any(String), 'utf8');
-    expect(mockRename).not.toHaveBeenCalled();
-    expect(mockUnlink).toHaveBeenCalledWith(expect.stringContaining('.tmp'));
+    expect(mockRename).toHaveBeenCalledWith(expect.stringContaining('.tmp'), expect.stringMatching(/content\.v3\.[a-f0-9]{64}\.md$/));
+    expect(mockPrisma.chunk.deleteMany).not.toHaveBeenCalled();
   });
 
   it('version-fences terminal failure updates', async () => {

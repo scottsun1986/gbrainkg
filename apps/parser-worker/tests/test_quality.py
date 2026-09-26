@@ -18,18 +18,34 @@ class ParserQualityTests(unittest.TestCase):
         self.assertEqual(result["quality_status"], "passed")
         self.assertEqual(result["quality_issues"], [])
 
-    def test_image_placeholder_is_not_indexable(self):
+    def test_empty_extraction_is_rejected(self):
         result = assess_content_quality("<!-- image -->", ".pptx", {})
         self.assertEqual(result["quality_status"], "rejected")
-        self.assertIn("OCR", " ".join(result["quality_issues"]))
+        self.assertIn("没有提取到可检索文字", result["quality_issues"])
 
-    def test_low_confidence_ocr_requires_review(self):
+    def test_residual_placeholder_after_successful_ocr_is_passed(self):
+        result = assess_content_quality(
+            "正文内容足够长可以过最低字数限制。\n\n### 图片文字\n\n网关节点部署于核心区\n\n<!-- image: x -->\n*(装饰性小图，跳过 OCR)*",
+            ".docx",
+            {"ocr_image_count": 46, "embedded_image_count": 47},
+        )
+        self.assertEqual(result["quality_status"], "passed")
+
+    def test_low_confidence_ocr_passes(self):
         result = assess_content_quality(
             "# 考勤制度\n工作时间为 09:00 至 18:00。",
             ".pdf",
             {"ocr_average_confidence": 0.61},
         )
-        self.assertEqual(result["quality_status"], "needs_review")
+        self.assertEqual(result["quality_status"], "passed")
+
+    def test_never_upgrades_rejected(self):
+        result = assess_content_quality(
+            "有效文字内容足够长",
+            ".pdf",
+            {"quality_status": "rejected"},
+        )
+        self.assertEqual(result["quality_status"], "rejected")
 
     def test_pdf_classification_uses_page_coverage(self):
         self.assertEqual(classify_pdf(10, 10, 2_000, "good"), "text")
