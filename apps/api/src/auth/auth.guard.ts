@@ -45,6 +45,9 @@ export class AdminGuard implements CanActivate {
     try {
       const userId = await this.authService.userIdFromRequest(request);
       if (await this.authService.isPasswordChangeRequired(userId)) return false;
+      // Backstop: when requireMfaForAdmins is on, privileged accounts without
+      // TOTP lose admin routes until they complete /auth/mfa/setup.
+      if (await this.authService.isMfaEnforcementBlocking(userId)) return false;
       const capabilities = await this.permissionService.getCapabilities(userId);
       // Allow regular users to create personal knowledge bases
       const isPersonalKbCreation =

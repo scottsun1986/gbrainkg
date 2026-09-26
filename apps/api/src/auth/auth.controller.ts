@@ -31,14 +31,19 @@ export class AuthController {
         username,
         String(body?.password || ""),
       );
-      this.auditService
-        .log({
-          userId: result.user.id,
-          action: "login",
-          resource: "auth",
-          details: { username },
-        })
-        .catch(() => undefined);
+      // MFA second-factor / forced-setup responses carry no user yet — audit
+      // those at the mfa endpoints instead.
+      const userId = (result as any).user?.id;
+      if (userId) {
+        this.auditService
+          .log({
+            userId,
+            action: "login",
+            resource: "auth",
+            details: { username },
+          })
+          .catch(() => undefined);
+      }
       return result;
     } catch (error) {
       this.auditService
@@ -59,7 +64,7 @@ export class AuthController {
     const userId = await this.authService.userIdFromRequest(req);
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, username: true, displayName: true, mustChangePassword: true },
+      select: { id: true, username: true, displayName: true, email: true, mustChangePassword: true, mfaEnabled: true, source: true },
     });
     return { userId, user };
   }

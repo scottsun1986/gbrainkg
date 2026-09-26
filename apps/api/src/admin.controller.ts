@@ -10,6 +10,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   Req,
   UseGuards,
@@ -1923,12 +1924,12 @@ export class AdminController {
     if (!role) throw new NotFoundException("Role not found.");
     if (role.builtin)
       throw new BadRequestException("Built-in roles cannot be deleted.");
-    await this.prisma.$transaction([
-      this.prisma.industryGrant.deleteMany({
+    await this.prisma.$transaction(async (tx) => {
+      await tx.industryGrant.deleteMany({
         where: { subjectType: "role", subjectId: id },
-      }),
-      this.prisma.role.delete({ where: { id } }),
-    ]);
+      });
+      await tx.role.delete({ where: { id } });
+    });
     await this.scheduleAccessReconciliation();
     return { ok: true };
   }
@@ -2543,5 +2544,72 @@ export class AdminController {
         message: error instanceof Error ? error.message : "OCR connection failed.",
       };
     }
+  }
+
+  // ---- MFA policy & enrolment status (read-mostly; policy toggle only) ----
+
+  @Get("security/mfa-policy")
+  async getMfaPolicy(@Req() req: any) {
+    const adminId = await this.authService.userIdFromRequest(req);
+    const capabilities = await this.permissionService.getCapabilities(adminId);
+    if (
+      !capabilities.includes("*") &&
+      !capabilities.includes("system.settings.manage") &&
+      !capabilities.includes("system.settings.read")
+    ) {
+      throw new ForbiddenException("您没有查看 MFA 策略的权限。");
+    }
+    return {
+      requireMfaForAdmins: await this.authService.isMfaEnforcedForAdmins(),
+    };
+  }
+
+  @Put("security/mfa-policy")
+  async setMfaPolicy(@Req() req: any, @Body() body: { requireMfaForAdmins?: boolean }) {
+    const adminId = await this.authService.userIdFromRequest(req);
+    const capabilities = await this.permissionService.getCapabilities(adminId);
+    if (!capabilities.includes("*") && !capabilities.includes("system.settings.manage")) {
+      throw new ForbiddenException("只有系统管理员可以修改 MFA 策略。");
+    }
+    const requireMfaForAdmins = body?.requireMfaForAdmins === true;
+    await this.authService.setMfaEnforcedForAdmins(requireMfaForAdmins);
+    await this.auditService
+      .log({
+        userId: adminId,
+        action: "system.mfa_policy.update",
+        resource: "SystemSetting",
+        details: { requireMfaForAdmins },
+      })
+      .catch(() => undefined);
+    return { requireMfaForAdmins };
+  }
+
+  /** Read-only MFA enrolment status across accounts (never exposes secrets). */
+  @Get("security/mfa-status")
+  async listMfaStatus(@Req() req: any) {
+    const adminId = await this.authService.userIdFromRequest(req);
+    const capabilities = await this.permissionService.getCapabilities(adminId);
+    if (
+      !capabilities.includes("*") &&
+      !capabilities.includes("system.settings.manage") &&
+      !capabilities.includes("system.settings.read") &&
+      !capabilities.includes("org.user.read")
+    ) {
+      throw new ForbiddenException("您没有查看用户 MFA 状态的权限。");
+    }
+    const users = await this.prisma.user.findMany({
+      orderBy: { createdAt: "asc" },
+      select: {
+        id: true,
+        username: true,
+        displayName: true,
+        email: true,
+        status: true,
+        source: true,
+        mfaEnabled: true,
+        mfaEnabledAt: true,
+      },
+    });
+    return { users, requireMfaForAdmins: await this.authService.isMfaEnforcedForAdmins() };
   }
 }

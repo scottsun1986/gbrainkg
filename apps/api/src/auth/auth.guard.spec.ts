@@ -12,6 +12,7 @@ describe('AuthGuards', () => {
     authService = {
       userIdFromRequest: jest.fn(),
       isPasswordChangeRequired: jest.fn().mockResolvedValue(false),
+      isMfaEnforcementBlocking: jest.fn().mockResolvedValue(false),
     } as any;
 
     permissionService = {

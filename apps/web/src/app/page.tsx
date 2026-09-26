@@ -7,7 +7,7 @@
  */
 /* eslint-disable */
 import React, { useState, useEffect, useRef } from "react";
-import { LoginScreen, PasswordChangeScreen } from "@/components/auth/LoginScreens";
+import { LoginScreen, PasswordChangeScreen, MfaScreen, MfaSetupScreen } from "@/components/auth/LoginScreens";
 import { KnowledgeGraphScreen } from "@/components/knowledge-graph/KnowledgeGraphScreen";
 import { PersonalSettingsScreen } from "@/components/settings/PersonalSettingsScreen";
 import { SideNav } from "@/components/common/SideNav";
@@ -34,7 +34,7 @@ import { useAdminBootstrap } from "@/hooks/useAdminBootstrap";
 import type { PaletteNavPayload } from "@/components/common/CommandPalette";
 import type { PreviewTarget } from "@/types";
 
-type AuthState = 'checking' | 'loggedOut' | 'mustChangePassword' | 'loggedIn';
+type AuthState = 'checking' | 'loggedOut' | 'mustChangePassword' | 'mfaRequired' | 'mfaSetup' | 'loggedIn';
 
 function App() {
   const { loadAdminData, currentUser, setCurrentUser, dbData, setDbData } = useAdminBootstrap();
@@ -46,7 +46,65 @@ function App() {
   const [loginLoading, setLoginLoading] = useState(false);
   const [passwordChangeError, setPasswordChangeError] = useState('');
   const [passwordChangeLoading, setPasswordChangeLoading] = useState(false);
+  const [mfaToken, setMfaToken] = useState('');
+  const [mfaError, setMfaError] = useState('');
+  const [mfaLoading, setMfaLoading] = useState(false);
+  const [mfaSetupInfo, setMfaSetupInfo] = useState<{ secret?: string; otpauthUri?: string }>({});
+  const [oidcEnabled, setOidcEnabled] = useState(false);
   const [theme, setTheme] = useTheme();
+
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/api/v1/auth/config`)
+      .then((r) => (r.ok ? r.json() : { oidcEnabled: false }))
+      .then((cfg: { oidcEnabled?: boolean }) => setOidcEnabled(Boolean(cfg?.oidcEnabled)))
+      .catch(() => setOidcEnabled(false));
+  }, []);
+
+  const completeLogin = React.useCallback(async (token: string, user?: { mustChangePassword?: boolean }) => {
+    window.localStorage.setItem('llmwiki_token', token);
+    if (user?.mustChangePassword) {
+      setPasswordChangeError('');
+      setAuthState('mustChangePassword');
+      return;
+    }
+    await loadAdminData(token);
+    setAuthState('loggedIn');
+  }, [loadAdminData]);
+
+  // OIDC callback lands on /#token=… / #mfa_token=… / #mfa_setup_token=… / #sso_error=…
+  useEffect(() => {
+    const hash = window.location.hash.replace(/^#/, '');
+    if (!hash) return;
+    const params = new URLSearchParams(hash.includes('=') ? hash : `q=${hash}`);
+    const token = params.get('token') || (hash.startsWith('token=') ? hash.slice(6) : '');
+    const mfa = params.get('mfa_token') || '';
+    const mfaSetup = params.get('mfa_setup_token') || '';
+    const ssoError = params.get('sso_error') || '';
+    if (!token && !mfa && !mfaSetup && !ssoError) return;
+    window.history.replaceState({}, '', '/');
+    if (ssoError) {
+      setLoginError(decodeURIComponent(ssoError));
+      setAuthState('loggedOut');
+      return;
+    }
+    if (token) {
+      void completeLogin(decodeURIComponent(token)).catch(() => {
+        setLoginError('SSO 登录失败，请重试');
+        setAuthState('loggedOut');
+      });
+      return;
+    }
+    if (mfa) {
+      setMfaToken(decodeURIComponent(mfa));
+      setAuthState('mfaRequired');
+      return;
+    }
+    if (mfaSetup) {
+      setMfaToken(decodeURIComponent(mfaSetup));
+      setMfaSetupInfo({});
+      setAuthState('mfaSetup');
+    }
+  }, [completeLogin]);
 
   useEffect(() => {
     const token = window.localStorage.getItem('llmwiki_token');
@@ -112,22 +170,113 @@ function App() {
         }
         throw new Error(message || '登录失败');
       }
-      const token = String((result as { token?: string }).token || '');
-      const user = (result as { user?: { mustChangePassword?: boolean } }).user;
-      window.localStorage.setItem('llmwiki_token', token);
-      if (user?.mustChangePassword) {
-        setPasswordChangeError('');
-        setAuthState('mustChangePassword');
+      // Second factor: password (or SSO) ok, but TOTP is still required.
+      if ((result as { mfaRequired?: boolean }).mfaRequired) {
+        setMfaToken(String((result as { mfaToken?: string }).mfaToken || ''));
+        setMfaError('');
+        setAuthState('mfaRequired');
         return;
       }
-      await loadAdminData(token);
-      setAuthState('loggedIn');
+      // requireMfaForAdmins: privileged account must enrol TOTP first.
+      if ((result as { mfaSetupRequired?: boolean }).mfaSetupRequired) {
+        setMfaToken(String((result as { mfaToken?: string }).mfaToken || ''));
+        setMfaSetupInfo({});
+        setMfaError('');
+        setAuthState('mfaSetup');
+        return;
+      }
+      const token = String((result as { token?: string }).token || '');
+      const user = (result as { user?: { mustChangePassword?: boolean } }).user;
+      await completeLogin(token, user);
     } catch (error) {
       setLoginError(errorMessage(error) || '登录失败');
     } finally {
       setLoginLoading(false);
     }
   };
+
+  const handleMfaLogin = async (code: string) => {
+    setMfaLoading(true);
+    setMfaError('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/auth/mfa/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mfaToken, code }),
+      });
+      const result = await response.json().catch(() => ({} as Record<string, unknown>));
+      if (!response.ok) throw new Error(apiMessage(result) || '动态验证码错误');
+      const token = String((result as { token?: string }).token || '');
+      const user = (result as { user?: { mustChangePassword?: boolean } }).user;
+      await completeLogin(token, user);
+    } catch (error) {
+      setMfaError(errorMessage(error) || '动态验证码错误');
+    } finally {
+      setMfaLoading(false);
+    }
+  };
+
+  const handleMfaSetupStart = async () => {
+    setMfaLoading(true);
+    setMfaError('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/auth/mfa/setup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(mfaToken ? { mfaToken } : {}),
+      });
+      const result = await response.json().catch(() => ({} as Record<string, unknown>));
+      if (!response.ok) throw new Error(apiMessage(result) || '无法开始 MFA 绑定');
+      setMfaSetupInfo({
+        secret: String((result as { secret?: string }).secret || ''),
+        otpauthUri: String((result as { otpauthUri?: string }).otpauthUri || ''),
+      });
+    } catch (error) {
+      setMfaError(errorMessage(error) || '无法开始 MFA 绑定');
+    } finally {
+      setMfaLoading(false);
+    }
+  };
+
+  const handleMfaSetupVerify = async (code: string) => {
+    setMfaLoading(true);
+    setMfaError('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/auth/mfa/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, ...(mfaToken ? { mfaToken } : {}) }),
+      });
+      const result = await response.json().catch(() => ({} as Record<string, unknown>));
+      if (!response.ok) throw new Error(apiMessage(result) || '动态验证码错误');
+      // Forced-setup login path completes with a real session.
+      const token = String((result as { token?: string }).token || '');
+      if (token) {
+        const user = (result as { user?: { mustChangePassword?: boolean } }).user;
+        setMfaToken('');
+        await completeLogin(token, user);
+        return;
+      }
+      setMfaToken('');
+      setAuthState('loggedOut');
+    } catch (error) {
+      setMfaError(errorMessage(error) || '动态验证码错误');
+    } finally {
+      setMfaLoading(false);
+    }
+  };
+
+  const handleOidcLogin = () => {
+    window.location.href = `${API_BASE_URL}/api/v1/auth/oidc/login`;
+  };
+
+  // Enrol TOTP as soon as the setup screen opens (once).
+  useEffect(() => {
+    if (authState !== 'mfaSetup') return;
+    if (mfaSetupInfo.secret || mfaLoading || mfaError) return;
+    void handleMfaSetupStart();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authState, mfaSetupInfo.secret, mfaLoading, mfaError]);
 
   const handlePasswordChange = async (currentPassword: string, newPassword: string) => {
     setPasswordChangeLoading(true);
@@ -223,7 +372,30 @@ function App() {
   };
 
   if (authState === 'checking') return <div style={{ padding: 40, textAlign: "center", color: "#999" }}>正在验证登录状态…</div>;
-  if (authState === 'loggedOut') return <LoginScreen onSubmit={handleLogin} error={loginError} loading={loginLoading} />;
+  if (authState === 'loggedOut') return (
+    <LoginScreen
+      onSubmit={handleLogin}
+      error={loginError}
+      loading={loginLoading}
+      oidcEnabled={oidcEnabled}
+      onOidcLogin={handleOidcLogin}
+    />
+  );
+  if (authState === 'mfaRequired') return (
+    <MfaScreen onSubmit={handleMfaLogin} onLogout={handleLogout} error={mfaError} loading={mfaLoading} />
+  );
+  if (authState === 'mfaSetup') {
+    return (
+      <MfaSetupScreen
+        secret={mfaSetupInfo.secret}
+        otpauthUri={mfaSetupInfo.otpauthUri}
+        onSubmit={handleMfaSetupVerify}
+        onLogout={handleLogout}
+        error={mfaError}
+        loading={mfaLoading}
+      />
+    );
+  }
   if (authState === 'mustChangePassword') return <PasswordChangeScreen onSubmit={handlePasswordChange} onLogout={handleLogout} error={passwordChangeError} loading={passwordChangeLoading} />;
   if (!dbData) return <div style={{ padding: 40, textAlign: "center", color: "#999" }}>系统正在加载企业数据底座，请稍候...</div>;
   if (dbData.error) return <div style={{ padding: 40, textAlign: "center", color: "#999" }}>企业数据底座暂不可用，请检查 API、数据库和登录状态后重试。</div>;

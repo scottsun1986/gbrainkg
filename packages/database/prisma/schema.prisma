@@ -17,6 +17,12 @@ model User {
   mustChangePassword Boolean @default(false)
   status       String     @default("active") // active/disabled
   source       String     @default("manual") // manual/ldap/oidc
+  // MFA/TOTP: base32 secret; mfaEnabled=false with a secret set means "pending setup verification"
+  mfaSecret    String?
+  mfaEnabled   Boolean    @default(false)
+  mfaEnabledAt DateTime?
+  // OIDC subject (iss + sub style identity) bound on first SSO login (JIT)
+  oidcSub      String?    @unique
   createdAt    DateTime   @default(now())
 
   orgs         UserOrg[]
@@ -748,4 +754,11 @@ model RaptorNode {
   @@index([documentId])
   @@index([documentId, level])
   @@index([parentNodeId])
+}
+
+// 系统级键值设置（如 requireMfaForAdmins）
+model SystemSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @default(now()) @updatedAt
 }
