@@ -1,6 +1,25 @@
-# GBrainKG monitoring stack (Prometheus + Grafana) — docker, no GitHub downloads.
+# GBrainKG monitoring stack (Prometheus + Alertmanager + Grafana) — docker, no GitHub downloads.
 # Usage on host: docker compose -f deploy/monitoring/docker-compose.monitoring.yml up -d
+# Optional env: ALERT_WEBHOOK_URL (企业微信/飞书 webhook), GRAFANA_ADMIN_PASSWORD
 services:
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: gbrainkg-alertmanager
+    restart: unless-stopped
+    user: "65534:65534"
+    ports:
+      - "127.0.0.1:9093:9093"
+    environment:
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+    volumes:
+      - /etc/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - /etc/alertmanager/templates:/etc/alertmanager/templates:ro
+      - alertmanager-data:/alertmanager
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --web.listen-address=0.0.0.0:9093
+
   prometheus:
     image: prom/prometheus:v2.54.1
     container_name: gbrainkg-prometheus
@@ -38,3 +57,4 @@ services:
 volumes:
   prometheus-data:
   grafana-data:
+  alertmanager-data:

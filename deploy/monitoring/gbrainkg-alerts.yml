@@ -113,3 +113,17 @@ groups:
         annotations:
           summary: 'RLS_ENFORCE is not active on an instance'
           description: '{{ $labels.instance }} is running without application RLS enforcement.'
+
+  # Fallback: keep ingestion_queue_depth queryable (sample 0) until the API build
+  # that calls setIngestionQueueDepth() reaches prod. `absent()` matches only the
+  # labeled gbrainkg-api series, so real samples silence this rule. The recorded
+  # series is unlabeled on purpose so it never collides with scraped instances.
+  - name: gbrainkg-materialize
+    interval: 15s
+    rules:
+      - record: ingestion_queue_depth
+        # instance!="" only matches scraped API series, never this rule's own
+        # output (which has no instance label) — avoids self-reference.
+        expr: absent(ingestion_queue_depth{job="gbrainkg-api", instance!=""}) * 0
+        labels:
+          source: fallback

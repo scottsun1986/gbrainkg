@@ -293,8 +293,7 @@ GBRAIN_DATABASE_URL=postgresql://llmwiki:$DB_PASS@127.0.0.1:5432/llmwiki?schema=
 DB_USER_APP=llmwiki_app
 DB_PASS_APP=$APP_DB_PASS
 DATABASE_URL_APP=postgresql://llmwiki_app:$APP_DB_PASS@127.0.0.1:5432/llmwiki?schema=public
-# RLS_ENFORCE=1：TenantContextService 对缺少 app.user_id / app.service 的查询 fail-closed。
-# 需配合运行时角色 NOBYPASSRLS + DATABASE_URL_APP 才真正拦截；=0 时行为等价直连。
+# RLS_ENFORCE=1：所有 Prisma 查询使用事务内用户/服务上下文；启动时校验运行时角色。
 RLS_ENFORCE=1
 
 REDIS_HOST=127.0.0.1

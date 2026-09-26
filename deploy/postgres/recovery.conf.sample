@@ -1,0 +1,48 @@
+# PostgreSQL 16 PITR / 恢复配置样例 (ROI-5)
+#
+# PG12+ 不再使用 recovery.conf; 把下列项写入目标实例的
+#   <target_datadir>/postgresql.auto.conf
+# 或 <target_datadir>/postgresql.conf, 然后:
+#   touch <target_datadir>/recovery.signal
+#   pg_ctl -D <target_datadir> start
+#
+# ⛔ 安全: 只用于独立恢复目录 (如 /data/pg-drill/pitr-*), 绝不要覆盖生产 data
+#   directory (/var/lib/postgresql/16/main), 除非走 --force-production 双重确认。
+#
+# 配套脚本: deploy/restore-pitr.sh (封装本文件的全部步骤)
+
+# ---- 从归档取 WAL (与 archive-wal.sh / PG_ARCHIVE_DIR 对齐) ----
+restore_command = '/bin/bash /usr/local/sbin/pg-archive-wal.sh.restore %f %p'
+# 更简单 (无包装脚本时):
+#restore_command = 'cp /data/pg-archive/main/%f %p'
+#restore_command = 'cp /data/pg-archive/$PG_ARCHIVE_DB/%f %p'   # 需在服务环境展开
+
+# ---- 恢复目标 (四选一; 全部注释则恢复到归档末尾) ----
+# 1) 时间点 (PITR 常用; 时区写全, 建议 UTC 或带偏移)
+#recovery_target_time = '2026-09-23 22:00:00+08'
+# 2) LSN
+#recovery_target_lsn = '5/EFC7D78'
+# 3) 已命名恢复点 (CREATE RESTORE POINT ...)
+#recovery_target_name = 'before_upgrade_v43'
+# 4) 时间线
+#recovery_target_timeline = 'latest'
+
+# 命中目标后的行为: promote | shutdown | pause
+#   promote  → 立即提升为可读写主库 (演练/接管用这个)
+#   shutdown → 停在目标点 (只读检查后再人工 promote)
+#   pause    → 停在目标点且保持恢复态, 便于 pg_control 查询后继续
+recovery_target_action = promote
+
+# 是否允许恢复目标「之后」的 WAL 也应用完再停 (inclusive)
+#recovery_target_inclusive = on
+
+# ---- Hot Standby: 恢复期间是否允许只读查询 ----
+hot_standby = on
+
+# ---- 可选: 清理不再需要的归档 (从库/恢复实例上配) ----
+#archive_cleanup_command = '/usr/lib/postgresql/16/bin/pg_archivecleanup /data/pg-archive/main %r'
+
+# ---- 流复制从库 (standby) 时改用 standby.signal, 并配置: ----
+#primary_conninfo = 'host=127.0.0.1 port=5432 user=replicator password=<secret> application_name=standby1'
+#primary_slot_name = 'standby1'
+#restore_command = ''    # 流复制优先; 归档作兜底可保留

@@ -1,0 +1,43 @@
+# PostgreSQL PITR / WAL 归档配置样例 (ROI-5)
+# 安装方式 (Debian/Ubuntu cluster, 例: 16/main):
+#   sudo cp deploy/postgres/postgresql-pitr.conf.sample \
+#           /etc/postgresql/16/main/conf.d/pitr.conf
+#   # 按需改 archive_command 中的归档目录 (或统一用 archive-wal.sh + PG_ARCHIVE_DIR)
+#   sudo systemctl restart postgresql@16-main   # archive_mode/wal_level 需 restart
+#   # 仅 archive_command 变更时: sudo pg_ctlcluster 16 main reload
+#
+# 目标:
+#   - RPO ≤ 5 分钟: 连续 WAL 归档 + archive_timeout 强制切段
+#   - 可做 PITR: restore_command 能从归档目录取回任意 WAL
+#   - 可做流复制: max_wal_senders / max_replication_slots 预留
+#
+# 环境变量约定 (archive-wal.sh 读取; 服务环境或脚本内默认):
+#   PG_ARCHIVE_DIR  归档根目录, 默认 /data/pg-archive/${PG_ARCHIVE_DB:-main}
+#   PG_ARCHIVE_DB   集群/实例标识 (目录名), 默认 main
+
+# ---- WAL / 复制 ----
+wal_level = replica                 # 必须 ≥ replica 才能归档 + 流复制 (PG16 默认即 replica)
+# wal_log_hints = on                # pg_rewind / 部分校验场景建议开 (需 restart)
+
+# ---- WAL 归档 (PITR 基础) ----
+archive_mode = on                   # 需 restart 才生效
+# 方式 A: 直接 cp (路径写死, 简单可靠)
+#archive_command = 'test ! -f /data/pg-archive/main/%f && cp %p /data/pg-archive/main/%f'
+# 方式 B: 包装脚本 (支持 PG_ARCHIVE_DIR 覆盖, 推荐; 脚本需对 postgres 用户可执行)
+archive_command = '/bin/bash /usr/local/sbin/pg-archive-wal.sh %p %f'
+archive_timeout = 300               # 5min 强制切 WAL 段 → 空闲库 RPO 上界 5min (目标 RPO ≤ 5min)
+#archive_sync_policy = on           # PG16+: 归档同步策略, 默认 on
+
+# ---- 流复制预留 ----
+max_wal_senders = 10                # 默认 10, 显式写出便于审计
+max_replication_slots = 4           # 复制槽, 防止从库拉断时主库回收 WAL
+wal_keep_size = 256MB               # 无槽时的 WAL 保留兜底 (MB)
+#max_slot_wal_keep_size = -1        # -1: 槽不设 WAL 上限; 生产可改为 50GB 防磁盘打满
+
+# ---- Hot Standby (从库只读查询) ----
+hot_standby = on
+#max_standby_archive_delay = 30s
+#max_standby_streaming_delay = 30s
+
+# ---- 可选: 归档磁盘保护 ----
+# 用 archive_command 内脚本做磁盘水位检查更灵活; 这里仅备注。

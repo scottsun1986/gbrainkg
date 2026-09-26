@@ -263,3 +263,26 @@ echo "RTO(e2e) = $((END - START))s"
 | `extension "vector" does not exist` | 宿主机未装 `postgresql-16-pgvector`；扩展模板或换用带扩展的容器镜像 |
 | 恢复后 Chunk 行数远少于预期 | 确认拿的是全量 `pg_dump`（custom format）而不是 schema-only；查 backup.sh 日志 |
 | RTO 远超目标 | `pg_restore -j 4`、dump 放本地盘、先建好扩展再恢复、把非关键索引恢复后建 |
+
+---
+
+## 6. PITR 演练纪要（2026-09-23，meetings2，`llmwiki` → `llmwiki_pitr_drill`）
+
+> 路径：`deploy/restore-pitr.sh`（basebackup + WAL 归档，**非**逻辑 dump）。
+> 完整 runbook 见 `docs/postgres-pitr-ha-runbook.md`。
+
+| 项 | 值 |
+|---|---|
+| 日期 / 主机 | 2026-09-23 22:53–22:55 CST / meetings2 |
+| basebackup | `/data/pg-backup/basebackup-20260923-225312`（8s，manifest 齐全） |
+| marker A | `2026-09-23 22:53:45.016896+08` |
+| marker B | `2026-09-23 22:53:47.161664+08` |
+| recovery_target_time | `2026-09-23 22:53:46+08` |
+| 截断证据 | B 未进恢复集 / A 已进（日志 `stopping before commit … 22:53:47.162`） |
+| 演练库 | `llmwiki_pitr_drill`（独立 data dir `/data/pg-drill/pitr-20260923-drill`，:55432） |
+| 行数核对 | users=10 kbs=26 docs=10703 chunks=13996（= 演练前 `llmwiki`） |
+| **实测 RPO** | 点恢复精度 **≈ 1.2s**；生产上界 **≤ 5min**（`archive_timeout=300`） |
+| **实测 RTO(core)** | **≈ 9.5s**（extract 1.5G + WAL replay + promote） |
+| **实测 RTO(e2e)** | 含决策/改连接串另计，目标 ≤ 15min（promote 路径） |
+| 三实例 API | `/ready` 全程 200/200/200（未受影响） |
+| 结论 | **达标**（真 PITR 截断验证通过；RTO 9.5s ≪ dump 路径 377s） |

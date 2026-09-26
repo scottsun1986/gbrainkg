@@ -84,10 +84,14 @@ services:
   bootstrap:
     image: llmwiki-api:${LLMWIKI_IMAGE_TAG:-local}
     entrypoint: []
-    command: ["sh", "-lc", "pnpm --filter database exec prisma migrate deploy --schema=prisma/schema.prisma && node apps/api/dist/bootstrap/production-bootstrap.js"]
+    command: ["sh", "-lc", "pnpm --filter database exec prisma migrate deploy --schema=prisma/schema.prisma && node apps/api/dist/bootstrap/runtime-db-role.js && node apps/api/dist/bootstrap/production-bootstrap.js"]
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://${DB_USER}:${DB_PASS}@postgres:5432/${DB_NAME}?schema=public
+      LLMWIKI_FORCE_MIGRATOR_URL: "1"
+      DB_NAME: ${DB_NAME}
+      DB_USER_APP: ${DB_USER_APP:-llmwiki_app}
+      DB_PASS_APP: ${DB_PASS_APP:?DB_PASS_APP is required for the NOBYPASSRLS runtime role}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@local.invalid}
       ADMIN_INITIAL_PASSWORD_FILE: /run/secrets/admin_initial_password
     secrets:
@@ -108,6 +112,8 @@ services:
       PORT: 3000
       HOST: 0.0.0.0
       DATABASE_URL: postgresql://${DB_USER}:${DB_PASS}@postgres:5432/${DB_NAME}?schema=public
+      DATABASE_URL_APP: postgresql://${DB_USER_APP:-llmwiki_app}:${DB_PASS_APP:?DB_PASS_APP is required}@postgres:5432/${DB_NAME}?schema=public
+      RLS_ENFORCE: "1"
       GBRAIN_DATABASE_URL: postgresql://${DB_USER}:${DB_PASS}@postgres:5432/${DB_NAME}
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -144,6 +150,18 @@ services:
       PRISMA_POOL_TIMEOUT_SECONDS: ${PRISMA_POOL_TIMEOUT_SECONDS:-20}
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-600}
       AUTH_LOGIN_THROTTLE_LIMIT: ${AUTH_LOGIN_THROTTLE_LIMIT:-10}
+      # Object storage: the API reaches the in-network MinIO service by its
+      # compose DNS name. All three vars are required or the service warns once
+      # and falls back to local disk inside the api volume.
+      MINIO_ENDPOINT: ${MINIO_API_ENDPOINT:-http://minio:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-}
+      MINIO_BUCKET: ${MINIO_BUCKET:-llmwiki-raw}
+      MINIO_REGION: ${MINIO_REGION:-us-east-1}
+      # BGE-M3 hybrid retrieval (sparse + late interaction), fail-open.
+      BGE_M3_HYBRID_ENABLED: ${BGE_M3_HYBRID_ENABLED:-true}
+      BGE_M3_HYBRID_ENDPOINT: ${BGE_M3_HYBRID_ENDPOINT:-}
+      BGE_M3_LATE_CHUNKING: ${BGE_M3_LATE_CHUNKING:-true}
     volumes:
       - brain_data:/var/lib/llmwiki
     depends_on:
