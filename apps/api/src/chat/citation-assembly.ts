@@ -2,6 +2,8 @@ import { Logger, type MessageEvent } from "@nestjs/common";
 import type { Subscriber } from "rxjs";
 import { getPrismaClient } from "../prisma";
 import type { PermissionService } from "../permission/permission.service";
+import { DocumentAclService } from "../permission/document-acl.service";
+import { getRequestContext } from "../observability/request-context";
 import type { ModelConfigService } from "../model-config.service";
 import type { SemanticCacheService } from "./semantic-cache.service";
 import type { ChatTraceRecorder } from "./chat-trace";
@@ -24,6 +26,22 @@ export interface CitationAssemblyDeps {
   permissionService?: PermissionService;
   modelConfigService?: ModelConfigService;
   semanticCacheService?: SemanticCacheService;
+  documentAclService?: DocumentAclService;
+}
+
+/** 解析当前请求用户：显式参数 > derivedGuard.userId > 请求上下文。 */
+function resolveEffectiveUserId(
+  userId: string | undefined,
+  derivedGuard?: { userId?: string },
+): string | undefined {
+  if (userId && typeof userId === "string") return userId;
+  const fromGuard = (derivedGuard as any)?.userId;
+  if (typeof fromGuard === "string" && fromGuard) return fromGuard;
+  try {
+    return getRequestContext()?.userId;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -36,6 +54,7 @@ export class CitationAssemblyService {
   private readonly permissionService!: PermissionService;
   private readonly modelConfigService?: ModelConfigService;
   private readonly semanticCacheService?: SemanticCacheService;
+  private readonly documentAclService: DocumentAclService;
 
   constructor(deps: CitationAssemblyDeps) {
     this.logger = deps.logger;
@@ -43,6 +62,9 @@ export class CitationAssemblyService {
     this.permissionService = deps.permissionService as PermissionService;
     this.modelConfigService = deps.modelConfigService;
     this.semanticCacheService = deps.semanticCacheService;
+    this.documentAclService =
+      deps.documentAclService ??
+      new DocumentAclService(deps.permissionService as PermissionService);
   }
 
   /**
@@ -57,7 +79,9 @@ export class CitationAssemblyService {
       sourceKeys: string[];
       aclEpoch: number;
       knowledgeEpoch: number;
+      userId?: string;
     },
+    explicitUserId?: string,
   ): Promise<any> {
     const citations = Array.isArray(result?.citations) ? result.citations : [];
     const docIds = citations
@@ -65,6 +89,7 @@ export class CitationAssemblyService {
       .filter(
         (id: any): id is string => typeof id === "string" && id.length > 0,
       );
+    const userId = resolveEffectiveUserId(explicitUserId, derivedGuard);
 
     const docs = docIds.length
       ? await this.prisma.document.findMany({
@@ -92,9 +117,35 @@ export class CitationAssemblyService {
     // of which retrieval arm produced them. Documents without effective-date
     // metadata stay eligible (unknown is not asserted as invalid).
     const now = Date.now();
-    const allowed = new Map<string, any>(
+    let allowed = new Map<string, any>(
       docs.filter((doc: any) => documentCurrentlyEffective(doc, now)).map((doc: any) => [doc.id, doc]),
     );
+    // Document-level ACL (P1): KB membership is necessary but not sufficient when
+    // DocumentAcl rows exist for a document. Batch check — never N+1 — and drop
+    // citations whose document the caller may not read. Empty ACL inherits the KB.
+    if (!userId) {
+      allowed.clear();
+    } else if (allowed.size > 0) {
+      try {
+        const readable = await this.documentAclService.filterReadableDocuments(
+          userId,
+          [...allowed.keys()],
+          { docs: [...allowed.values()] },
+        );
+        if (readable.size !== allowed.size) {
+          for (const id of [...allowed.keys()]) {
+            if (!readable.has(id)) allowed.delete(id);
+          }
+        }
+      } catch (err) {
+        // Fail-open on ACL service errors would leak; fail-closed drops the
+        // contested docs but keeps the rest of the answer path alive.
+        this.logger.warn(
+          `document ACL filter failed, dropping doc citations: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        allowed = new Map();
+      }
+    }
     const sourceKeys = [...new Set(derivedGuard.sourceKeys)].sort();
     const derivedCandidates = citations.filter((citation: any) => !citation.docId && citation.slug);
     const derivedPages = derivedCandidates.length
@@ -116,35 +167,58 @@ export class CitationAssemblyService {
         .map((item: any) => item?.docId)
         .filter((id: any): id is string => typeof id === "string" && id.length > 0);
       if (!docIds.length) continue;
-      const allowedCount = await this.prisma.document.count({
+      if (!userId) continue;
+      const sourceDocs = await this.prisma.document.findMany({
         where: { id: { in: docIds }, kbId: { in: visibleKbIds }, status: "published" },
+        select: { id: true, kbId: true },
       });
-      if (allowedCount === new Set(docIds).size) validDerived.add(page.slug);
+      if (sourceDocs.length !== new Set(docIds).size) continue;
+      const readableSources = await this.documentAclService.filterReadableDocuments(userId, docIds, {
+        docs: sourceDocs,
+        visibleKbIds,
+      });
+      if (readableSources.size === new Set(docIds).size) validDerived.add(page.slug);
+    }
+    const raptorKbIds: string[] = [...new Set<string>(citations.filter((citation: any) => (citation.raptor || citation.inventory) && !citation.docId)
+      .map((citation: any) => citation.kbId).filter((id: any): id is string => typeof id === 'string' && visibleKbIds.includes(id)))];
+    const allowedRaptorKbIds = new Set<string>();
+    if (userId && raptorKbIds.length) {
+      try {
+        const restricted = await this.prisma.documentAcl.findMany({
+          where: { document: { kbId: { in: raptorKbIds }, status: 'published' } },
+          select: { documentId: true, document: { select: { kbId: true } } },
+        });
+        const restrictedIds: string[] = [...new Set<string>(restricted.map((entry: any) => String(entry.documentId)))];
+        const readable = await this.documentAclService.filterReadableDocuments(userId, restrictedIds, {
+          visibleKbIds,
+          docs: restricted.map((entry: any) => ({ id: entry.documentId, kbId: entry.document.kbId })),
+        });
+        for (const kbId of raptorKbIds) {
+          if (restricted.every((entry: any) => entry.document.kbId !== kbId || readable.has(entry.documentId))) {
+            allowedRaptorKbIds.add(kbId);
+          }
+        }
+      } catch (err) {
+        this.logger.warn(`RAPTOR ACL check failed, dropping global summaries: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
     const filtered = citations
       .map((citation: any) => {
         if (!citation.docId) {
-          // Synthetic inventory citations (per-KB document statistics) carry no
-          // document binding. Authorize them at the knowledge-base level: the
-          // source KB must be within the caller's visible set. Everything else
-          // without a docId (derived pages) must still match a derived page
-          // created under the exact same source set/epoch — a page created
-          // under a different source set or epoch is simply ignored.
-          if (citation.inventory && citation.kbId && visibleKbIds.includes(citation.kbId)) {
+          // KB-wide summaries have no document binding. They are usable only
+          // when every ACL-restricted published document in that KB is readable.
+          if (citation.inventory && citation.kbId && allowedRaptorKbIds.has(citation.kbId)) {
             return citation;
           }
-          // RAPTOR macro summaries (Level-2 KB-global nodes have documentId
-          // null by design) were retrieved with the caller's visible-KB scope,
-          // so KB-level membership IS their authorization boundary. Without
-          // this branch the permission guard deleted every Level-2 node and
-          // the global-recall arm contributed nothing to answers.
-          if (citation.raptor && citation.kbId && visibleKbIds.includes(citation.kbId)) {
+          // RAPTOR Level-2 summaries are KB-global and require the same guard.
+          if (citation.raptor && citation.kbId && allowedRaptorKbIds.has(citation.kbId)) {
             return citation;
           }
           if (
             citation.isCompiledDerived &&
             citation.scopeId === derivedGuard.scopeId &&
-            citation.aclEpoch === derivedGuard.aclEpoch
+            citation.aclEpoch === derivedGuard.aclEpoch &&
+            citation.slug && validDerived.has(citation.slug)
           ) {
             return citation;
           }

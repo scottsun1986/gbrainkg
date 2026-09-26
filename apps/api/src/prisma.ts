@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import * as fs from 'fs';
 import * as path from 'path';
+import { withRlsContext } from './db/rls-prisma';
 
 // Prefer the NOBYPASSRLS runtime role (RLS-enforced) when provided.
 if (process.env.DATABASE_URL_APP && !process.env.LLMWIKI_FORCE_MIGRATOR_URL) {
@@ -41,6 +42,11 @@ if (!process.env.DATABASE_URL) {
   }
 }
 
+// A .env file can supply DATABASE_URL_APP after the initial process-env check.
+if (process.env.DATABASE_URL_APP && !process.env.LLMWIKI_FORCE_MIGRATOR_URL) {
+  process.env.DATABASE_URL = process.env.DATABASE_URL_APP;
+}
+
 // One Prisma pool per API process. This prevents each controller and service
 // from silently allocating an independent PostgreSQL connection pool.
 //
@@ -71,15 +77,29 @@ if (process.env.DATABASE_URL) {
 
 const prismaGlobal = globalThis as typeof globalThis & {
   __llmwikiPrisma?: PrismaClient;
+  __llmwikiPrismaRaw?: PrismaClient;
 };
 
 export function getPrismaClient(): PrismaClient {
-  prismaGlobal.__llmwikiPrisma ??= new PrismaClient();
+  if (!prismaGlobal.__llmwikiPrisma) {
+    if (process.env.RLS_ENFORCE === '1' && !process.env.LLMWIKI_FORCE_MIGRATOR_URL) {
+      if (!process.env.DATABASE_URL_APP) {
+        throw new Error('RLS_ENFORCE=1 requires DATABASE_URL_APP (a dedicated NOBYPASSRLS runtime role)');
+      }
+      process.env.DATABASE_URL = withConnectionPoolParams(process.env.DATABASE_URL_APP);
+    }
+    const raw = new PrismaClient();
+    prismaGlobal.__llmwikiPrismaRaw = raw;
+    prismaGlobal.__llmwikiPrisma = process.env.RLS_ENFORCE === '1' && !process.env.LLMWIKI_FORCE_MIGRATOR_URL
+      ? withRlsContext(raw)
+      : raw;
+  }
   return prismaGlobal.__llmwikiPrisma;
 }
 
 export async function disconnectPrismaClient(): Promise<void> {
-  if (!prismaGlobal.__llmwikiPrisma) return;
-  await prismaGlobal.__llmwikiPrisma.$disconnect();
+  if (!prismaGlobal.__llmwikiPrismaRaw) return;
+  await prismaGlobal.__llmwikiPrismaRaw.$disconnect();
   prismaGlobal.__llmwikiPrisma = undefined;
+  prismaGlobal.__llmwikiPrismaRaw = undefined;
 }

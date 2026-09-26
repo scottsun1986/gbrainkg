@@ -3,6 +3,7 @@ import { DocumentAclService } from './document-acl.service';
 const mockPrisma = {
   document: {
     findUnique: jest.fn(),
+    findMany: jest.fn(),
   },
   documentAcl: {
     findMany: jest.fn(),
@@ -14,11 +15,15 @@ const mockPrisma = {
   },
   kbAdmin: {
     findFirst: jest.fn(),
+    findMany: jest.fn(),
   },
   userRole: {
     findMany: jest.fn(),
   },
   userOrg: {
+    findMany: jest.fn(),
+  },
+  knowledgeBase: {
     findMany: jest.fn(),
   },
 };
@@ -43,10 +48,17 @@ describe('DocumentAclService.isDocumentReadable', () => {
       id: 'doc-1',
       kbId: 'kb-1',
     });
+    mockPrisma.document.findMany.mockResolvedValue([
+      { id: 'doc-1', kbId: 'kb-1' },
+    ]);
     mockPrisma.documentAcl.findMany.mockResolvedValue([]);
     mockPrisma.kbAdmin.findFirst.mockResolvedValue(null);
+    mockPrisma.kbAdmin.findMany.mockResolvedValue([]);
     mockPrisma.userRole.findMany.mockResolvedValue([]);
     mockPrisma.userOrg.findMany.mockResolvedValue([]);
+    mockPrisma.knowledgeBase.findMany.mockResolvedValue([
+      { id: 'kb-1', ownerUserId: 'owner-1' },
+    ]);
     permissionService.getVisibleKnowledgeBases.mockResolvedValue(['kb-1']);
     permissionService.isSystemAdmin.mockResolvedValue(false);
   });
@@ -54,16 +66,17 @@ describe('DocumentAclService.isDocumentReadable', () => {
   it('inherits KB visibility when the document has no ACL rows', async () => {
     const readable = await service.isDocumentReadable('user-1', 'doc-1');
     expect(readable).toBe(true);
-    expect(mockPrisma.documentAcl.findMany).toHaveBeenCalledWith({
-      where: { documentId: 'doc-1' },
-      select: { subjectType: true, subjectId: true },
-    });
+    expect(mockPrisma.documentAcl.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { documentId: { in: ['doc-1'] } },
+      }),
+    );
   });
 
   it('rejects when KB is not visible and no ACL grants access', async () => {
     permissionService.getVisibleKnowledgeBases.mockResolvedValue([]);
     mockPrisma.documentAcl.findMany.mockResolvedValue([
-      { subjectType: 'user', subjectId: 'other-user' },
+      { documentId: 'doc-1', subjectType: 'user', subjectId: 'other-user' },
     ]);
     const readable = await service.isDocumentReadable('user-1', 'doc-1');
     expect(readable).toBe(false);
@@ -71,8 +84,8 @@ describe('DocumentAclService.isDocumentReadable', () => {
 
   it('rejects non-granted subjects once ACL rows exist (deny-by-default)', async () => {
     mockPrisma.documentAcl.findMany.mockResolvedValue([
-      { subjectType: 'user', subjectId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
-      { subjectType: 'role', subjectId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' },
+      { documentId: 'doc-1', subjectType: 'user', subjectId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
+      { documentId: 'doc-1', subjectType: 'role', subjectId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' },
     ]);
     mockPrisma.userRole.findMany.mockResolvedValue([
       { roleId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' },
@@ -90,7 +103,7 @@ describe('DocumentAclService.isDocumentReadable', () => {
     const userId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
     const roleId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
     mockPrisma.documentAcl.findMany.mockResolvedValue([
-      { subjectType: 'role', subjectId: roleId },
+      { documentId: 'doc-1', subjectType: 'role', subjectId: roleId },
     ]);
     mockPrisma.userRole.findMany.mockResolvedValue([{ roleId }]);
 
@@ -100,9 +113,9 @@ describe('DocumentAclService.isDocumentReadable', () => {
 
   it('always allows the kb admin even when ACL denies the subject', async () => {
     mockPrisma.documentAcl.findMany.mockResolvedValue([
-      { subjectType: 'user', subjectId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
+      { documentId: 'doc-1', subjectType: 'user', subjectId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
     ]);
-    mockPrisma.kbAdmin.findFirst.mockResolvedValue({ kbId: 'kb-1' });
+    mockPrisma.kbAdmin.findMany.mockResolvedValue([{ kbId: 'kb-1' }]);
 
     const readable = await service.isDocumentReadable('user-1', 'doc-1');
     expect(readable).toBe(true);
