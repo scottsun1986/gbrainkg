@@ -3,7 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -135,7 +135,8 @@ class ExecuteContractTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code, 200)
                 result = response.json()
                 self.assertEqual(result['status'], 'completed')
-                self.assertEqual(result['quality_status'], 'needs_review')
+                # Full-image PPTX without OCR text is no longer held for review.
+                self.assertEqual(result['quality_status'], 'passed')
                 self.assertIn("## 第 1 页", result['markdown'])
 
     def test_extract_excel_merged_cells_forward_fill(self):
@@ -185,7 +186,8 @@ class ExecuteContractTests(unittest.IsolatedAsyncioTestCase):
             tmp_path = Path(tmp.name)
         try:
             doc.save(tmp_path)
-            md = main.extract_docx(tmp_path)
+            md, images = main.extract_docx(tmp_path)
+            self.assertEqual(images, [])
             self.assertIn("# 第一章 基础建设规范", md)
             self.assertIn("这是正文说明段落。", md)
             self.assertIn("| 项目 | 进度 |", md)
@@ -221,3 +223,389 @@ class ExecuteContractTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(0 <= pos_title < pos_middle < pos_bottom)
         finally:
             tmp_path.unlink(missing_ok=True)
+
+    def test_extract_docx_collects_embedded_images_with_placeholder(self):
+        import io
+
+        import docx
+        from PIL import Image
+
+        doc = docx.Document()
+        doc.add_paragraph("正文前段")
+        img = Image.new("RGB", (200, 120), color=(200, 80, 80))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
+        doc.add_picture(buf, width=docx.shared.Inches(1.2))
+        doc.add_paragraph("正文后段")
+
+        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+        try:
+            doc.save(tmp_path)
+            md, images = main.extract_docx(tmp_path)
+            self.assertEqual(len(images), 1)
+            self.assertEqual(images[0]["key"], "docx-media-1")
+            self.assertGreater(len(images[0]["blob"]), 100)
+            self.assertIn("<!-- image: docx-media-1 -->", md)
+            self.assertLess(md.index("正文前段"), md.index("<!-- image: docx-media-1 -->"))
+            self.assertLess(md.index("<!-- image: docx-media-1 -->"), md.index("正文后段"))
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    def test_is_image_ocr_worthy_size_gate(self):
+        import io
+
+        from PIL import Image
+
+        def png(w, h, color=(10, 20, 30)):
+            buf = io.BytesIO()
+            Image.new("RGB", (w, h), color=color).save(buf, format="PNG")
+            return buf.getvalue()
+
+        self.assertFalse(main.is_image_ocr_worthy(b""))
+        self.assertFalse(main.is_image_ocr_worthy(png(8, 8)))
+        self.assertFalse(main.is_image_ocr_worthy(b"not-an-image" * 400))
+        self.assertTrue(main.is_image_ocr_worthy(png(200, 120)))
+        self.assertTrue(main.is_image_ocr_worthy(png(64, 64)))
+
+    async def test_docx_embedded_image_ocr_text_is_searchable(self):
+        import io
+        from unittest.mock import AsyncMock
+
+        import docx
+        from PIL import Image
+
+        doc = docx.Document()
+        doc.add_paragraph("机房运维规范正文")
+        img = Image.new("RGB", (400, 240), color=(200, 80, 80))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
+        doc.add_picture(buf, width=docx.shared.Inches(2.0))
+        doc.add_paragraph("后续说明")
+
+        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+        try:
+            doc.save(tmp_path)
+            docx_bytes = tmp_path.read_bytes()
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+        fake_ocr = (
+            "机房温控阈值设定为26摄氏度\n相对湿度不得超过60%",
+            {
+                "ocr_provider": "baidu",
+                "ocr_words_result_num": 2,
+                "ocr_average_confidence": 0.93,
+            },
+        )
+        with (
+            tempfile.TemporaryDirectory() as root,
+            patch.object(main, "UPLOAD_ROOT", Path(root)),
+            patch.object(main, "LOCAL_DOCLING_ENABLED", False),
+            patch.object(main, "OCR_PROVIDER", "baidu"),
+            patch.object(
+                main, "convert_image_with_baidu_ocr", AsyncMock(return_value=fake_ocr)
+            ) as baidu,
+        ):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=main.app), base_url="http://parser"
+            ) as client:
+                response = await client.post(
+                    "/parse-execute",
+                    files={
+                        "file": (
+                            "ops.docx",
+                            docx_bytes,
+                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        )
+                    },
+                    data={
+                        "ocr_provider": "baidu",
+                        "ocr_api_key": "k",
+                        "ocr_secret_key": "s",
+                    },
+                )
+            self.assertEqual(response.status_code, 200)
+            result = response.json()
+            self.assertEqual(result["status"], "completed")
+            markdown = result["markdown"]
+            self.assertIn("机房温控阈值设定为26摄氏度", markdown)
+            self.assertIn("### 图片文字", markdown)
+            self.assertLess(markdown.index("机房运维规范正文"), markdown.index("机房温控阈值"))
+            self.assertLess(markdown.index("机房温控阈值"), markdown.index("后续说明"))
+            self.assertEqual(result.get("ocr_image_count"), 1)
+            self.assertEqual(result.get("embedded_image_count"), 1)
+            baidu.assert_awaited_once()
+
+    async def test_docx_small_image_skips_ocr(self):
+        import io
+        from unittest.mock import AsyncMock
+
+        import docx
+        from PIL import Image
+
+        doc = docx.Document()
+        doc.add_paragraph("正文")
+        img = Image.new("RGB", (16, 16), color=(200, 80, 80))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        doc.add_picture(buf, width=docx.shared.Inches(0.1))
+
+        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+        try:
+            doc.save(tmp_path)
+            docx_bytes = tmp_path.read_bytes()
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+        with (
+            tempfile.TemporaryDirectory() as root,
+            patch.object(main, "UPLOAD_ROOT", Path(root)),
+            patch.object(main, "LOCAL_DOCLING_ENABLED", False),
+            patch.object(main, "OCR_PROVIDER", "baidu"),
+            patch.object(
+                main, "convert_image_with_baidu_ocr", AsyncMock(return_value=("x", {}))
+            ) as baidu,
+        ):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=main.app), base_url="http://parser"
+            ) as client:
+                response = await client.post(
+                    "/parse-execute",
+                    files={
+                        "file": (
+                            "icon.docx",
+                            docx_bytes,
+                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        )
+                    },
+                    data={"ocr_provider": "baidu"},
+                )
+            self.assertEqual(response.status_code, 200)
+            result = response.json()
+            self.assertEqual(result["status"], "completed")
+            self.assertIn("装饰性小图，跳过 OCR", result["markdown"])
+            self.assertEqual(result.get("ocr_image_count"), 0)
+            baidu.assert_not_awaited()
+
+    async def test_pdf_embedded_large_image_ocred_small_skipped(self):
+        import io
+        import zlib
+
+        from PIL import Image
+
+        def build_pdf_with_text_and_images() -> bytes:
+            """Minimal PDF: one native-text page + one large figure + one icon."""
+            large = Image.new("RGB", (320, 200), color=(30, 90, 160))
+            # Noise so the large figure is not a tiny compressed solid fill.
+            for x in range(0, 320, 4):
+                for y in range(0, 200, 4):
+                    large.putpixel((x, y), (x % 256, y % 256, (x * y) % 256))
+            small = Image.new("RGB", (12, 12), color=(200, 30, 30))
+            large_raw = zlib.compress(large.convert("RGB").tobytes())
+            small_raw = zlib.compress(small.convert("RGB").tobytes())
+            content = (
+                b"BT /F1 12 Tf 40 280 Td (architecture diagram and notes) Tj ET\n"
+                b"q 320 0 0 200 40 40 cm /Im0 Do Q\n"
+                b"q 12 0 0 12 350 250 cm /Im1 Do Q\n"
+            )
+            objects = []
+
+            def add(payload: bytes) -> int:
+                objects.append(payload)
+                return len(objects)
+
+            font_id = add(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+            im0_id = add(
+                b"<< /Type /XObject /Subtype /Image /Width 320 /Height 200 "
+                b"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode "
+                b"/Length %d >>\nstream\n" % len(large_raw)
+                + large_raw
+                + b"\nendstream"
+            )
+            im1_id = add(
+                b"<< /Type /XObject /Subtype /Image /Width 12 /Height 12 "
+                b"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode "
+                b"/Length %d >>\nstream\n" % len(small_raw)
+                + small_raw
+                + b"\nendstream"
+            )
+            content_id = add(
+                b"<< /Length %d >>\nstream\n" % len(content) + content + b"\nendstream"
+            )
+            page_id = add(
+                b"<< /Type /Page /Parent 3 0 R /MediaBox [0 0 400 320] "
+                b"/Resources << /Font << /F1 %d 0 R >> /XObject << /Im0 %d 0 R /Im1 %d 0 R >> >> "
+                b"/Contents %d 0 R >>" % (font_id, im0_id, im1_id, content_id)
+            )
+            pages_id = add(
+                b"<< /Type /Pages /Kids [%d 0 R] /Count 1 >>" % page_id
+            )
+            # page_id referenced Parent 3 0 R which is this pages object only if
+            # it lands at index 3; rebuild page object with the real parent id.
+            objects[page_id - 1] = (
+                b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 400 320] "
+                b"/Resources << /Font << /F1 %d 0 R >> /XObject << /Im0 %d 0 R /Im1 %d 0 R >> >> "
+                b"/Contents %d 0 R >>" % (pages_id, font_id, im0_id, im1_id, content_id)
+            )
+            catalog_id = add(b"<< /Type /Catalog /Pages %d 0 R >>" % pages_id)
+
+            out = bytearray(b"%PDF-1.4\n")
+            offsets = [0]
+            for index, body in enumerate(objects, start=1):
+                offsets.append(len(out))
+                out.extend(f"{index} 0 obj\n".encode("ascii"))
+                out.extend(body)
+                out.extend(b"\nendobj\n")
+            xref_pos = len(out)
+            out.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+            out.extend(b"0000000000 65535 f \n")
+            for off in offsets[1:]:
+                out.extend(f"{off:010d} 00000 n \n".encode("ascii"))
+            out.extend(
+                f"trailer\n<< /Size {len(objects) + 1} /Root {catalog_id} 0 R >>\n"
+                f"startxref\n{xref_pos}\n%%EOF\n".encode("ascii")
+            )
+            return bytes(out)
+
+        pdf_bytes = build_pdf_with_text_and_images()
+
+        fake_ocr = (
+            "架构图核心节点说明",
+            {"ocr_provider": "baidu", "ocr_words_result_num": 1, "ocr_average_confidence": 0.91},
+        )
+        with (
+            tempfile.TemporaryDirectory() as root,
+            patch.object(main, "UPLOAD_ROOT", Path(root)),
+            patch.object(main, "LOCAL_DOCLING_ENABLED", False),
+            patch.object(main, "OCR_PROVIDER", "baidu"),
+            patch.object(main, "PDF_PARSE_MODE", "fast"),
+            patch.object(
+                main, "convert_image_with_baidu_ocr", AsyncMock(return_value=fake_ocr)
+            ) as baidu,
+        ):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=main.app), base_url="http://parser"
+            ) as client:
+                response = await client.post(
+                    "/parse-execute",
+                    files={"file": ("arch.pdf", pdf_bytes, "application/pdf")},
+                    data={"ocr_provider": "baidu"},
+                )
+            self.assertEqual(response.status_code, 200)
+            result = response.json()
+            self.assertEqual(result["status"], "completed", result.get("error"))
+            self.assertIn("architecture diagram and notes", result["markdown"])
+            self.assertIn("架构图核心节点说明", result["markdown"])
+            self.assertIn("### 图片文字", result["markdown"])
+            # Only the large figure is OCR-eligible.
+            self.assertEqual(baidu.await_count, 1)
+            self.assertEqual(result.get("ocr_image_count"), 1)
+
+    async def test_ocr_embedded_images_endpoint_enriches_docx(self):
+        import io
+
+        import docx
+        from PIL import Image
+
+        doc = docx.Document()
+        doc.add_paragraph("系统架构说明正文")
+        img = Image.new("RGB", (400, 240), color=(40, 90, 160))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        doc.add_picture(buf, width=docx.shared.Inches(2.0))
+        doc.add_paragraph("附录")
+
+        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+        try:
+            doc.save(tmp_path)
+            docx_bytes = tmp_path.read_bytes()
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+        fake_ocr = (
+            "网关节点部署于核心区",
+            {"ocr_provider": "baidu", "ocr_words_result_num": 1, "ocr_average_confidence": 0.9},
+        )
+        with (
+            tempfile.TemporaryDirectory() as root,
+            patch.object(main, "UPLOAD_ROOT", Path(root)),
+            patch.object(main, "OCR_PROVIDER", "baidu"),
+            patch.object(
+                main, "convert_image_with_baidu_ocr", AsyncMock(return_value=fake_ocr)
+            ) as baidu,
+        ):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=main.app), base_url="http://parser"
+            ) as client:
+                response = await client.post(
+                    "/ocr-embedded-images",
+                    files={
+                        "file": (
+                            "arch.docx",
+                            docx_bytes,
+                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        )
+                    },
+                    data={"ocr_provider": "baidu"},
+                )
+            self.assertEqual(response.status_code, 200)
+            result = response.json()
+            self.assertIn("网关节点部署于核心区", result["markdown"])
+            self.assertEqual(result.get("embedded_image_count"), 1)
+            self.assertEqual(result.get("ocr_image_count"), 1)
+            baidu.assert_awaited_once()
+
+    async def test_ocr_embedded_images_endpoint_skips_small(self):
+        import io
+
+        import docx
+        from PIL import Image
+
+        doc = docx.Document()
+        doc.add_paragraph("正文")
+        img = Image.new("RGB", (12, 12), color=(200, 30, 30))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        doc.add_picture(buf, width=docx.shared.Inches(0.1))
+
+        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+        try:
+            doc.save(tmp_path)
+            docx_bytes = tmp_path.read_bytes()
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+        with (
+            tempfile.TemporaryDirectory() as root,
+            patch.object(main, "UPLOAD_ROOT", Path(root)),
+            patch.object(main, "OCR_PROVIDER", "baidu"),
+            patch.object(
+                main, "convert_image_with_baidu_ocr", AsyncMock(return_value=("x", {}))
+            ) as baidu,
+        ):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=main.app), base_url="http://parser"
+            ) as client:
+                response = await client.post(
+                    "/ocr-embedded-images",
+                    files={
+                        "file": (
+                            "icon.docx",
+                            docx_bytes,
+                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        )
+                    },
+                    data={"ocr_provider": "baidu"},
+                )
+            self.assertEqual(response.status_code, 200)
+            result = response.json()
+            self.assertIn("装饰性小图，跳过 OCR", result.get("markdown", ""))
+            self.assertEqual(result.get("ocr_image_count"), 0)
+            baidu.assert_not_awaited()

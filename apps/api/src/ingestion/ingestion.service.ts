@@ -357,17 +357,91 @@ export class IngestionService implements OnModuleInit {
         throw new Error(parsed?.error || "Parser timed out.");
     }
 
+    // AnyDoc (and its content-hash dedup) extracts document text but never
+    // OCRs pictures inside Office/PDF files. Parser-worker paths already do
+    // image OCR internally. Enrich the AnyDoc path so figure labels enter
+    // the hybrid index instead of being silently dropped.
+    const engineName = String(parsed?.engine || "");
+    const missingImageOcr =
+      parsed?.ocr_image_count === undefined || parsed?.ocr_image_count === null;
+    if (
+      parsed &&
+      [".docx", ".pptx", ".pdf"].includes(ext) &&
+      missingImageOcr &&
+      (engineName.startsWith("anydoc") || engineName.endsWith("-dedup"))
+    ) {
+      try {
+        const imageForm = new FormData();
+        const rawExt = extname(document.rawFileOid || "").toLowerCase();
+        const titleExt = extname(document.title || "").toLowerCase();
+        const imageExt =
+          SUPPORTED_UPLOAD_EXTENSIONS.has(titleExt) || ANYDOC_UPLOAD_EXTENSIONS.has(titleExt)
+            ? titleExt
+            : SUPPORTED_UPLOAD_EXTENSIONS.has(rawExt) || ANYDOC_UPLOAD_EXTENSIONS.has(rawExt)
+              ? rawExt
+              : ext;
+        const baseTitle = titleExt
+          ? document.title.slice(0, -titleExt.length)
+          : document.title;
+        imageForm.append(
+          "file",
+          new Blob([content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength) as ArrayBuffer]),
+          `${baseTitle}${imageExt}`,
+        );
+        const ocrCfg = await this.modelConfigService.getOcrConfig();
+        if (ocrCfg) {
+          imageForm.append("ocr_provider", ocrCfg.provider);
+          imageForm.append("ocr_endpoint", ocrCfg.baseUrl);
+          imageForm.append("ocr_api_key", ocrCfg.apiKey);
+          imageForm.append("ocr_secret_key", ocrCfg.secretKey);
+        }
+        const imageHeaders: Record<string, string> = {};
+        const imageAuthToken = process.env.PARSER_AUTH_TOKEN || process.env.AUTH_TOKEN;
+        if (imageAuthToken) imageHeaders.Authorization = `Bearer ${imageAuthToken}`;
+        const imageResp = await fetch(`${this.parserUrl}/ocr-embedded-images`, {
+          method: "POST",
+          body: imageForm,
+          headers: imageHeaders,
+          signal: AbortSignal.timeout(parserPollBudget(process.env) + 30_000),
+        });
+        if (imageResp.ok) {
+          const imageResult = await imageResp.json();
+          const imageMd = String(imageResult?.markdown || "").trim();
+          if (imageMd) {
+            parsed.markdown = `${String(parsed.markdown || "").trim()}\n\n## 图片文字（OCR）\n\n${imageMd}`;
+          }
+          for (const key of [
+            "embedded_image_count",
+            "ocr_image_count",
+            "ocr_provider",
+            "ocr_words_result_num",
+            "ocr_average_confidence",
+          ]) {
+            if (imageResult?.[key] !== undefined && imageResult?.[key] !== null) {
+              parsed[key] = imageResult[key];
+              conversionMetadata[key] = imageResult[key];
+            }
+          }
+          this.logger.log(
+            `Embedded-image OCR enriched document ${documentId}: images=${imageResult?.embedded_image_count ?? 0} ocr=${imageResult?.ocr_image_count ?? 0}`,
+          );
+        } else {
+          this.logger.warn(
+            `Embedded-image OCR endpoint failed for ${documentId}: HTTP ${imageResp.status}`,
+          );
+        }
+      } catch (imageErr) {
+        this.logger.warn(
+          `Embedded-image OCR enrichment failed for ${documentId}: ${imageErr instanceof Error ? imageErr.message : imageErr}`,
+        );
+      }
+    }
+
     // Inspect original output before control-character normalization can hide damage.
     const quality = assessContentQuality(String(parsed.markdown || ""), ext, parsed);
     // content-v2.1: language detection + PII scan + SimHash for near-dup gate.
+    // PII is recorded as metadata only and never blocks publication.
     const extended = assessExtendedQuality(String(parsed.markdown || ""));
-    if (extended.piiFindings.length > 0 && quality.quality_status === 'passed') {
-      (quality as any).quality_status = 'needs_review';
-      (quality as any).quality_issues = [
-        ...((quality as any).quality_issues || []),
-        ...extended.issues,
-      ];
-    }
     parsed = {
       ...parsed,
       ...quality,
@@ -480,6 +554,7 @@ export class IngestionService implements OnModuleInit {
       "ocr_model",
       "slide_count",
       "embedded_image_count",
+      "ocr_image_count",
       "quality_metrics",
       "quality_rule_version",
       "docling_error",
@@ -492,7 +567,11 @@ export class IngestionService implements OnModuleInit {
     parserMetadata["parsed_at"] = new Date().toISOString();
     if (extended?.language) parserMetadata["language"] = extended.language;
     if (extended?.simhash) parserMetadata["simhash"] = extended.simhash;
-    const contentPath = join(this.uploadRoot, documentId, "content.md");
+    // Parsed content is immutable per version/hash. The database pointer and
+    // chunks change in one transaction; a stale job never replaces the file
+    // used by a newer version.
+    const relativeContentPath = `${documentId}/content.v${targetVersion}.${createHash("sha256").update(markdown).digest("hex")}.md`;
+    const contentPath = join(this.uploadRoot, relativeContentPath);
     const pendingContentPath = join(
       this.uploadRoot,
       documentId,
@@ -503,6 +582,7 @@ export class IngestionService implements OnModuleInit {
       markdown,
       "utf8",
     );
+    await rename(pendingContentPath, contentPath);
     // The expectedVersion check at the top only fences queue-time. Re-check
     // inside the save transaction: a concurrent re-upload that bumped the
     // version between parse and save must not have its chunks clobbered.
@@ -512,15 +592,24 @@ export class IngestionService implements OnModuleInit {
     try {
       await this.prisma.$transaction(
         async (tx) => {
-          const current = await tx.document.findUnique({
-            where: { id: documentId },
-            select: { version: true },
+          const claim = await tx.document.updateMany({
+            where: { id: documentId, version: targetVersion },
+            data: {
+              mdPath: relativeContentPath,
+              status: qualityStatus === "passed" ? "indexing" : "needs_review",
+              parserEngine: parsed.engine || null,
+              parserClassification: parsed.classification || null,
+              parserMetadata: parserMetadata as any,
+              qualityStatus,
+              qualityScore,
+              qualityIssues: qualityIssues as any,
+            },
           });
-          if (!current || current.version !== targetVersion) {
+          if (claim.count !== 1) {
             throw new SupersededVersionError(
               documentId,
               targetVersion as number,
-              current?.version as number,
+              -1,
             );
           }
           await tx.chunk.deleteMany({ where: { documentId } });
@@ -550,18 +639,6 @@ export class IngestionService implements OnModuleInit {
           for (let i = 0; i < chunkData.length; i += CHUNK_BATCH_SIZE) {
             await tx.chunk.createMany({ data: chunkData.slice(i, i + CHUNK_BATCH_SIZE) });
           }
-          await tx.document.update({
-            where: { id: documentId },
-            data: {
-              status: qualityStatus === "passed" ? "indexing" : "needs_review",
-              parserEngine: parsed.engine || null,
-              parserClassification: parsed.classification || null,
-              parserMetadata: parserMetadata as any,
-              qualityStatus,
-              qualityScore,
-              qualityIssues: qualityIssues as any,
-            },
-          });
         },
         // Chunk replacement for large documents can exceed the default 5s
         // interactive-transaction timeout.
@@ -581,15 +658,6 @@ export class IngestionService implements OnModuleInit {
           reason: "superseded-version",
         };
       }
-      throw err;
-    }
-
-    // Publish the canonical file only after the version-fenced database save
-    // succeeds. A stale parser can no longer overwrite a newer content.md.
-    try {
-      await rename(pendingContentPath, contentPath);
-    } catch (err) {
-      await unlink(pendingContentPath).catch(() => undefined);
       throw err;
     }
 

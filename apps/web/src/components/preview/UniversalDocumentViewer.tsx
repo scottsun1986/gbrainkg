@@ -922,6 +922,29 @@ export function UniversalDocumentViewer({ preview, onClose }: UniversalDocumentV
                     <div style={{ color: 'var(--ink-3)' }}>入库质量门禁</div>
                     <div>{docData?.document?.qualityStatus || 'unknown'}{typeof docData?.document?.qualityScore === 'number' ? ` · ${(docData.document.qualityScore * 100).toFixed(1)} 分` : ''}{Array.isArray(docData?.document?.qualityIssues) && docData.document.qualityIssues.length ? ` · ${docData.document.qualityIssues.join('；')}` : ''}</div>
 
+                    <div style={{ color: 'var(--ink-3)' }}>内嵌图片 OCR</div>
+                    <div>
+                      {(() => {
+                        const meta = (docData?.document as any)?.parserMetadata || {};
+                        const embedded = meta.embedded_image_count;
+                        const ocr = meta.ocr_image_count;
+                        const words = meta.ocr_words_result_num;
+                        const conf = meta.ocr_average_confidence;
+                        const provider = meta.ocr_provider;
+                        if (embedded === undefined && ocr === undefined) {
+                          return <span style={{ color: 'var(--ink-3)' }}>— 无内嵌图片或未触发 OCR</span>;
+                        }
+                        return (
+                          <span>
+                            识别 <b>{ocr ?? 0}</b> / {embedded ?? '?'} 张
+                            {words !== undefined && words !== null ? ` · 提取文字 ${words} 字` : ''}
+                            {conf !== undefined && conf !== null ? ` · 平均置信度 ${(Number(conf) * 100).toFixed(1)}%` : ''}
+                            {provider ? ` · ${provider}` : ''}
+                          </span>
+                        );
+                      })()}
+                    </div>
+
                     <div style={{ color: 'var(--ink-3)' }}>切片总数</div>
                     <div>{docData?.document?.chunkCount || docData?.chunks?.length || 0} 个检索 Chunk</div>
 

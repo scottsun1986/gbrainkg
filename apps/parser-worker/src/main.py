@@ -40,6 +40,10 @@ OCR_PROVIDER = os.environ.get("OCR_PROVIDER", "none").lower()
 OCR_TIMEOUT_SECONDS = float(os.environ.get("OCR_TIMEOUT_SECONDS", "900"))
 OCR_POLL_INTERVAL_SECONDS = float(os.environ.get("OCR_POLL_INTERVAL_SECONDS", "5"))
 OCR_MAX_FILE_BYTES = int(os.environ.get("OCR_MAX_FILE_BYTES", str(50 * 1024 * 1024)))
+# Skip icons/decorative images that cannot hold searchable text. Size-only gate
+# so the threshold stays corpus-agnostic.
+OCR_IMAGE_MIN_SIDE = int(os.environ.get("OCR_IMAGE_MIN_SIDE", "64"))
+OCR_IMAGE_MIN_BYTES = int(os.environ.get("OCR_IMAGE_MIN_BYTES", str(2 * 1024)))
 BAIDU_OCR_API_KEY = os.environ.get("BAIDU_OCR_API_KEY", "").strip()
 BAIDU_OCR_SECRET_KEY = os.environ.get("BAIDU_OCR_SECRET_KEY", "").strip()
 BAIDU_OCR_ENDPOINT = os.environ.get(
@@ -463,8 +467,13 @@ def extract_legacy_word(path: Path) -> str:
         raise RuntimeError("Legacy .doc conversion returned empty text")
     return text
 
-def extract_docx(path: Path) -> str:
-    """Extract .docx to Markdown while preserving paragraph/table order."""
+def extract_docx(path: Path) -> tuple[str, list[dict[str, Any]]]:
+    """Extract .docx to Markdown while preserving paragraph/table order.
+
+    Embedded images become position placeholders (``<!-- image: docx-media-N -->``)
+    plus a parallel ``image_parts`` list so a later OCR pass can swap the
+    placeholder for searchable text without re-parsing the package.
+    """
     try:
         import docx
         from docx.document import Document as DocxDocument
@@ -472,9 +481,12 @@ def extract_docx(path: Path) -> str:
         from docx.text.paragraph import Paragraph
         from docx.oxml.table import CT_Tbl
         from docx.oxml.text.paragraph import CT_P
+        from docx.oxml.ns import qn
 
         doc = docx.Document(str(path))
-        lines = []
+        lines: list[str] = []
+        image_parts: list[dict[str, Any]] = []
+        image_counter = 0
 
         def iter_blocks(parent: DocxDocument):
             for child in parent.element.body.iterchildren():
@@ -483,47 +495,74 @@ def extract_docx(path: Path) -> str:
                 elif isinstance(child, CT_Tbl):
                     yield Table(child, parent)
 
+        def collect_images(element: Any) -> None:
+            nonlocal image_counter
+            for blip in element.xpath(".//a:blip"):
+                embed = blip.get(qn("r:embed"))
+                if not embed:
+                    continue
+                try:
+                    part = doc.part.related_parts[embed]
+                    blob = bytes(part.blob or b"")
+                    if not blob:
+                        continue
+                    part_name = str(part.partname)
+                    ext = part_name.rsplit(".", 1)[-1].lower() if "." in part_name else "png"
+                    content_type = str(getattr(part, "content_type", "") or "")
+                    if content_type.startswith("image/"):
+                        ext = content_type.split("/", 1)[1].lower() or ext
+                    if ext == "jpeg":
+                        ext = "jpg"
+                except Exception as image_error:
+                    logger.warning("Unable to extract DOCX image from %s: %s", path.name, image_error)
+                    continue
+                image_counter += 1
+                key = f"docx-media-{image_counter}"
+                image_parts.append({"key": key, "ext": ext, "blob": blob})
+                lines.append(f"<!-- image: {key} -->")
+
         for block in iter_blocks(doc):
             if isinstance(block, Paragraph):
                 txt = block.text.strip()
-                if not txt:
-                    continue
-                style_name = (block.style.name if block.style else "").lower()
-                heading_match = re.search(r"(?:heading|标题)\s*([1-6])", style_name)
-                if heading_match:
-                    lines.append(f"{'#' * int(heading_match.group(1))} {txt}")
-                else:
-                    # Visual pseudo-heading inference:
-                    # 1. Bold text or large font size
-                    # 2. Section number patterns (e.g. 第一章, 1.1, 一、)
-                    runs = [r for r in block.runs if r.text.strip()]
-                    all_bold = runs and all(r.bold for r in runs)
-                    sizes = [r.font.size.pt for r in runs if r.font and r.font.size]
-                    max_pt = max(sizes) if sizes else 0
-                    is_short = len(txt) <= 70 and not txt.endswith(("。", "！", "？", "；", ".", "!", "?", ";"))
-
-                    pseudo_level = 0
-                    if max_pt >= 16:
-                        pseudo_level = 1
-                    elif max_pt >= 14:
-                        pseudo_level = 2
-                    elif all_bold and is_short:
-                        num_match = re.match(r"^(\d+(?:\.\d+)+)", txt)
-                        if re.match(r"^(第[一二三四五六七八九十0-9]+[章节篇部卷]|Chapter\s*\d+)", txt):
-                            pseudo_level = 1
-                        elif num_match:
-                            pseudo_level = min(6, num_match.group(1).count(".") + 1)
-                        elif re.match(r"^([一二三四五六七八九十]+[、.])", txt):
-                            pseudo_level = 2
-                        else:
-                            pseudo_level = 3
-                    elif is_short and re.match(r"^(第[一二三四五六七八九十0-9]+[章节篇部卷]|Chapter\s*\d+)", txt):
-                        pseudo_level = 1
-
-                    if pseudo_level > 0:
-                        lines.append(f"{'#' * pseudo_level} {txt}")
+                if txt:
+                    style_name = (block.style.name if block.style else "").lower()
+                    heading_match = re.search(r"(?:heading|标题)\s*([1-6])", style_name)
+                    if heading_match:
+                        lines.append(f"{'#' * int(heading_match.group(1))} {txt}")
                     else:
-                        lines.append(txt)
+                        # Visual pseudo-heading inference:
+                        # 1. Bold text or large font size
+                        # 2. Section number patterns (e.g. 第一章, 1.1, 一、)
+                        runs = [r for r in block.runs if r.text.strip()]
+                        all_bold = runs and all(r.bold for r in runs)
+                        sizes = [r.font.size.pt for r in runs if r.font and r.font.size]
+                        max_pt = max(sizes) if sizes else 0
+                        is_short = len(txt) <= 70 and not txt.endswith(("。", "！", "？", "；", ".", "!", "?", ";"))
+
+                        pseudo_level = 0
+                        if max_pt >= 16:
+                            pseudo_level = 1
+                        elif max_pt >= 14:
+                            pseudo_level = 2
+                        elif all_bold and is_short:
+                            num_match = re.match(r"^(\d+(?:\.\d+)+)", txt)
+                            if re.match(r"^(第[一二三四五六七八九十0-9]+[章节篇部卷]|Chapter\s*\d+)", txt):
+                                pseudo_level = 1
+                            elif num_match:
+                                pseudo_level = min(6, num_match.group(1).count(".") + 1)
+                            elif re.match(r"^([一二三四五六七八九十]+[、.])", txt):
+                                pseudo_level = 2
+                            else:
+                                pseudo_level = 3
+                        elif is_short and re.match(r"^(第[一二三四五六七八九十0-9]+[章节篇部卷]|Chapter\s*\d+)", txt):
+                            pseudo_level = 1
+
+                        if pseudo_level > 0:
+                            lines.append(f"{'#' * pseudo_level} {txt}")
+                        else:
+                            lines.append(txt)
+                # Images live in the paragraph XML even when the paragraph has no text.
+                collect_images(block._p)
             else:
                 rows = []
                 for row in block.rows:
@@ -540,10 +579,11 @@ def extract_docx(path: Path) -> str:
                     t_lines = ["| " + " | ".join(normalized[0]) + " |", "| " + " | ".join(["---"] * width) + " |"]
                     t_lines.extend("| " + " | ".join(row) + " |" for row in normalized[1:])
                     lines.append("\n".join(t_lines))
-        return "\n\n".join(lines).strip()
+                collect_images(block._tbl)
+        return "\n\n".join(lines).strip(), image_parts
     except Exception as e:
         logger.warning(f"python-docx extraction failed for {path}: {e}")
-        return ""
+        return "", []
 
 def inspect_pdf_native(path: Path) -> dict[str, Any]:
     """Inspect native PDF text page-by-page without OCR or GPU work."""
@@ -1145,6 +1185,253 @@ async def convert_image_with_baidu_ocr(
         return "\n".join(lines), metadata
 
 
+def is_image_ocr_worthy(blob: bytes) -> bool:
+    """Size-only gate: skip icons/decorative images that cannot hold text.
+
+    Decoded dimensions decide; the byte floor is only a fallback when Pillow
+    is unavailable. Undecodable blobs are refused so OCR quota is not spent
+    on junk.
+    """
+    if not blob:
+        return False
+    try:
+        import io as _io
+
+        from PIL import Image
+    except Exception:
+        return len(blob) >= OCR_IMAGE_MIN_BYTES
+    try:
+        with Image.open(_io.BytesIO(blob)) as img:
+            width, height = img.size
+        return min(width, height) >= OCR_IMAGE_MIN_SIDE
+    except Exception:
+        return False
+
+
+async def ocr_image_parts_into_markdown(
+    markdown: str,
+    image_parts: list[dict[str, Any]],
+    ocr_config: dict[str, str],
+) -> tuple[str, dict[str, Any]]:
+    """Replace ``<!-- image: key -->`` placeholders with OCR text from the API.
+
+    Failures degrade to an annotated placeholder so the document stays
+    indexable and reviewable; they never abort the whole parse.
+    """
+    metadata: dict[str, Any] = {"embedded_image_count": len(image_parts)}
+    if not image_parts:
+        return markdown, metadata
+
+    provider = str(ocr_config.get("provider") or OCR_PROVIDER).lower()
+    ocr_count = 0
+    words_total = 0
+    confidences: list[float] = []
+    result = markdown
+
+    for position, image in enumerate(image_parts, start=1):
+        key = str(image.get("key") or f"image-{position}")
+        placeholder = f"<!-- image: {key} -->"
+        if placeholder not in result:
+            continue
+        blob = bytes(image.get("blob") or b"")
+        if not blob:
+            result = result.replace(placeholder, f"<!-- image: {key} -->\n*(图片内容为空)*", 1)
+            continue
+        if not is_image_ocr_worthy(blob):
+            result = result.replace(placeholder, f"<!-- image: {key} -->\n*(装饰性小图，跳过 OCR)*", 1)
+            continue
+        if provider != "baidu":
+            result = result.replace(
+                placeholder,
+                f"<!-- image: {key} -->\n*(图片存在，当前未配置 OCR 接口)*",
+                1,
+            )
+            continue
+
+        ext = str(image.get("ext") or "png").lower().lstrip(".")
+        temp = tempfile.NamedTemporaryFile(
+            prefix=f"embedded-image-{position}-",
+            suffix=f".{ext}",
+            dir=str(UPLOAD_ROOT),
+            delete=False,
+        )
+        image_path = Path(temp.name)
+        try:
+            with temp:
+                temp.write(blob)
+            try:
+                image_md, image_metadata = await convert_image_with_baidu_ocr(image_path, ocr_config)
+                if image_md.strip():
+                    ocr_count += 1
+                    words_total += int(image_metadata.get("ocr_words_result_num") or 0)
+                    conf = image_metadata.get("ocr_average_confidence")
+                    if conf is not None:
+                        try:
+                            confidences.append(float(conf))
+                        except (TypeError, ValueError):
+                            pass
+                    result = result.replace(
+                        placeholder,
+                        f"### 图片文字\n\n{image_md.strip()}",
+                        1,
+                    )
+                else:
+                    result = result.replace(
+                        placeholder,
+                        f"<!-- image: {key} -->\n*(图片未识别到有效文字)*",
+                        1,
+                    )
+            except Exception as ocr_err:
+                logger.warning("Embedded image OCR failed for %s: %s", key, ocr_err)
+                result = result.replace(
+                    placeholder,
+                    f"<!-- image: {key} -->\n*(图片 OCR 识别失败: {ocr_err})*",
+                    1,
+                )
+        finally:
+            image_path.unlink(missing_ok=True)
+
+    if ocr_count:
+        metadata["ocr_provider"] = provider
+        metadata["ocr_image_count"] = ocr_count
+        metadata["ocr_words_result_num"] = words_total
+        if confidences:
+            metadata["ocr_average_confidence"] = round(sum(confidences) / len(confidences), 4)
+    else:
+        metadata["ocr_image_count"] = 0
+    return result, metadata
+
+
+def extract_embedded_image_parts(path: Path) -> list[dict[str, Any]]:
+    """Collect embedded images from DOCX / PPTX / PDF for standalone OCR enrichment."""
+    suffix = path.suffix.lower()
+    try:
+        if suffix == ".docx":
+            _, images = extract_docx(path)
+            return images
+        if suffix == ".pptx":
+            _, images = extract_pptx_native(path)
+            return images
+        if suffix == ".pdf":
+            return extract_pdf_page_images(path)
+    except Exception as e:
+        logger.warning("Embedded image extraction failed for %s: %s", path.name, e)
+    return []
+
+
+async def ocr_embedded_images_fragments(
+    path: Path, ocr_config: dict[str, str]
+) -> tuple[str, dict[str, Any]]:
+    """OCR embedded images and return appendable Markdown fragments.
+
+    Used by the API after AnyDoc text extraction: AnyDoc preserves document
+    structure but does not OCR pictures inside Office/PDF files.
+    """
+    image_parts = extract_embedded_image_parts(path)
+    if not image_parts:
+        return "", {"embedded_image_count": 0}
+    for position, image in enumerate(image_parts, start=1):
+        if not image.get("key"):
+            image["key"] = f"image-{position}"
+    skeleton = "\n\n".join(f"<!-- image: {image['key']} -->" for image in image_parts)
+    result, metadata = await ocr_image_parts_into_markdown(skeleton, image_parts, ocr_config)
+    return result.strip(), metadata
+
+
+def extract_pdf_page_images(path: Path) -> list[dict[str, Any]]:
+    """Collect embedded raster images per PDF page for optional OCR."""
+    results: list[dict[str, Any]] = []
+    try:
+        import pypdf
+
+        reader = pypdf.PdfReader(str(path))
+        for page_index, page in enumerate(reader.pages):
+            try:
+                page_images = page.images
+            except Exception as img_err:
+                logger.debug("PDF page %s image enumeration failed: %s", page_index + 1, img_err)
+                continue
+            for img_index, img in enumerate(page_images, start=1):
+                try:
+                    blob = bytes(img.data or b"")
+                    if not blob:
+                        continue
+                    name = str(getattr(img, "name", "") or "")
+                    ext = name.rsplit(".", 1)[-1].lower() if "." in name else "png"
+                    if ext == "jpeg":
+                        ext = "jpg"
+                    if ext not in {"png", "jpg", "gif", "bmp", "webp", "tif", "tiff"}:
+                        ext = "png"
+                    results.append({
+                        "key": f"p{page_index + 1}-img{img_index}",
+                        "page_index": page_index,
+                        "ext": ext,
+                        "blob": blob,
+                    })
+                except Exception as one_err:
+                    logger.debug(
+                        "Skip PDF image page=%s#%s: %s", page_index + 1, img_index, one_err
+                    )
+    except Exception as e:
+        logger.warning("PDF image extraction failed for %s: %s", path.name, e)
+    return results
+
+
+def insert_pdf_image_placeholders(
+    markdown: str, image_parts: list[dict[str, Any]]
+) -> str:
+    """Attach per-page image placeholders at the end of each ``## 第 N 页`` body."""
+    by_page: dict[int, list[str]] = {}
+    for image in image_parts:
+        page_index = int(image.get("page_index") or 0)
+        key = str(image.get("key") or "image")
+        by_page.setdefault(page_index, []).append(f"<!-- image: {key} -->")
+    if not by_page:
+        return markdown
+
+    pattern = re.compile(r"(?m)^(##\s*第\s*(\d+)\s*页\s*)$")
+    matches = list(pattern.finditer(markdown))
+    if not matches:
+        extras = "\n\n".join(
+            placeholder for placeholders in by_page.values() for placeholder in placeholders
+        )
+        return f"{markdown.rstrip()}\n\n{extras}"
+
+    pieces: list[str] = []
+    last = 0
+    for index, match in enumerate(matches):
+        pieces.append(markdown[last:match.start()])
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(markdown)
+        body = markdown[start:end]
+        page_number = int(match.group(2))
+        placeholders = by_page.get(page_number - 1, [])
+        if placeholders:
+            body = body.rstrip() + "\n\n" + "\n\n".join(placeholders) + "\n\n"
+        pieces.append(match.group(1) + body)
+        last = end
+    pieces.append(markdown[last:])
+    return "".join(pieces)
+
+
+async def enrich_pdf_figures_with_ocr(
+    markdown: str,
+    path: Path,
+    ocr_config: dict[str, str],
+    metadata: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    """OCR large figures on native-text PDF pages and splice text into the page."""
+    image_parts = await asyncio.to_thread(extract_pdf_page_images, path)
+    if not image_parts:
+        return markdown, metadata
+    placeholder_md = insert_pdf_image_placeholders(markdown, image_parts)
+    enriched, ocr_metadata = await ocr_image_parts_into_markdown(
+        placeholder_md, image_parts, ocr_config
+    )
+    merged = {**metadata, **ocr_metadata}
+    return enriched, merged
+
+
 async def convert_with_cloud_ocr(
     path: Path, ocr_config: dict[str, str]
 ) -> tuple[str, dict[str, Any]]:
@@ -1303,7 +1590,14 @@ async def convert_pdf_with_fallback(
                 logger.warning(f"Docling layout conversion failed on {path.name}, falling back to native: {docling_err}")
                 metadata["docling_error"] = str(docling_err)
         if PDF_PARSE_MODE in {"fast", "hybrid", "auto"}:
-            return native_md, "pypdf-native", metadata
+            # Native-text pages may still carry figures/charts whose labels are
+            # only available through image OCR. Scan pages are handled by the
+            # cloud document parser below and must not be double-billed.
+            enriched_md, metadata = await enrich_pdf_figures_with_ocr(
+                native_md, path, ocr_config, metadata
+            )
+            engine = "pypdf-native+ocr" if metadata.get("ocr_image_count") else "pypdf-native"
+            return enriched_md, engine, metadata
 
     if classification in {"scanned", "mixed"} and str(
         ocr_config.get("provider") or OCR_PROVIDER
@@ -1359,7 +1653,11 @@ async def convert_pdf_with_fallback(
             metadata["docling_error"] = str(docling_err)
 
     if native_md:
-        return native_md, "pypdf-fallback", metadata
+        enriched_md, metadata = await enrich_pdf_figures_with_ocr(
+            native_md, path, ocr_config, metadata
+        )
+        engine = "pypdf-fallback+ocr" if metadata.get("ocr_image_count") else "pypdf-fallback"
+        return enriched_md, engine, metadata
     raise RuntimeError(
         f"No parser produced content for {path.name}; classification={classification}, "
         f"OCR_PROVIDER={ocr_config.get('provider') or OCR_PROVIDER}, "
@@ -1389,10 +1687,26 @@ async def process_file(
             task["markdown"] = await asyncio.to_thread(extract_legacy_word, path)
             task["engine"] = "antiword"
         elif suffix == ".docx":
-            md = await asyncio.to_thread(extract_docx, path)
-            if md:
-                task["markdown"] = md
-                task["engine"] = "python-docx"
+            md, docx_images = await asyncio.to_thread(extract_docx, path)
+            if md or docx_images:
+                if docx_images:
+                    md, ocr_metadata = await ocr_image_parts_into_markdown(
+                        md, docx_images, ocr_config
+                    )
+                    task.update(ocr_metadata)
+                if md.strip():
+                    task["markdown"] = md
+                    task["engine"] = (
+                        "python-docx+ocr" if task.get("ocr_image_count") else "python-docx"
+                    )
+                else:
+                    if not LOCAL_DOCLING_ENABLED:
+                        raise RuntimeError(
+                            "DOCX extraction returned no indexable content and local Docling is disabled"
+                        )
+                    md = await convert_with_docling(path)
+                    task["markdown"] = md
+                    task["engine"] = "docling"
             else:
                 if not LOCAL_DOCLING_ENABLED:
                     raise RuntimeError("DOCX native extraction returned no text and local Docling is disabled")
@@ -1657,6 +1971,44 @@ async def execute_document(
         return {"task_id": accepted.task_id, **tasks[accepted.task_id]}
     finally:
         tasks.pop(accepted.task_id, None)
+
+
+@app.post("/ocr-embedded-images")
+async def ocr_embedded_images_endpoint(
+    file: UploadFile = File(...),
+    ocr_provider: str | None = Form(None),
+    ocr_endpoint: str | None = Form(None),
+    ocr_api_key: str | None = Form(None),
+    ocr_secret_key: str | None = Form(None),
+    _auth: None = Depends(verify_auth),
+):
+    """OCR embedded images only; used after AnyDoc text extraction.
+
+    AnyDoc produces the document body but never OCRs pictures inside
+    .docx/.pptx/.pdf. The API calls this endpoint to append searchable
+    image text so figure labels are retrievable.
+    """
+    filename = Path(file.filename or "upload.bin").name
+    suffix = Path(filename).suffix.lower() or ".bin"
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty upload")
+    path = UPLOAD_ROOT / f"ocr-embed-{uuid.uuid4()}{suffix}"
+    path.write_bytes(content)
+    try:
+        ocr_config = {
+            "provider": (ocr_provider or OCR_PROVIDER).strip().lower(),
+            "endpoint": (ocr_endpoint or BAIDU_OCR_ENDPOINT).strip(),
+            "api_key": ocr_api_key or BAIDU_OCR_API_KEY,
+            "secret_key": ocr_secret_key or BAIDU_OCR_SECRET_KEY,
+        }
+        markdown, metadata = await ocr_embedded_images_fragments(path, ocr_config)
+        return {"markdown": markdown, **metadata}
+    except Exception as exc:
+        logger.error("Embedded-image OCR failed for %s: %s", filename, exc)
+        raise HTTPException(status_code=500, detail=f"Embedded-image OCR failed: {exc}")
+    finally:
+        path.unlink(missing_ok=True)
 
 if __name__ == "__main__":
     import uvicorn
