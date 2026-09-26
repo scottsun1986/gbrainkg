@@ -215,6 +215,10 @@ resolve_instance_params() {
     WEB_PORT=3200
     PUBLIC_PORT=20080
     DATA_DIR="/data/llmwiki"
+    # Snapshots live on the data disk: root is only 20G and filled up when
+    # .releases stayed under $PROD_REPO on /. Symlink keeps $PROD_REPO/.releases
+    # working for rollback/list.
+    RELEASES_DIR="/data/llmwiki/.releases"
     ENV_FILE="/home/ubuntu/.config/llmwiki/production.env"
     EXPECTED_REDIS_DB=0
     DB_NAME="llmwiki"
@@ -229,6 +233,7 @@ resolve_instance_params() {
     WEB_PORT=$((3200 + offset))
     PUBLIC_PORT=$((20080 + offset))
     DATA_DIR="/data/llmwiki-inst${INST_NUM}"
+    RELEASES_DIR="/data/llmwiki-inst${INST_NUM}/code/.releases"
     ENV_FILE="/home/ubuntu/.config/llmwiki/production-inst${INST_NUM}.env"
     EXPECTED_REDIS_DB=$offset
     DB_NAME="llmwiki_inst${INST_NUM}"
@@ -259,10 +264,35 @@ discover_instances() {
 #   tree.tar.gz   : 可用于非 git 恢复的完整可部署树
 take_pre_release_snapshot() {
   local ts="$1"
-  log "[$INST_NAME] Pre-release snapshot -> $PROD_REPO/.releases/$ts ..."
+  # Prefer the data-disk releases dir (set by resolve_instance_params). The
+  # $PROD_REPO/.releases path is kept as a symlink so rollback/list keep working.
+  local releases_dir="${RELEASES_DIR:-$PROD_REPO/.releases}"
+  log "[$INST_NAME] Pre-release snapshot -> $releases_dir/$ts ..."
   ssh "$PROD_HOST" "
     set -euo pipefail
-    REL_DIR='$PROD_REPO/.releases/$ts'
+    RELEASES_ROOT='$releases_dir'
+    REL_DIR='$releases_dir/$ts'
+    if ! mkdir -p \"\$RELEASES_ROOT\" 2>/dev/null; then
+      echo \"  ! cannot create \$RELEASES_ROOT, falling back to $PROD_REPO/.releases\"
+      RELEASES_ROOT='$PROD_REPO/.releases'
+      REL_DIR=\"\$RELEASES_ROOT/$ts\"
+      mkdir -p \"\$REL_DIR\"
+    fi
+    # Only manage a symlink when the data-disk dir differs from $PROD_REPO/.releases.
+    # Never ln a path onto itself (that creates a self-referential loop).
+    if [[ \"\$RELEASES_ROOT\" != '$PROD_REPO/.releases' ]]; then
+      if [[ -L '$PROD_REPO/.releases' ]]; then
+        # Repair a pre-existing self-loop or stale link.
+        ln -sfn \"\$RELEASES_ROOT\" '$PROD_REPO/.releases'
+      elif [[ ! -e '$PROD_REPO/.releases' ]]; then
+        ln -sfn \"\$RELEASES_ROOT\" '$PROD_REPO/.releases'
+      elif [[ -d '$PROD_REPO/.releases' ]]; then
+        # Legacy on-disk dir: move it to the data disk so / never fills again.
+        cp -a '$PROD_REPO/.releases/.' \"\$RELEASES_ROOT/\" 2>/dev/null || true
+        rm -rf '$PROD_REPO/.releases'
+        ln -sfn \"\$RELEASES_ROOT\" '$PROD_REPO/.releases'
+      fi
+    fi
     mkdir -p \"\$REL_DIR\"
 
     remote_git_sha=\$(git -C '$PROD_REPO' rev-parse HEAD 2>/dev/null || echo 'unknown')
@@ -304,6 +334,16 @@ take_pre_release_snapshot() {
 }
 JSON
     echo \"  - manifest: git=\$remote_git_sha api=\$api_version env=\${env_sha:0:12}… tree=\${tree_sha:0:12}…\"
+
+    # Keep only the newest 5 snapshots so root/data disks cannot fill up.
+    KEEP=5
+    mapfile -t snap_dirs < <(ls -1 \"\$RELEASES_ROOT\" 2>/dev/null | grep -E '^[0-9]{8,14}\$' | sort || true)
+    if (( \${#snap_dirs[@]} > KEEP )); then
+      for old in \"\${snap_dirs[@]:0:\${#snap_dirs[@]}-KEEP}\"; do
+        echo \"  - pruning old snapshot \$old\"
+        rm -rf \"\$RELEASES_ROOT/\$old\"
+      done
+    fi
   "
   LAST_SNAPSHOT_TS="$ts"
 }
@@ -518,6 +558,8 @@ deploy_single_instance() {
     set +a
     npx prisma generate
     npx prisma migrate deploy
+    # Reconcile the NOBYPASSRLS runtime role before restarting the API.
+    bash \"$PROD_REPO/scripts/reconcile-runtime-db-role.sh\" '$ENV_FILE'
 
     # 执行 GBrain 底座迁移，确保 pages / content_chunks 架构同步
     gbrain apply-migrations --yes || true
@@ -526,7 +568,7 @@ deploy_single_instance() {
     # 绝不使用可猜测的默认口令：未显式提供 ADMIN_INITIAL_PASSWORD 时跳过管理员
     # 初始化（账号已存在的常规发布场景本就不需要它），而不是创建 123456 管理员。
     if [[ -n \"\${ADMIN_INITIAL_PASSWORD:-}\" ]]; then
-      ADMIN_INITIAL_PASSWORD=\"\$ADMIN_INITIAL_PASSWORD\" node \"$PROD_REPO/apps/api/dist/bootstrap/production-bootstrap.js\"
+      ADMIN_INITIAL_PASSWORD=\"\$ADMIN_INITIAL_PASSWORD\" LLMWIKI_FORCE_MIGRATOR_URL=1 RLS_ENFORCE=0 node \"$PROD_REPO/apps/api/dist/bootstrap/production-bootstrap.js\"
     else
       echo '  - ADMIN_INITIAL_PASSWORD not provided: skipping admin password bootstrap (existing admins are untouched).'
     fi
@@ -565,12 +607,23 @@ deploy_single_instance() {
 
   # 3.5 健康巡检与 GBrain 状态校验
   # 失败时不自动回滚（避免误伤），只打印可直接执行的回滚命令并以非零退出。
+  # Nest 冷启动可达 10s+，固定 sleep 3 后单次 curl 会把未就绪误判为故障。
   log "[$INST_NAME] Verifying health..."
   local health_rc=0
   ssh "$PROD_HOST" "
     ok=1
-    curl -sf 'http://127.0.0.1:$API_PORT/open-api/spec.json' >/dev/null && echo '  - API (port $API_PORT): OK' || { echo '  - API (port $API_PORT): FAIL'; ok=0; }
-    curl -sf 'http://127.0.0.1:$WEB_PORT/' >/dev/null && echo '  - Web (port $WEB_PORT): OK' || { echo '  - Web (port $WEB_PORT): FAIL'; ok=0; }
+    api_ok=0
+    web_ok=0
+    for i in \$(seq 1 30); do
+      curl -sf 'http://127.0.0.1:$API_PORT/open-api/spec.json' >/dev/null && api_ok=1
+      curl -sf 'http://127.0.0.1:$WEB_PORT/' >/dev/null && web_ok=1
+      if [[ \"\$api_ok\" -eq 1 && \"\$web_ok\" -eq 1 ]]; then
+        break
+      fi
+      sleep 2
+    done
+    if [[ \"\$api_ok\" -eq 1 ]]; then echo '  - API (port $API_PORT): OK'; else echo '  - API (port $API_PORT): FAIL'; ok=0; fi
+    if [[ \"\$web_ok\" -eq 1 ]]; then echo '  - Web (port $WEB_PORT): OK'; else echo '  - Web (port $WEB_PORT): FAIL'; ok=0; fi
     domain=\$(grep -E '^WEB_ORIGIN=' '$ENV_FILE' | head -1 | sed -E 's|^WEB_ORIGIN=https?://([^:/]+).*|\1|' || echo '127.0.0.1')
     scheme=\$(grep -E '^WEB_ORIGIN=' '$ENV_FILE' | head -1 | grep -q '^WEB_ORIGIN=https://' && echo 'https' || echo 'http')
     curl -sk --resolve \"\$domain:$PUBLIC_PORT:127.0.0.1\" -o /dev/null -w \"  - Public Gateway (\$PUBLIC_PORT): HTTP %{http_code}\n\" \"\$scheme://\$domain:$PUBLIC_PORT/\" || echo \"  - Public Gateway (\$PUBLIC_PORT): skipped\"
