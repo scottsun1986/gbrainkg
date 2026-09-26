@@ -8,7 +8,7 @@ const mockPrisma = {
 // Separate mock for the interactive-transaction client so specs can make the
 // in-transaction version re-read diverge from the queue-time read.
 const tx = {
-  document: { findUnique: jest.fn(), update: jest.fn() },
+  document: { findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
   chunk: { deleteMany: jest.fn(), createMany: jest.fn() },
 };
 const mockReadFile = jest.fn();
@@ -32,6 +32,7 @@ describe('ingestion version fencing', () => {
     delete process.env.AUTO_GRAPH_EXTRACT_ENABLED;
     mockPrisma.document.update.mockResolvedValue({});
     mockPrisma.document.updateMany.mockResolvedValue({ count: 1 });
+    tx.document.updateMany.mockResolvedValue({ count: 1 });
     enrichQueue.add.mockResolvedValue({});
     mockPrisma.$transaction.mockImplementation(async (arg: unknown) => {
       if (typeof arg === 'function') return (arg as (client: typeof tx) => unknown)(tx);
@@ -67,7 +68,7 @@ describe('ingestion version fencing', () => {
       id: 'doc-1', kbId: 'kb-1', title: 'fixture.txt', rawFileOid: '/fixture.txt',
       status: 'uploaded', version: 3,
     });
-    tx.document.findUnique.mockResolvedValue({ version: 4 }); // re-uploaded while parsing
+    tx.document.updateMany.mockResolvedValue({ count: 0 }); // re-uploaded while parsing
     mockReadFile.mockResolvedValue(Buffer.from('正常的合同条款内容'.repeat(20)));
 
     const service = new IngestionService(
@@ -100,10 +101,10 @@ describe('ingestion version fencing', () => {
     const result = await service.processDocument('doc-1', 3);
 
     expect(result.status).toBe('indexing');
-    expect(tx.document.findUnique).toHaveBeenCalledWith({
-      where: { id: 'doc-1' },
-      select: { version: true },
-    });
+    expect(tx.document.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'doc-1', version: 3 },
+      data: expect.objectContaining({ mdPath: expect.stringMatching(/^doc-1\/content\.v3\.[a-f0-9]{64}\.md$/) }),
+    }));
     expect(tx.chunk.deleteMany).toHaveBeenCalledWith({ where: { documentId: 'doc-1' } });
     expect(tx.chunk.createMany).toHaveBeenCalledTimes(1);
     expect(enrichQueue.add).toHaveBeenCalledWith(

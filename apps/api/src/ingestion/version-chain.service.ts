@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { getPrismaClient } from '../prisma';
 import { PrismaClient } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
+import { withServiceContext } from '../db/tenant-context.service';
 
 export type VersionRelation = 'supersedes' | 'revision' | 'translation';
 
@@ -39,7 +40,7 @@ export class VersionChainService {
 
   async createVersion(input: PublishNewVersionInput) {
     const relation = input.relation ?? 'supersedes';
-    return this.prisma.$transaction(async (tx) => {
+    return withServiceContext(this.prisma, async (tx) => {
       const previous = input.documentId
         ? await tx.document.findUnique({ where: { id: input.documentId } })
         : input.sourceExternalId

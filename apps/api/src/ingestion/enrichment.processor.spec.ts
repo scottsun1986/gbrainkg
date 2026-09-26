@@ -1,7 +1,7 @@
 import { EnrichmentProcessor } from './enrichment.processor';
 
 const mockPrisma = {
-  document: { findUnique: jest.fn(), update: jest.fn() },
+  document: { findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
 };
 jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => mockPrisma) }));
 
@@ -21,6 +21,7 @@ describe('EnrichmentProcessor readiness gating', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockPrisma.document.updateMany.mockResolvedValue({ count: 1 });
     delete process.env.AUTO_GRAPH_EXTRACT_ENABLED;
     raptor.isEnabled.mockReturnValue(false);
     processor = new EnrichmentProcessor(
@@ -62,6 +63,15 @@ describe('EnrichmentProcessor readiness gating', () => {
     expect(readinessWrites).toEqual(['enriching', 'ready']);
   });
 
+  it('keeps a document degraded when a configured hybrid index is incomplete', async () => {
+    chunkEmbedding.isEnabled.mockReturnValue(true);
+    chunkEmbedding.embedDocumentChunks.mockResolvedValue({ requested: 10, embedded: 10, failed: 0, missing: 0, hybridMissing: 2 });
+    chunkEmbedding.documentCoverage.mockResolvedValue({ total: 10, missing: 0 });
+    await expect(processor.process(job({ documentId: 'doc-1', kbId: 'kb-1' })))
+      .rejects.toThrow(/hybrid index incomplete.*2 chunks/);
+    expect(mockPrisma.document.update.mock.calls.at(-1)?.[0].data.indexReadiness).toBe('degraded');
+  });
+
   it('keeps the legacy flow when the embedding service is disabled', async () => {
     chunkEmbedding.isEnabled.mockReturnValue(false);
 
@@ -95,5 +105,19 @@ describe('EnrichmentProcessor readiness gating', () => {
     await expect(
       processor.process(job({ documentId: 'doc-1', kbId: 'kb-1', expectedVersion: 4 })),
     ).resolves.toEqual({ readiness: 'ready' });
+    expect(mockPrisma.document.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'doc-1', version: 4 },
+      data: { indexReadiness: 'enriching' },
+    }));
+  });
+
+  it('stops when a version change races with the enriching state update', async () => {
+    chunkEmbedding.isEnabled.mockReturnValue(true);
+    mockPrisma.document.findUnique.mockResolvedValue({ version: 4 });
+    mockPrisma.document.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(processor.process(job({ documentId: 'doc-1', kbId: 'kb-1', expectedVersion: 4 })))
+      .resolves.toEqual({ readiness: 'superseded' });
+    expect(chunkEmbedding.embedDocumentChunks).not.toHaveBeenCalled();
   });
 });

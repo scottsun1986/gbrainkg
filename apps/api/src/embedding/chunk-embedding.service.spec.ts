@@ -9,12 +9,36 @@ const mockPrisma: any = {
 mockPrisma.$transaction.mockImplementation(async (callback: (client: any) => Promise<unknown>) =>
   callback(mockPrisma),
 );
-jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => mockPrisma) }));
+jest.mock('@prisma/client', () => ({
+  PrismaClient: jest.fn(() => mockPrisma),
+  Prisma: {
+    raw: (value: string) => ({ __raw: value }),
+    sql: (strings: TemplateStringsArray, ...values: unknown[]) => ({ strings, values }),
+    join: (values: unknown[], separator = ',') => ({ __join: values, separator }),
+  },
+}));
 
 /** Deterministic UUIDs so formatVectorValues accepts the fixture ids. */
 function chunkUuid(i: number): string {
   const hex = i.toString(16).padStart(12, '0');
   return `aaaaaaaa-bbbb-4ccc-8ddd-${hex}`;
+}
+
+/** Reconstruct SQL text from a tagged-template $executeRaw call. */
+function sqlOf(call: any[]): string {
+  const strings = call[0];
+  const parts: string[] = [];
+  const raw = Array.isArray(strings) ? strings : [String(strings)];
+  for (let i = 0; i < raw.length; i++) {
+    parts.push(String(raw[i] ?? ''));
+    const injected = call[i + 1];
+    if (injected && typeof injected === 'object' && typeof injected.__raw === 'string') {
+      parts.push(injected.__raw);
+    } else if (injected !== undefined && typeof injected !== 'object') {
+      parts.push(String(injected));
+    }
+  }
+  return parts.join('');
 }
 
 describe('ChunkEmbeddingService.embedDocumentChunks', () => {
@@ -37,6 +61,10 @@ describe('ChunkEmbeddingService.embedDocumentChunks', () => {
   const coverageCalls = () =>
     mockPrisma.$queryRaw.mock.calls.filter((call: any[]) =>
       String(call[0]).includes('FILTER (WHERE embedding IS NULL)'),
+    );
+  const batchUpdateCalls = () =>
+    mockPrisma.$executeRaw.mock.calls.filter((call: any[]) =>
+      sqlOf(call).includes('UPDATE "Chunk" AS c'),
     );
 
   beforeEach(() => {
@@ -69,9 +97,12 @@ describe('ChunkEmbeddingService.embedDocumentChunks', () => {
     // The cursor advanced past the last ord of the previous page.
     const cursors = batchCalls().map((call: any[]) => Number(call[2]));
     expect(cursors).toEqual([-1, 63, 127, 191]);
-    expect(mockPrisma.$executeRawUnsafe).toHaveBeenCalledTimes(4);
+    // Batch write is a single $executeRaw statement per write batch — no
+    // $executeRawUnsafe string-concat path remains.
+    expect(batchUpdateCalls()).toHaveLength(4);
+    expect(mockPrisma.$executeRawUnsafe).not.toHaveBeenCalled();
     // formatVectorValues output is UUID-typed and free of raw interpolation.
-    const sql = String(mockPrisma.$executeRawUnsafe.mock.calls[0][0]);
+    const sql = sqlOf(batchUpdateCalls()[0]);
     expect(sql).toContain('::uuid');
     expect(sql).toContain('::vector');
     expect(sql).not.toContain('chunk-');
@@ -143,7 +174,7 @@ describe('ChunkEmbeddingService.embedDocumentChunks', () => {
     });
   });
 
-  it('uses $executeRawUnsafe for high-performance batch vector updates when available', async () => {
+  it('uses a single parameterized $executeRaw batch vector update (no $executeRawUnsafe)', async () => {
     mockPrisma.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
       const sql = String(strings);
       if (sql.includes('ord >')) return rows.slice(0, 5);
@@ -153,16 +184,15 @@ describe('ChunkEmbeddingService.embedDocumentChunks', () => {
       return [];
     });
     embedMock.embed.mockImplementation(async (texts: string[]) => texts.map(() => [0.1, 0.2]));
-    mockPrisma.$executeRawUnsafe.mockResolvedValue(5);
+    mockPrisma.$executeRaw.mockResolvedValue(5);
 
     const result = await service.embedDocumentChunks('33333333-3333-4333-8333-333333333333');
 
-    expect(mockPrisma.$executeRawUnsafe).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.$executeRawUnsafe).toHaveBeenCalledWith(
-      expect.stringContaining('UPDATE "Chunk" AS c'),
-    );
+    expect(mockPrisma.$executeRawUnsafe).not.toHaveBeenCalled();
+    expect(batchUpdateCalls()).toHaveLength(1);
+    expect(sqlOf(batchUpdateCalls()[0])).toContain('UPDATE "Chunk" AS c');
     // Injected payloads are rejected by formatVectorValues before they reach SQL.
-    const sql = String(mockPrisma.$executeRawUnsafe.mock.calls[0][0]);
+    const sql = sqlOf(batchUpdateCalls()[0]);
     expect(sql).toContain(`('${chunkUuid(0)}'::uuid`);
     expect(result).toEqual({ requested: 5, embedded: 5, failed: 0, missing: 0 });
   });
@@ -179,13 +209,14 @@ describe('ChunkEmbeddingService.embedDocumentChunks', () => {
       return [];
     });
     embedMock.embed.mockResolvedValue([[0.1, 0.2]]);
-    mockPrisma.$executeRawUnsafe.mockResolvedValue(1);
     mockPrisma.$executeRaw.mockResolvedValue(1);
+    mockPrisma.$executeRawUnsafe.mockResolvedValue(1);
 
     const result = await service.embedDocumentChunks('33333333-3333-4333-8333-333333333333');
 
-    // formatVectorValues throws on the non-uuid id, so the unsafe batch path is
+    // formatVectorValues throws on the non-uuid id, so the batch VALUES path is
     // never taken — no interpolated payload can reach SQL.
+    expect(batchUpdateCalls()).toHaveLength(0);
     expect(mockPrisma.$executeRawUnsafe).not.toHaveBeenCalled();
     // Per-row fallback keeps the id as a bound parameter (not string-built).
     expect(result.requested).toBe(1);

@@ -378,7 +378,7 @@ export class IngestionController {
       );
     const document = await this.prisma.document.findFirst({
       where: { id: docId, kbId },
-      select: { id: true, rawFileOid: true },
+      select: { id: true, rawFileOid: true, objectKey: true, storageProvider: true },
     });
     if (!document) throw new NotFoundException("Document not found.");
     // Repair the BM25 corpus statistics BEFORE the row (and its cascading
@@ -395,6 +395,22 @@ export class IngestionController {
       this.graphRagService?.removeDocumentFromGraph(kbId, docId),
       this.raptorService?.removeDocument(kbId, docId),
     ]);
+    // Object-storage delete first keys off objectKey (MinIO or local object
+    // namespace); rawFileOid removal below covers the parser's local copy.
+    if (document.objectKey) {
+      const provider = (document.storageProvider === "minio" ? "minio" : "local") as
+        | "minio"
+        | "local";
+      await this.objectStorage
+        .delete(document.objectKey, provider)
+        .catch((err) => {
+          this.logger.warn(
+            `Object storage delete failed for ${document.objectKey}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        });
+    }
     if (document.rawFileOid)
       await unlink(document.rawFileOid).catch(() => undefined);
     await rm(join(this.uploadRoot, docId), { recursive: true, force: true }).catch(() => undefined);

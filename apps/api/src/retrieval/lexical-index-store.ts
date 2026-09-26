@@ -24,6 +24,7 @@
  *  3. Okapi BM25 is then computed in SQL with the exact corpus df (from
  *     LexicalTermStat) and exact N / avgdl (from KbLexicalStat).
  */
+import { recordFailopen } from '../observability/failopen';
 import { lexicalLength, tokenize } from './lexical-tokenizer';
 import { indexableChunkText } from '../ingestion/chunk-text';
 import { withServiceContext } from '../db/tenant-context.service';
@@ -623,8 +624,15 @@ export async function searchLexicalBm25(
   limit: number,
   options: LexicalSearchOptions = {},
 ): Promise<LexicalHit[]> {
-  const { hits } = await searchLexicalBm25Detailed(prisma, scope, terms, limit, options);
-  return hits;
+  try {
+    const { hits } = await searchLexicalBm25Detailed(prisma, scope, terms, limit, options);
+    return hits;
+  } catch (err) {
+    // Fail-open: BM25 downgrades to "no hits"; the request path falls back to
+    // the candidate pool. Must be counted or production is blind to lexical loss.
+    recordFailopen('lexical');
+    throw err;
+  }
 }
 
 export async function searchLexicalBm25Detailed(
@@ -649,10 +657,7 @@ export async function searchLexicalBm25Detailed(
   const k1 = Number(options.k1 ?? process.env.LEXICAL_BM25_K1 ?? 1.2);
   const b = Number(options.b ?? process.env.LEXICAL_BM25_B ?? 0.75);
   const timeoutMs = Math.max(1, Number(options.timeoutMs ?? process.env.LEXICAL_STATEMENT_TIMEOUT_MS ?? 2500));
-  const window = Math.max(
-    0,
-    Math.floor(Number(options.window ?? process.env.LEXICAL_CANDIDATE_WINDOW ?? 2000)),
-  );
+  const window = Math.max(0, Math.floor(Number(options.window ?? process.env.LEXICAL_CANDIDATE_WINDOW ?? 0)));
   const maxDfRatio = Number(options.maxDfRatio ?? process.env.LEXICAL_MAX_DF_RATIO ?? 0.5);
   const candidateBudget = Math.max(
     100,
@@ -736,6 +741,8 @@ export async function searchLexicalBm25Detailed(
           AND l."kbId" = ANY(${scope}::uuid[])
           AND d.status = 'published'
           AND l."tsv" @@ q.tsq
+        -- Exact BM25 must see every matching chunk. A nonzero window is an
+        -- explicitly approximate, latency-oriented mode.
         ORDER BY rank DESC, l."chunkId"
         LIMIT ${window > 0 ? window : null}
       ),

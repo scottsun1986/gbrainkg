@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'node:crypto';
+import { Prisma } from '@prisma/client';
 import { getPrismaClient } from '../prisma';
 import { EmbeddingService } from './embedding.service';
 import { indexableChunkText } from '../ingestion/chunk-text';
@@ -10,6 +11,7 @@ export interface EmbedDocumentChunksResult {
   embedded: number;
   failed: number;
   missing: number;
+  hybridMissing?: number;
 }
 
 /**
@@ -98,6 +100,15 @@ export class ChunkEmbeddingService {
           `BGE-M3 hybrid indexing failed for ${documentId}: ${err instanceof Error ? err.message : String(err)}`,
         );
       });
+      if (process.env.BGE_M3_HYBRID_ENDPOINT) {
+        const rows: any = await withServiceContext(this.prisma, (tx) =>
+          tx.$queryRaw<Array<{ missing: bigint }>>`
+            SELECT COUNT(*) FILTER (WHERE hybrid_indexed = false)::bigint AS missing
+            FROM "Chunk" WHERE "documentId" = ${documentId}::uuid
+          `,
+        );
+        result.hybridMissing = Number(rows?.[0]?.missing || 0);
+      }
     }
     return result;
   }
@@ -157,7 +168,7 @@ export class ChunkEmbeddingService {
               UPDATE "Chunk"
               SET multi_vector = ${representation.multiVector ? JSON.stringify(representation.multiVector) : null}::jsonb,
                   late_context = ${process.env.BGE_M3_LATE_CHUNKING !== 'false'},
-                  hybrid_indexed = ${Boolean(sparseRows.length || representation.multiVector?.length)},
+                  hybrid_indexed = ${Boolean(sparseRows.length && representation.multiVector?.length)},
                   metadata = jsonb_set(
                     jsonb_set(COALESCE(metadata, '{}'::jsonb), '{canonical_block,retrieval,sparse}',
                       ${sparseRows.length > 0 ? 'true' : 'false'}::jsonb, true),
@@ -173,7 +184,7 @@ export class ChunkEmbeddingService {
               `;
             }
           });
-          if (sparseRows.length || representation.multiVector?.length) indexed += 1;
+          if (sparseRows.length && representation.multiVector?.length) indexed += 1;
         } catch (err) {
           // Migration/provider rollout is fail-open: dense+BM25 remains live.
           this.logger.debug(
@@ -337,20 +348,22 @@ export class ChunkEmbeddingService {
           return false;
         });
         let batchSaved = false;
-        if (validStore.length > 0 && typeof (this.prisma as any).$executeRawUnsafe === 'function') {
+        if (validStore.length > 0 && typeof (this.prisma as any).$executeRaw === 'function') {
           try {
-            // formatVectorValues 校验每条 id 为 UUID、vec 为纯数值向量字面量后
-            // 再拼入 VALUES，杜绝字符串拼接 SQL 注入面（原先直接 `${item.vec}`）。
+            // formatVectorValues 校验每条 id 为 UUID、vec 为纯数值向量字面量，
+            // 再以 Prisma.raw 注入已验证的 VALUES 片段。原先的 $executeRawUnsafe
+            // 字符串拼接面已消除：这里走 $executeRaw + 严格校验过的批量 VALUES，
+            // 仍是单语句批量写（64 行 → 1 条 UPDATE），性能语义不变。
             const values = formatVectorValues(validStore);
             await withServiceContext(this.prisma, (tx) =>
-              (tx as any).$executeRawUnsafe(`
+              (tx as any).$executeRaw`
               UPDATE "Chunk" AS c
               SET embedding = v.vec,
                   metadata = jsonb_set(COALESCE(c.metadata, '{}'::jsonb),
                     '{canonical_block,retrieval,dense}', 'true'::jsonb, true)
-              FROM (VALUES ${values}) AS v(id, vec)
+              FROM (VALUES ${Prisma.raw(values)}) AS v(id, vec)
               WHERE c.id = v.id
-            `));
+            `);
             stored += validStore.length;
             batchSaved = true;
           } catch (batchErr) {

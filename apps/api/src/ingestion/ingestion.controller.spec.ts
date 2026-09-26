@@ -30,6 +30,8 @@ describe('IngestionController', () => {
     jest.clearAllMocks();
     mockObjectStorage = {
       put: jest.fn().mockResolvedValue({ provider: 'local', objectKey: 'raw/test', size: 1, sha256: 'x' }),
+      delete: jest.fn().mockResolvedValue(undefined),
+      getStream: jest.fn(),
     };
 
     mockPermissionService = {
@@ -156,6 +158,75 @@ describe('IngestionController', () => {
       await expect(
         controller.uploadDocument('kb-1', file, {} as any),
       ).rejects.toThrow(/未包含有效且受支持的文档/);
+    });
+  });
+
+  describe('deleteDocument object-storage path', () => {
+    // deleteDocument requires isUuid(kbId) && isUuid(docId); permissions and
+    // the kb row are re-pointed at the same UUID for these cases.
+    const kbId = '11111111-1111-4111-8111-111111111111';
+    const docId = '22222222-2222-4222-8222-222222222222';
+
+    beforeEach(() => {
+      mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue([kbId]);
+      mockPrisma.knowledgeBase.findUnique.mockResolvedValue({
+        id: kbId,
+        type: 'department',
+        ownerUserId: 'user-1',
+        orgNodeId: null,
+        status: 'active',
+      });
+    });
+
+    it('persists objectKey/storageProvider on upload', async () => {
+      mockObjectStorage.put.mockResolvedValue({
+        provider: 'minio',
+        objectKey: `raw/${docId}/abc`,
+        size: 5,
+        sha256: 'deadbeef',
+      });
+      const file = {
+        originalname: 'readme.md',
+        buffer: Buffer.from('# Hello Knowledge Base'),
+        size: 22,
+      };
+      const res = await controller.uploadDocument(kbId, file, {} as any);
+      expect(res.documents[0].objectKey).toBe(`raw/${docId}/abc`);
+      expect(res.documents[0].storageProvider).toBe('minio');
+    });
+
+    it('deletes through objectStorage.delete(objectKey, provider) then local copy', async () => {
+      mockPrisma.document.findFirst.mockResolvedValue({
+        id: docId,
+        rawFileOid: `/tmp/uploads/${docId}/readme.md`,
+        objectKey: `raw/${docId}/abc`,
+        storageProvider: 'minio',
+      });
+      mockPrisma.document.delete.mockResolvedValue({ id: docId });
+      const order: string[] = [];
+      mockObjectStorage.delete.mockImplementation(async () => {
+        order.push('objectStorage');
+      });
+
+      const res = await controller.deleteDocument(kbId, docId, {} as any);
+
+      expect(res).toEqual({ ok: true, documentId: docId });
+      expect(mockObjectStorage.delete).toHaveBeenCalledWith(`raw/${docId}/abc`, 'minio');
+      expect(order).toContain('objectStorage');
+    });
+
+    it('falls back to local delete when objectKey is absent', async () => {
+      mockPrisma.document.findFirst.mockResolvedValue({
+        id: docId,
+        rawFileOid: `/tmp/uploads/${docId}/readme.md`,
+        objectKey: null,
+        storageProvider: 'local',
+      });
+      mockPrisma.document.delete.mockResolvedValue({ id: docId });
+
+      await controller.deleteDocument(kbId, docId, {} as any);
+
+      expect(mockObjectStorage.delete).not.toHaveBeenCalled();
     });
   });
 });

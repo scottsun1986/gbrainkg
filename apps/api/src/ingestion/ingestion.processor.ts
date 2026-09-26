@@ -1,5 +1,7 @@
-import { Processor, WorkerHost } from "@nestjs/bullmq";
-import { Job } from "bullmq";
+import { InjectQueue, Processor, WorkerHost } from "@nestjs/bullmq";
+import { Optional } from "@nestjs/common";
+import { Job, Queue } from "bullmq";
+import { setIngestionQueueDepth } from "../observability/failopen";
 import { IngestionService } from "./ingestion.service";
 
 // A layout-heavy PDF can legitimately consume several minutes. Two workers
@@ -9,11 +11,28 @@ import { IngestionService } from "./ingestion.service";
   concurrency: Number(process.env.INGESTION_CONCURRENCY || 2),
 })
 export class IngestionProcessor extends WorkerHost {
-  constructor(private readonly ingestionService: IngestionService) {
+  constructor(
+    private readonly ingestionService: IngestionService,
+    @Optional() @InjectQueue("ingestion-queue") private readonly queue?: Queue,
+  ) {
     super();
   }
 
+  /** Report waiting+active as ingestion_queue_depth (metrics must never break the job). */
+  private async reportQueueDepth(): Promise<void> {
+    try {
+      if (!this.queue || typeof this.queue.getJobCounts !== "function") return;
+      const counts = await this.queue.getJobCounts("waiting", "active", "delayed");
+      setIngestionQueueDepth(
+        Number(counts.waiting || 0) + Number(counts.active || 0) + Number(counts.delayed || 0),
+      );
+    } catch {
+      /* ignore */
+    }
+  }
+
   async process(job: Job<{ documentId: string; expectedVersion: number }>) {
+    await this.reportQueueDepth();
     try {
       return await this.ingestionService.processDocument(
         job.data.documentId,
@@ -29,6 +48,8 @@ export class IngestionProcessor extends WorkerHost {
         );
       }
       throw error;
+    } finally {
+      await this.reportQueueDepth();
     }
   }
 }

@@ -467,6 +467,7 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
             this.uploadRoot,
             document.id,
             document.chunks,
+            document.mdPath,
           ),
           sourceFile: document.title,
           kbId: document.kbId,

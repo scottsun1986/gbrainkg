@@ -34,11 +34,7 @@ describe('BGE-M3 hybrid retrieval', () => {
     } as any;
     mockPrisma.$queryRaw.mockResolvedValueOnce([
       {
-        chunkId: 'c1', tokenId: 7, weight: 0.8, documentId: 'd1', kbId: 'k1', ord: 0,
-        content: 'source text', metadata: {}, docTitle: 'doc', docVersion: 1,
-      },
-      {
-        chunkId: 'c1', tokenId: 9, weight: 0.4, documentId: 'd1', kbId: 'k1', ord: 0,
+        chunkId: 'c1', sparseScore: 1.0, documentId: 'd1', kbId: 'k1', ord: 0,
         content: 'source text', metadata: {}, docTitle: 'doc', docVersion: 1,
       },
     ]);

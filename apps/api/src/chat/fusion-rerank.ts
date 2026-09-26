@@ -552,6 +552,7 @@ export class FusionRerankService {
         platformRerankApplied: true,
       };
     } catch (error) {
+      recordFailopen("rerank");
       this.logger.warn(`Rerank unavailable; retaining GBrain ranking: ${error instanceof Error ? error.message : String(error)}`);
       return result;
     }

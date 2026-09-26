@@ -8,6 +8,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getPrismaClient } from '../prisma';
+import { withServiceContext } from '../db/tenant-context.service';
 import { IngestionService } from '../ingestion/ingestion.service';
 import { GitConnector } from './git-connector';
 import { FeishuConnector } from './feishu-connector';
@@ -118,14 +119,14 @@ export class ConnectorService {
   async sync(sourceId: string): Promise<SyncRunSummary> {
     const source = await this.getSource(sourceId);
     const connector = this.getConnector(source.kind);
-    const run = await this.prisma.connectorRun.create({
+    const run = await withServiceContext(this.prisma, (tx) => tx.connectorRun.create({
       data: {
         id: randomUUID(),
         sourceId,
         status: 'running',
         startedAt: new Date(),
       },
-    });
+    }));
 
     let fetched = 0;
     let ingested = 0;
@@ -158,7 +159,7 @@ export class ConnectorService {
 
       const status = failed > 0 ? 'failed' : 'success';
       const finishedAt = new Date();
-      await this.prisma.connectorRun.update({
+      await withServiceContext(this.prisma, (tx) => tx.connectorRun.update({
         where: { id: run.id },
         data: {
           status,
@@ -168,7 +169,7 @@ export class ConnectorService {
           failed,
           detail: { processed, skipped } as never,
         },
-      });
+      }));
       await this.prisma.connectorSource.update({
         where: { id: sourceId },
         data: {
@@ -189,7 +190,7 @@ export class ConnectorService {
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await this.prisma.connectorRun.update({
+      await withServiceContext(this.prisma, (tx) => tx.connectorRun.update({
         where: { id: run.id },
         data: {
           status: 'failed',
@@ -200,7 +201,7 @@ export class ConnectorService {
           error: message,
           detail: { processed, skipped } as never,
         },
-      });
+      }));
       await this.prisma.connectorSource.update({
         where: { id: sourceId },
         data: { lastError: message, lastSyncAt: new Date() },

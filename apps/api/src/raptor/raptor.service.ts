@@ -110,12 +110,12 @@ export class RaptorService {
 
   /** Remove document-scoped nodes and immediately invalidate the KB-global summary. */
   async removeDocument(kbId: string, documentId: string): Promise<void> {
-    await (this.prisma as any).$transaction([
-      (this.prisma as any).raptorNode.deleteMany({ where: { documentId } }),
+    await (this.prisma as any).$transaction(async (tx: any) => {
+      await tx.raptorNode.deleteMany({ where: { documentId } });
       // Level-2 content contains facts from every Level-1 document and must
       // not survive deletion of any contributor.
-      (this.prisma as any).raptorNode.deleteMany({ where: { kbId, level: 2 } }),
-    ]);
+      await tx.raptorNode.deleteMany({ where: { kbId, level: 2 } });
+    });
     this.scheduleBuildKbGlobalTree(kbId);
   }
 
@@ -190,9 +190,9 @@ export class RaptorService {
 
     // Rebuild is wholesale per document: the RaptorNode table has no natural
     // unique key, so delete this document's tree and re-insert it atomically.
-    await (this.prisma as any).$transaction([
-      (this.prisma as any).raptorNode.deleteMany({ where: { documentId } }),
-      (this.prisma as any).raptorNode.createMany({
+    await (this.prisma as any).$transaction(async (tx: any) => {
+      await tx.raptorNode.deleteMany({ where: { documentId } });
+      await tx.raptorNode.createMany({
         data: [
           ...sectionNodes.map((node) => ({
             kbId,
@@ -218,8 +218,8 @@ export class RaptorService {
             },
           },
         ],
-      }),
-    ]);
+      });
+    });
     // Vectorize the fresh summary nodes so search() can use cosine recall
     // instead of keyword containment. Fail-open: keyword search keeps working
     // when the embedding provider is unavailable.
@@ -483,9 +483,9 @@ export class RaptorService {
       );
 
       const title = '全库业务架构与制度演进全景';
-      const [, createdGlobal] = await (this.prisma as any).$transaction([
-        (this.prisma as any).raptorNode.deleteMany({ where: { kbId, level: 2 } }),
-        (this.prisma as any).raptorNode.create({
+      const createdGlobal = await (this.prisma as any).$transaction(async (tx: any) => {
+        await tx.raptorNode.deleteMany({ where: { kbId, level: 2 } });
+        return tx.raptorNode.create({
           data: {
             kbId,
             documentId: null,
@@ -500,8 +500,8 @@ export class RaptorService {
               tokenCount: estimateTokens(summary),
             },
           },
-        }),
-      ]);
+        });
+      });
 
       this.logger.log(`RAPTOR built Level 2 KB global tree for KB ${kbId} (covered ${docNodes.length} docs).`);
       if (this.embeddingService?.isEnabled() && createdGlobal?.id) {

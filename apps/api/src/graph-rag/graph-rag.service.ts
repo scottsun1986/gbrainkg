@@ -1581,6 +1581,7 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
           this.logger.debug(
             `Graph 2-hop expansion failed (returning 1-hop only): ${err instanceof Error ? err.message : String(err)}`,
           );
+          recordFailopen('graph');
         }
       }
     }
@@ -1800,6 +1801,7 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
       this.logger.debug(
         `Graph chunk-arm lookup failed: ${err instanceof Error ? err.message : String(err)}`,
       );
+      recordFailopen('graph');
       return [];
     }
   }
@@ -1851,6 +1853,7 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
         }
       } catch (err) {
         this.logger.debug(`Community vector search unavailable: ${err instanceof Error ? err.message : String(err)}`);
+        recordFailopen('graph');
       }
     }
 
@@ -1961,6 +1964,7 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
       return { probes: probes.slice(0, maxProbes), communityIds, seedEntities };
     } catch (err) {
       this.logger.debug(`DRIFT planning unavailable: ${err instanceof Error ? err.message : String(err)}`);
+      recordFailopen('graph');
       return empty;
     }
   }

@@ -3,6 +3,7 @@ import { getPrismaClient } from '../prisma';
 import { ModelConfigService } from '../model-config.service';
 import { EmbeddingService } from '../embedding/embedding.service';
 import { withServiceContext } from '../db/tenant-context.service';
+import { recordFailopen } from '../observability/failopen';
 
 @Injectable()
 export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
@@ -138,6 +139,7 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
       return null;
     } catch (err) {
       this.logger.error(`Lookup error: ${err instanceof Error ? err.message : String(err)}`);
+      recordFailopen('semantic_cache');
       return null;
     }
   }

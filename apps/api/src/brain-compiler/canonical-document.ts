@@ -40,7 +40,8 @@ export async function readCanonicalDocument(
   uploadRoot: string,
   documentId: string,
   chunks: StoredChunk[],
+  mdPath?: string | null,
 ): Promise<string> {
-  const markdown = await readFile(join(uploadRoot, documentId, 'content.md'), 'utf8').catch(() => '');
+  const markdown = await readFile(join(uploadRoot, mdPath || `${documentId}/content.md`), 'utf8').catch(() => '');
   return markdown.trim() || mergeStoredChunks(chunks);
 }

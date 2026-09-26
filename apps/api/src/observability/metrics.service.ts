@@ -235,6 +235,8 @@ export class MetricsService {
     );
     metricsRegistry.defineCounter('retrieval_failopen_total', 'Retrieval fail-open events by channel');
     metricsRegistry.defineGauge('ingestion_queue_depth', 'Ingestion queue backlog');
+    // Always publish a sample (0 until a worker reports) so the series is queryable.
+    metricsRegistry.setGauge('ingestion_queue_depth', 0);
     metricsRegistry.defineGauge('process_uptime_seconds', 'Process uptime in seconds');
     metricsRegistry.defineCounter('llm_errors_total', 'Upstream LLM/embedding/rerank provider errors');
     metricsRegistry.defineCounter('embedding_failures_total', 'Embedding batch/item failures');

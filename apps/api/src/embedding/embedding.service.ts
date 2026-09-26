@@ -65,8 +65,24 @@ export class EmbeddingService {
     return process.env.CHUNK_EMBEDDINGS_ENABLED !== 'false';
   }
 
+  /**
+   * BGE-M3 sparse / late-interaction arms. Default ON: the sparse and
+   * ColBERT paths are fail-open (missing endpoint or dense-only gateway
+   * simply leaves those channels empty and records `recordFailopen`), so the
+   * safe default is to try. Set `BGE_M3_HYBRID_ENABLED=false` to opt out.
+   */
   isHybridEnabled(): boolean {
-    return process.env.BGE_M3_HYBRID_ENABLED === 'true';
+    return process.env.BGE_M3_HYBRID_ENABLED !== 'false';
+  }
+
+  /**
+   * Whether a hybrid-capable endpoint is configured at all. Used by the
+   * retrieval sparse/late arms to distinguish "feature disabled" from
+   * "feature enabled but no endpoint" (the latter is a fail-open event).
+   */
+  hasHybridEndpoint(): boolean {
+    if (process.env.BGE_M3_HYBRID_ENDPOINT) return true;
+    return Boolean(process.env.EMBEDDING_BASE_URL);
   }
 
   async getConfig(): Promise<EmbeddingProviderConfig | null> {
@@ -188,17 +204,30 @@ export class EmbeddingService {
       return texts.map(() => ({ dense: null, sparse: null, multiVector: null }));
     }
     const config = await this.getConfig();
-    if (!config) return texts.map(() => ({ dense: null, sparse: null, multiVector: null }));
-    const endpoint = String(process.env.BGE_M3_HYBRID_ENDPOINT || `${config.baseUrl}/embeddings`);
+    if (!config && !process.env.BGE_M3_HYBRID_ENDPOINT) {
+      // No embedding route and no dedicated hybrid endpoint: fail open with
+      // empty representations (dense+BM25 stays live) and count the event.
+      const { recordFailopen } = await import('../observability/failopen');
+      recordFailopen('sparse');
+      return texts.map(() => ({ dense: null, sparse: null, multiVector: null }));
+    }
+    const endpoint = String(
+      process.env.BGE_M3_HYBRID_ENDPOINT || `${config?.baseUrl || ''}/embeddings`,
+    );
+    if (!process.env.BGE_M3_HYBRID_ENDPOINT && !config?.baseUrl) {
+      const { recordFailopen } = await import('../observability/failopen');
+      recordFailopen('sparse');
+      return texts.map(() => ({ dense: null, sparse: null, multiVector: null }));
+    }
     try {
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+          ...(config?.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
         },
         body: JSON.stringify({
-          model: config.modelName,
+          model: config?.modelName || process.env.EMBEDDING_MODEL || 'BAAI/bge-m3',
           input: texts.map((text) => String(text || '').slice(0, this.maxChars)),
           input_type: inputType,
           return_dense: true,
@@ -240,7 +269,7 @@ export class EmbeddingService {
               .filter((vector: number[]) => vector.length > 0 && vector.every(Number.isFinite))
           : null;
         output[index] = {
-          dense: dense && dense.length && (!config.dimensions || dense.length === config.dimensions) ? dense : null,
+          dense: dense && dense.length && (!config?.dimensions || dense.length === config.dimensions) ? dense : null,
           sparse: sparse?.indices.length ? sparse : null,
           multiVector: multiVector?.length ? multiVector : null,
         };

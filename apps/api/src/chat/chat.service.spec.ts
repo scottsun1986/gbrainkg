@@ -143,6 +143,20 @@ describe("ChatService", () => {
     jest.clearAllMocks();
   });
 
+  it('filters inventory and fallback search results by document ACL before returning them', async () => {
+    mockPrisma.document.findMany.mockResolvedValue([
+      { id: 'public-doc', kbId: 'kb-1', lifecycleStatus: 'active' },
+      { id: 'restricted-doc', kbId: 'kb-1', lifecycleStatus: 'active' },
+    ]);
+    jest.spyOn((service as any).documentAclService, 'filterReadableDocuments')
+      .mockResolvedValue(new Set(['public-doc']));
+    const results = await (service as any).filterSearchResultsForUser('user-1', ['kb-1'], [
+      { documentId: 'public-doc', evidence: 'visible' },
+      { documentId: 'restricted-doc', evidence: 'secret' },
+    ]);
+    expect(results).toEqual([{ documentId: 'public-doc', evidence: 'visible' }]);
+  });
+
   it("should stream chat and trigger lazy compile if topic is dirty", async () => {
     // 权限校验 mock
     mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(["kb-1"]);

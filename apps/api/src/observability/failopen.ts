@@ -15,6 +15,7 @@ export type FailChannel =
   | 'weknora'
   | 'shadow'
   | 'section_rescue'
+  | 'semantic_cache'
   | 'embedding'
   | 'ingestion'
   | 'other';

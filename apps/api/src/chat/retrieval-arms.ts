@@ -1,4 +1,5 @@
 import { filterRescueHits, pickRescueTargets, RescueChunk } from './section-rescue';
+import { recordFailopen } from '../observability/failopen';
 import { Logger } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import type { BrainRepoAdapter } from "@llmwiki/gbrain-adapter";
@@ -13,6 +14,7 @@ import type { EmbeddingService } from "../embedding/embedding.service";
 import type { GraphRagService } from "../graph-rag/graph-rag.service";
 import type { RaptorService } from "../raptor/raptor.service";
 import type { LexicalIndexService } from "../retrieval/lexical-index.service";
+import type { RetrievalVariantParams } from "../experiments/retrieval-variants";
 import type { HybridRetrievalService } from "../retrieval/hybrid-retrieval.service";
 
 export function stripInvalidCitationMarkers(value: string, citationCount: number): string {
@@ -1098,6 +1100,7 @@ export class RetrievalArmsService {
     if (!this.prisma || !(this.prisma as any).chunk?.findMany) return [];
     const targets = pickRescueTargets(query, citations);
     if (!targets.length) return [];
+    try {
     const anchors = filterRescueHits(query, [
       {
         id: '__probe__',
@@ -1169,6 +1172,11 @@ export class RetrievalArmsService {
       );
     }
     return out;
+    } catch (err) {
+      // section_rescue fail-open: drop rescue hits and let the candidate pool stand.
+      recordFailopen('section_rescue');
+      return [];
+    }
   }
 
   async searchChunksFallback(
@@ -1176,6 +1184,7 @@ export class RetrievalArmsService {
     query: string,
     limit = 15,
     extraQueries: string[] = [],
+    variant?: RetrievalVariantParams,
   ): Promise<
     Array<{
       documentId: string | null;
@@ -1197,7 +1206,7 @@ export class RetrievalArmsService {
       return [];
     }
 
-    const subQueryCacheKey = extraQueries.length === 0
+    const subQueryCacheKey = extraQueries.length === 0 && !variant
       ? `${scope.slice().sort().join(",")}:${query.trim().toLowerCase()}:${limit}`
       : null;
     if (subQueryCacheKey) {
@@ -1705,14 +1714,14 @@ export class RetrievalArmsService {
         .forEach(([id], index) => lateRankMap.set(id, index + 1));
 
       // Reciprocal Rank Fusion (RRF, k=60) with structural multipliers
-      const rrfK = Number(process.env.RETRIEVAL_RRF_K || 60);
+      const rrfK = Number(variant?.rrfK ?? process.env.RETRIEVAL_RRF_K ?? 60);
       // The graph channel is a third, independent ranking signal. It is weighted
       // slightly below lexical/vector because graph recall is precision-limited
       // by extraction quality, but a chunk found only by the graph now competes
       // on rank instead of being appended after the fact.
-      const graphRrfWeight = Number(process.env.RETRIEVAL_GRAPH_RRF_WEIGHT || 0.8);
-      const sparseRrfWeight = Number(process.env.RETRIEVAL_BGE_M3_SPARSE_RRF_WEIGHT || 0.9);
-      const lateRrfWeight = Number(process.env.RETRIEVAL_BGE_M3_LATE_RRF_WEIGHT || 1.0);
+      const graphRrfWeight = Number(variant?.graphWeight ?? process.env.RETRIEVAL_GRAPH_RRF_WEIGHT ?? 0.8);
+      const sparseRrfWeight = Number(variant?.sparseWeight ?? process.env.RETRIEVAL_BGE_M3_SPARSE_RRF_WEIGHT ?? 0.9);
+      const lateRrfWeight = Number(variant?.lateWeight ?? process.env.RETRIEVAL_BGE_M3_LATE_RRF_WEIGHT ?? 1.0);
       const scored = allFound.map((c: any) => {
         let rrfScore = 0;
         const lRank = lexicalRankMap.get(c.id);

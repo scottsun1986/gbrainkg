@@ -20,14 +20,19 @@ interface MinioConfig {
   accessKey: string;
   secretKey: string;
   bucket: string;
+  region: string;
 }
 
 /**
  * 原始文件对象存储。优先 MinIO（S3 v4 签名，无 SDK 依赖），否则本地目录。
  * 路径穿越防护：objectKey 生成自 UUID，解析时 normalize + root 前缀校验。
+ *
+ * 缺 MINIO_ENDPOINT / MINIO_ACCESS_KEY / MINIO_SECRET_KEY 时明确 fallback
+ * local 并 warn 一次（按进程），避免生产静默落盘却以为已进对象存储。
  */
 @Injectable()
 export class ObjectStorageService {
+  private static warnedLocalFallback = false;
   private readonly logger = new Logger(ObjectStorageService.name);
   private readonly localRoot: string;
   private readonly minio: MinioConfig | null;
@@ -39,19 +44,40 @@ export class ObjectStorageService {
     const endpoint = process.env.MINIO_ENDPOINT || '';
     const accessKey = process.env.MINIO_ACCESS_KEY || '';
     const secretKey = process.env.MINIO_SECRET_KEY || '';
-    if (endpoint && accessKey && secretKey) {
+    const missing = [
+      !endpoint && 'MINIO_ENDPOINT',
+      !accessKey && 'MINIO_ACCESS_KEY',
+      !secretKey && 'MINIO_SECRET_KEY',
+    ].filter(Boolean) as string[];
+    if (missing.length === 0) {
       const url = new URL(endpoint.includes('://') ? endpoint : `http://${endpoint}`);
+      const useSsl = url.protocol === 'https:';
+      const port = Number(url.port || (useSsl ? 443 : 80));
       this.minio = {
         endpoint: url.hostname,
-        port: Number(url.port || (url.protocol === 'https:' ? 443 : 80)),
-        useSsl: url.protocol === 'https:',
+        port,
+        useSsl,
         accessKey,
         secretKey,
         bucket: process.env.MINIO_BUCKET || 'llmwiki-raw',
+        region: process.env.MINIO_REGION || 'us-east-1',
       };
     } else {
       this.minio = null;
+      if (!ObjectStorageService.warnedLocalFallback) {
+        ObjectStorageService.warnedLocalFallback = true;
+        this.logger.warn(
+          `Object storage is falling back to local disk (${this.localRoot}); ` +
+            `missing ${missing.join(', ')}. ` +
+            'Set MINIO_ENDPOINT + MINIO_ACCESS_KEY + MINIO_SECRET_KEY to enable MinIO/S3.',
+        );
+      }
     }
+  }
+
+  /** Test hook: clear the one-shot fallback warning latch. */
+  static resetFallbackWarning(): void {
+    ObjectStorageService.warnedLocalFallback = false;
   }
 
   get provider(): StorageProvider {
@@ -98,6 +124,14 @@ export class ObjectStorageService {
     return createReadStream(this.resolveLocal(objectKey));
   }
 
+  /** Convenience download path used by callers that need the whole object. */
+  async getBuffer(objectKey: string, provider: StorageProvider): Promise<Buffer> {
+    if (provider === 'minio' && this.minio) {
+      return this.minioGet(objectKey);
+    }
+    return fsp.readFile(this.resolveLocal(objectKey));
+  }
+
   async delete(objectKey: string, provider: StorageProvider): Promise<void> {
     if (provider === 'minio' && this.minio) {
       await this.minioRequest('DELETE', objectKey);
@@ -133,11 +167,31 @@ export class ObjectStorageService {
     try {
       await this.minioRequest('PUT', '/');
     } catch {
-      // bucket may already exist
+      // BucketAlreadyOwnedByYou / BucketAlreadyExists (409) or a racing
+      // create from another instance: object PUT is still valid afterwards.
     }
   }
 
-  /** Minimal S3 v4 signed request (path-style) — no external SDK. */
+  /** AWS URI encode (RFC 3986 unreserved only; `!'()*` must be percent-encoded). */
+  private static awsUriEncode(value: string): string {
+    return encodeURIComponent(value).replace(
+      /[!'()*]/g,
+      (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+    );
+  }
+
+  /** Host header value: omit :port when it is the scheme default (SigV4 rule). */
+  private hostHeader(cfg: MinioConfig): string {
+    const isDefaultPort =
+      (cfg.useSsl && cfg.port === 443) || (!cfg.useSsl && cfg.port === 80);
+    return isDefaultPort ? cfg.endpoint : `${cfg.endpoint}:${cfg.port}`;
+  }
+
+  /**
+   * Minimal S3 v4 signed request (path-style) — no external SDK.
+   * Signature chain follows the AWS SigV4 spec:
+   *   CanonicalRequest → StringToSign → kDate→kRegion→kService→kSigning → HMAC.
+   */
   private minioRequest(
     method: string,
     key: string,
@@ -154,11 +208,15 @@ export class ObjectStorageService {
           const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
           const dateStamp = amzDate.slice(0, 8);
           const payloadHash = ch('sha256').update(body ?? Buffer.alloc(0)).digest('hex');
-          const region = process.env.MINIO_REGION || 'us-east-1';
+          const region = cfg.region;
           const service = 's3';
-          const canonicalUri = pathStyle.split('/').map(encodeURIComponent).join('/').replace(/%2F/g, '/');
+          const host = this.hostHeader(cfg);
+          const canonicalUri = pathStyle
+            .split('/')
+            .map((segment) => ObjectStorageService.awsUriEncode(segment))
+            .join('/');
           const canonicalHeaders =
-            `host:${cfg.endpoint}:${cfg.port}\n` +
+            `host:${host}\n` +
             `x-amz-content-sha256:${payloadHash}\n` +
             `x-amz-date:${amzDate}\n`;
           const signedHeaders = 'host;x-amz-content-sha256;x-amz-date';
@@ -199,7 +257,7 @@ export class ObjectStorageService {
                 'x-amz-content-sha256': payloadHash,
                 'Content-Type': contentType,
                 'Content-Length': body?.length ?? 0,
-                Host: `${cfg.endpoint}:${cfg.port}`,
+                Host: host,
               },
             },
             (res) => {

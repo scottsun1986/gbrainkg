@@ -1,6 +1,7 @@
 import { Injectable, Logger, MessageEvent, Optional, Inject, ForbiddenException } from "@nestjs/common";
 import { Observable, Subscriber } from "rxjs";
 import { PermissionService } from "../permission/permission.service";
+import { DocumentAclService } from "../permission/document-acl.service";
 import { BrainCompilerService } from "../brain-compiler/brain-compiler.service";
 import { BrainRepoAdapter, BrainQueryResult } from "@llmwiki/gbrain-adapter";
 import { getPrismaClient } from "../prisma";
@@ -302,6 +303,7 @@ export class ChatService {
   private readonly retrievalArms: RetrievalArmsService;
   private readonly fusionRerank: FusionRerankService;
   private readonly citationAssembly: CitationAssemblyService;
+  private readonly documentAclService: DocumentAclService;
 
   constructor(
     private readonly permissionService: PermissionService,
@@ -321,6 +323,7 @@ export class ChatService {
     @Optional() private readonly shadowRetrievalService?: ShadowRetrievalService,
   ) {
     this.gbrain = gbrainAdapter ?? getSharedBrainRepoAdapter();
+    this.documentAclService = new DocumentAclService(this.permissionService);
     this.queryRewriter = new QueryRewriterService({
       logger: this.logger,
       modelConfigService: this.modelConfigService,
@@ -333,6 +336,7 @@ export class ChatService {
       permissionService: this.permissionService,
       modelConfigService: this.modelConfigService,
       semanticCacheService: this.semanticCacheService,
+      documentAclService: this.documentAclService,
     });
     this.fusionRerank = new FusionRerankService({
       logger: this.logger,
@@ -452,9 +456,29 @@ export class ChatService {
       sourceKeys: string[];
       aclEpoch: number;
       knowledgeEpoch: number;
+      userId?: string;
     },
   ): Promise<any> {
     return this.citationAssembly.filterQueryResultByCurrentPermission(result, visibleKbIds, derivedGuard);
+  }
+
+  private async filterSearchResultsForUser<T extends { documentId?: string | null }>(
+    userId: string,
+    scope: string[],
+    results: T[],
+  ): Promise<T[]> {
+    const ids = [...new Set(results.map((result) => result.documentId).filter((id): id is string => Boolean(id)))];
+    if (!ids.length) return [];
+    const docs = await this.prisma.document.findMany({
+      where: { id: { in: ids }, kbId: { in: scope }, status: "published" },
+      select: { id: true, kbId: true, effectiveFrom: true, effectiveTo: true, lifecycleStatus: true },
+    });
+    const current = docs.filter((doc) => documentCurrentlyEffective(doc, Date.now()));
+    const readable = await this.documentAclService.filterReadableDocuments(userId, current.map((doc) => doc.id), {
+      docs: current,
+      visibleKbIds: scope,
+    });
+    return results.filter((result) => result.documentId && readable.has(result.documentId));
   }
 
   private selectEvidence(
@@ -619,28 +643,9 @@ export class ChatService {
         conversationId,
         question,
         CONTROL_VARIANT,
-        async (variant) => {
-          const keys = Object.entries({
-            RETRIEVAL_RRF_K: String(variant.rrfK ?? 60),
-            RETRIEVAL_GRAPH_RRF_WEIGHT: String(variant.graphWeight ?? 0.8),
-            RETRIEVAL_BGE_M3_SPARSE_RRF_WEIGHT: String(variant.sparseWeight ?? 0.9),
-            RETRIEVAL_SUBQUERY_PROBES_MAX: String(variant.subqueryProbesMax ?? 4),
-          } as Record<string, string>);
-          const prev: Record<string, string | undefined> = {};
-          for (const [k, v] of keys) {
-            prev[k] = process.env[k];
-            process.env[k] = v;
-          }
-          try {
-            const hits = await this.retrievalArms.searchChunksFallback(scope, question, 8);
-            return { citations: hits as any[] };
-          } finally {
-            for (const [k, v] of Object.entries(prev)) {
-              if (v === undefined) delete process.env[k];
-              else process.env[k] = v;
-            }
-          }
-        },
+        async (variant) => ({
+          citations: await this.retrievalArms.searchChunksFallback(scope, question, 8, [], variant) as any[],
+        }),
       );
       this.logger.debug(
         `A/B shadow diff recorded for retrieval.fusion (control hits=${controlHits.length})`,
@@ -859,11 +864,12 @@ export class ChatService {
         },
         orderBy: [{ kb: { name: "asc" } }, { title: "asc" }],
       });
+      const readableDocs = await this.filterSearchResultsForUser(userId, scope, accessibleDocs.map((doc) => ({ ...doc, documentId: doc.id })));
       return {
         success: true,
         query,
-        total: accessibleDocs.length,
-        results: accessibleDocs.slice(0, limit).map((d) => ({
+        total: readableDocs.length,
+        results: readableDocs.slice(0, limit).map((d) => ({
           documentId: d.id,
           kbId: d.kbId,
           title: d.title,
@@ -1225,6 +1231,7 @@ export class ChatService {
         sourceKeys: scope.map((id) => sourceKeyForKnowledgeBase(id)),
         aclEpoch: userScope.aclEpoch,
         knowledgeEpoch: userScope.knowledgeEpoch,
+        userId,
       },
     );
 
@@ -1265,13 +1272,14 @@ export class ChatService {
       }
     }
 
-    const precedence = this.resolveTemporalPrecedence(results);
+    const authorizedResults = await this.filterSearchResultsForUser(userId, scope, results);
+    const precedence = this.resolveTemporalPrecedence(authorizedResults);
 
     return {
       success: true,
       query,
-      total: results.length,
-      results: results.slice(0, limit),
+      total: authorizedResults.length,
+      results: authorizedResults.slice(0, limit),
       ...(precedence.temporalNotice ? { temporalNotice: precedence.temporalNotice } : {}),
     };
   }
@@ -1655,6 +1663,7 @@ export class ChatService {
               sourceKeys: userScope.sourceKeys,
               aclEpoch: userScope.aclEpoch,
               knowledgeEpoch: userScope.knowledgeEpoch,
+              userId,
             },
           );
           if (revalidated.citations.length !== cachedCitations.length) {
@@ -2405,6 +2414,7 @@ export class ChatService {
         sourceKeys: selectedSourceKeys,
         aclEpoch: userScope.aclEpoch,
         knowledgeEpoch: userScope.knowledgeEpoch,
+        userId,
       },
     );
     const aclCandidateCount = Array.isArray(queryResult.citations) ? queryResult.citations.length : 0;
@@ -2530,6 +2540,7 @@ export class ChatService {
           sourceKeys: selectedSourceKeys,
           aclEpoch: userScope.aclEpoch,
           knowledgeEpoch: userScope.knowledgeEpoch,
+          userId,
         },
       );
       trace.finish(
@@ -2710,6 +2721,7 @@ export class ChatService {
             sourceKeys: selectedSourceKeys,
             aclEpoch: userScope.aclEpoch,
             knowledgeEpoch: userScope.knowledgeEpoch,
+            userId,
           },
         );
 

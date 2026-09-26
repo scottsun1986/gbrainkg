@@ -1,6 +1,8 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Job } from 'bullmq';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Job, Queue } from 'bullmq';
 import { Logger, Optional } from '@nestjs/common';
+import { setIngestionQueueDepth } from '../observability/failopen';
 import { getPrismaClient } from '../prisma';
 import { ChunkEmbeddingService } from '../embedding/chunk-embedding.service';
 import { RaptorService } from '../raptor/raptor.service';
@@ -37,11 +39,26 @@ export class EnrichmentProcessor extends WorkerHost {
     private readonly modelConfigService: ModelConfigService,
     @Optional() private readonly lexicalIndexService?: LexicalIndexService,
     @Optional() private readonly compilerService?: BrainCompilerService,
+    @Optional() @InjectQueue('enrichment-queue') private readonly queue?: Queue,
   ) {
     super();
   }
 
+  /** Report waiting+active as ingestion_queue_depth (metrics must never break the job). */
+  private async reportQueueDepth(): Promise<void> {
+    try {
+      if (!this.queue || typeof this.queue.getJobCounts !== 'function') return;
+      const counts = await this.queue.getJobCounts('waiting', 'active', 'delayed');
+      setIngestionQueueDepth(
+        Number(counts.waiting || 0) + Number(counts.active || 0) + Number(counts.delayed || 0),
+      );
+    } catch {
+      /* ignore */
+    }
+  }
+
   async process(job: Job<EnrichmentJobData>): Promise<{ readiness: string }> {
+    await this.reportQueueDepth();
     const { documentId, kbId, expectedVersion } = job.data;
     if (expectedVersion !== undefined) {
       const current = await this.prisma.document.findUnique({
@@ -55,7 +72,9 @@ export class EnrichmentProcessor extends WorkerHost {
         return { readiness: 'superseded' };
       }
     }
-    await this.setReadiness(documentId, 'enriching');
+    if (!(await this.setReadiness(documentId, 'enriching', expectedVersion))) {
+      return { readiness: 'superseded' };
+    }
     try {
       // Parallel Enrichment Pipeline: dispatch chunk embedding, RAPTOR summary hierarchy,
       // and GraphRAG extraction concurrently to cut document ingestion latency by up to 60%.
@@ -65,7 +84,7 @@ export class EnrichmentProcessor extends WorkerHost {
       if (this.chunkEmbeddingService.isEnabled()) {
         enrichmentTasks.push(
           (async () => {
-            await this.chunkEmbeddingService.embedDocumentChunks(documentId);
+            const embeddingResult = await this.chunkEmbeddingService.embedDocumentChunks(documentId);
             // Verify coverage instead of trusting the embed pass: null vectors are
             // swallowed by the fail-open embedding client.
             const coverage = await this.chunkEmbeddingService.documentCoverage(documentId);
@@ -73,6 +92,9 @@ export class EnrichmentProcessor extends WorkerHost {
               throw new Error(
                 `Chunk embedding incomplete for ${documentId}: ${coverage.missing}/${coverage.total} chunks missing vectors.`,
               );
+            }
+            if (embeddingResult.hybridMissing) {
+              throw new Error(`BGE-M3 hybrid index incomplete for ${documentId}: ${embeddingResult.hybridMissing} chunks missing sparse or multi-vector data.`);
             }
           })(),
         );
@@ -125,7 +147,9 @@ export class EnrichmentProcessor extends WorkerHost {
           return { readiness: 'superseded' };
         }
       }
-      await this.setReadiness(documentId, 'ready', expectedVersion);
+      if (!(await this.setReadiness(documentId, 'ready', expectedVersion))) {
+        return { readiness: 'superseded' };
+      }
       // Self-healing publish re-drive: the source-sync job gates publishing on
       // complete embeddings and its retry window may have expired while this
       // enrichment was still running, leaving the document stranded in
@@ -149,6 +173,7 @@ export class EnrichmentProcessor extends WorkerHost {
           `Publish re-drive failed for ${documentId}: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
+      await this.reportQueueDepth();
       return { readiness: 'ready' };
     } catch (err) {
       await this.setReadiness(documentId, 'degraded', expectedVersion).catch(() => undefined);
@@ -156,20 +181,24 @@ export class EnrichmentProcessor extends WorkerHost {
         `Enrichment failed for ${documentId} (attempt ${job.attemptsMade + 1}): ${err instanceof Error ? err.message : String(err)}`,
       );
       throw err; // let BullMQ retry with backoff
+    } finally {
+      await this.reportQueueDepth();
     }
   }
 
-  private async setReadiness(documentId: string, readiness: string, expectedVersion?: number): Promise<void> {
+  private async setReadiness(documentId: string, readiness: string, expectedVersion?: number): Promise<boolean> {
     if (expectedVersion !== undefined && typeof (this.prisma as any)?.document?.updateMany === 'function') {
-      await (this.prisma as any).document.updateMany({
+      const updated = await (this.prisma as any).document.updateMany({
         where: { id: documentId, version: expectedVersion },
         data: { indexReadiness: readiness },
       });
+      return updated.count === 1;
     } else {
       await this.prisma.document.update({
         where: { id: documentId },
         data: { indexReadiness: readiness },
       });
+      return true;
     }
   }
 

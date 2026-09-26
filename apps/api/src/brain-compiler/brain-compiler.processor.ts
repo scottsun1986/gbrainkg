@@ -300,6 +300,7 @@ export class BrainCompilerProcessor extends WorkerHost {
             this.uploadRoot,
             document.id,
             document.chunks,
+            document.mdPath,
           ),
           sourceFile: document.title,
           kbId: document.kbId,

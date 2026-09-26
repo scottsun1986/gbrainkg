@@ -92,7 +92,7 @@ describe('RaptorService', () => {
     const create = jest.fn().mockResolvedValue({ id: 'l2-1' });
     (service as any).prisma = {
       raptorNode: { findMany, deleteMany, create },
-      $transaction: jest.fn().mockImplementation((actions) => Promise.all(actions)),
+      $transaction: jest.fn().mockImplementation((callback) => callback({ raptorNode: { deleteMany, create } })),
     };
 
     const res = await service.buildKbGlobalTree('kb-100');
@@ -110,7 +110,7 @@ describe('RaptorService', () => {
 
   it('invalidates document and KB-global nodes before scheduling a rebuild', async () => {
     const deleteMany = jest.fn().mockResolvedValue({ count: 1 });
-    const transaction = jest.fn().mockImplementation((actions) => Promise.all(actions));
+    const transaction = jest.fn().mockImplementation((callback) => callback({ raptorNode: { deleteMany } }));
     (service as any).prisma = { raptorNode: { deleteMany }, $transaction: transaction };
     const schedule = jest.spyOn(service, 'scheduleBuildKbGlobalTree').mockImplementation(() => undefined);
 

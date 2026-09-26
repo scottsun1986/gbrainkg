@@ -71,55 +71,60 @@ export class HybridRetrievalService {
   async searchSparse(kbIds: string[], query: string, limit = 50): Promise<HybridChunkHit[]> {
     if (!this.isEnabled() || !kbIds.length || !query.trim()) return [];
     const representation = await this.queryRepresentation(query);
-    if (!representation?.sparse?.indices.length) return [];
-    const queryWeights = new Map<number, number>();
-    representation.sparse.indices.forEach((tokenId, index) => {
-      queryWeights.set(tokenId, Number(representation.sparse!.values[index]) || 0);
-    });
+    if (!representation?.sparse?.indices.length) {
+      // Feature is on but no sparse arm came back (no endpoint, dense-only
+      // gateway, or transient provider failure): fail open to dense+BM25 and
+      // surface the degradation instead of silently dropping the channel.
+      recordFailopen('sparse');
+      return [];
+    }
     try {
-      const postingLimit = Math.max(limit * 100, Number(process.env.BGE_M3_SPARSE_POSTING_LIMIT || 20_000));
-      // Capture before the SQL closure: TS drops property narrowing inside callbacks.
       const sparseIndices: number[] = representation.sparse!.indices;
+      const sparseWeights: number[] = representation.sparse!.values;
       const rows = await withServiceContext(this.prisma, (tx) =>
         tx.$queryRaw<Array<{
-        chunkId: string; tokenId: number; weight: number; documentId: string; kbId: string;
+        chunkId: string; sparseScore: number; documentId: string; kbId: string;
         ord: number; content: string; metadata: any; docTitle: string; docVersion: number;
       }>>`
-        SELECT s."chunkId", s."tokenId", s.weight,
+        WITH query_terms AS (
+          SELECT token_id, SUM(query_weight)::float8 AS query_weight
+          FROM unnest(${sparseIndices}::integer[], ${sparseWeights}::real[]) AS q(token_id, query_weight)
+          GROUP BY token_id
+        ), ranked AS (
+          SELECT s."chunkId", SUM(s.weight * q.query_weight)::float8 AS score
+          FROM query_terms q
+          JOIN "ChunkSparseEmbedding" s ON s."tokenId" = q.token_id
+          JOIN "Chunk" c ON c.id = s."chunkId"
+          JOIN "Document" d ON d.id = c."documentId"
+          WHERE c."kbId" = ANY(${kbIds}::uuid[]) AND d.status = 'published'
+          GROUP BY s."chunkId"
+          ORDER BY score DESC
+          LIMIT ${Math.max(1, limit)}
+        )
+        SELECT ranked."chunkId", ranked.score AS "sparseScore",
                c."documentId", c."kbId", c.ord, c.content, c.metadata,
                d.title AS "docTitle", d.version AS "docVersion"
-        FROM "ChunkSparseEmbedding" s
-        JOIN "Chunk" c ON c.id = s."chunkId"
+        FROM ranked
+        JOIN "Chunk" c ON c.id = ranked."chunkId"
         JOIN "Document" d ON d.id = c."documentId"
-        WHERE s."tokenId" = ANY(${sparseIndices}::integer[])
-          AND c."kbId" = ANY(${kbIds}::uuid[])
-          AND d.status = 'published'
-        ORDER BY s.weight DESC
-        LIMIT ${postingLimit}
+        ORDER BY ranked.score DESC
       `);
-      const scored = new Map<string, { score: number; row: typeof rows[number] }>();
-      for (const row of rows || []) {
-        const contribution = (queryWeights.get(Number(row.tokenId)) || 0) * Number(row.weight || 0);
-        const current = scored.get(String(row.chunkId));
-        if (current) current.score += contribution;
-        else scored.set(String(row.chunkId), { score: contribution, row });
-      }
-      return [...scored.entries()]
-        .map(([id, entry]) => ({
-          id,
-          documentId: entry.row.documentId,
-          kbId: entry.row.kbId,
-          ord: entry.row.ord,
-          content: entry.row.content,
-          metadata: entry.row.metadata,
-          document: { title: entry.row.docTitle, version: entry.row.docVersion },
-          sparseScore: entry.score,
-        }))
-        .sort((left, right) => right.sparseScore - left.sparseScore)
-        .slice(0, Math.max(1, limit));
+      return (rows || []).map((row: {
+        chunkId: string; sparseScore: number; documentId: string; kbId: string;
+        ord: number; content: string; metadata: any; docTitle: string; docVersion: number;
+      }) => ({
+        id: String(row.chunkId),
+        documentId: row.documentId,
+        kbId: row.kbId,
+        ord: row.ord,
+        content: row.content,
+        metadata: row.metadata,
+        document: { title: row.docTitle, version: row.docVersion },
+        sparseScore: Number(row.sparseScore),
+      }));
     } catch (err) {
       this.logger.debug(`BGE-M3 sparse retrieval unavailable: ${err instanceof Error ? err.message : String(err)}`);
-      recordFailopen("hybrid");
+      recordFailopen('sparse');
       return [];
     }
   }
@@ -128,7 +133,12 @@ export class HybridRetrievalService {
     const result = new Map<string, number>();
     if (!this.isEnabled() || !candidateIds.length) return result;
     const representation = await this.queryRepresentation(query);
-    if (!representation?.multiVector?.length) return result;
+    if (!representation?.multiVector?.length) {
+      // No ColBERT arm (missing endpoint / dense-only gateway): fail open and
+      // let the caller keep the un-reordered candidate order.
+      recordFailopen('late_interaction');
+      return result;
+    }
     const cappedIds = candidateIds.slice(0, Math.max(1, Number(process.env.BGE_M3_LATE_INTERACTION_CANDIDATES || 60)));
     try {
       const rows = await withServiceContext(this.prisma, (tx) =>
@@ -147,6 +157,7 @@ export class HybridRetrievalService {
       return result;
     } catch (err) {
       this.logger.debug(`BGE-M3 late interaction unavailable: ${err instanceof Error ? err.message : String(err)}`);
+      recordFailopen('late_interaction');
       return result;
     }
   }
