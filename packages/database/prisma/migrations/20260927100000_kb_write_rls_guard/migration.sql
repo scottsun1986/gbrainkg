@@ -133,19 +133,35 @@ REVOKE ALL ON FUNCTION app_kb_system_admin(uuid), app_kb_has_permission(uuid, te
   app_kb_manages_org(uuid, uuid), app_kb_can_manage(uuid, text, uuid, uuid),
   app_kb_can_create(text, uuid, uuid, text), app_kb_guard_structure() FROM PUBLIC;
 DO $$
-DECLARE runtime_role text;
+DECLARE
+  candidate_roles text[];
+  runtime_role text;
+  granted integer := 0;
 BEGIN
-  runtime_role := CASE
-    WHEN current_database() = 'llmwiki' THEN 'llmwiki_app'
+  -- The original inst1 uses database llmwiki, but deployments may name its
+  -- NOBYPASSRLS runtime role llmwiki_app or llmwiki_app_inst1.
+  candidate_roles := CASE
+    WHEN current_database() = 'llmwiki' THEN ARRAY['llmwiki_app', 'llmwiki_app_inst1']
     WHEN current_database() ~ '^llmwiki_inst[0-9]+$'
-      THEN replace(current_database(), 'llmwiki_inst', 'llmwiki_app_inst')
+      THEN ARRAY[replace(current_database(), 'llmwiki_inst', 'llmwiki_app_inst')]
     ELSE NULL
   END;
-  IF runtime_role IS NULL OR NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = runtime_role) THEN
-    RAISE EXCEPTION 'Expected NOBYPASSRLS runtime role is missing for database %', current_database();
+  IF candidate_roles IS NULL THEN
+    RAISE EXCEPTION 'Unknown runtime role mapping for database %', current_database();
   END IF;
-  EXECUTE format(
-    'GRANT EXECUTE ON FUNCTION app_kb_can_manage(uuid, text, uuid, uuid), app_kb_can_create(text, uuid, uuid, text) TO %I',
-    runtime_role
-  );
+  FOR runtime_role IN
+    SELECT rolname FROM pg_roles WHERE rolname = ANY(candidate_roles)
+  LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = runtime_role AND (rolsuper OR rolbypassrls)) THEN
+      RAISE EXCEPTION 'Runtime role % must be NOBYPASSRLS', runtime_role;
+    END IF;
+    EXECUTE format(
+      'GRANT EXECUTE ON FUNCTION app_kb_can_manage(uuid, text, uuid, uuid), app_kb_can_create(text, uuid, uuid, text) TO %I',
+      runtime_role
+    );
+    granted := granted + 1;
+  END LOOP;
+  IF granted = 0 THEN
+    RAISE EXCEPTION 'Expected runtime role is missing for database %', current_database();
+  END IF;
 END $$;
