@@ -95,15 +95,18 @@ describe('IngestionController', () => {
       expect(mockIngestionService.enqueue).toHaveBeenCalledTimes(1);
     });
 
-    it('reuses an exact same-title upload unless a copy is requested', async () => {
+    it('creates a copy of an exact duplicate by default; explicit skip still reuses', async () => {
       const file = { originalname: 'readme.md', buffer: Buffer.from('# Hello'), size: 7 };
       mockPrisma.document.findFirst.mockResolvedValue({ id: 'existing', title: 'readme.md', version: 1 });
-      const reused = await controller.uploadDocument('kb-1', file, {} as any);
-      expect(reused).toEqual(expect.objectContaining({ reused: true }));
-      expect(mockPrisma.document.create).not.toHaveBeenCalled();
-      expect(mockIngestionService.enqueue).not.toHaveBeenCalled();
-      await controller.uploadDocument('kb-1', file, {} as any, { duplicateMode: 'copy' });
+      const copied = await controller.uploadDocument('kb-1', file, {} as any);
+      expect(copied).not.toHaveProperty('reused');
+      expect(mockPrisma.document.findFirst).not.toHaveBeenCalled();
       expect(mockPrisma.document.create).toHaveBeenCalledTimes(1);
+      const reused = await controller.uploadDocument('kb-1', file, {} as any, { duplicateMode: 'skip' });
+      expect(reused).toEqual(expect.objectContaining({ reused: true }));
+      expect(mockPrisma.document.findFirst).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.document.create).toHaveBeenCalledTimes(1);
+      expect(mockIngestionService.enqueue).toHaveBeenCalledTimes(1);
     });
 
     it('rejects unsupported file extension', async () => {
@@ -121,6 +124,7 @@ describe('IngestionController', () => {
 
   describe('uploadDocument with archive file', () => {
     it('unzips, extracts valid documents, enqueues each, and does not persist the zip itself', async () => {
+      mockPrisma.document.findFirst.mockResolvedValue({ id: 'existing', title: 'guide.md', version: 1 });
       const zip = new AdmZip();
       zip.addFile('guide.md', Buffer.from('# User Guide\nHow to use.'));
       zip.addFile('data.csv', Buffer.from('col1,col2\nval1,val2'));
@@ -141,6 +145,8 @@ describe('IngestionController', () => {
       expect(res.isArchive).toBe(true);
       expect(res.total).toBe(2);
       expect(res.documents.length).toBe(2);
+      expect(res.reusedCount).toBe(0);
+      expect(mockPrisma.document.findFirst).not.toHaveBeenCalled();
 
       const titles = res.documents.map((d: any) => d.title);
       expect(titles).toContain('guide.md');

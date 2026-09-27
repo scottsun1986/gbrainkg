@@ -133,7 +133,9 @@ export class IngestionController {
         "Only the knowledge base owner or administrator can upload.",
       );
 
-    const duplicateMode = body?.duplicateMode ?? 'skip';
+    // File uploads create a separate document by default. Older automated
+    // clients can still explicitly request idempotent reuse with "skip".
+    const duplicateMode = body?.duplicateMode ?? 'copy';
     if (!['skip', 'copy'].includes(duplicateMode))
       throw new BadRequestException("duplicateMode must be skip or copy.");
 
