@@ -138,6 +138,10 @@ async function main(): Promise<void> {
     const cases: CaseRow[] = Array.isArray(payload?.cases) ? payload.cases : [];
     if (!cases.length) {
       console.log('No converted feedback cases found; nothing to replay.');
+      if (GATE) {
+        console.error('Feedback gate requires at least one converted case in strict mode.');
+        process.exit(1);
+      }
       return;
     }
     const results: any[] = [];

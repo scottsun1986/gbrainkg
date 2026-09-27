@@ -1,16 +1,17 @@
 /**
  * A/B 门禁 runner：登录 API → 拉 /api/v1/experiments/summary → evaluateAbSummaries。
- * 无凭据/无样本时跳过退出 0；有样本且 treatment 劣化时退出 1。
+ * 报告模式允许无凭据/无样本跳过；严格模式对缺数据、服务异常 fail closed。
  */
 import { evaluateAbSummaries, ArmSummary } from '../../apps/api/src/experiments/ab-gate';
 
 async function main() {
+  const strict = process.env.GATE_STRICT === '1';
   const base = process.env.API_BASE || 'http://127.0.0.1:3202';
   const user = process.env.TEST_USER || process.env.LLMWIKI_USER || 'admin';
   const password = process.env.TEST_PASSWORD || process.env.LLMWIKI_PASS;
   if (!password) {
     console.log('[ab-gate-runner] no TEST_PASSWORD, skipping');
-    return 0;
+    return strict ? 1 : 0;
   }
   const login = await fetch(`${base}/api/v1/auth/login`, {
     method: 'POST',
@@ -18,8 +19,8 @@ async function main() {
     body: JSON.stringify({ username: user, password }),
   }).catch(() => null);
   if (!login || !login.ok) {
-    console.log('[ab-gate-runner] login failed or API down — skipping');
-    return 0;
+    console.error('[ab-gate-runner] login failed or API down');
+    return strict ? 1 : 0;
   }
   const loginJson = (await login.json()) as { token?: string; accessToken?: string };
   const token = loginJson.token || loginJson.accessToken || '';
@@ -27,8 +28,8 @@ async function main() {
     headers: token ? { authorization: `Bearer ${token}` } : {},
   }).catch(() => null);
   if (!res || !res.ok) {
-    console.log('[ab-gate-runner] summary fetch failed — skipping');
-    return 0;
+    console.error('[ab-gate-runner] summary fetch failed');
+    return strict ? 1 : 0;
   }
   const summaries = (await res.json()) as ArmSummary[];
   const result = evaluateAbSummaries(summaries, {
@@ -36,7 +37,7 @@ async function main() {
     minSamples: Number(process.env.AB_MIN_SAMPLES || 30),
   });
   console.log(JSON.stringify(result, null, 2));
-  if (result.skipped) return 0;
+  if (result.skipped) return strict ? 1 : 0;
   return result.pass ? 0 : 1;
 }
 
@@ -44,5 +45,5 @@ main()
   .then((code) => process.exit(code))
   .catch((err) => {
     console.error('[ab-gate-runner] error', err);
-    process.exit(0); // fail-open in runner; strict mode handled by exit code path above
+    process.exit(process.env.GATE_STRICT === '1' ? 1 : 0);
   });

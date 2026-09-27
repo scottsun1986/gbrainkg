@@ -18,6 +18,24 @@
 
 ---
 
+## 独立 300 篇语料评测
+
+每套固定 100 题；`profile_300.py` 将这些题的全部 gold 文档纳入语料，再以 seed 42 从非 gold 文档中抽样补足 300 篇。离线构建会在 `profiles/300/` 写入语料与清单，记录原始 dev 数据、预处理脚本、评测集和最终输出的 SHA-256。KB 名称包含语料哈希，和上文旧 KB 完全隔离。
+
+```bash
+python3 tests/evaluation/intl-benchmark/profile_300.py build all
+# 在测试环境执行；每套严格校验恰好 300 篇且全部 published
+python3 tests/evaluation/intl-benchmark/profile_300.py ingest all
+# 正式 100 题检索；--mode full 追加 100 题问答
+python3 tests/evaluation/intl-benchmark/benchmark_suite.py all --profile 300 --mode retrieval
+```
+
+`--profile 300` 从 `profiles/300/{dataset}_ingest_meta.json` 读取独立 KB，校验清单哈希，并在结果里记录 profile、清单和语料哈希。不同语料的历史基线不可直接比较；需先在同一 profile 建立改动前基线，再运行配对回归。逐题检索结果的 `ranked_sources` 保留 title、document_id、chunk_id 与 score，方便识别重复标题来自同文档多 chunk 还是不同文档。
+
+问答评分同时保留原始正文 `em/f1` 与仅去除 `[数字]` 引用标记后的 `em_citation_stripped/f1_citation_stripped`；后者衡量答案正文，引用仍由 `citation_hit` 独立计分。两组分数都不改变历史结果和官方基准口径。
+
+---
+
 ## 1.5 Global 30 Benchmarks (Ragas & DeepEval)
 
 新增支持全球 30 大国际权威基准的端到端评测，采用真实 API 调用而非模拟数据：

@@ -1353,15 +1353,15 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
     const privateSourceRows = options.excludePrivate
       ? await db.brainSource.findMany({
           where: { status: "active" },
-          select: {
-            sourceKey: true,
-            documents: { select: { document: { select: { kb: { select: { type: true } } } } } },
-          },
+          // Under document RLS, selecting a required `documents.document`
+          // relation can return null and Prisma rejects the entire telemetry
+          // query. Source kind is stored when the per-KB source is created.
+          select: { sourceKey: true, kind: true },
         })
       : [];
     const privateSourceKeys = new Set(
       privateSourceRows
-        .filter((source: any) => source.documents.some((item: any) => item.document?.kb?.type === "personal"))
+        .filter((source: any) => source.kind === "personal" || source.kind === "private")
         .map((source: any) => source.sourceKey),
     );
     const [lastRun, runs, runsTotal, sources, scopes, derivedCount, outboxPending, opLogs, dirtyTopics, queueCounts, failedJobs] = await Promise.all([
@@ -1370,7 +1370,7 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
       db.brainMaintenanceRun.count(),
       db.brainSource.findMany({
         where: options.excludePrivate
-          ? { status: "active", documents: { none: { document: { kb: { type: "personal" } } } } }
+          ? { status: "active", kind: { notIn: ["personal", "private"] } }
           : { status: "active" },
         include: { _count: { select: { members: true, documents: true } } },
         orderBy: { sourceKey: "asc" },

@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # GBrainKG unified CI pipeline.
 #
-# Runs every automated quality layer in order and fails fast. Layers that need
-# a live API + seeded corpus require LLMWIKI_TOKEN (or LLMWIKI_USER/PASS) and
-# are skipped with a warning when it is absent, so the unit layers still run.
+# Runs every automated quality layer in order and fails fast. Report mode may
+# skip live layers; strict release mode treats any required skip as failure.
 #
 # Usage:
 #   LLMWIKI_TOKEN=<jwt> bash scripts/ci.sh
@@ -11,9 +10,7 @@
 #
 # GATE_STRICT=1 contract:
 #   - any failing layer  -> process exits non-zero (deploy must abort)
-#   - missing e2e token  -> layers are still skipped (as above) but a prominent
-#                           WARN is printed so a "green" gate cannot silently
-#                           claim full e2e coverage
+#   - any required live layer skipped -> process exits non-zero
 # This script never runs a dist-writing build; callers that need artifacts
 # build them themselves (deploy-prod.sh already does).
 set -uo pipefail
@@ -48,6 +45,7 @@ warn_skip() {
     echo "[CI] WARN: GATE_STRICT=1 but '$layer' was SKIPPED."
     echo "[CI] WARN:   enable: $*"
     echo "[CI] WARN:   Release gate is incomplete without this layer."
+    FAILED=1
   fi
 }
 
@@ -91,24 +89,32 @@ else
   warn_skip "official-qrels IR gate" "export BEIR_QRELS + BEIR_RUN (see tests/evaluation/intl-benchmark/README.md §6)"
 fi
 
-if [[ -n "${LLMWIKI_TOKEN:-}${LLMWIKI_USER:-}" ]]; then
+if [[ -n "${LLMWIKI_TOKEN:-}" || ( -n "${LLMWIKI_USER:-${TEST_USER:-}}" && -n "${LLMWIKI_PASS:-${TEST_PASSWORD:-}}" ) ]]; then
   run "E2E knowledge-base scenario suite" python3 tests/e2e/sota_knowledge_base_suite.py
   run "SOTA retrieval quality gate" bash tests/evaluation/ci-gate.sh
 else
   echo ""
-  echo "[CI] Skipping E2E suite + quality gate: set LLMWIKI_TOKEN (or LLMWIKI_USER/LLMWIKI_PASS)."
+  echo "[CI] Skipping E2E suite + quality gate: set LLMWIKI_TOKEN (or LLMWIKI_USER/TEST_USER with LLMWIKI_PASS/TEST_PASSWORD)."
   E2E_SKIPPED=1
-  warn_skip "E2E suite + SOTA quality gate" "export LLMWIKI_TOKEN (or LLMWIKI_USER/LLMWIKI_PASS)"
+  warn_skip "E2E suite + SOTA quality gate" "export LLMWIKI_TOKEN (or LLMWIKI_USER/TEST_USER with LLMWIKI_PASS/TEST_PASSWORD)"
 fi
 
-# P2 feedback regression gate (optional). Only invoked when LLMWIKI_TOKEN is present;
-# scripts/feedback-gate.sh itself no-ops without credentials. GATE_STRICT=1 is
-# inherited by the gate so a regression exits non-zero on release pipelines.
-if [[ -n "${LLMWIKI_TOKEN:-}" ]]; then
+# Feedback regression gate. Report mode may skip without credentials; strict
+# release mode requires credentials and at least one converted feedback case.
+if [[ -n "${LLMWIKI_TOKEN:-}${TEST_PASSWORD:-}${LLMWIKI_PASS:-}" ]]; then
   run "Feedback regression gate" bash scripts/feedback-gate.sh
 else
   echo ""
   echo "[CI] Skipping feedback regression gate: LLMWIKI_TOKEN not set."
+  warn_skip "feedback regression gate" "export TEST_PASSWORD (or LLMWIKI_PASS) and seed converted feedback cases"
+fi
+
+if [[ -n "${TEST_PASSWORD:-${LLMWIKI_PASS:-}}" ]]; then
+  run "A/B metrics gate" bash scripts/ab-gate.sh
+else
+  echo ""
+  echo "[CI] Skipping A/B metrics gate: TEST_PASSWORD/LLMWIKI_PASS not set."
+  warn_skip "A/B metrics gate" "export TEST_PASSWORD (or LLMWIKI_PASS) and collect experiment samples"
 fi
 
 echo ""

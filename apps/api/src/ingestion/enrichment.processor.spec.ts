@@ -3,8 +3,9 @@ import { EnrichmentProcessor } from './enrichment.processor';
 const mockPrisma = {
   document: { findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
   enrichmentStage: { findMany: jest.fn(), upsert: jest.fn() },
+  brainChangeEvent: { update: jest.fn(), upsert: jest.fn() },
 };
-jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => mockPrisma) }));
+jest.mock('../prisma', () => ({ getPrismaClient: () => mockPrisma }));
 
 describe('EnrichmentProcessor readiness gating', () => {
   const chunkEmbedding = {
@@ -124,24 +125,50 @@ describe('EnrichmentProcessor readiness gating', () => {
     expect(chunkEmbedding.embedDocumentChunks).not.toHaveBeenCalled();
   });
 
-  it('retries only the failed enrichment stage for the same document version', async () => {
+  it('dispatches slow RAPTOR work without delaying core readiness', async () => {
     chunkEmbedding.isEnabled.mockReturnValue(true);
     chunkEmbedding.embedDocumentChunks.mockResolvedValue({ requested: 1, embedded: 1, failed: 0, missing: 0 });
     chunkEmbedding.documentCoverage.mockResolvedValue({ total: 1, missing: 0 });
     mockPrisma.document.findUnique.mockResolvedValue({ version: 4 });
     raptor.isEnabled.mockReturnValue(true);
-    raptor.indexDocument.mockRejectedValueOnce(new Error('temporary RAPTOR failure')).mockResolvedValueOnce(undefined);
-
-    await expect(processor.process(job({ documentId: 'doc-1', kbId: 'kb-1', expectedVersion: 4 })))
-      .rejects.toThrow('temporary RAPTOR failure');
-    expect(mockPrisma.enrichmentStage.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      where: { documentId_version_stage: { documentId: 'doc-1', version: 4, stage: 'embedding' } },
-    }));
-    mockPrisma.enrichmentStage.findMany.mockResolvedValue([{ stage: 'embedding' }]);
+    raptor.indexDocument.mockResolvedValue(undefined);
 
     await expect(processor.process(job({ documentId: 'doc-1', kbId: 'kb-1', expectedVersion: 4 })))
       .resolves.toEqual({ readiness: 'ready' });
+    expect(mockPrisma.enrichmentStage.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { documentId_version_stage: { documentId: 'doc-1', version: 4, stage: 'embedding' } },
+    }));
+    expect(mockPrisma.brainChangeEvent.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ eventType: 'aux_enrichment_request', resourceId: 'doc-1' }),
+    }));
     expect(chunkEmbedding.embedDocumentChunks).toHaveBeenCalledTimes(1);
-    expect(raptor.indexDocument).toHaveBeenCalledTimes(2);
+    expect(raptor.indexDocument).not.toHaveBeenCalled();
+  });
+
+  it('completes the durable outbox event only after enrichment succeeds', async () => {
+    chunkEmbedding.isEnabled.mockReturnValue(false);
+    mockPrisma.document.findUnique.mockResolvedValue({ version: 4 });
+    await expect(processor.process(job({
+      documentId: 'doc-1', kbId: 'kb-1', expectedVersion: 4, outboxEventId: 'evt-1',
+    }))).resolves.toEqual({ readiness: 'ready' });
+    expect(mockPrisma.brainChangeEvent.update).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { id: 'evt-1' },
+      data: expect.objectContaining({ status: 'completed', processedAt: expect.any(Date) }),
+    }));
+  });
+
+  it('runs RAPTOR on the auxiliary path and records its completed stage', async () => {
+    raptor.isEnabled.mockReturnValue(true);
+    raptor.indexDocument.mockResolvedValue({ nodes: 2 });
+    mockPrisma.document.findUnique.mockResolvedValue({ version: 4, kb: { status: 'active' } });
+    await processor.processAuxiliary(job({ documentId: 'doc-1', kbId: 'kb-1',
+      expectedVersion: 4, outboxEventId: 'aux-1' }));
+    expect(raptor.indexDocument).toHaveBeenCalledWith('kb-1', 'doc-1');
+    expect(mockPrisma.enrichmentStage.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ stage: 'raptor' }),
+    }));
+    expect(mockPrisma.brainChangeEvent.update).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { id: 'aux-1' }, data: expect.objectContaining({ status: 'completed' }),
+    }));
   });
 });

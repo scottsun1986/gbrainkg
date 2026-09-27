@@ -31,7 +31,7 @@
     "benchmark:beir:selftest": "python3 tests/evaluation/intl-benchmark/beir_pipeline.py --selftest",
     "benchmark:fetch": "python3 tests/evaluation/intl-benchmark/fetch_datasets.py",
     "benchmark:fetch:selftest": "python3 tests/evaluation/intl-benchmark/fetch_datasets.py --selftest",
-    "benchmark:selftest": "pnpm benchmark:ir:selftest && python3 tests/evaluation/intl-benchmark/benchmark_suite.py --selftest && pnpm benchmark:beir:selftest && pnpm benchmark:fetch:selftest && pnpm loadtest:selftest",
+    "benchmark:selftest": "pnpm benchmark:ir:selftest && python3 tests/evaluation/intl-benchmark/benchmark_suite.py --selftest && npx --yes tsx@4.23.13 tests/evaluation/quality-gate-auth.selftest.ts && pnpm benchmark:beir:selftest && pnpm benchmark:fetch:selftest && pnpm loadtest:selftest",
     "benchmark:ann-recall": "python3 tests/evaluation/intl-benchmark/ann_recall_eval.py",
     "benchmark:ann-recall:selftest": "python3 tests/evaluation/intl-benchmark/ann_recall_eval.py --selftest",
     "benchmark:scale": "bash scripts/run-scale-benchmark.sh",

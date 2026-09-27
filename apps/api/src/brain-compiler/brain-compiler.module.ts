@@ -15,7 +15,7 @@ import { brainAdapterProvider } from './brain-adapter.provider';
     ModelConfigModule,
     BullModule.registerQueue({
       name: 'dirty-compiler-queue',
-    }),
+    }, { name: 'enrichment-queue' }, { name: 'aux-enrichment-queue' }),
   ],
   providers: [
     brainAdapterProvider,

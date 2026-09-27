@@ -209,12 +209,6 @@ export class KnowledgeBaseController {
     const name = String(body?.name || "").trim();
     if (!name) throw new BadRequestException("Knowledge base name is required.");
     const normalizedName = name.slice(0, 120);
-    const existing = await this.prisma.knowledgeBase.count({
-      where: { type: "personal", ownerUserId: userId, status: "active" },
-    });
-    if (existing >= 20) {
-      throw new BadRequestException("Personal knowledge base limit (20) reached.");
-    }
     // Names must be unique within one user's personal scope; different users
     // may reuse the same name freely.
     const duplicate = await this.prisma.knowledgeBase.findFirst({
@@ -442,7 +436,9 @@ export class KnowledgeBaseController {
         },
         skip: (pageNumber - 1) * pageSize,
         take: pageSize,
-        orderBy: { updatedAt: "desc" },
+        // A unique tie-break makes offset pages deterministic once publishing
+        // settles (many documents can share the same updatedAt timestamp).
+        orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
       }),
       (db as any).document.count({ where }),
       // Whole-KB status breakdown. The management page used to derive these

@@ -78,6 +78,18 @@ export class BrainCompilerProcessor extends WorkerHost {
     // when thousands of users can read it.
     if (job.name === "source-sync") {
       let { kbId, docIds = [] } = job.data;
+      // Jobs may outlive their knowledge base. Treat archived/deleted sources
+      // as successful no-ops so retries cannot monopolize the shared compiler
+      // pool or block active tenants behind permanently invalid work.
+      if (typeof db.knowledgeBase?.findUnique === "function") {
+        const knowledgeBase = await db.knowledgeBase.findUnique({
+          where: { id: kbId }, select: { status: true },
+        });
+        if (!knowledgeBase || knowledgeBase.status !== "active") {
+          this.logger.warn(`Skipping source sync for unavailable knowledge base ${kbId}.`);
+          return { status: "skipped", reason: "knowledge-base-unavailable" };
+        }
+      }
       // Core-indexing gate: publishing a document before its required chunks
       // all carry embeddings would push a partially indexed version to GBrain.
       // indexReadiness 'ready' short-circuits the per-chunk stats query.

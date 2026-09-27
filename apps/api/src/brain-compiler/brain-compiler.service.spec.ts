@@ -114,6 +114,53 @@ describe("BrainCompilerService source isolation", () => {
       },
     ]);
   });
+
+  it('reads audit telemetry without traversing RLS-hidden required documents', async () => {
+    const findSources = jest.fn(async (args: any) => {
+      if (args.select) {
+        // Prisma throws if this query selects documents.document under RLS.
+        if (args.select.documents) throw new Error('required document relation hidden by RLS');
+        return [
+          { sourceKey: 'personal-source', kind: 'personal' },
+          { sourceKey: 'legacy-private-source', kind: 'private' },
+          { sourceKey: 'industry-source', kind: 'industry' },
+        ];
+      }
+      return [{ sourceKey: 'industry-source', kind: 'industry', status: 'active', _count: { members: 2, documents: 3 } }];
+    });
+    const mockDb = {
+      brainSource: { findMany: findSources },
+      brainMaintenanceRun: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+        count: jest.fn().mockResolvedValue(0),
+      },
+      brainScope: { findMany: jest.fn().mockResolvedValue([
+        { id: 'private-scope', sourceKeys: ['personal-source'], _count: { members: 1, derivedPages: 1 } },
+        { id: 'public-scope', sourceKeys: ['industry-source'], _count: { members: 2, derivedPages: 3 } },
+      ]) },
+      brainDerivedPage: { count: jest.fn().mockResolvedValue(3) },
+      brainChangeEvent: { count: jest.fn().mockResolvedValue(0) },
+      brainTopic: { count: jest.fn().mockResolvedValue(0) },
+    };
+    const queue = {
+      getJobCounts: jest.fn().mockResolvedValue({ waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0 }),
+      getJobs: jest.fn().mockResolvedValue([]),
+    };
+    const service = new BrainCompilerService(queue as any, {} as any, {} as any, {} as any, {} as any);
+    (service as any).prisma = mockDb;
+
+    const telemetry = await service.getDreamTelemetry({ excludePrivate: true });
+
+    expect(findSources).toHaveBeenNthCalledWith(1, {
+      where: { status: 'active' }, select: { sourceKey: true, kind: true },
+    });
+    expect(findSources).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      where: { status: 'active', kind: { notIn: ['personal', 'private'] } },
+    }));
+    expect(telemetry.sources.map((source: any) => source.sourceKey)).toEqual(['industry-source']);
+    expect(telemetry.scopes.map((scope: any) => scope.id)).toEqual(['public-scope']);
+  });
 });
 
 describe("BrainCompilerService coalesced source sync", () => {

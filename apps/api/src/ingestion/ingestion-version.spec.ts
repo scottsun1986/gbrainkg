@@ -14,7 +14,7 @@ const tx = {
   brainChangeEvent: { create: jest.fn() },
 };
 const mockReadFile = jest.fn();
-jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => mockPrisma) }));
+jest.mock('../prisma', () => ({ getPrismaClient: () => mockPrisma }));
 jest.mock('node:fs/promises', () => ({
   readFile: (...args: unknown[]) => mockReadFile(...args),
   writeFile: jest.fn(),
@@ -65,6 +65,18 @@ describe('ingestion version fencing', () => {
     expect(mockPrisma.document.update).not.toHaveBeenCalled();
   });
 
+  it('does not parse documents from an archived knowledge base', async () => {
+    mockPrisma.document.findUnique.mockResolvedValue({
+      id: 'doc-1', kbId: 'kb-1', title: 'old.txt', rawFileOid: '/old.txt',
+      status: 'indexing', version: 4, kb: { status: 'archived' },
+    });
+    const service = new IngestionService(queue as any, compiler as any, models as any);
+    await expect(service.processDocument('doc-1', 4)).resolves.toEqual(
+      expect.objectContaining({ skipped: true, reason: 'knowledge-base-archived' }),
+    );
+    expect(mockReadFile).not.toHaveBeenCalled();
+  });
+
   it('re-checks the version inside the save transaction and aborts on a mid-parse bump', async () => {
     mockPrisma.document.findUnique.mockResolvedValue({
       id: 'doc-1', kbId: 'kb-1', title: 'fixture.txt', rawFileOid: '/fixture.txt',
@@ -88,7 +100,7 @@ describe('ingestion version fencing', () => {
     expect(enrichQueue.add).not.toHaveBeenCalled();
   });
 
-  it('replaces chunks and carries the version into the enrichment job on the happy path', async () => {
+  it('commits the enrichment request beside the replaced chunks on the happy path', async () => {
     mockPrisma.document.findUnique.mockResolvedValue({
       id: 'doc-1', kbId: 'kb-1', title: 'fixture.txt', rawFileOid: '/fixture.txt',
       status: 'uploaded', version: 3,
@@ -110,11 +122,14 @@ describe('ingestion version fencing', () => {
     expect(tx.chunk.deleteMany).toHaveBeenCalledWith({ where: { documentId: 'doc-1' } });
     expect(tx.chunk.createMany).toHaveBeenCalledTimes(1);
     expect(tx.enrichmentStage.deleteMany).toHaveBeenCalledWith({ where: { documentId: 'doc-1', version: 3 } });
-    expect(enrichQueue.add).toHaveBeenCalledWith(
-      'enrich',
-      expect.objectContaining({ documentId: 'doc-1', kbId: 'kb-1', expectedVersion: 3 }),
-      expect.anything(),
-    );
+    expect(tx.brainChangeEvent.create).toHaveBeenCalledTimes(2);
+    expect(tx.brainChangeEvent.create).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      data: expect.objectContaining({
+        eventType: 'enrichment_request', resourceId: 'doc-1',
+        payload: { kbId: 'kb-1', version: 3 }, status: 'pending',
+      }),
+    }));
+    expect(enrichQueue.add).not.toHaveBeenCalled();
   });
 
   it('routes text documents by the stored file extension, not dotted display titles', async () => {

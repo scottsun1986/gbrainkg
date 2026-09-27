@@ -40,6 +40,10 @@ warn() { log "WARNING: $*"; }
 if [ -z "$TOKEN" ] && [ -z "$TEST_PASSWORD" ]; then
   warn "skip: no LLMWIKI_TOKEN / TEST_PASSWORD configured — feedback regression gate not run."
   warn "set LLMWIKI_TOKEN (for CI bookkeeping) and TEST_PASSWORD (admin login for the harness) to enable."
+  if [ "$STRICT" = "1" ]; then
+    log "FAIL: strict mode requires feedback regression credentials."
+    exit 1
+  fi
   exit 0
 fi
 
@@ -87,18 +91,3 @@ else
   log "done (report mode)."
 fi
 exit 0
-
-# ---- A/B 指标回流门禁（与 feedback 回归互补）----
-if [ -x "$ROOT/scripts/ab-gate.sh" ]; then
-  log "running A/B metrics gate..."
-  if [ "$STRICT" = "1" ]; then
-    GATE_STRICT=1 bash "$ROOT/scripts/ab-gate.sh"
-    ab_rc=$?
-    if [ "$ab_rc" -ne 0 ]; then
-      log "FAIL: A/B gate blocked release (exit $ab_rc)"
-      exit "$ab_rc"
-    fi
-  else
-    bash "$ROOT/scripts/ab-gate.sh" || warn "A/B gate reported issues (report mode)"
-  fi
-fi

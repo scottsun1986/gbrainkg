@@ -11,6 +11,7 @@
 """
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -109,6 +110,11 @@ def f1_score(pred, gold):
 
 def em_score(pred, gold):
     return float(normalize_answer(pred) == normalize_answer(gold))
+
+
+def strip_citation_tags(answer):
+    """Remove only numeric source markers; leave all answer prose untouched."""
+    return re.sub(r"\[\d+\]", "", str(answer or ""))
 
 
 def gold_variants(gold):
@@ -290,6 +296,10 @@ def _selftest():
     assert outside_cutoff["mrr@10"] == 0.0
     duplicates = ranking_metrics(["A", "a", "B"], ["A", "B"])
     assert 0.0 <= duplicates["ndcg@10"] <= 1.0
+    assert strip_citation_tags("Paris [1] and Lyon [12].") == "Paris  and Lyon ."
+    assert strip_citation_tags("[source] [1,2] [3]") == "[source] [1,2] "
+    assert em_score(strip_citation_tags("Paris [1]"), "Paris") == 1.0
+    assert em_score("Paris [1]", "Paris") == 0.0
     print("benchmark_suite selftest OK")
 
 
@@ -299,7 +309,10 @@ def run_single_benchmark(dataset, mode="full", limit=0, token=None):
     # so "is this failure reproducible or was it load/temperature noise?" is a
     # measurement instead of a guess.
     eval_file = Path(os.environ.get("EVAL_SET_PATH") or (BASE / f"{dataset}_eval_set.json"))
-    meta_file = BASE / f"{dataset}_ingest_meta.json"
+    profile = os.environ.get("EVAL_PROFILE", "").strip()
+    if profile and not re.fullmatch(r"[a-zA-Z0-9_-]+", profile):
+        raise ValueError("EVAL_PROFILE must be a simple profile name")
+    meta_file = (BASE / "profiles" / profile / f"{dataset}_ingest_meta.json") if profile else (BASE / f"{dataset}_ingest_meta.json")
     if not eval_file.exists() or not meta_file.exists():
         raise FileNotFoundError(f"Missing dataset files for {dataset}")
 
@@ -308,6 +321,16 @@ def run_single_benchmark(dataset, mode="full", limit=0, token=None):
         eval_set = eval_set[:limit]
 
     meta = json.load(open(meta_file))
+    if profile and (meta.get("profile") != profile or not meta.get("all_published")):
+        raise ValueError(f"{dataset}: profile {profile} has not finished publishing")
+    if profile:
+        manifest_file = BASE / "profiles" / profile / f"{dataset}_manifest.json"
+        manifest_bytes = manifest_file.read_bytes()
+        if hashlib.sha256(manifest_bytes).hexdigest() != meta.get("manifest_sha256"):
+            raise ValueError(f"{dataset}: profile manifest hash mismatch")
+        manifest = json.loads(manifest_bytes)
+        if manifest.get("selected_corpus_sha256") != meta.get("selected_corpus_sha256"):
+            raise ValueError(f"{dataset}: profile corpus hash mismatch")
     kb_id = meta["kb_id"]
     if not token:
         token = login()
@@ -325,11 +348,21 @@ def run_single_benchmark(dataset, mode="full", limit=0, token=None):
                 "qid": q["qid"], "ranked": [], "recall@2": 0.0,
                 "recall@5": 0.0, "recall@10": 0.0,
                 "full_evidence": 0.0, "mrr@10": 0.0,
-                "ndcg@10": 0.0, "error": err,
+                "ndcg@10": 0.0, "ranked_sources": [], "error": err,
             }
-        titles = [r.get("title") for r in (res.get("results") or []) if r.get("title")]
+        ranked_results = [r for r in (res.get("results") or []) if r.get("title")]
+        titles = [r["title"] for r in ranked_results]
         m = ranking_metrics(titles, q["gold_titles"])
-        return {"qid": q["qid"], "ranked": titles[:20], **m, "error": None}
+        # Preserve source identity beside the legacy title ranking. Identical
+        # titles can come from one document's chunks or distinct documents;
+        # the title-only metric cannot tell which happened.
+        ranked_sources = [
+            {"title": r["title"], "document_id": r.get("documentId") or r.get("document_id"),
+             "chunk_id": r.get("chunkId") or r.get("chunk_id"), "score": r.get("score")}
+            for r in ranked_results[:20]
+        ]
+        return {"qid": q["qid"], "ranked": titles[:20], "ranked_sources": ranked_sources,
+                **m, "error": None}
 
     search_rows = []
     t_search_start = time.time()
@@ -360,6 +393,7 @@ def run_single_benchmark(dataset, mode="full", limit=0, token=None):
         def qa_once(q):
             c = chat_once(token, q["question"], kb_id)
             ans = c.get("answer") or ""
+            answer_content = strip_citation_tags(ans)
             cit_titles = [x["title"] for x in c.get("citations") or []]
             return {
                 "qid": q["qid"], "question": q["question"], "gold": q["answer"], "type": q["type"],
@@ -367,6 +401,8 @@ def run_single_benchmark(dataset, mode="full", limit=0, token=None):
                 "error": c.get("error"),
                 "em": em_score(ans, q["answer"]),
                 "f1": f1_score(ans, q["answer"]),
+                "em_citation_stripped": em_score(answer_content, q["answer"]),
+                "f1_citation_stripped": f1_score(answer_content, q["answer"]),
                 "containment": float(normalize_answer(q["answer"]) in normalize_answer(ans)),
                 "alias_match": float(answer_match(ans, q["answer"])),
                 "citation_hit": float(any(t.casefold() in set(g.casefold() for g in q["gold_titles"]) for t in cit_titles)),
@@ -378,7 +414,8 @@ def run_single_benchmark(dataset, mode="full", limit=0, token=None):
             if repeats == 1:
                 return runs[0]
             first = dict(runs[0])
-            for key in ("em", "f1", "containment", "alias_match", "citation_hit", "refusal"):
+            for key in ("em", "f1", "em_citation_stripped", "f1_citation_stripped",
+                        "containment", "alias_match", "citation_hit", "refusal"):
                 values = [float(r.get(key) or 0) for r in runs]
                 first[f"{key}_mean"] = sum(values) / len(values)
                 first[f"{key}_majority"] = float(sum(values) * 2 >= len(values))
@@ -423,6 +460,8 @@ def run_single_benchmark(dataset, mode="full", limit=0, token=None):
             "refusal_rate_on_answerable": round(len(refusals) / len(successful), 4) if successful else None,
             "em": avg("em", qa_rows),
             "f1": avg("f1", qa_rows),
+            "em_citation_stripped": avg("em_citation_stripped", qa_rows),
+            "f1_citation_stripped": avg("f1_citation_stripped", qa_rows),
             "f1_on_attempted": avg("f1", non_ref),
             "em_on_attempted": avg("em", non_ref),
             "api_errors": qa_errors,
@@ -438,7 +477,13 @@ def run_single_benchmark(dataset, mode="full", limit=0, token=None):
             qa_summary["containment_majority"] = avg("containment_majority", qa_rows)
             qa_summary["containment_pass_at_n"] = avg("containment_pass_at_n", qa_rows)
             qa_summary["citation_hit_majority"] = avg("citation_hit_majority", qa_rows)
-        print(f"  [问答阶段完成 - 耗时 {t_qa_dur}s]: Containment={qa_summary['containment']}, CitationHit={qa_summary['citation_hit']}, RefusalRate={qa_summary['refusal_rate_on_answerable']}")
+        print(
+            f"  [问答阶段完成 - 耗时 {t_qa_dur}s]: Containment={qa_summary['containment']}, "
+            f"CitationHit={qa_summary['citation_hit']}, "
+            f"EM(raw/stripped)={qa_summary['em']}/{qa_summary['em_citation_stripped']}, "
+            f"F1(raw/stripped)={qa_summary['f1']}/{qa_summary['f1_citation_stripped']}, "
+            f"RefusalRate={qa_summary['refusal_rate_on_answerable']}"
+        )
         if repeats > 1:
             print(
                 f"  [重复测量 x{repeats}]: Containment(mean)={qa_summary['containment']}, "
@@ -450,6 +495,9 @@ def run_single_benchmark(dataset, mode="full", limit=0, token=None):
     result = {
         "dataset": dataset,
         "kb_id": kb_id,
+        "profile": profile or None,
+        "selected_corpus_sha256": meta.get("selected_corpus_sha256"),
+        "manifest_sha256": meta.get("manifest_sha256"),
         "n": len(eval_set),
         "mode": mode,
         "retrieval": ret_summary,
@@ -462,7 +510,8 @@ def run_single_benchmark(dataset, mode="full", limit=0, token=None):
 
     res_dir = BASE / "results"
     res_dir.mkdir(parents=True, exist_ok=True)
-    out_file = res_dir / f"intl-{dataset}-{time.strftime('%Y%m%d-%H%M%S')}.json"
+    profile_suffix = f"-{profile}" if profile else ""
+    out_file = res_dir / f"intl-{dataset}{profile_suffix}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out_file.write_text(json.dumps(result, ensure_ascii=False, indent=2))
     print(f"  ✓ 结果保存至: {out_file.relative_to(BASE.parent.parent)}")
     return result
@@ -474,6 +523,12 @@ def compare_with_baseline(current_results, baseline_path=DEFAULT_BASELINE):
         return []
 
     baseline_data = json.load(open(baseline_path))
+    if any((res.get("profile") or None) != (baseline_data.get("profile") or None) or
+           (res.get("selected_corpus_sha256") or None) !=
+           (baseline_data.get("datasets", {}).get(res["dataset"], {}).get("selected_corpus_sha256") or None)
+           for res in current_results):
+        print("⚠️  当前语料 profile/hash 与基线不同，跳过跨语料指标对比。")
+        return []
     b_datasets = baseline_data.get("datasets", {})
     b_version = baseline_data.get("version", "unknown")
     # Guard against comparing across metric definitions. A baseline recorded with
@@ -572,6 +627,11 @@ def compare_with_baseline(current_results, baseline_path=DEFAULT_BASELINE):
 
 def check_gate(current_results, baseline_path=DEFAULT_BASELINE):
     baseline_data = json.load(open(baseline_path))
+    if any((res.get("profile") or None) != (baseline_data.get("profile") or None) or
+           (res.get("selected_corpus_sha256") or None) !=
+           (baseline_data.get("datasets", {}).get(res["dataset"], {}).get("selected_corpus_sha256") or None)
+           for res in current_results):
+        raise ValueError("quality gate requires a baseline from the same corpus profile/hash")
     b_datasets = baseline_data.get("datasets", {})
     failed = []
 
@@ -639,6 +699,8 @@ def main():
                         help="测试数据集 (all / 2wiki / hotpot / musique)")
     parser.add_argument("--mode", default="full", choices=["full", "retrieval"],
                         help="测试模式: retrieval (仅检索, 快速验证) 或 full (全量问答生成)")
+    parser.add_argument("--profile", default=os.environ.get("EVAL_PROFILE", ""),
+                        help="独立语料 profile，例如 300；默认使用历史已入库 KB")
     parser.add_argument("--limit", type=int, default=0,
                         help="限制评测题目数量 (默认 0 表示全量 100 题)")
     parser.add_argument("--baseline", default=str(DEFAULT_BASELINE),
@@ -650,6 +712,9 @@ def main():
     parser.add_argument("--selftest", action="store_true", help="仅校验指标实现，不访问 API")
 
     args = parser.parse_args()
+    if args.profile and not re.fullmatch(r"[a-zA-Z0-9_-]+", args.profile):
+        parser.error("--profile must be a simple profile name")
+    os.environ["EVAL_PROFILE"] = args.profile
 
     if args.selftest:
         _selftest()

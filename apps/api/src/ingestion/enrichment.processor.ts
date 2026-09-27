@@ -2,6 +2,7 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Job, Queue } from 'bullmq';
 import { Logger, Optional } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { setIngestionQueueDepth } from '../observability/failopen';
 import { getPrismaClient } from '../prisma';
 import { ChunkEmbeddingService } from '../embedding/chunk-embedding.service';
@@ -14,6 +15,7 @@ import { LexicalIndexService } from '../retrieval/lexical-index.service';
 export interface EnrichmentJobData {
   documentId: string;
   kbId: string;
+  outboxEventId?: string;
   // Version of the document whose chunks this job was queued for. When the
   // document has since been re-ingested the job must not touch readiness.
   expectedVersion?: number;
@@ -27,7 +29,7 @@ export interface EnrichmentJobData {
  * (pending → enriching → ready | degraded) so callers and the UI can tell
  * whether a document is fully indexed.
  */
-@Processor('enrichment-queue', { concurrency: Number(process.env.ENRICHMENT_CONCURRENCY || 2) })
+@Processor('enrichment-queue', { concurrency: Number(process.env.ENRICHMENT_CONCURRENCY || 4) })
 export class EnrichmentProcessor extends WorkerHost {
   private readonly logger = new Logger(EnrichmentProcessor.name);
   private readonly prisma = getPrismaClient();
@@ -59,20 +61,37 @@ export class EnrichmentProcessor extends WorkerHost {
 
   async process(job: Job<EnrichmentJobData>): Promise<{ readiness: string }> {
     await this.reportQueueDepth();
-    const { documentId, kbId, expectedVersion } = job.data;
+    const { documentId, kbId, expectedVersion, outboxEventId } = job.data;
+    const finishOutbox = async (status: 'completed' | 'failed', error?: unknown) => {
+      const eventStore = (this.prisma as any).brainChangeEvent;
+      if (!outboxEventId || typeof eventStore?.update !== 'function') return;
+      await eventStore.update({
+        where: { id: outboxEventId },
+        data: status === 'completed'
+          ? { status, processedAt: new Date(), errorMessage: null }
+          : { status, errorMessage: error instanceof Error ? error.message : String(error), retryCount: { increment: 1 } },
+      });
+    };
+    if (outboxEventId && typeof (this.prisma as any).brainChangeEvent?.update === 'function') {
+      await (this.prisma as any).brainChangeEvent.update({
+        where: { id: outboxEventId }, data: { status: 'processing' },
+      });
+    }
     if (expectedVersion !== undefined) {
       const current = await this.prisma.document.findUnique({
         where: { id: documentId },
-        select: { version: true },
+        select: { version: true, kb: { select: { status: true } } },
       });
-      if (!current || current.version !== expectedVersion) {
+      if (!current || current.version !== expectedVersion || current.kb?.status === 'archived') {
         this.logger.warn(
           `Enrichment for ${documentId} skipped: version ${expectedVersion} superseded by ${current?.version ?? 'deleted'}.`,
         );
+        await finishOutbox('completed');
         return { readiness: 'superseded' };
       }
     }
     if (!(await this.setReadiness(documentId, 'enriching', expectedVersion))) {
+      await finishOutbox('completed');
       return { readiness: 'superseded' };
     }
     try {
@@ -98,10 +117,8 @@ export class EnrichmentProcessor extends WorkerHost {
           return result;
         })();
       };
-      // Parallel Enrichment Pipeline: dispatch chunk embedding, RAPTOR summary hierarchy,
-      // and GraphRAG extraction concurrently to cut document ingestion latency by up to 60%.
-      // Uses allSettled to ensure all parallel tasks complete even if one fails,
-      // preventing orphaned background operations on BullMQ retry.
+      // Only retrieval-critical dense and lexical indexes occupy these slots.
+      // Slow LLM-driven summaries/graph extraction use an independent queue.
       const enrichmentTasks: Promise<any>[] = [];
       if (this.chunkEmbeddingService.isEnabled()) {
         enrichmentTasks.push(
@@ -138,12 +155,6 @@ export class EnrichmentProcessor extends WorkerHost {
           }),
         );
       }
-      if (this.raptorService.isEnabled()) {
-        enrichmentTasks.push(runStage('raptor', () => this.raptorService.indexDocument(kbId, documentId)));
-      }
-      if (process.env.AUTO_GRAPH_EXTRACT_ENABLED === 'true') {
-        enrichmentTasks.push(runStage('graph', () => this.extractGraph(kbId, documentId)));
-      }
       const settled = await Promise.allSettled(enrichmentTasks);
       const firstError = settled.find((r): r is PromiseRejectedResult => r.status === 'rejected');
       if (firstError) {
@@ -160,17 +171,34 @@ export class EnrichmentProcessor extends WorkerHost {
       if (expectedVersion !== undefined) {
         const postCheck = await this.prisma.document.findUnique({
           where: { id: documentId },
-          select: { version: true },
+          select: { version: true, kb: { select: { status: true } } },
         });
-        if (!postCheck || postCheck.version !== expectedVersion) {
+        if (!postCheck || postCheck.version !== expectedVersion || postCheck.kb?.status === 'archived') {
           this.logger.warn(
             `Enrichment for ${documentId} completed but version ${expectedVersion} was superseded by ${postCheck?.version ?? 'deleted'}. Skipping ready broadcast.`,
           );
+          await finishOutbox('completed');
           return { readiness: 'superseded' };
         }
       }
       if (!(await this.setReadiness(documentId, 'ready', expectedVersion))) {
+        await finishOutbox('completed');
         return { readiness: 'superseded' };
+      }
+      if (expectedVersion !== undefined && (this.raptorService.isEnabled() || process.env.AUTO_GRAPH_EXTRACT_ENABLED === 'true')) {
+        const hash = createHash('sha256').update(`aux:${documentId}:${expectedVersion}`).digest('hex');
+        const eventId = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+        try {
+          await (this.prisma as any).brainChangeEvent.upsert({
+            where: { id: eventId },
+            create: { id: eventId, eventType: 'aux_enrichment_request', resourceType: 'document',
+              resourceId: documentId, payload: { kbId, version: expectedVersion }, status: 'pending' },
+            update: {},
+          });
+        } catch (error) {
+          // Optional summary/graph work is not part of core search readiness.
+          this.logger.warn(`Could not persist auxiliary enrichment request for ${documentId}: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
       // Self-healing publish re-drive: the source-sync job gates publishing on
       // complete embeddings and its retry window may have expired while this
@@ -195,16 +223,56 @@ export class EnrichmentProcessor extends WorkerHost {
           `Publish re-drive failed for ${documentId}: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
+      await finishOutbox('completed');
       await this.reportQueueDepth();
       return { readiness: 'ready' };
     } catch (err) {
       await this.setReadiness(documentId, 'degraded', expectedVersion).catch(() => undefined);
+      await finishOutbox('failed', err).catch((outboxErr) => {
+        this.logger.warn(`Failed to record enrichment outbox status for ${documentId}: ${outboxErr instanceof Error ? outboxErr.message : String(outboxErr)}`);
+      });
       this.logger.error(
         `Enrichment failed for ${documentId} (attempt ${job.attemptsMade + 1}): ${err instanceof Error ? err.message : String(err)}`,
       );
       throw err; // let BullMQ retry with backoff
     } finally {
       await this.reportQueueDepth();
+    }
+  }
+
+  /** LLM-dependent indexes run on a separate, bounded worker pool. */
+  async processAuxiliary(job: Job<EnrichmentJobData>): Promise<void> {
+    const { documentId, kbId, expectedVersion, outboxEventId } = job.data;
+    const eventStore = (this.prisma as any).brainChangeEvent;
+    if (outboxEventId) await eventStore.update({ where: { id: outboxEventId }, data: { status: 'processing' } });
+    try {
+      const doc = await this.prisma.document.findUnique({
+        where: { id: documentId }, select: { version: true, kb: { select: { status: true } } },
+      });
+      if (doc && doc.kb?.status === 'active' && (expectedVersion === undefined || doc.version === expectedVersion)) {
+        const stageStore = (this.prisma as any).enrichmentStage;
+        const rows = expectedVersion === undefined ? [] : await stageStore.findMany({
+          where: { documentId, version: expectedVersion }, select: { stage: true },
+        });
+        const completed = new Set(rows.map((row: { stage: string }) => row.stage));
+        const stages: Array<[string, () => Promise<unknown>]> = [];
+        if (this.raptorService.isEnabled()) stages.push(['raptor', () => this.raptorService.indexDocument(kbId, documentId)]);
+        if (process.env.AUTO_GRAPH_EXTRACT_ENABLED === 'true') stages.push(['graph', () => this.extractGraph(kbId, documentId)]);
+        for (const [stage, work] of stages) {
+          if (completed.has(stage)) continue;
+          await work();
+          if (expectedVersion !== undefined) await stageStore.upsert({
+            where: { documentId_version_stage: { documentId, version: expectedVersion, stage } },
+            create: { documentId, version: expectedVersion, stage }, update: {},
+          });
+        }
+      }
+      if (outboxEventId) await eventStore.update({ where: { id: outboxEventId },
+        data: { status: 'completed', processedAt: new Date(), errorMessage: null } });
+    } catch (error) {
+      if (outboxEventId) await eventStore.update({ where: { id: outboxEventId },
+        data: { status: 'failed', errorMessage: error instanceof Error ? error.message : String(error), retryCount: { increment: 1 } } }).catch(() => undefined);
+      throw error;
     }
   }
 

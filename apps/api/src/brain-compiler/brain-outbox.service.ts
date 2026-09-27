@@ -7,6 +7,8 @@ export type ChangeEventType =
   | 'doc_change'
   | 'doc_delete'
   | 'doc_acl_change'
+  | 'enrichment_request'
+  | 'aux_enrichment_request'
   | 'perm_grant'
   | 'perm_revoke'
   | 'org_change'
@@ -29,7 +31,7 @@ export class BrainOutboxService implements OnModuleInit, OnModuleDestroy {
   private dispatchCursor?: string;
 
   onModuleInit() {
-    this.dispatchTimer = setInterval(() => { void this.dispatchPending(); }, 15_000);
+    this.dispatchTimer = setInterval(() => { void this.dispatchPending(); }, 5_000);
     this.dispatchTimer.unref();
     void this.dispatchPending();
   }
@@ -42,20 +44,41 @@ export class BrainOutboxService implements OnModuleInit, OnModuleDestroy {
     if (this.dispatching) return;
     this.dispatching = true;
     try {
+      const coreLimit = Math.max(1, Number(process.env.ENRICHMENT_QUEUE_MAX_WAITING || 500));
+      const auxLimit = Math.max(1, Number(process.env.AUX_ENRICHMENT_QUEUE_MAX_WAITING || 100));
+      const counts = await Promise.all([this.enrichmentQueue, this.auxiliaryQueue].map(async (queue) =>
+        typeof queue?.getJobCounts === 'function'
+          ? await queue.getJobCounts('waiting', 'delayed') : { waiting: 0, delayed: 0 }));
+      let coreQueued = Number(counts[0].waiting || 0) + Number(counts[0].delayed || 0);
+      let auxQueued = Number(counts[1].waiting || 0) + Number(counts[1].delayed || 0);
       const events = await this.prisma.brainChangeEvent.findMany({
         where: { status: { in: ['pending', 'processing', 'failed'] }, retryCount: { lt: 10 } },
         orderBy: { id: 'asc' }, take: 100,
         ...(this.dispatchCursor ? { cursor: { id: this.dispatchCursor }, skip: 1 } : {}),
       });
       for (const event of events) {
-        const job = await this.compilerQueue.getJob(`outbox-event-${event.id}`);
+        const isEnrichment = event.eventType === 'enrichment_request';
+        const isAuxiliary = event.eventType === 'aux_enrichment_request';
+        const queue = isAuxiliary ? this.auxiliaryQueue : isEnrichment ? this.enrichmentQueue : this.compilerQueue;
+        const jobId = isAuxiliary ? `aux-outbox-${event.id}` : isEnrichment ? `enrichment-outbox-${event.id}` : `outbox-event-${event.id}`;
+        const job = await queue.getJob(jobId);
         if (!job) {
-          await this.enqueueEvent(event.id, event.eventType);
+          if (isEnrichment && coreQueued >= coreLimit) continue;
+          if (isAuxiliary && auxQueued >= auxLimit) continue;
+          await this.enqueueEvent(event.id, event.eventType, event.resourceId, event.payload);
+          if (isEnrichment) coreQueued += 1;
+          if (isAuxiliary) auxQueued += 1;
         } else {
           const state = await job.getState();
           // Never steal an active or delayed BullMQ lease. BullMQ owns stalled
           // worker detection; replay only terminal jobs with unfinished DB state.
-          if (state === 'failed' || state === 'completed') await job.retry(state);
+          if (state === 'failed' || state === 'completed') {
+            if (isEnrichment && coreQueued >= coreLimit) continue;
+            if (isAuxiliary && auxQueued >= auxLimit) continue;
+            await job.retry(state);
+            if (isEnrichment) coreQueued += 1;
+            if (isAuxiliary) auxQueued += 1;
+          }
         }
       }
       this.dispatchCursor = events.length === 100 ? events[events.length - 1].id : undefined;
@@ -66,8 +89,27 @@ export class BrainOutboxService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async enqueueEvent(eventId: string, eventType: string) {
+  private async enqueueEvent(eventId: string, eventType: string, resourceId?: string | null, payload?: any) {
     const isRevoke = eventType === 'perm_revoke' || eventType === 'doc_delete' || eventType === 'doc_acl_change';
+    if (eventType === 'enrichment_request' || eventType === 'aux_enrichment_request') {
+      if (!resourceId || !payload?.kbId || typeof payload?.version !== 'number') {
+        throw new Error(`Invalid enrichment outbox event ${eventId}`);
+      }
+      const auxiliary = eventType === 'aux_enrichment_request';
+      await (auxiliary ? this.auxiliaryQueue : this.enrichmentQueue).add(auxiliary ? 'augment-document' : 'enrich-from-outbox', {
+        documentId: resourceId,
+        kbId: payload.kbId,
+        expectedVersion: payload.version,
+        outboxEventId: eventId,
+      }, {
+        jobId: `${auxiliary ? 'aux' : 'enrichment'}-outbox-${eventId}`,
+        attempts: Number(process.env.ENRICHMENT_ATTEMPTS || 3),
+        backoff: { type: 'exponential', delay: Number(process.env.ENRICHMENT_BACKOFF_MS || 30_000) },
+        removeOnComplete: 500,
+        removeOnFail: 1000,
+      });
+      return;
+    }
     await this.compilerQueue.add('process-outbox-event', { eventId }, {
       jobId: `outbox-event-${eventId}`, priority: isRevoke ? 1 : 3,
       attempts: 3, backoff: { type: 'exponential', delay: 2000 },
@@ -77,6 +119,8 @@ export class BrainOutboxService implements OnModuleInit, OnModuleDestroy {
 
   constructor(
     @InjectQueue('dirty-compiler-queue') private readonly compilerQueue: Queue,
+    @InjectQueue('enrichment-queue') private readonly enrichmentQueue: Queue,
+    @InjectQueue('aux-enrichment-queue') private readonly auxiliaryQueue: Queue,
   ) {}
 
   /**
@@ -107,7 +151,7 @@ export class BrainOutboxService implements OnModuleInit, OnModuleDestroy {
     );
 
     // 将事件投递到队列中，高优先级处理权限撤销事件
-    await this.enqueueEvent(event.id, eventType);
+    await this.enqueueEvent(event.id, eventType, resourceId, payload);
 
     return event.id;
   }

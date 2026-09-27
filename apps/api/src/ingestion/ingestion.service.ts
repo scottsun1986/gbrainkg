@@ -71,6 +71,7 @@ export class IngestionService implements OnModuleInit {
         status: { in: ["parsing", "indexing"] },
         updatedAt: { lt: staleBefore },
         rawFileOid: { not: null },
+        kb: { status: 'active' },
       },
       select: {
         id: true,
@@ -86,7 +87,17 @@ export class IngestionService implements OnModuleInit {
       // interrupted. Resume at the compile boundary instead of spending
       // minutes parsing a large PDF for a second time.
       if (document.status === "indexing" && document._count.chunks > 0) {
-        if (this.enrichmentQueue) {
+        // The transactional outbox already owns enrichment delivery. Re-enqueue
+        // only legacy documents which have no durable request for this version.
+        const pendingRequest = await this.prisma.brainChangeEvent.findFirst({
+          where: {
+            eventType: 'enrichment_request', resourceId: document.id,
+            payload: { path: ['version'], equals: document.version },
+            status: { in: ['pending', 'processing', 'failed'] },
+          },
+          select: { id: true },
+        });
+        if (this.enrichmentQueue && !pendingRequest) {
           await this.enrichmentQueue.add(
             `enrich-${document.id}-v${document.version}`,
             {
@@ -183,9 +194,12 @@ export class IngestionService implements OnModuleInit {
         sourceType: true,
         status: true,
         version: true,
+        kb: { select: { status: true } },
       },
     });
     if (!document) throw new Error(`Document ${documentId} no longer exists.`);
+    if (document.kb?.status && document.kb.status !== 'active')
+      return { documentId, status: document.status, skipped: true, reason: 'knowledge-base-archived' };
     if (expectedVersion !== undefined && document.version !== expectedVersion) {
       return { documentId, status: document.status, skipped: true, reason: "superseded-version" };
     }
@@ -597,6 +611,7 @@ export class IngestionService implements OnModuleInit {
             data: {
               mdPath: relativeContentPath,
               status: qualityStatus === "passed" ? "indexing" : "needs_review",
+              ...(qualityStatus === "passed" ? { indexReadiness: "pending" } : {}),
               parserEngine: parsed.engine || null,
               parserClassification: parsed.classification || null,
               parserMetadata: parserMetadata as any,
@@ -655,6 +670,15 @@ export class IngestionService implements OnModuleInit {
                 payload: { kbId: document.kbId, version: targetVersion },
               },
             });
+            await tx.brainChangeEvent.create({
+              data: {
+                eventType: "enrichment_request",
+                resourceType: "document",
+                resourceId: documentId,
+                status: "pending",
+                payload: { kbId: document.kbId, version: targetVersion },
+              },
+            });
           }
         },
         // Chunk replacement for large documents can exceed the default 5s
@@ -697,32 +721,10 @@ export class IngestionService implements OnModuleInit {
     // source synchronization out of the request/parse path.
     // Post-publish enrichment owns lexical postings and the other derived
     // indexes. Running lexical indexing here as well paid twice per document.
-    // Post-publish enrichment runs through a durable queue with retries and
-    // maintains the Document.indexReadiness state machine. When the queue is
-    // not assembled (unit tests), fall back to fire-and-forget behaviour.
-    if (this.enrichmentQueue) {
-      await this.prisma.document
-        .update({ where: { id: documentId }, data: { indexReadiness: "pending" } })
-        .catch(() => undefined);
-      await this.enrichmentQueue
-        .add(
-          "enrich",
-          // Carry the version whose chunks were just saved so a stale
-          // enrichment job cannot flip readiness of a newer version.
-          { documentId, kbId: document.kbId, expectedVersion: targetVersion ?? undefined },
-          {
-            attempts: Number(process.env.ENRICHMENT_ATTEMPTS || 3),
-            backoff: { type: "exponential", delay: Number(process.env.ENRICHMENT_BACKOFF_MS || 30_000) },
-            removeOnComplete: 500,
-            removeOnFail: 1000,
-          },
-        )
-        .catch((err) => {
-          this.logger.warn(
-            `Failed to enqueue enrichment for ${documentId}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        });
-    } else if (this.chunkEmbeddingService?.isEnabled()) {
+    // Enrichment intent was committed beside the chunks. BrainOutboxService
+    // delivers it to BullMQ and retries delivery independently of this worker.
+    // Unit harnesses without the outbox keep the legacy local fallback.
+    if (!this.enrichmentQueue && this.chunkEmbeddingService?.isEnabled()) {
       void this.chunkEmbeddingService.embedDocumentChunks(documentId).catch((err) => {
         this.logger.warn(
           `Chunk embedding failed for ${documentId}: ${err instanceof Error ? err.message : String(err)}`,

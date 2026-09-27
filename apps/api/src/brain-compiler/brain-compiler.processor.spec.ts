@@ -9,6 +9,7 @@ import { BrainOutboxService } from "./brain-outbox.service";
 import { ChunkEmbeddingService } from "../embedding/chunk-embedding.service";
 
 const mockPrisma = {
+  knowledgeBase: { findUnique: jest.fn() },
   brainChangeEvent: { findUnique: jest.fn(), update: jest.fn() },
   brainRepo: {
     findUnique: jest.fn(),
@@ -61,6 +62,7 @@ describe("BrainCompilerProcessor", () => {
   };
 
   beforeEach(async () => {
+    mockPrisma.knowledgeBase.findUnique.mockResolvedValue({ status: 'active' });
     chunkEmbedding.isEnabled.mockReturnValue(false);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -186,6 +188,15 @@ describe("BrainCompilerProcessor", () => {
     });
     expect(compilerService.invalidateScopesForSource).toHaveBeenCalledWith("llmwiki-kb-stable");
     expect(compilerService.queueScopeSynthesis).toHaveBeenCalledWith(["scope-1"], 3);
+  });
+
+  it('completes stale source-sync jobs for archived knowledge bases without retrying', async () => {
+    mockPrisma.knowledgeBase.findUnique.mockResolvedValue({ status: 'archived' });
+    const result = await processor.process({
+      name: 'source-sync', data: { kbId: 'kb-archived', docIds: ['doc-old'] },
+    } as Job);
+    expect(result).toEqual({ status: 'skipped', reason: 'knowledge-base-unavailable' });
+    expect(compilerService.syncKnowledgeBaseSource).not.toHaveBeenCalled();
   });
 
   describe("core-indexing gate for source publish", () => {

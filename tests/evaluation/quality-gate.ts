@@ -19,6 +19,7 @@ import fs from 'fs';
 import path from 'path';
 import { llmChat, extractJson, llmConfig } from './llm-client';
 import { runMetadata } from './run-meta';
+import { requireResolvedScopes, resolveGateToken } from './quality-gate-auth';
 
 interface EvalQuestion {
   id: string;
@@ -47,7 +48,7 @@ const API_BASE = (process.env.API_URL || process.env.API_BASE || 'http://127.0.0
   .replace(/\/api\/v1\/chat\/completions$/, '')
   .replace(/\/$/, '');
 const CHAT_URL = `${API_BASE}/api/v1/chat/completions`;
-const TOKEN = process.env.LLMWIKI_TOKEN || process.env.AUTH_TOKEN || '';
+let TOKEN = '';
 const REQUEST_TIMEOUT_MS = Number(process.env.GATE_REQUEST_TIMEOUT_MS || 90_000);
 // Independent (LLM-as-judge) scoring: opt-in, reported always, gated only when
 // GATE_LLM_JUDGE_MIN > 0. This avoids a gate that only measures keyword overlap.
@@ -172,6 +173,12 @@ async function fetchChatCompletion(
   }
 }
 
+function requireChatSuccess(result: ChatResult, questionId: string): void {
+  if (result.error || (result.status !== 200 && result.status !== 201)) {
+    throw new Error(`Quality gate request failed for ${questionId}: ${result.error || `HTTP ${result.status}`}`);
+  }
+}
+
 // Max evidence text passed to the judge per citation (keeps prompts bounded).
 const EVIDENCE_SNIPPET_MAX_CHARS = 800;
 
@@ -266,13 +273,13 @@ async function runQualityGate() {
   const limit = Math.max(0, Number(process.env.GATE_LIMIT || 0));
   const dataset: EvalQuestion[] = limit > 0 ? allQuestions.slice(0, limit) : allQuestions;
 
+  TOKEN = await resolveGateToken(API_BASE, process.env);
+
   const allScopes = dataset.map((item) => item.expected_kb_scope).filter((s) => s.length > 0);
   const scopeMap = await resolveScopeMap(allScopes);
-  const resolved = [...scopeMap.keys()].filter((key) => allScopes.some((s) => s.includes(key)));
-  console.log(`语料范围解析: ${resolved.length}/${new Set(allScopes).size} 个知识库已映射\n`);
-  if (!TOKEN) {
-    console.warn(`${colors.yellow}警告: 未设置 LLMWIKI_TOKEN，鉴权类用例将全部失败${colors.reset}\n`);
-  }
+  const requiredScopes = [...new Set(allScopes.flat())];
+  console.log(`语料范围解析: ${scopeMap.size}/${requiredScopes.length} 个知识库已映射\n`);
+  requireResolvedScopes(allScopes, scopeMap, API_BASE);
 
   interface Row {
     id: string; category: string; success: boolean;
@@ -296,10 +303,12 @@ async function runQualityGate() {
     if (item.prior_turns?.length) {
       for (const prior of item.prior_turns) {
         const turn = await fetchChatCompletion(prior, scopeIds, conversationId);
+        requireChatSuccess(turn, item.id);
         conversationId = turn.conversationId ?? conversationId;
       }
     }
     let res = await fetchChatCompletion(item.question, scopeIds, conversationId);
+    requireChatSuccess(res, item.id);
 
     // LLM answering is mildly nondeterministic: when the correct evidence WAS
     // retrieved (hitRate true) but the model refused, retry once with a nonce
@@ -309,6 +318,7 @@ async function runQualityGate() {
       || item.expected_document_titles.some((t) => res.citations.some((c) => (c.doc_title || '').includes(t)));
     if (!item.expected_no_answer && refused && hitOnFirst) {
       res = await fetchChatCompletion(`${item.question}（复核）`, scopeIds);
+      requireChatSuccess(res, item.id);
     }
     const titles = res.citations.map((c) => c.doc_title || '');
 

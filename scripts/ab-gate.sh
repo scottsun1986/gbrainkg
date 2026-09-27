@@ -3,7 +3,7 @@
 #
 # 用法:
 #   bash scripts/ab-gate.sh                     # 无凭据则跳过(退出 0)
-#   GATE_STRICT=1 bash scripts/ab-gate.sh       # 发布门禁：有凭据时劣化即非零
+#   GATE_STRICT=1 bash scripts/ab-gate.sh       # 缺凭据/数据/服务异常均非零
 #
 # 凭据:
 #   TEST_USER / TEST_PASSWORD  管理端登录（拉 /api/v1/experiments/summary）
@@ -24,7 +24,10 @@ log() { echo "[ab-gate $(date '+%F %T')] $*"; }
 
 if [ -z "$TEST_PASSWORD" ]; then
   log "skip: TEST_PASSWORD not set — cannot fetch experiment summary."
-  [ "$STRICT" = "1" ] && log "strict mode: treating skip as pass (no live experiments assumed)."
+  if [ "$STRICT" = "1" ]; then
+    log "FAIL: strict mode requires live A/B validation credentials."
+    exit 1
+  fi
   exit 0
 fi
 

@@ -59,6 +59,36 @@ function boundedInteger(value: unknown, field: string, min: number, max: number)
   return number;
 }
 
+// Keep the admin directory's public shape explicit. A User model may gain new
+// authentication fields over time; spreading a Prisma User into an HTTP reply
+// would expose them by default.
+const ADMIN_USER_SELECT = {
+  id: true,
+  username: true,
+  displayName: true,
+  email: true,
+  mustChangePassword: true,
+  status: true,
+  source: true,
+  mfaEnabled: true,
+  mfaEnabledAt: true,
+  createdAt: true,
+  roles: { include: { role: true } },
+  orgs: { include: { orgNode: true } },
+} as const;
+
+function safeAdminUser(user: any) {
+  if (!user) return null;
+  const {
+    id, username, displayName, email, mustChangePassword, status,
+    source, mfaEnabled, mfaEnabledAt, createdAt, roles, orgs,
+  } = user;
+  return {
+    id, username, displayName, email, mustChangePassword, status,
+    source, mfaEnabled, mfaEnabledAt, createdAt, roles, orgs,
+  };
+}
+
 function assertGbrainRecipe(params: unknown, kind: string): void {
   if (!params || typeof params !== 'object' || !(params as any).gbrainRecipe) return;
   const recipe = String((params as any).gbrainRecipe).trim().toLowerCase();
@@ -386,12 +416,12 @@ export class AdminController {
     // Admin shell inventory must run under service RLS context: otherwise
     // KnowledgeBase filters make required Prisma relations (IndustryGrant.kb)
     // resolve to null and 500 the post-login admin bootstrap.
-    return withServiceContext(this.prisma, async (db: any) => {
+    // Keep telemetry outside this interactive transaction: it performs queue,
+    // filesystem and HTTP health checks, which can exceed Prisma's 5s default
+    // transaction timeout even though the inventory DB work is quick.
+    const data = await withServiceContext(this.prisma, async (db: any) => {
       const users = await (db as any).user.findMany({
-        include: {
-          roles: { include: { role: true } },
-          orgs: { include: { orgNode: true } },
-        },
+        select: ADMIN_USER_SELECT,
         orderBy: { createdAt: "asc" },
       });
       const allOrgs = await (db as any).orgNode.findMany({
@@ -540,7 +570,7 @@ export class AdminController {
                 user.id === adminId ||
                 user.orgs.some((org: any) => managedOrgIds.has(org.orgNodeId)),
             );
-      const safeUsers = directoryUsers.map(({ passwordHash, ...user }: any) => {
+      const safeUsers = directoryUsers.map((user: any) => {
         const isTargetSystemAdmin = user.roles.some(
           (r: any) =>
             r.role?.builtin ||
@@ -552,7 +582,7 @@ export class AdminController {
           (!isTargetSystemAdmin &&
             user.orgs.length > 0 &&
             user.orgs.some((org: any) => managedOrgIds.has(org.orgNodeId)));
-        return { ...user, canManage };
+        return { ...safeAdminUser(user), canManage };
       });
       const visibleKbIdSet = new Set(visibleKbs.map((kb: any) => kb.id));
       const industryScopeKbIds = new Set(industryScopeKbs.map((kb: any) => kb.id));
@@ -736,16 +766,8 @@ export class AdminController {
             })
           : [],
         audit,
-        dream: includeTelemetry && (isSystemAdmin || canReadAudit)
-          ? await this.brainCompilerService.getDreamTelemetry({
-              excludePrivate: true,
-              runsPage: dreamPage,
-              runsLimit: auditLimit,
-            })
-          : null,
-        systemStatus: includeTelemetry && (isSystemAdmin || canReadAudit)
-          ? await this.getSystemStatusTelemetryData()
-          : null,
+        dream: null,
+        systemStatus: null,
         auditPagination: {
           page: auditPage,
           limit: auditLimit,
@@ -756,6 +778,15 @@ export class AdminController {
         managedOrgIds: [...managedOrgIds],
       };
     });
+    if (includeTelemetry && (isSystemAdmin || canReadAudit)) {
+      data.dream = await this.brainCompilerService.getDreamTelemetry({
+        excludePrivate: true,
+        runsPage: dreamPage,
+        runsLimit: auditLimit,
+      });
+      data.systemStatus = await this.getSystemStatusTelemetryData();
+    }
+    return data;
   }
 
   @Get("system/status-telemetry")
@@ -854,23 +885,20 @@ export class AdminController {
 
     const personalSources = await db.brainSource.findMany({
       where: { status: "active" },
-      select: {
-        sourceKey: true,
-        documents: {
-          select: { document: { select: { kb: { select: { type: true } } } } },
-        },
-      },
+      // This endpoint runs with the requesting admin's RLS context. Traversing
+      // the required Document relation of another user's personal source makes
+      // Prisma throw when that document is hidden. The source's durable kind is
+      // enough to exclude personal and legacy private sources from telemetry.
+      select: { sourceKey: true, kind: true },
     });
     const privateSourceKeys = new Set(
       personalSources
-        .filter((source: any) =>
-          source.documents.some((item: any) => item.document?.kb?.type === "personal"),
-        )
+        .filter((source: any) => source.kind === "personal" || source.kind === "private")
         .map((source: any) => source.sourceKey),
     );
     const safeSourceWhere = {
       status: "active",
-      documents: { none: { document: { kb: { type: "personal" } } } },
+      kind: { notIn: ["personal", "private"] },
     };
     const [sources, sourcesTotal, sharedSourcesTotal, privateSourcesTotal] = await Promise.all([
       db.brainSource.findMany({
@@ -1666,10 +1694,7 @@ export class AdminController {
         orgs: { create: orgIds.map((orgNodeId: string) => ({ orgNodeId })) },
         roles: { create: finalRoleIds.map((roleId: string) => ({ roleId })) },
       },
-      include: {
-        roles: { include: { role: true } },
-        orgs: { include: { orgNode: true } },
-      },
+      select: ADMIN_USER_SELECT,
     });
     await tx.brainChangeEvent.create({ data: {
       eventType: 'role_change', resourceType: 'user', resourceId: created.id,
@@ -1680,7 +1705,7 @@ export class AdminController {
     await this.brainOutboxService?.dispatchPending();
     await this.brainCompilerService.ensureUserBrainRepo(user.id);
     await this.scheduleAccessReconciliation();
-    return { user };
+    return { user: safeAdminUser(user) };
   }
 
   @Patch("users/:id")
@@ -1775,10 +1800,7 @@ export class AdminController {
       } });
       return tx.user.findUnique({
         where: { id },
-        include: {
-          roles: { include: { role: true } },
-          orgs: { include: { orgNode: true } },
-        },
+        select: ADMIN_USER_SELECT,
       });
     });
     if (data.status && data.status !== exists.status) {
@@ -1803,7 +1825,7 @@ export class AdminController {
     if (typeof this.brainCompilerService?.invalidateUserScope === "function") {
       await this.brainCompilerService.invalidateUserScope(id).catch(() => undefined);
     }
-    return { user };
+    return { user: safeAdminUser(user) };
   }
 
   @Delete("users/:id")
@@ -1814,7 +1836,9 @@ export class AdminController {
         "You can only manage users in your organization or its descendants.",
       );
     const user = await this.prisma.$transaction(async tx => {
-      const updated = await tx.user.update({ where: { id }, data: { status: 'disabled' } });
+      const updated = await tx.user.update({
+        where: { id }, data: { status: 'disabled' }, select: ADMIN_USER_SELECT,
+      });
       await tx.brainChangeEvent.create({ data: {
         eventType: 'perm_revoke', resourceType: 'user', resourceId: id,
         payload: { action: 'disable' }, status: 'pending',
@@ -1840,7 +1864,7 @@ export class AdminController {
     if (typeof this.brainCompilerService?.invalidateUserScope === "function") {
       await this.brainCompilerService.invalidateUserScope(id).catch(() => undefined);
     }
-    return { user };
+    return { user: safeAdminUser(user) };
   }
 
   private async validateAssignableRoles(operatorId: string, roleIds: string[]) {

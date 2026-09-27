@@ -64,6 +64,8 @@ import {
 } from "./evidence-pack";
 import { RetrievalArmsService } from "./retrieval-arms";
 import { FusionRerankService } from "./fusion-rerank";
+import { selectDiverseSearchCitations } from "./search-result-diversity";
+import { answerStyleRule } from "./answer-style";
 import { CitationAssemblyService } from "./citation-assembly";
 import { QueryRewriterService, type RetrievalRequest } from "./query-rewriter";
 
@@ -1228,6 +1230,7 @@ export class ChatService {
           citations: fallbackChunks.map((fb, idx) => ({
             topic: fb.title || fb.documentId || "",
             docId: fb.documentId,
+            chunkId: fb.id || fb.chunkId,
             kbId: fb.kbId,
             version: fb.version,
             ord: fb.ord,
@@ -1287,6 +1290,7 @@ export class ChatService {
           citations: fallbackChunks.map((fb, idx) => ({
             topic: fb.title || fb.documentId || "",
             docId: fb.documentId,
+            chunkId: fb.id || fb.chunkId,
             kbId: fb.kbId,
             version: fb.version,
             ord: fb.ord,
@@ -1344,10 +1348,12 @@ export class ChatService {
 
     const citations = Array.isArray(queryResult.citations) ? queryResult.citations : [];
     citations.sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0));
-    const results = citations.slice(0, limit).map((c: any) => {
+    const selectedCitations = selectDiverseSearchCitations(citations, limit);
+    const results = selectedCitations.map((c: any) => {
       const docId = c.docId || c.documentId || null;
       return {
         documentId: docId,
+        chunkId: c.chunkId || c.id || undefined,
         kbId: c.kbId || null,
         title: String(c.docTitle || c.topic || "未知文档"),
         version: typeof c.version === "number" ? c.version : undefined,
@@ -4353,7 +4359,8 @@ export class ChatService {
 5. [Direct, Concise & Focused Answers (Direct Answer Inversion)]:
 - In your very first sentence, directly and concisely state the core answer, conclusion, entity, or numerical value (under 30 words) with citation tags.
 - Do NOT begin with generic fillers or preamble phrases (e.g. "According to the provided documents...", "Based on the text..."). Answer the user's question directly upfront.
-- Subsequent sentences should provide the necessary supporting context, calculations, or contractual clauses.`
+- Subsequent sentences should provide the necessary supporting context, calculations, or contractual clauses.
+${answerStyleRule(true)}`
         : `你是一个专业的企业级知识库智能助手。请严格基于下方给出的【参考知识库资料】回答用户的问题。
 
 【重要回答规范】：
@@ -4371,7 +4378,8 @@ export class ChatService {
 10. 【开门见山、结论先行】：
 - 回答第一句必须开门见山，用简明直接的语言（10~30字以内）直接给出最核心的结论、明确答案、实体或具体数值，并紧随其标注引用角标（示例格式：“根据规定，该项标准为……[1]。”，具体内容以参考资料为准）。
 - 严禁在开头堆砌“根据您提供的参考资料，我为您查询到以下信息……”等无意义的客套废话或免责套话。
-- 首句给出明确结论后，后续段落再展开陈述支撑依据、计算过程或细分条款说明。`;
+- 首句给出明确结论后，后续段落仅在问题需要时展开支撑依据、计算过程或细分条款说明。
+${answerStyleRule(false)}`;
 
       const dynamicDirectives = [
         queryResult?.diagnostics?.mode === "inventory"
