@@ -23,6 +23,7 @@ import { McpService } from './mcp.service';
 import { UserCredentialService } from '../auth/user-credential.service';
 import { OpenApiRateLimitService } from '../open-api/open-api-rate-limit.service';
 import { AuthService } from '../auth/auth.service';
+import { setRequestContextUser } from '../observability/request-context';
 import { getPrismaClient } from '../prisma';
 
 interface McpSession {
@@ -98,6 +99,11 @@ export class McpController implements OnModuleDestroy {
           message: 'MCP 鉴权失败：X-App-Id 或 X-App-Secret 不正确或已被禁用',
         });
       }
+
+      // 凭证鉴权不经过 AuthService.userIdFromRequest，必须显式把用户写入请求
+      // 上下文，否则 RLS 事务会以空 user_id + service=off 作用域执行，
+      // 导致 Conversation/Message 等写入触发 "row-level security policy" 42501。
+      setRequestContextUser(verified.user.id);
 
       const rate = this.rateLimitService.check(String(appId).trim());
       if (!rate.allowed) {

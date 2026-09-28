@@ -8,6 +8,7 @@ import {
 import { UserCredentialService } from '../auth/user-credential.service';
 import { AuthService } from '../auth/auth.service';
 import { OpenApiRateLimitService } from './open-api-rate-limit.service';
+import { setRequestContextUser } from '../observability/request-context';
 import { getPrismaClient } from '../prisma';
 
 @Injectable()
@@ -54,6 +55,10 @@ export class OpenApiGuard implements CanActivate {
       }
       request.user = verified.user;
       request.credential = verified.credential;
+
+      // 凭证鉴权不经过 AuthService.userIdFromRequest，需显式写入请求上下文，
+      // 否则 RLS 事务以空 user_id 作用域执行，写入会被行级安全策略拒绝。
+      setRequestContextUser(verified.user.id);
 
       // 凭证级限流：仅在鉴权成功后按 appId 计数（凭证路径是对外的开放 API 入口）。
       // Bearer JWT 会话路径为内部登录用户复用通道，不做限流——这是侵入最小、

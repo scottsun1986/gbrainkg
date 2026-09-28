@@ -1,6 +1,12 @@
 import { McpController } from './mcp.controller';
 import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 
+jest.mock('../observability/request-context', () => ({
+  setRequestContextUser: jest.fn(),
+}));
+
+import { setRequestContextUser } from '../observability/request-context';
+
 describe('McpController', () => {
   let controller: McpController;
   let mockMcpService: any;
@@ -167,6 +173,33 @@ describe('McpController', () => {
     expect(jsonResult).toBeDefined();
     expect(jsonResult.jsonrpc).toBe('2.0');
     expect(mockMcpService.handleJsonRpc).toHaveBeenCalled();
+  });
+
+  it('should bind the credential user into the request context for RLS', async () => {
+    const mockReq = {
+      headers: {
+        'x-app-id': 'app_valid',
+        'x-app-secret': 'sec_valid',
+      },
+      query: {},
+    } as any;
+
+    const mockRes = {
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn(),
+      setHeader: jest.fn(),
+      write: jest.fn(),
+      end: jest.fn(),
+    } as any;
+
+    await controller.handleDirectRpc(mockReq, mockRes, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'chat_knowledge', arguments: { prompt: 'test' } },
+    });
+
+    expect(setRequestContextUser).toHaveBeenCalledWith('user-1');
   });
 
   it('should process Streamable HTTP when Accept: text/event-stream', async () => {
