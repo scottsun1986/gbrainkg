@@ -69,3 +69,35 @@ export function countSubtreeUsers(
   const ids = getSubtreeOrgIds(node);
   return users.filter((u) => (u.orgIds || []).some((id) => ids.has(String(id)))).length;
 }
+
+/**
+ * 一次性预计算每个组织节点的子树用户数（去重口径与 countSubtreeUsers 一致）。
+ * 逐节点调用 countSubtreeUsers 是 O(N×M)（每个节点都对全量用户 filter），
+ * 大组织树下管理面板每次渲染重算全部节点会明显卡顿；此函数自底向上合并
+ * 子树用户集合（同一用户归属多个子组织时只计一次），渲染期 O(1) 查表。
+ */
+export function buildSubtreeUserCounts(
+  roots: Array<OrgTreeLike | null | undefined>,
+  users: OrgUserLike[],
+): Map<string, number> {
+  const directUsers = new Map<string, Set<OrgUserLike>>();
+  for (const user of users) {
+    for (const orgId of user.orgIds || []) {
+      const key = String(orgId);
+      let bucket = directUsers.get(key);
+      if (!bucket) directUsers.set(key, (bucket = new Set<OrgUserLike>()));
+      bucket.add(user);
+    }
+  }
+  const counts = new Map<string, number>();
+  const visit = (node: OrgTreeLike): Set<OrgUserLike> => {
+    const merged = new Set<OrgUserLike>(directUsers.get(String(node.id)) || []);
+    for (const child of node.children || []) {
+      for (const user of visit(child)) merged.add(user);
+    }
+    counts.set(String(node.id), merged.size);
+    return merged;
+  };
+  roots.forEach((root) => root && visit(root));
+  return counts;
+}

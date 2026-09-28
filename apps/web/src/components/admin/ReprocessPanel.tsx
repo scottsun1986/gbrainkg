@@ -32,17 +32,39 @@ export function ReprocessPanel() {
       const res = await fetch(`${API_BASE_URL}/api/v1/admin/system/reprocess/status`, { headers: apiHeaders() });
       if (!res.ok) return;
       const data = await res.json();
-      if (data.status) setStatus(data.status);
+      if (data.status) { setStatus(data.status); runningRef.current = Boolean(data.status.running); }
       if (data.corpusStats) setStats(data.corpusStats);
     } catch {}
   };
 
+  // 任务运行中以 2s 跟踪进度；空闲时该接口背后的语料统计（11 个聚合查询）
+  // 不需要秒级轮询——退避到 60s 低频兜底。语料统计服务端另有 30s 缓存。
+  const runningRef = useRef(false);
   useEffect(() => {
-    fetchStatus();
-    const timer = setInterval(() => {
-      fetchStatus();
-    }, 2000);
-    return () => clearInterval(timer);
+    void fetchStatus();
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const schedule = () => {
+      if (cancelled) return;
+      const interval = runningRef.current ? 2000 : 60000;
+      timer = setTimeout(async () => {
+        try {
+          const res = await fetch(`${API_BASE_URL}/api/v1/admin/system/reprocess/status`, { headers: apiHeaders() });
+          if (res.ok) {
+            const data = await res.json();
+            if (cancelled) return;
+            if (data.status) {
+              setStatus(data.status);
+              runningRef.current = Boolean(data.status.running);
+            }
+            if (data.corpusStats) setStats(data.corpusStats);
+          }
+        } catch {}
+        schedule();
+      }, interval);
+    };
+    schedule();
+    return () => { cancelled = true; clearTimeout(timer); };
   }, []);
 
   useEffect(() => {

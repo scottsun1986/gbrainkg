@@ -9,14 +9,14 @@ import { API_BASE_URL, apiHeaders } from '@/lib/api';
 import { appStore } from '@/lib/app-store';
 import { errorMessage, apiMessage, asRecord, asArray, str, num, bool } from '@/lib/errors';
 import { emitToast, emitDataRefresh } from '@/lib/app-events';
-import { flattenOrgTree, getSubtreeOrgIds, countSubtreeUsers } from '@/lib/org-utils';
+import { flattenOrgTree, getSubtreeOrgIds, countSubtreeUsers, buildSubtreeUserCounts } from '@/lib/org-utils';
 import type { OrgTreeNode, RoleRow, TagItem, UserRow } from '@/types';
 
-export function UsersOrgTreeNode({ node, depth = 0, selectedId, onSelect, expandedIds, onToggle, users }: { node: OrgTreeNode; depth?: number; selectedId?: string | null; onSelect: (n: OrgTreeNode) => void; expandedIds: Set<string>; onToggle: (id: string) => void; users: UserRow[] }) {
+export const UsersOrgTreeNode = React.memo(function UsersOrgTreeNode({ node, depth = 0, selectedId, onSelect, expandedIds, onToggle, countMap }: { node: OrgTreeNode; depth?: number; selectedId?: string | null; onSelect: (n: OrgTreeNode) => void; expandedIds: Set<string>; onToggle: (id: string) => void; countMap: Map<string, number> }) {
   const isExpanded = expandedIds.has(node.id);
   const isSelected = selectedId === node.id;
   const hasChildren = node.children && node.children.length > 0;
-  const userCount = countSubtreeUsers(node, users);
+  const userCount = countMap.get(node.id) || 0;
 
   return (
     <div style={{ marginLeft: depth > 0 ? 12 : 0, display: 'flex', flexDirection: 'column' }}>
@@ -67,14 +67,14 @@ export function UsersOrgTreeNode({ node, depth = 0, selectedId, onSelect, expand
               onSelect={onSelect}
               expandedIds={expandedIds}
               onToggle={onToggle}
-              users={users}
+              countMap={countMap}
             />
           ))}
         </div>
       )}
     </div>
   );
-}
+});
 
 export function UsersPanel({ orgTrees = [], orgTree, orgOptions = [], canManage = false, capabilities = [] }: { orgTrees?: OrgTreeNode[]; orgTree?: OrgTreeNode | null; orgOptions?: Array<OrgTreeNode | { id: string; name: string; path: string; canManage?: boolean }>; canManage?: boolean; capabilities?: string[] }){
   const effectiveTrees = useMemo(() => {
@@ -82,7 +82,12 @@ export function UsersPanel({ orgTrees = [], orgTree, orgOptions = [], canManage 
     if (orgTree) return [orgTree];
     return [];
   }, [orgTrees, orgTree]);
+  const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(searchInput), 300);
+    return () => clearTimeout(t);
+  }, [searchInput]);
   const [selectedOrg, setSelectedOrg] = useState<any>(null);
   const [roleFilter, setRoleFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -92,6 +97,14 @@ export function UsersPanel({ orgTrees = [], orgTree, orgOptions = [], canManage 
   const [open, setOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<any>(null);
   const [confirmDel, setConfirmDel] = useState<any>(null);
+
+  // 用户快照 + 子树人数预算：appStore 是可变单例，捕获引用既能修复
+  // filteredUsers 的过期缓存，也让计数 Map 在用户目录变化后正确重建。
+  const users = appStore.USERS;
+  const subtreeUserCounts = useMemo(
+    () => buildSubtreeUserCounts(effectiveTrees, users),
+    [effectiveTrees, users],
+  );
 
   const isSysAdmin = (capabilities || []).includes('*');
   const manageableOrgOptions = useMemo(() => {
@@ -128,7 +141,7 @@ export function UsersPanel({ orgTrees = [], orgTree, orgOptions = [], canManage 
 
   // 2. 多维度用户过滤
   const filteredUsers = useMemo(() => {
-    return appStore.USERS.filter((u) => {
+    return users.filter((u) => {
       // 组织树筛选（本层及以下组织）
       if (filterOrgIds && !(u.orgIds || []).some(id => filterOrgIds.has(id))) {
         return false;
@@ -163,7 +176,7 @@ export function UsersPanel({ orgTrees = [], orgTree, orgOptions = [], canManage 
       }
       return true;
     });
-  }, [filterOrgIds, search, roleFilter, statusFilter, permFilter]);
+  }, [users, filterOrgIds, search, roleFilter, statusFilter, permFilter]);
 
   // 3. 分页计算
   const totalUsers = filteredUsers.length;
@@ -240,7 +253,7 @@ export function UsersPanel({ orgTrees = [], orgTree, orgOptions = [], canManage 
                   onSelect={setSelectedOrg}
                   expandedIds={treeExpandedIds}
                   onToggle={toggleTreeNode}
-                  users={appStore.USERS}
+                  countMap={subtreeUserCounts}
                 />
               ))
             ) : (
@@ -268,8 +281,8 @@ export function UsersPanel({ orgTrees = [], orgTree, orgOptions = [], canManage 
             <input
               className="search-input"
               placeholder="搜索姓名 / 账号 / 邮箱 / 角色..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
               style={{ width: '240px' }}
             />
             <select
@@ -305,6 +318,7 @@ export function UsersPanel({ orgTrees = [], orgTree, orgOptions = [], canManage 
                 type="button"
                 className="btn"
                 onClick={() => {
+                  setSearchInput('');
                   setSearch('');
                   setSelectedOrg(null);
                   setRoleFilter('all');

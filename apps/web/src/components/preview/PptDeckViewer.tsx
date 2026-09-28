@@ -775,7 +775,7 @@ export function PptDeckViewer({
 
                   <div className="ppt-thumbnail-aspect">
                     {hasImages ? (
-                      <img
+                      <img loading="lazy" decoding="async"
                         src={slide.images[0]}
                         alt={slide.title}
                         style={{ width: "100%", height: "100%", objectFit: "contain" }}
@@ -848,7 +848,7 @@ export function PptDeckViewer({
                         <div className="ppt-thumbnail-aspect">
                           <span className="ppt-thumbnail-badge">{idx + 1}</span>
                           {hasImage ? (
-                            <img
+                            <img loading="lazy" decoding="async"
                               src={slide.images[0]}
                               alt={slide.title}
                               style={{ width: "100%", height: "100%", objectFit: "contain" }}
@@ -974,7 +974,7 @@ export function PptDeckViewer({
                           position: "relative",
                         }}
                       >
-                        <img
+                        <img loading="lazy" decoding="async"
                           src={currentSlide.images[0]}
                           alt={currentSlide.title}
                           style={{
@@ -1002,7 +1002,7 @@ export function PptDeckViewer({
                             }}
                           >
                             {currentSlide.images.map((imgUrl, i) => (
-                              <img
+                              <img loading="lazy" decoding="async"
                                 key={i}
                                 src={imgUrl}
                                 alt={`幻灯片配图 ${i + 1}`}

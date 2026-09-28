@@ -178,18 +178,19 @@ export function UniversalDocumentViewer({ preview, onClose }: UniversalDocumentV
     return cleanPhrases;
   }, [chunkAnchoredPhrases, rankedPhrases, cleanPhrases]);
 
-  useEffect(() => {
-    if (!kbId || !docId) {
-      setLoading(false);
-      return;
-    }
-    let active = true;
-    setLoading(true);
-    setError('');
-    setCompileTruth(null);
-    setCompileTruthError('');
-    setCompileTruthLoading(true);
+  // —— 按需加载控制 ——
+  // 详情（元数据+chunks+markdown）是默认视图所需，仍立即拉取；原始文件二进制
+  // （可达数十 MB）、Excel 解析、PPT 无损 PDF、Compile Truth 仅在对应 Tab
+  // 首次激活或下载时才拉取，引用片段打开（默认 std_md）不再连带全量原件。
+  const rawRequestedRef = useRef(false);
+  const truthRequestedRef = useRef(false);
+  const docIdRef = useRef<string | undefined>(undefined);
+  const objectUrlsRef = useRef<string[]>([]);
 
+  const loadCompileTruthFn = () => {
+    if (!kbId || !docId) return;
+    setCompileTruthLoading(true);
+    setCompileTruthError('');
     // Compile Truth is deliberately read from the current user's BrainTopic
     // and the authorized 百纳 source mapping, not inferred from UI status.
     fetch(`${API_BASE_URL}/api/v1/kbs/${kbId}/documents/${docId}/compile-truth`, { headers: apiHeaders() })
@@ -198,11 +199,88 @@ export function UniversalDocumentViewer({ preview, onClose }: UniversalDocumentV
         if (!res.ok) throw new Error(json.message || `API ${res.status}`);
         return json;
       })
-      .then((data) => { if (active) setCompileTruth(data); })
-      .catch((err: unknown) => { if (active) setCompileTruthError(errorMessage(err) || '编译真相加载失败'); })
-      .finally(() => { if (active) setCompileTruthLoading(false); });
+      .then((data) => { if (docIdRef.current === docId) setCompileTruth(data); })
+      .catch((err: unknown) => { if (docIdRef.current === docId) setCompileTruthError(errorMessage(err) || '编译真相加载失败'); })
+      .finally(() => { if (docIdRef.current === docId) setCompileTruthLoading(false); });
+  };
 
-    // 1. 获取文档元数据与分块数据
+  const loadRawContent = async () => {
+    if (!kbId || !docId || rawRequestedRef.current) return;
+    rawRequestedRef.current = true;
+    try {
+      const fileRes = await fetch(`${API_BASE_URL}/api/v1/kbs/${kbId}/documents/${docId}/file`, {
+        headers: apiHeaders(),
+      });
+      if (fileRes.ok) {
+        const blob = await fileRes.blob();
+        if (docIdRef.current !== docId) return;
+        setRawBlob(blob);
+        const url = URL.createObjectURL(blob);
+        objectUrlsRef.current.push(url);
+        setRawBlobUrl(url);
+
+        if (isExcel) {
+          const buffer = await blob.arrayBuffer();
+          const XLSX = await loadXLSX();
+          const wb = XLSX.read(buffer, { type: 'array' });
+          if (wb.SheetNames.length > 0) {
+            const firstSheet = wb.SheetNames[0];
+            const rows = XLSX.utils.sheet_to_json(wb.Sheets[firstSheet], { header: 1 }) as unknown[][];
+            if (docIdRef.current === docId) setSheetsData({ names: wb.SheetNames, active: firstSheet, rows });
+          }
+        }
+      }
+
+      // PPT/PPTX：后端无损转制原生 PDF 真实版式预览（仅原件 Tab 需要）。
+      if (isPpt) {
+        if (docIdRef.current === docId) { setPptPdfLoading(true); setPptPdfError(''); }
+        try {
+          const res = await fetch(`${API_BASE_URL}/api/v1/kbs/${kbId}/documents/${docId}/pdf-preview`, {
+            headers: apiHeaders(),
+          });
+          if (!res.ok) {
+            const errJson = await res.json().catch(() => ({}));
+            throw new Error(errJson.message || `API ${res.status}`);
+          }
+          const blob = await res.blob();
+          if (docIdRef.current !== docId) return;
+          const url = URL.createObjectURL(blob);
+          objectUrlsRef.current.push(url);
+          setPptPdfBlobUrl(url);
+        } catch (err) {
+          if (docIdRef.current === docId) setPptPdfError(errorMessage(err) || 'PPT 原件预览生成中');
+        } finally {
+          if (docIdRef.current === docId) setPptPdfLoading(false);
+        }
+      }
+    } catch (e) {
+      console.warn('获取原始文件失败:', e);
+    }
+  };
+
+  useEffect(() => {
+    if (!kbId || !docId) {
+      setLoading(false);
+      return;
+    }
+    let active = true;
+    // 切换文档时重置按需加载状态并释放旧 objectURL。
+    docIdRef.current = docId;
+    rawRequestedRef.current = false;
+    truthRequestedRef.current = false;
+    objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    objectUrlsRef.current = [];
+    setLoading(true);
+    setError('');
+    setCompileTruth(null);
+    setCompileTruthError('');
+    setCompileTruthLoading(false);
+    setRawBlob(null);
+    setRawBlobUrl('');
+    setPptPdfBlobUrl('');
+    setSheetsData({ names: [], active: '', rows: [] });
+
+    // 1. 获取文档元数据与分块数据（默认视图所需）
     fetch(`${API_BASE_URL}/api/v1/kbs/${kbId}/documents/${docId}`, { headers: apiHeaders() })
       .then(async (res) => {
         const json = await res.json().catch(() => ({}));
@@ -212,63 +290,9 @@ export function UniversalDocumentViewer({ preview, onClose }: UniversalDocumentV
       .then(async (data) => {
         if (!active) return;
         setDocData(data);
-
-        // 2. 如果存在原始文件二进制，获取 Blob
-        if (data.document?.hasRawFile) {
-          try {
-            const fileRes = await fetch(`${API_BASE_URL}/api/v1/kbs/${kbId}/documents/${docId}/file`, {
-              headers: apiHeaders(),
-            });
-            if (fileRes.ok) {
-              const blob = await fileRes.blob();
-              if (active) {
-                setRawBlob(blob);
-                const url = URL.createObjectURL(blob);
-                setRawBlobUrl(url);
-
-                if (isExcel) {
-                  const buffer = await blob.arrayBuffer();
-                  const XLSX = await loadXLSX();
-                  const wb = XLSX.read(buffer, { type: 'array' });
-                  if (wb.SheetNames.length > 0) {
-                    const firstSheet = wb.SheetNames[0];
-                    const rows = XLSX.utils.sheet_to_json(wb.Sheets[firstSheet], { header: 1 }) as unknown[][];
-                    setSheetsData({ names: wb.SheetNames, active: firstSheet, rows });
-                  }
-                }
-              }
-            }
-          } catch (e) {
-            console.warn('获取原始文件失败:', e);
-          }
-        }
-
-        // 3. 如果是 PPT/PPTX，调用后端无损转制原生 PDF 真实版式预览
-        if (isPpt && data.document?.hasRawFile) {
-          setPptPdfLoading(true);
-          setPptPdfError('');
-          fetch(`${API_BASE_URL}/api/v1/kbs/${kbId}/documents/${docId}/pdf-preview`, {
-            headers: apiHeaders(),
-          })
-            .then(async (res) => {
-              if (!res.ok) {
-                const errJson = await res.json().catch(() => ({}));
-                throw new Error(errJson.message || `API ${res.status}`);
-              }
-              return res.blob();
-            })
-            .then((blob) => {
-              if (active) {
-                const url = URL.createObjectURL(blob);
-                setPptPdfBlobUrl(url);
-              }
-            })
-            .catch((err: unknown) => {
-              if (active) setPptPdfError(errorMessage(err) || 'PPT 原件预览生成中');
-            })
-            .finally(() => {
-              if (active) setPptPdfLoading(false);
-            });
+        // 默认落在“原始文件排版”Tab 时立即拉原件；否则等 Tab 激活再拉。
+        if (activeTab === 'raw' && data.document?.hasRawFile) {
+          void loadRawContent();
         }
       })
       .catch((err: unknown) => {
@@ -280,10 +304,27 @@ export function UniversalDocumentViewer({ preview, onClose }: UniversalDocumentV
 
     return () => {
       active = false;
-      if (rawBlobUrl) URL.revokeObjectURL(rawBlobUrl);
-      if (pptPdfBlobUrl) URL.revokeObjectURL(pptPdfBlobUrl);
+      docIdRef.current = undefined;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kbId, docId]);
+
+  // Tab 驱动的懒加载：原件 Tab / 编译真相 Tab 首次激活时才发起对应请求。
+  useEffect(() => {
+    if (activeTab === 'truth' && !truthRequestedRef.current && kbId && docId) {
+      truthRequestedRef.current = true;
+      loadCompileTruthFn();
+    }
+    if (activeTab === 'raw' && !rawRequestedRef.current && docData?.document?.hasRawFile) {
+      void loadRawContent();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, docData]);
+
+  useEffect(() => () => {
+    objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    objectUrlsRef.current = [];
+  }, []);
 
   // 高亮处理后的 Markdown HTML
   const markdownHtml = useMemo(() => {
@@ -408,7 +449,14 @@ export function UniversalDocumentViewer({ preview, onClose }: UniversalDocumentV
   };
 
   const handleDownload = () => {
-    if (!rawBlobUrl && !rawBlob) return;
+    if (!rawBlobUrl && !rawBlob) {
+      // 原件按需加载尚未触发（如从引用片段进入）：先拉取，完成后再次点击即可下载。
+      if (docData?.document?.hasRawFile) {
+        void loadRawContent();
+        window.dispatchEvent(new CustomEvent('app-toast', { detail: '原件加载中，请稍候再点击下载' }));
+      }
+      return;
+    }
     const a = document.createElement('a');
     a.href = rawBlobUrl;
     a.download = filename;

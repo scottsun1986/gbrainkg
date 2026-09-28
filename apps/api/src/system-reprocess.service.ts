@@ -188,7 +188,20 @@ export class SystemReprocessService {
     }
   }
 
-  async getCorpusStatistics(): Promise<CorpusStatistics> {
+  // 语料统计含 11 个聚合查询（其中 Chunk 向量覆盖率为全表扫描），而管理端
+  // Reprocess 面板以 2s 频率轮询。30s 结果缓存把稳态成本从 ~330 聚合/分钟
+  // 降到 ~22/分钟，且统计本身不需要秒级新鲜度。
+  private corpusStatsCache: { value: CorpusStatistics; expiresAt: number } | null = null;
+  private static readonly CORPUS_STATS_TTL_MS = 30_000;
+
+  async getCorpusStatistics(forceRefresh = false): Promise<CorpusStatistics> {
+    if (
+      !forceRefresh &&
+      this.corpusStatsCache &&
+      this.corpusStatsCache.expiresAt > Date.now()
+    ) {
+      return this.corpusStatsCache.value;
+    }
     try {
       const [
         totalDocs,
@@ -222,7 +235,7 @@ export class SystemReprocessService {
       ]);
 
       const embeddingRow = chunkEmbeddingStats[0];
-      return {
+      const result: CorpusStatistics = {
         totalDocuments: totalDocs,
         readyDocuments: readyDocs,
         degradedDocuments: degradedDocs,
@@ -236,6 +249,11 @@ export class SystemReprocessService {
         totalRaptorNodes: Number(raptorCount || 0),
         semanticCacheCount: cacheCount,
       };
+      this.corpusStatsCache = {
+        value: result,
+        expiresAt: Date.now() + SystemReprocessService.CORPUS_STATS_TTL_MS,
+      };
+      return result;
     } catch (err) {
       this.logger.warn(`Failed to gather corpus statistics: ${err instanceof Error ? err.message : String(err)}`);
       return {

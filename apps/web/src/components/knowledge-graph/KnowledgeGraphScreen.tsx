@@ -176,6 +176,7 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: Knowl
 
   const svgRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<NodeDragState | null>(null);
+  const dragFrameRef = useRef<number | null>(null);
   const panRef = useRef<PanState | null>(null);
   const [canvasSize, setCanvasSize] = useState({ w: 1100, h: 720 });
   const [isPanning, setIsPanning] = useState(false);
@@ -364,7 +365,12 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: Knowl
   }, [hoverId, filteredEdges]);
 
   const selectedNode = allNodes.find((n) => n.id === selected);
-  const selectedEdges = selected ? allEdges.filter((e) => e.source === selected || e.target === selected) : [];
+  // 用 useMemo 稳定引用：此前每次 render 重建数组，导致 relatedByType 的
+  // memo 依赖永远失效、逐帧全量重算。
+  const selectedEdges = useMemo(
+    () => (selected ? allEdges.filter((e) => e.source === selected || e.target === selected) : []),
+    [selected, allEdges],
+  );
   const relatedByType = useMemo(() => {
     const groups: Record<string, GraphEdge[]> = { contains: [], mentions: [], related_to: [] };
     for (const e of selectedEdges) {
@@ -412,14 +418,30 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: Knowl
       const d = dragRef.current;
       d.node.fx = d.node.x = d.startX + (event.clientX - d.startClientX) / transform.k;
       d.node.fy = d.node.y = d.startY + (event.clientY - d.startClientY) / transform.k;
-      if (layout) setLayout({ ...layout, nodes: [...layout.nodes] });
+      // 拖拽以 rAF 节流提交 state：每个 mousemove 都拷贝整个 nodes 数组会让
+      // 大图（数百节点 + 边的 SVG）在拖拽期间持续全量重渲染。
+      if (dragFrameRef.current === null) {
+        dragFrameRef.current = requestAnimationFrame(() => {
+          dragFrameRef.current = null;
+          setLayout((current) => (current ? { ...current, nodes: [...current.nodes] } : current));
+        });
+      }
       return;
     }
     if (panRef.current) {
       setTransform({ ...transform, x: panRef.current.tx + (event.clientX - panRef.current.x), y: panRef.current.ty + (event.clientY - panRef.current.y) });
     }
   };
-  const onMouseUp = () => { dragRef.current = null; panRef.current = null; setIsPanning(false); };
+  const onMouseUp = () => {
+    dragRef.current = null;
+    panRef.current = null;
+    setIsPanning(false);
+    if (dragFrameRef.current !== null) {
+      cancelAnimationFrame(dragFrameRef.current);
+      dragFrameRef.current = null;
+      setLayout((current) => (current ? { ...current, nodes: [...current.nodes] } : current));
+    }
+  };
 
   const startNodeDrag = (event: React.MouseEvent, node: GraphNode) => {
     event.stopPropagation();

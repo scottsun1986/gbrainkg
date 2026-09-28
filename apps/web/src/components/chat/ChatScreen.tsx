@@ -88,6 +88,20 @@ export function ChatScreen(){
       });
     };
 
+    // 流式渲染缓冲：SSE 每个 delta 直接 setState 会让长回答以每 token 一次
+    // 全列表重渲染（叠加 O(n²) 的答案重解析）。以 ~50ms 合并刷新， citation/
+    // trace/done 等结构化事件到达时立即冲刷，保证顺序与最终一致性。
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+    const accumulatedTextRef = { current: "" };
+    const flushAssistant = (done = false) => {
+      if (flushTimer !== null) { clearTimeout(flushTimer); flushTimer = null; }
+      updateAssistant(accumulatedTextRef.current, done);
+    };
+    const scheduleAssistantFlush = () => {
+      if (flushTimer !== null) return;
+      flushTimer = setTimeout(() => { flushTimer = null; updateAssistant(accumulatedTextRef.current, false); }, 50);
+    };
+
     (async () => {
       try {
         const userMsg = messages[messages.length - 2]?.text || "";
@@ -123,14 +137,17 @@ export function ChatScreen(){
           const data = JSON.parse(payload);
           if (data.type === 'delta') {
             accumulatedText += String(data.content || '');
-            updateAssistant(accumulatedText, false);
+            accumulatedTextRef.current = accumulatedText;
+            scheduleAssistantFlush();
           } else if (data.type === 'error') {
             streamError = String(data.content || '问答服务返回错误');
-            if (!accumulatedText) updateAssistant(streamError, false);
+            if (!accumulatedText) { accumulatedTextRef.current = streamError; flushAssistant(false); }
           } else if (data.type === 'conversation') {
+            flushAssistant(false);
             setActiveConv(data.conversation_id);
             setConversationList(list => [{ id: data.conversation_id, title: userMsg.slice(0, 120), createdAt: new Date().toISOString() }, ...list.filter(item => item.id !== data.conversation_id)]);
           } else if (data.type === 'citation') {
+            flushAssistant(false);
             const citation = { id: `${data.index}-${data.topic_slug}`, citationIndex: Number(data.index), title: data.timeline_entry?.doc_title || data.topic_slug || '知识主题', kb: data.timeline_entry?.source_kb, documentId: data.timeline_entry?.document_id, kbName: data.timeline_entry?.kb_name || data.timeline_entry?.source_kb || '知识库', truth: '—', evidences: 1, lastUpdate: '刚刚', snippet: data.timeline_entry?.snippet || '', path: data.topic_slug, pageNo: data.timeline_entry?.page_no, bbox: data.timeline_entry?.bbox };
             setCitations(items => [...items, citation]);
             setMessages(items => {
@@ -140,6 +157,7 @@ export function ChatScreen(){
               return next;
             });
           } else if (data.type === 'trace' && data.node?.id) {
+            flushAssistant(false);
             setMessages(items => {
               const next = [...items];
               const lastIndex = next.map(item => item.role).lastIndexOf('ai');
@@ -167,16 +185,22 @@ export function ChatScreen(){
         }
         buffer += decoder.decode();
         if (buffer.trim()) consumeLine(buffer);
-        updateAssistant(accumulatedText || streamError, true);
+        accumulatedTextRef.current = accumulatedText || streamError;
+        flushAssistant(true);
         if (active) setStreaming(false);
       } catch (err) {
-         if (active && errorMessage(err) !== 'AbortError' && (err as { name?: string })?.name !== 'AbortError') {
-           updateAssistant("大模型请求失败：" + (errorMessage(err) || '未知错误'), true);
-           setStreaming(false);
-         }
+        const isAbort = errorMessage(err) === 'AbortError' || (err as { name?: string })?.name === 'AbortError';
+        if (isAbort) {
+          // 用户主动停止：保留已生成的部分文本并标记完成。
+          flushAssistant(true);
+        } else if (active) {
+          accumulatedTextRef.current = "大模型请求失败：" + (errorMessage(err) || '未知错误');
+          flushAssistant(true);
+          setStreaming(false);
+        }
       }
     })();
-    return () => { active = false; streamController.current = null; controller.abort(); };
+    return () => { active = false; streamController.current = null; if (flushTimer !== null) clearTimeout(flushTimer); controller.abort(); };
   }, [streaming]);
 
   // 流式期间自动滚底（除非用户主动上滑）

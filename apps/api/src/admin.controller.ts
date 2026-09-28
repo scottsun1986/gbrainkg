@@ -164,6 +164,13 @@ function assertGbrainRecipe(params: unknown, kind: string): void {
 export class AdminController {
   private readonly prisma = getPrismaClient();
   private readonly telemetryLogger = new Logger("AdminController.systemStatusTelemetry");
+  // getSystemStatusTelemetryData 重（~20 个查询 + du + Docling 探测），但
+  // /admin/data?telemetry=1 与 /admin/system/status-telemetry 两条路径以及
+  // 子分区翻页会反复触发同一计算。按 (section,page,limit) 做 10s 短缓存：
+  // 面板轮询/翻页风暴退化为缓存命中，统计的新鲜度损失可忽略。
+  private readonly telemetryCache = new Map<string, { value: any; expiresAt: number }>();
+  private static readonly TELEMETRY_CACHE_TTL_MS = 10_000;
+  private static readonly TELEMETRY_CACHE_MAX_ENTRIES = 32;
   constructor(
     private readonly permissionService: PermissionService,
     private readonly authService: AuthService,
@@ -426,6 +433,7 @@ export class AdminController {
     @Query("dreamPage") dreamPageParam?: string,
     @Query("telemetry") telemetryParam?: string,
     @Query("limit") limitParam?: string,
+    @Query("fields") fieldsParam?: string,
   ) {
     const auditPage = Math.max(1, Math.min(10000, Number.parseInt(auditPageParam || "1", 10) || 1));
     const auditLimit = Math.max(1, Math.min(100, Number.parseInt(auditLimitParam || "20", 10) || 20));
@@ -441,6 +449,21 @@ export class AdminController {
     // bootstrap (which calls this endpoint just to render the shell) is not
     // blocked by a megabyte-scale response; pass telemetry=1 to opt in.
     const includeTelemetry = ["true", "1"].includes(String(telemetryParam || ""));
+    // ?fields=audit,dream — 分区裁剪模式：审计/Dream 翻页只返回所需分区，
+    // 跳过 users/orgs/roles/providers/models 等全量清单，避免每次翻页
+    // 重新下载与计算整个管理面引导载荷。
+    const fields = String(fieldsParam || "")
+      .split(",")
+      .map((f) => f.trim())
+      .filter(Boolean);
+    const invalidFields = fields.filter((f) => !["audit", "dream"].includes(f));
+    if (invalidFields.length)
+      throw new BadRequestException(
+        `Unsupported fields: ${invalidFields.join(", ")}. Allowed: audit, dream`,
+      );
+    const fieldsMode = fields.length > 0;
+    const wantAudit = !fieldsMode || fields.includes("audit");
+    const wantDream = fieldsMode && fields.includes("dream");
     const auditWindow = Math.min(1000, auditPage * auditLimit);
     const adminId = await this.authService.userIdFromRequest(req);
     const capabilities = await this.permissionService.getCapabilities(adminId);
@@ -485,12 +508,16 @@ export class AdminController {
     // filesystem and HTTP health checks, which can exceed Prisma's 5s default
     // transaction timeout even though the inventory DB work is quick.
     const data = await withServiceContext(this.prisma, async (db: any) => {
-      const users = await (db as any).user.findMany({
-        select: ADMIN_USER_SELECT,
-        orderBy: { createdAt: "asc" },
-        take: inventoryLimit,
-      });
-      const allOrgs = await (db as any).orgNode.findMany({
+      // 分区模式下只执行审计链路必需的查询，跳过全量清单。
+      const users = wantAudit
+        ? await (db as any).user.findMany({
+            select: ADMIN_USER_SELECT,
+            orderBy: { createdAt: "asc" },
+            take: inventoryLimit,
+          })
+        : [];
+      const allOrgs = !fieldsMode
+        ? await (db as any).orgNode.findMany({
         where: { status: "active" },
         include: {
           admins: {
@@ -516,7 +543,8 @@ export class AdminController {
         },
         orderBy: [{ path: "asc" }, { sort: "asc" }],
         take: inventoryLimit,
-      });
+      })
+        : [];
       const orgs =
         canReadOrg || canReadIndustry
           ? allOrgs.map((org: any) => ({
@@ -529,7 +557,8 @@ export class AdminController {
               canSetAdmin: isSystemAdmin || managedOrgIds.has(org.id),
             }))
           : [];
-      const kbs = await (db as any).knowledgeBase.findMany({
+      const kbs = wantAudit
+        ? await (db as any).knowledgeBase.findMany({
         where: { status: "active" },
         include: {
           admins: {
@@ -548,55 +577,66 @@ export class AdminController {
           _count: { select: { documents: true } },
         },
         take: inventoryLimit,
-      });
+      })
+        : [];
       // 审计流水只需要标题/状态/时间等汇总字段；不带 parserMetadata 等大
       // JSON 列，避免为拼审计文案把整张文档表（含 MB 级元数据）拉进内存。
       const [roles, grants, providers, configs, compileJobs, documents] =
         await Promise.all([
-          (db as any).role.findMany({
-            include: { _count: { select: { users: true } } },
-            orderBy: { name: "asc" },
-            take: inventoryLimit,
-          }),
-          this.loadGrantsWithKb(),
-          (db as any).modelProvider.findMany({
-            orderBy: { name: "asc" },
-            take: inventoryLimit,
-          }),
-          (db as any).modelConfig.findMany({
-            include: { provider: true },
-            orderBy: { createdAt: "asc" },
-            take: inventoryLimit,
-          }),
-          (db as any).compileJob.findMany({
-            select: {
-              id: true,
-              userId: true,
-              status: true,
-              trigger: true,
-              createdAt: true,
-              inputEvidenceIds: true,
-              user: { select: { displayName: true, username: true } },
-              brainTopic: { select: { topicSlug: true } },
-            },
-            orderBy: { createdAt: "desc" },
-            take: auditWindow,
-          }),
-          (db as any).document.findMany({
-            select: {
-              id: true,
-              kbId: true,
-              title: true,
-              status: true,
-              updatedAt: true,
-              uploadedById: true,
-              kb: { select: { name: true } },
-            },
-            orderBy: { updatedAt: "desc" },
-            take: auditWindow,
-          }),
+          !fieldsMode
+            ? (db as any).role.findMany({
+                include: { _count: { select: { users: true } } },
+                orderBy: { name: "asc" },
+                take: inventoryLimit,
+              })
+            : Promise.resolve([]),
+          wantAudit ? this.loadGrantsWithKb() : Promise.resolve([]),
+          !fieldsMode
+            ? (db as any).modelProvider.findMany({
+                orderBy: { name: "asc" },
+                take: inventoryLimit,
+              })
+            : Promise.resolve([]),
+          !fieldsMode
+            ? (db as any).modelConfig.findMany({
+                include: { provider: true },
+                orderBy: { createdAt: "asc" },
+                take: inventoryLimit,
+              })
+            : Promise.resolve([]),
+          wantAudit
+            ? (db as any).compileJob.findMany({
+                select: {
+                  id: true,
+                  userId: true,
+                  status: true,
+                  trigger: true,
+                  createdAt: true,
+                  inputEvidenceIds: true,
+                  user: { select: { displayName: true, username: true } },
+                  brainTopic: { select: { topicSlug: true } },
+                },
+                orderBy: { createdAt: "desc" },
+                take: auditWindow,
+              })
+            : Promise.resolve([]),
+          wantAudit
+            ? (db as any).document.findMany({
+                select: {
+                  id: true,
+                  kbId: true,
+                  title: true,
+                  status: true,
+                  updatedAt: true,
+                  uploadedById: true,
+                  kb: { select: { name: true } },
+                },
+                orderBy: { updatedAt: "desc" },
+                take: auditWindow,
+              })
+            : Promise.resolve([]),
         ]);
-      const recentAuditLogs = canReadAudit
+      const recentAuditLogs = canReadAudit && wantAudit
         ? await (db as any).auditLog.findMany({
             orderBy: { createdAt: "desc" },
             take: 50,
@@ -786,9 +826,11 @@ export class AdminController {
       const auditTotal = auditDocumentsTotal + auditCompileJobsTotal + auditGrantsTotal;
       const audit = auditItems.slice((auditPage - 1) * auditLimit, auditPage * auditLimit);
       // 批量判定写权限：一次加载管理面数据，避免对每个知识库重复发起
-      // isSystemAdmin/组织子树/KbAdmin 查询的 N+1 开销。
-      const [writePermissions, managedIndustryWritePermissions] =
-        await Promise.all([
+      // isSystemAdmin/组织子树/KbAdmin 查询的 N+1 开销。分区模式响应不含
+      // kbs 清单，无需判定。
+      const [writePermissions, managedIndustryWritePermissions] = fieldsMode
+        ? [new Map<string, boolean>(), new Map<string, boolean>()]
+        : await Promise.all([
           this.permissionService.canManageKnowledgeBases(
             adminId,
             visibleKbs.map((kb: any) => kb.id),
@@ -876,15 +918,48 @@ export class AdminController {
         managedOrgIds: [...managedOrgIds],
       };
     });
+    if (fieldsMode) {
+      // 分区裁剪：只回审计/Dream 所需字段，丢弃全量清单与 systemStatus
+      // （状态面板走独立的 status-telemetry 端点，已有短缓存）。
+      const light: any = {
+        audit: data.audit,
+        auditPagination: data.auditPagination,
+        dream: null,
+        systemStatus: null,
+        capabilities: data.capabilities,
+        managedOrgIds: data.managedOrgIds,
+      };
+      if (wantDream && (isSystemAdmin || canReadAudit)) {
+        light.dream = await this.brainCompilerService.getDreamTelemetry({
+          excludePrivate: true,
+          runsPage: dreamPage,
+          runsLimit: auditLimit,
+        });
+      }
+      return light;
+    }
     if (includeTelemetry && (isSystemAdmin || canReadAudit)) {
       data.dream = await this.brainCompilerService.getDreamTelemetry({
         excludePrivate: true,
         runsPage: dreamPage,
         runsLimit: auditLimit,
       });
-      data.systemStatus = await this.getSystemStatusTelemetryData();
+      data.systemStatus = await this.getCachedSystemStatusTelemetry("", 1, 20);
     }
     return data;
+  }
+
+  private async getCachedSystemStatusTelemetry(section: string, page: number, limit: number): Promise<any> {
+    const key = `${section}:${page}:${limit}`;
+    const cached = this.telemetryCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+    const value = await this.getSystemStatusTelemetryData({ section, page, limit });
+    if (this.telemetryCache.size >= AdminController.TELEMETRY_CACHE_MAX_ENTRIES) {
+      const oldest = this.telemetryCache.keys().next().value;
+      if (oldest !== undefined) this.telemetryCache.delete(oldest);
+    }
+    this.telemetryCache.set(key, { value, expiresAt: Date.now() + AdminController.TELEMETRY_CACHE_TTL_MS });
+    return value;
   }
 
   @Get("system/status-telemetry")
@@ -902,11 +977,7 @@ export class AdminController {
     }
     const page = Math.max(1, Math.min(10000, Number.parseInt(pageParam || "1", 10) || 1));
     const limit = Math.max(1, Math.min(100, Number.parseInt(limitParam || "20", 10) || 20));
-    return this.getSystemStatusTelemetryData({
-      section: sectionParam || "",
-      page,
-      limit,
-    });
+    return this.getCachedSystemStatusTelemetry(sectionParam || "", page, limit);
   }
 
   private async getSystemStatusTelemetryData(options: { section?: string; page?: number; limit?: number } = {}) {

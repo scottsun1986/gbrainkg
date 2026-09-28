@@ -73,22 +73,11 @@ export function useAdminBootstrap(): {
   const [dbData, setDbData] = useState<AdminData | null>(null);
 
   const loadAdminData = useCallback(async (token: string) => {
-    const [res, conversationsResponse] = await Promise.all([
-      fetch(`${API_BASE_URL}/api/v1/admin/data`, { headers: { Authorization: `Bearer ${token}` } }),
-      fetch(`${API_BASE_URL}/api/v1/conversations`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => null),
-    ]);
-    let d: AdminData;
-    if (res.ok) {
-      d = await res.json();
-    } else if (res.status === 403) {
-      const sessionRes = await fetch(`${API_BASE_URL}/api/v1/session/bootstrap`, { headers: { Authorization: `Bearer ${token}` } });
-      if (!sessionRes.ok) throw new Error(`API ${sessionRes.status}`);
-      const session = asRecord(await sessionRes.json()) as AdminData;
-      d = { ...session, kbs: session.kbs || [], users: [], orgs: [], roles: [], grants: [], providers: [], models: [], audit: [], dream: null };
-    } else {
-      throw new Error(`API ${res.status}`);
-    }
-
+    const headers = { Authorization: `Bearer ${token}` };
+    // 阶段一：轻量 session/bootstrap（所有用户可用）+ 会话列表并行拉取。
+    // 普通用户不再先打注定 403 的 admin/data（服务端在拒绝前还要执行数个
+    // 权限查询）；管理员的完整清单在阶段二异步补齐，不阻塞主壳渲染。
+    const applyBootstrap = async (d: AdminData, convRes: Response | null) => {
     appStore.CAPABILITIES = Array.isArray(d.capabilities) ? (d.capabilities as string[]) : [];
     appStore.KNOWLEDGE_BASES = mapKbs(asArray(d.kbs));
     appStore.USERS = mapUsers(asArray(d.users));
@@ -220,11 +209,41 @@ export function useAdminBootstrap(): {
       appStore.ORG_TREES = [];
       appStore.ORG_TREE = null;
     }
-    appStore.CONVERSATIONS = conversationsResponse && conversationsResponse.ok
-      ? await conversationsResponse.json().catch(() => [])
-      : [];
+    if (convRes && convRes.ok) {
+      appStore.CONVERSATIONS = await convRes.json().catch(() => []);
+    }
     setDbData(d);
     emitAdminDataUpdated({ orgTrees: appStore.ORG_TREES, orgTree: appStore.ORG_TREE });
+    };
+
+    const [sessionRes, conversationsResponse] = await Promise.all([
+      fetch(`${API_BASE_URL}/api/v1/session/bootstrap`, { headers }).catch(() => null),
+      fetch(`${API_BASE_URL}/api/v1/conversations`, { headers }).catch(() => null),
+    ]);
+
+    if (sessionRes && sessionRes.ok) {
+      const session = asRecord(await sessionRes.json().catch(() => null));
+      const caps: string[] = Array.isArray(session?.capabilities) ? (session!.capabilities as unknown[]).map(String) : [];
+      const maybeAdmin = ['*', 'org.read', 'org.user.read', 'kb.industry.read', 'role.read', 'audit.read', 'system.settings.read']
+        .some((cap) => caps.includes(cap));
+      await applyBootstrap({
+        ...(session as unknown as AdminData),
+        users: [], orgs: [], roles: [], grants: [], providers: [], models: [], audit: [], dream: null,
+      }, conversationsResponse);
+      if (maybeAdmin) {
+        // 阶段二：管理面全量清单异步补齐（不阻塞主壳首屏）。
+        const adminRes = await fetch(`${API_BASE_URL}/api/v1/admin/data`, { headers }).catch(() => null);
+        if (adminRes && adminRes.ok) {
+          await applyBootstrap((await adminRes.json()) as AdminData, null);
+        }
+      }
+      return;
+    }
+
+    // session/bootstrap 不可用（旧版本后端等）时回退原 admin/data 路径。
+    const res = await fetch(`${API_BASE_URL}/api/v1/admin/data`, { headers });
+    if (!res.ok) throw new Error(`API ${res.status}`);
+    await applyBootstrap((await res.json()) as AdminData, conversationsResponse);
   }, []);
 
   return { loadAdminData, currentUser, setCurrentUser, dbData, setDbData };

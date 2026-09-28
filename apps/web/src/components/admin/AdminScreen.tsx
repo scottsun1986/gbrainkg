@@ -31,12 +31,16 @@ export function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities =
   useEffect(() => {
     if (tab === 'audit' && !appStore.DREAM && capabilities.includes('*') && !dreamLazyRef.current) {
       dreamLazyRef.current = true;
-      void loadAuditPage(1);
+      void loadAuditPage(1, true);
     }
   }, [tab]);
-  const loadAuditPage = async (page: number) => {
+  const loadAuditPage = async (page: number, includeDream = false) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/admin/data?auditPage=${page}&auditLimit=20&telemetry=1`, { headers: apiHeaders() });      const result = await response.json().catch(() => ({}));
+      // fields 分区模式：只回审计行（首次进入审计页时附带 Dream 遥测），
+      // 不再重传整个管理面清单 + systemStatus 遥测（原先每次翻页 ~1MB）。
+      const fields = includeDream ? 'audit,dream' : 'audit';
+      const response = await fetch(`${API_BASE_URL}/api/v1/admin/data?fields=${fields}&auditPage=${page}&auditLimit=20`, { headers: apiHeaders() });
+      const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || '审计日志加载失败');
       appStore.AUDIT = (result.audit || []).map((item: AuditRow) => ({ ...item, when: new Date(item.when).toLocaleString('zh-CN'), what: item.action, actor: item.actor }));
       appStore.AUDIT_META = result.auditPagination || { page, limit: 20, total: appStore.AUDIT.length, totalPages: 1 };
@@ -48,7 +52,7 @@ export function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities =
   };
   const loadDreamPage = async (page: number) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/admin/data?auditPage=${auditMeta.page || 1}&auditLimit=20&dreamPage=${page}&telemetry=1`, { headers: apiHeaders() });
+      const response = await fetch(`${API_BASE_URL}/api/v1/admin/data?fields=dream&dreamPage=${page}&auditLimit=20`, { headers: apiHeaders() });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || 'Dream 运行记录加载失败');
       if (result.dream) appStore.DREAM = result.dream;
@@ -319,7 +323,8 @@ export function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities =
                   const result = await response.json().catch(()=>({}));
                   if (!response.ok) throw new Error(result.message || '维护任务提交失败');
                   window.dispatchEvent(new CustomEvent('app-toast',{detail:'Dream Cycle 已进入后台队列'}));
-                  window.setTimeout(()=>window.dispatchEvent(new CustomEvent('app-data-refresh')),1500);
+                  // 定向刷新 Dream 遥测即可；全量 app-data-refresh 会重拉整个管理面清单。
+                  window.setTimeout(()=>{ void loadDreamPage(1); },1500);
                 } catch (error) { window.dispatchEvent(new CustomEvent('app-toast',{detail:errorMessage(error) || '维护任务提交失败'})); }
               }}><Icon name="refresh" size={12}/> 立即执行维护</button>}
             </div>

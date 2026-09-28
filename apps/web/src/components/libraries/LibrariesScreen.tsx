@@ -272,7 +272,9 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
     pinnedDocs.some((p) => !PIN_TERMINAL.has(p.status));
 
   useEffect(() => {
-    if (!hasProcessingDocs || !current?.id) return;
+    // 屏幕不可见（多屏常驻挂载 display:none）时暂停轮询，避免后台持续
+    // 打接口；回到本屏后由下一次 effect 或用户操作恢复。
+    if (!hasProcessingDocs || !current?.id || !active) return;
     const timer = setInterval(() => {
       void loadDocuments(current.id, { page: docPage, limit: docPageSize, search: docSearch, status: docStatusFilter });
       // 钉住行不在当前服务端页（被过滤/翻页排除）时，按 id 精确拉取其最新状态
@@ -293,7 +295,7 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
       }
     }, 2000);
     return () => clearInterval(timer);
-  }, [hasProcessingDocs, current?.id, docPage, docPageSize, docSearch, docStatusFilter, pinnedDocs]);
+  }, [hasProcessingDocs, current?.id, docPage, docPageSize, docSearch, docStatusFilter, pinnedDocs, active]);
 
   useEffect(() => {
     setDocPage(1);

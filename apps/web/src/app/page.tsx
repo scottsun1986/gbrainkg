@@ -169,12 +169,22 @@ function App() {
   }, [loadAdminData]);
 
   useEffect(() => {
+    // 管理端连续小操作（保存角色/删模型等）都会广播 app-data-refresh；
+    // 去抖合并 250ms 内的多次广播，避免每次都全量重拉 admin/data + conversations。
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     const refresh = () => {
-      const token = window.localStorage.getItem('llmwiki_token');
-      if (token) void loadAdminData(token);
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        const token = window.localStorage.getItem('llmwiki_token');
+        if (token) void loadAdminData(token);
+      }, 250);
     };
     window.addEventListener('app-data-refresh', refresh);
-    return () => window.removeEventListener('app-data-refresh', refresh);
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      window.removeEventListener('app-data-refresh', refresh);
+    };
   }, [loadAdminData]);
 
   const handleLogin = async (username: string, password: string) => {

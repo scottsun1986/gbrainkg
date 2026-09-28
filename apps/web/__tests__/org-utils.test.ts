@@ -8,6 +8,7 @@ import {
   flattenOrgTree,
   getSubtreeOrgIds,
   countSubtreeUsers,
+  buildSubtreeUserCounts,
 } from '../src/lib/org-utils';
 
 const tree = {
@@ -69,5 +70,27 @@ describe('countSubtreeUsers', () => {
     assert.equal(countSubtreeUsers(tree.children[0], users), 2); // u1 + u3
     assert.equal(countSubtreeUsers(tree, users), 3);
     assert.equal(countSubtreeUsers(null, users), 0);
+  });
+});
+
+describe('buildSubtreeUserCounts', () => {
+  it('precomputes per-node subtree counts identical to countSubtreeUsers', () => {
+    const users = [
+      { id: 'u1', orgIds: ['a1'] },
+      { id: 'u2', orgIds: ['b'] },
+      { id: 'u3', orgIds: ['a', 'b'] },
+      { id: 'u4', orgIds: [] },
+    ];
+    const counts = buildSubtreeUserCounts([tree], users);
+    const collect = (node: any, out: any[] = []) => {
+      out.push(node);
+      (node.children || []).forEach((c: any) => collect(c, out));
+      return out;
+    };
+    for (const node of collect(tree)) {
+      assert.equal(counts.get(node.id) || 0, countSubtreeUsers(node, users));
+    }
+    assert.equal(counts.get(tree.id), 3);
+    assert.equal(counts.get('a1'), 1);
   });
 });
