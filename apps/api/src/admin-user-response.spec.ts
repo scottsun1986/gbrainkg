@@ -66,7 +66,7 @@ describe('admin user responses', () => {
   });
 
   it('POST /admin/users returns a safe user DTO', async () => {
-    const result = await controller.createUser({}, { username: 'reader', displayName: 'Reader', orgIds: ['org-1'] });
+    const result = await controller.createUser({}, { username: 'reader', displayName: 'Reader', orgIds: ['org-1'], password: 'safe-test-password' });
     expect(mockPrisma.user.create.mock.calls[0][0].select).toBeDefined();
     expectSafe(result.user);
   });

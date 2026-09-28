@@ -134,32 +134,37 @@ export class ConnectorService {
    * （sourceType feishu/git，sourceExternalId）→ 写进度与 cursor。
    */
   async sync(sourceId: string): Promise<SyncRunSummary> {
-    // Concurrency guard: reject a second trigger while a run is in flight.
-    // The in-memory set covers same-process double triggers; the DB check
-    // covers runs left in 'running' by a crashed process.
     if (this.runningSyncs.has(sourceId)) {
       throw new ConflictException(`connector source ${sourceId} sync is already running`);
     }
-    const staleRun = await this.prisma.connectorRun.findFirst({
-      where: { sourceId, status: 'running' },
-      select: { id: true },
-    });
-    if (staleRun) {
-      throw new ConflictException(
-        `connector source ${sourceId} already has a running sync (run ${staleRun.id})`,
-      );
-    }
-    const source = await this.getSource(sourceId);
-    const connector = this.getConnector(source.kind);
     this.runningSyncs.add(sourceId);
-    const run = await withServiceContext(this.prisma, (tx) => tx.connectorRun.create({
-      data: {
-        id: randomUUID(),
-        sourceId,
-        status: 'running',
-        startedAt: new Date(),
-      },
-    }));
+    try {
+      return await this.syncLocked(sourceId);
+    } finally {
+      this.runningSyncs.delete(sourceId);
+    }
+  }
+
+  private async syncLocked(sourceId: string): Promise<SyncRunSummary> {
+    const { source, run } = await withServiceContext(this.prisma, async (tx) => {
+      // Serialize the check/create across API processes sharing this database.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${sourceId}, 0))`;
+      const source = await tx.connectorSource.findUnique({ where: { id: sourceId } });
+      if (!source || source.status !== 'active') throw new NotFoundException('active connector source not found');
+      this.getConnector(source.kind);
+      const activeRun = await tx.connectorRun.findFirst({
+        where: { sourceId, status: 'running' },
+        select: { id: true },
+      });
+      if (activeRun) {
+        throw new ConflictException(`connector source ${sourceId} already has a running sync (run ${activeRun.id})`);
+      }
+      const run = await tx.connectorRun.create({
+        data: { id: randomUUID(), sourceId, status: 'running', startedAt: new Date() },
+      });
+      return { source, run };
+    });
+    const connector = this.getConnector(source.kind);
 
     let fetched = 0;
     let ingested = 0;
@@ -192,24 +197,27 @@ export class ConnectorService {
 
       const status = failed > 0 ? 'failed' : 'success';
       const finishedAt = new Date();
-      await withServiceContext(this.prisma, (tx) => tx.connectorRun.update({
-        where: { id: run.id },
-        data: {
-          status,
-          finishedAt,
-          fetched,
-          ingested,
-          failed,
-          detail: { processed, skipped } as never,
-        },
-      }));
-      await this.prisma.connectorSource.update({
-        where: { id: sourceId },
-        data: {
-          cursor: result.nextCursor ?? source.cursor,
-          lastSyncAt: finishedAt,
-          lastError: failed > 0 ? `${failed} change(s) failed` : null,
-        },
+      await withServiceContext(this.prisma, async (tx) => {
+        await tx.connectorRun.update({
+          where: { id: run.id },
+          data: {
+            status,
+            finishedAt,
+            fetched,
+            ingested,
+            failed,
+            detail: { processed, skipped } as never,
+          },
+        });
+        await tx.connectorSource.update({
+          where: { id: sourceId },
+          data: {
+            // Retain the checkpoint until every change has been durably queued.
+            cursor: failed > 0 ? source.cursor : (result.nextCursor ?? source.cursor),
+            lastSyncAt: finishedAt,
+            lastError: failed > 0 ? `${failed} change(s) failed` : null,
+          },
+        });
       });
 
       return {
@@ -223,21 +231,23 @@ export class ConnectorService {
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await withServiceContext(this.prisma, (tx) => tx.connectorRun.update({
-        where: { id: run.id },
-        data: {
-          status: 'failed',
-          finishedAt: new Date(),
-          fetched,
-          ingested,
-          failed: failed || 1,
-          error: message,
-          detail: { processed, skipped } as never,
-        },
-      }));
-      await this.prisma.connectorSource.update({
-        where: { id: sourceId },
-        data: { lastError: message, lastSyncAt: new Date() },
+      await withServiceContext(this.prisma, async (tx) => {
+        await tx.connectorRun.update({
+          where: { id: run.id },
+          data: {
+            status: 'failed',
+            finishedAt: new Date(),
+            fetched,
+            ingested,
+            failed: failed || 1,
+            error: message,
+            detail: { processed, skipped } as never,
+          },
+        });
+        await tx.connectorSource.update({
+          where: { id: sourceId },
+          data: { lastError: message, lastSyncAt: new Date() },
+        });
       });
       return {
         runId: run.id,
@@ -249,8 +259,6 @@ export class ConnectorService {
         skipped,
         error: message,
       };
-    } finally {
-      this.runningSyncs.delete(sourceId);
     }
   }
 
@@ -285,10 +293,15 @@ export class ConnectorService {
         sourceExternalId: change.externalId,
         lifecycleStatus: 'current',
       },
-      select: { id: true, contentHash: true, rawFileOid: true, version: true },
+      select: { id: true, contentHash: true, rawFileOid: true, version: true, status: true },
     });
 
     if (existing && existing.contentHash === contentHash) {
+      // A previous enqueue may have failed after the document was persisted.
+      if (existing.status === 'parsing' || existing.status === 'failed') {
+        await this.ingestionService.enqueue(existing.id, 'connector-sync', existing.version, 3);
+        return 'ingested';
+      }
       return 'skipped';
     }
 

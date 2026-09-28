@@ -8,7 +8,7 @@ const modelConfig = {
   id: 'model-1', kind: 'llm', modelName: 'model-a', contextLen: 8192,
   dimensions: null, createdAt: new Date(0), provider,
 };
-const mockPrisma = {
+const mockPrisma: any = {
   modelConfig: { findFirst: jest.fn() },
   modelProvider: { update: jest.fn() },
   $disconnect: jest.fn(),

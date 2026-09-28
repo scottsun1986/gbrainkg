@@ -1,6 +1,6 @@
 import { BrainCompilerService } from "./brain-compiler.service";
 
-const mockPrisma = {
+const mockPrisma: any = {
   knowledgeBase: { findMany: jest.fn() },
   user: { findMany: jest.fn() },
 
@@ -349,11 +349,11 @@ describe("BrainCompilerService query freshness", () => {
         findUnique: jest.fn().mockResolvedValue({ id: "11111111-1111-4111-8111-111111111111" }),
       },
       brainSourceDocument: { findMany: findMappings },
-      $queryRaw: jest.fn(),
-  $executeRaw: jest.fn().mockResolvedValue(1),
-  $executeRawUnsafe: jest.fn().mockResolvedValue(1).mockResolvedValue([
+      $queryRaw: jest.fn().mockResolvedValue([
         { publishedCount: BigInt(100_000), mappingStale: false },
       ]),
+      $executeRaw: jest.fn().mockResolvedValue(1),
+      $executeRawUnsafe: jest.fn().mockResolvedValue(1),
     };
     (service as any).prisma = prisma;
     (service as any).getSourcePlan = jest.fn().mockResolvedValue([

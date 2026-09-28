@@ -16,10 +16,18 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
   private cleanupTimer?: NodeJS.Timeout;
 
   static normalizeQuery(text: string): string {
-    return String(text || '')
-      .toLowerCase()
-      .replace(/[？?。！!,，\s\-_:："“”'‘’（）()【】\[\]、\/\\|`~@#$%^&*+=<>—…]+/g, ' ')
-      .trim();
+    // Symbols, case and internal whitespace can change meaning (C vs C++,
+    // identifiers and quoted text). An exact cache must preserve them.
+    return String(text || '').trim();
+  }
+
+  private remember(key: string, hit: any, expiresAt: number): void {
+    this.l1ExactCache.delete(key);
+    if (expiresAt <= Date.now()) return;
+    this.l1ExactCache.set(key, { hit, expiresAt });
+    while (this.l1ExactCache.size > 2000) {
+      this.l1ExactCache.delete(this.l1ExactCache.keys().next().value!);
+    }
   }
 
   constructor(
@@ -103,7 +111,7 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
 
       const results = await withServiceContext(this.prisma, (tx) =>
         tx.$queryRaw<any[]>`
-        SELECT id, "queryText", "responseContent", citations, "processingTrace", "modelName",
+        SELECT id, "queryText", "responseContent", citations, "processingTrace", "modelName", "expiresAt",
                1 - ("queryEmbedding" <=> ${embedding}::vector) as similarity
         FROM "SemanticCache"
         WHERE "scopeFingerprint" = ${scopeFingerprint}
@@ -118,10 +126,10 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
         const hit = (results as any[])[0];
         
         // Cache to L1 for subsequent instant zero-millisecond hits
-        this.l1ExactCache.set(l1Key, {
-          hit,
-          expiresAt: Date.now() + this.ttlHours * 3600000,
-        });
+        const localExpiry = Date.now() + this.ttlHours * 3600000;
+        this.remember(l1Key, hit, hit.expiresAt
+          ? Math.min(localExpiry, new Date(hit.expiresAt).getTime())
+          : localExpiry);
 
         // Async increment hitCount and update lastHitAt
         withServiceContext(this.prisma, (tx) =>
@@ -176,14 +184,7 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
         similarity: 1.0,
         hitCount: 1,
       };
-      this.l1ExactCache.set(l1Key, {
-        hit: entryObj,
-        expiresAt: expiresAt.getTime(),
-      });
-      if (this.l1ExactCache.size > 2000) {
-        const oldest = this.l1ExactCache.keys().next().value;
-        if (oldest) this.l1ExactCache.delete(oldest);
-      }
+      this.remember(l1Key, entryObj, expiresAt.getTime());
 
       // scopeFingerprint already encodes the exact selected source set plus the
       // ACL/knowledge epochs (see semanticCacheScopeKey). Mirror it into
@@ -229,6 +230,10 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
   // scopes whose unrelated counters happen to be smaller.
 
   async cleanup(): Promise<void> {
+    const now = Date.now();
+    for (const [key, entry] of this.l1ExactCache) {
+      if (entry.expiresAt <= now) this.l1ExactCache.delete(key);
+    }
     try {
       const result = await this.prisma.semanticCache.deleteMany({
         where: {

@@ -1,6 +1,6 @@
 import { SystemReprocessService } from './system-reprocess.service';
 
-const mockPrisma = {
+const mockPrisma: any = {
   document: {
     count: jest.fn(),
     findMany: jest.fn(),
@@ -17,6 +17,12 @@ const mockPrisma = {
   semanticCache: {
     count: jest.fn(),
     deleteMany: jest.fn(),
+  },
+  systemSetting: {
+    findUnique: jest.fn().mockResolvedValue(null),
+    create: jest.fn().mockResolvedValue({}),
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
   },
   $queryRaw: jest.fn(),
   $executeRaw: jest.fn(),
@@ -131,7 +137,41 @@ describe('SystemReprocessService', () => {
     expect(finalStatus.stats.scannedDocs).toBe(1);
   });
 
+  it('renews the lease while a long-running pipeline is active', async () => {
+    jest.useFakeTimers();
+    let finish!: () => void;
+    jest.spyOn(service as any, 'executeReprocess').mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));
+    try {
+      await service.startReprocess();
+      await jest.advanceTimersByTimeAsync(60_001);
+      expect(mockPrisma.systemSetting.updateMany).toHaveBeenCalledWith({
+        where: { key: expect.any(String), value: { endsWith: expect.stringMatching(/^\|/) } },
+        data: { value: expect.any(String) },
+      });
+      finish();
+      await jest.advanceTimersByTimeAsync(0);
+      const calls = mockPrisma.systemSetting.updateMany.mock.calls.length;
+      await jest.advanceTimersByTimeAsync(120_000);
+      expect(mockPrisma.systemSetting.updateMany).toHaveBeenCalledTimes(calls);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('handles cancel request gracefully', () => {
     expect(service.cancelReprocess().success).toBe(false);
+  });
+
+  it('does not overwrite a lease replaced by another starter', async () => {
+    mockPrisma.systemSetting.findUnique.mockResolvedValueOnce({
+      value: '2000-01-01T00:00:00.000Z|old-owner',
+    });
+    mockPrisma.systemSetting.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(service.startReprocess()).rejects.toThrow('正在运行中');
+    expect(mockPrisma.systemSetting.updateMany).toHaveBeenCalledWith({
+      where: { key: expect.any(String), value: '2000-01-01T00:00:00.000Z|old-owner' },
+      data: { value: expect.any(String) },
+    });
   });
 });

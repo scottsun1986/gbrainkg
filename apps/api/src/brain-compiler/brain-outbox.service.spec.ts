@@ -1,11 +1,26 @@
 import { BrainOutboxService } from './brain-outbox.service';
 const mockFindMany = jest.fn();
-const mockPrisma = { brainChangeEvent: { findMany: mockFindMany },
+const mockPrisma: any = { brainChangeEvent: { findMany: mockFindMany },
   $transaction: jest.fn(async (fn: any) => fn(mockPrisma)),
 };
 jest.mock('../prisma', () => ({ getPrismaClient: () => mockPrisma }));
 
 describe('durable pending outbox dispatcher', () => {
+  it('dispatches permission revocations after a malformed enrichment event', async () => {
+    mockFindMany.mockResolvedValue([
+      { id: 'bad', eventType: 'enrichment_request', payload: {} },
+      { id: 'revoke', eventType: 'perm_revoke' },
+    ]);
+    const add = jest.fn().mockResolvedValue({});
+    const service = new BrainOutboxService(
+      { add, getJob: jest.fn().mockResolvedValue(undefined) } as any,
+      { getJob: jest.fn().mockResolvedValue(undefined) } as any,
+      {} as any,
+    );
+    await service.dispatchPending();
+    expect(add).toHaveBeenCalledWith('process-outbox-event', { eventId: 'revoke' }, expect.any(Object));
+  });
+
   it('recovers a failed queue delivery with the same stable job identity', async () => {
     mockFindMany.mockResolvedValue([{ id: 'event-1', eventType: 'perm_revoke' }]);
     const add = jest.fn().mockRejectedValueOnce(new Error('redis offline')).mockResolvedValue({});

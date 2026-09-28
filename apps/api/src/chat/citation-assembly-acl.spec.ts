@@ -19,6 +19,15 @@ describe('CitationAssemblyService ACL revalidation', () => {
     return { service, prisma, acl };
   }
 
+  it('drops obsolete evidence instead of stamping it with the current version', async () => {
+    const { service, prisma } = createService(['doc']);
+    prisma.document.findMany.mockResolvedValue([{ id: 'doc', kbId: 'kb-1', version: 2 }]);
+    const result = await service.filterQueryResultByCurrentPermission({
+      citations: [{ docId: 'doc', version: 1, context: 'old content' }],
+    }, ['kb-1'], guard);
+    expect(result.citations).toEqual([]);
+  });
+
   it('drops KB-wide summaries when a published source document is unreadable', async () => {
     const { service } = createService([], [{ documentId: 'private-doc', document: { kbId: 'kb-1' } }]);
     const result = await service.filterQueryResultByCurrentPermission({

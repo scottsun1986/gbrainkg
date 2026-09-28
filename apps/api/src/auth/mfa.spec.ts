@@ -46,6 +46,11 @@ describe('MFA/TOTP two-step login', () => {
       if (args?.where?.id === userId) return { ...userState } as any;
       return null;
     }) as any);
+    jest.spyOn(prisma.user, 'updateMany').mockImplementation((async (args: any) => {
+      if (Object.entries(args.where).some(([key, value]) => (userState as any)[key] !== value)) return { count: 0 };
+      userState = { ...userState, ...args.data };
+      return { count: 1 };
+    }) as any);
     jest.spyOn(prisma.user, 'update').mockImplementation((async (args: any) => {
       userState = { ...userState, ...(args.data as any) };
       return { ...userState } as any;
@@ -71,6 +76,24 @@ describe('MFA/TOTP two-step login', () => {
 
   it('rejects a bad password even before MFA', async () => {
     await expect(authService.login('alice', 'wrong')).rejects.toThrow(UnauthorizedException);
+  });
+
+  it('rejects a malformed Unicode token signature without throwing', () => {
+    expect(authService.decodeToken(`body.${'é'.repeat(43)}`)).toBeNull();
+    expect(authService.decodeToken(`${authService.issueAccessToken(userId).token}.extra`)).toBeNull();
+  });
+
+  it('does not enable a secret replaced during verification', async () => {
+    userState.mfaSecret = secret.base32;
+    jest.spyOn(prisma.user, 'updateMany').mockResolvedValueOnce({ count: 0 });
+    await expect(mfaService.verify(userId, totpNow(secret.raw), { fromMfaToken: true }))
+      .rejects.toThrow('MFA state changed');
+    expect(userState.mfaEnabled).toBe(false);
+  });
+
+  it('does not reset MFA enabled by a concurrent request', async () => {
+    jest.spyOn(prisma.user, 'updateMany').mockResolvedValueOnce({ count: 0 });
+    await expect(mfaService.setup(userId)).rejects.toThrow('MFA state changed');
   });
 
   describe('with mfaEnabled', () => {

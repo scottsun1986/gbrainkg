@@ -3,6 +3,7 @@ import {
   Get,
   HttpCode,
   NotFoundException,
+  Post,
   Query,
   Req,
   Res,
@@ -12,6 +13,8 @@ import { OidcService } from './oidc.service';
 import { AuditService } from '../audit/audit.service';
 
 const OIDC_STATE_COOKIE = 'llmwiki_oidc_state';
+const OIDC_RESULT_COOKIE = 'llmwiki_oidc_result';
+const OIDC_RESULT_PATH = '/api/v1/auth/oidc/result';
 
 /** Minimal cookie reader (cookie-parser is intentionally not a dependency). */
 function readCookie(req: Request, name: string): string | undefined {
@@ -59,7 +62,7 @@ export class OidcController {
       );
     }
     const { url, state } = await this.oidcService.buildAuthorizationUrl();
-    const secure = url.startsWith('https://');
+    const secure = this.oidcService.envConfig().redirectUri.startsWith('https://');
     res.cookie(OIDC_STATE_COOKIE, state, {
       httpOnly: true,
       sameSite: 'lax',
@@ -120,12 +123,20 @@ export class OidcController {
             details: { method: 'oidc' },
           })
           .catch(() => undefined);
-        target.searchParams.set('code', Buffer.from(result.token).toString('base64url'));
-      } else if (result.kind === 'mfa') {
-        target.searchParams.set('code', Buffer.from(result.mfaToken).toString('base64url'));
-      } else {
-        target.searchParams.set('code', Buffer.from(result.mfaToken).toString('base64url'));
       }
+      // Keep the session and MFA ticket out of URLs, browser history and proxy logs.
+      // The browser exchanges this short-lived, HttpOnly cookie on the same origin.
+      const handoff = result.kind === 'token'
+        ? { kind: result.kind, token: result.token }
+        : { kind: result.kind, mfaToken: result.mfaToken };
+      res.cookie(OIDC_RESULT_COOKIE, Buffer.from(JSON.stringify(handoff)).toString('base64url'), {
+        httpOnly: true,
+        sameSite: 'strict',
+        secure: target.protocol === 'https:',
+        path: OIDC_RESULT_PATH,
+        maxAge: 60_000,
+      });
+      target.hash = 'sso_ready=1';
       res.setHeader('Cache-Control', 'no-store');
       return res.redirect(302, target.toString());
     } catch (err) {
@@ -139,5 +150,22 @@ export class OidcController {
         .catch(() => undefined);
       return fail(err instanceof Error ? err.message : 'SSO login failed.');
     }
+  }
+
+  @Post('oidc/result')
+  @HttpCode(200)
+  result(@Req() req: Request, @Res() res: Response) {
+    const encoded = readCookie(req, OIDC_RESULT_COOKIE);
+    res.clearCookie(OIDC_RESULT_COOKIE, { path: OIDC_RESULT_PATH });
+    res.setHeader('Cache-Control', 'no-store');
+    if (!encoded) return res.status(401).json({ message: 'SSO result has expired. Please sign in again.' });
+    try {
+      const result = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
+      if (result?.kind === 'token' && typeof result.token === 'string') return res.json(result);
+      if ((result?.kind === 'mfa' || result?.kind === 'mfaSetup') && typeof result.mfaToken === 'string') return res.json(result);
+    } catch {
+      // Reject malformed cookies without reflecting their contents.
+    }
+    return res.status(401).json({ message: 'Invalid SSO result. Please sign in again.' });
   }
 }

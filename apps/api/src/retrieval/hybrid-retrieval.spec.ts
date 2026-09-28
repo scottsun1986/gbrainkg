@@ -1,6 +1,6 @@
 import { HybridRetrievalService, lateInteractionScore } from './hybrid-retrieval.service';
 
-const mockPrisma = { $queryRaw: jest.fn(),
+const mockPrisma: any = { $queryRaw: jest.fn(),
   $executeRaw: jest.fn().mockResolvedValue(1),
   $executeRawUnsafe: jest.fn().mockResolvedValue(1),
   $transaction: jest.fn(async (fn: any) => fn(mockPrisma)),

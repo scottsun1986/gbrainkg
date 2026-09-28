@@ -1,8 +1,7 @@
 /**
  * OIDC authorization-code SSO. Built on Node's built-in `fetch` and `node:crypto`
- * only (no new npm dependencies). Identity comes from the standard userinfo
- * endpoint; when userinfo is missing we fall back to verifying the `id_token`
- * RS256 signature against the provider JWKS with `node:crypto`.
+ * only (no new npm dependencies). Verify the `id_token` whenever present;
+ * identity comes from userinfo, with verified token claims as a fallback.
  */
 import {
   BadRequestException,
@@ -125,12 +124,15 @@ export class OidcService {
   }
 
   private verifyState(state: string): { nonce: string; ts: number } {
-    const [body, signature] = String(state || '').split('.');
-    if (!body || !signature) throw new UnauthorizedException('Invalid OIDC state.');
+    const parts = String(state || '').split('.');
+    const [body, signature] = parts;
+    if (parts.length !== 2 || !body || !signature) throw new UnauthorizedException('Invalid OIDC state.');
     const expected = createHmac('sha256', this.secret()).update(body).digest('base64url');
+    const suppliedBytes = Buffer.from(signature);
+    const expectedBytes = Buffer.from(expected);
     if (
-      signature.length !== expected.length ||
-      !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))
+      suppliedBytes.length !== expectedBytes.length ||
+      !timingSafeEqual(suppliedBytes, expectedBytes)
     ) {
       throw new UnauthorizedException('Invalid OIDC state signature.');
     }
@@ -140,7 +142,7 @@ export class OidcService {
     } catch {
       throw new UnauthorizedException('Invalid OIDC state payload.');
     }
-    const ts = Number(payload.ts || 0);
+    const ts = Number(payload?.ts || 0);
     if (!payload.nonce || !ts || Math.abs(Math.floor(Date.now() / 1000) - ts) > STATE_TTL_SECONDS) {
       throw new UnauthorizedException('OIDC state has expired. Restart the SSO login.');
     }
@@ -335,6 +337,15 @@ export class OidcService {
       if (!audList.includes(expectedClientId)) {
         throw new UnauthorizedException('OIDC id_token audience mismatch.');
       }
+      if (audList.length > 1 && payload.azp !== expectedClientId) {
+        throw new UnauthorizedException('OIDC id_token authorized party mismatch.');
+      }
+    }
+    const now = Math.floor(Date.now() / 1000);
+    if (!Number.isInteger(payload.exp) || payload.exp <= now ||
+        !Number.isInteger(payload.iat) || payload.iat > now + 60 ||
+        (payload.nbf !== undefined && (!Number.isInteger(payload.nbf) || payload.nbf > now + 60))) {
+      throw new UnauthorizedException('OIDC id_token is expired or has invalid timestamps.');
     }
     if (header.alg !== 'RS256') {
       this.logger.warn(
@@ -372,17 +383,21 @@ export class OidcService {
   ): Promise<OidcIdentity> {
     const config = this.envConfig();
     const endpoints = await this.loadEndpoints(config);
+    let idTokenClaims: Record<string, unknown> | null = null;
+    if (tokenPayload.id_token) {
+      if (!endpoints.jwks_uri) throw new UnauthorizedException('OIDC provider did not publish JWKS.');
+      const jwks = await this.loadJwks(endpoints.jwks_uri);
+      idTokenClaims = this.verifyIdToken(String(tokenPayload.id_token), jwks, expectedNonce, config.issuer, config.clientId);
+      if (!idTokenClaims) throw new UnauthorizedException('OIDC id_token signature verification failed.');
+    }
     let claims: Record<string, unknown> | null = await this.fetchUserinfo(
       endpoints,
       String(tokenPayload.access_token || ''),
     );
-    if (!claims && tokenPayload.id_token) {
-      let jwks: any[] = [];
-      if (endpoints.jwks_uri) {
-        jwks = await this.loadJwks(endpoints.jwks_uri);
-      }
-      claims = this.verifyIdToken(String(tokenPayload.id_token), jwks, expectedNonce, config.issuer, config.clientId);
+    if (claims && idTokenClaims && claims.sub !== idTokenClaims.sub) {
+      throw new UnauthorizedException('OIDC userinfo subject does not match the id_token.');
     }
+    claims ??= idTokenClaims;
     if (!claims) {
       throw new UnauthorizedException(
         'OIDC provider returned no userinfo/id_token claims; cannot identify the user.',

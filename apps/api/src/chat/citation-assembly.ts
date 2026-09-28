@@ -225,6 +225,8 @@ export class CitationAssemblyService {
           return citation.slug && validDerived.has(citation.slug) ? citation : null;
         }
         const doc = allowed.get(citation.docId);
+        // Do not relabel old evidence as the current document version.
+        if (doc && citation.version != null && Number(citation.version) !== doc.version) return null;
         return doc
           ? {
               ...citation,

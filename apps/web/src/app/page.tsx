@@ -71,7 +71,8 @@ function App() {
     setAuthState('loggedIn');
   }, [loadAdminData]);
 
-  // OIDC callback lands on /#token=… / #mfa_token=… / #mfa_setup_token=… / #sso_error=…
+  // The OIDC callback carries no credential in the URL. Claim the short-lived
+  // result cookie through a same-origin request, then clear the URL marker.
   useEffect(() => {
     const hash = window.location.hash.replace(/^#/, '');
     if (!hash) return;
@@ -80,11 +81,34 @@ function App() {
     const mfa = params.get('mfa_token') || '';
     const mfaSetup = params.get('mfa_setup_token') || '';
     const ssoError = params.get('sso_error') || '';
-    if (!token && !mfa && !mfaSetup && !ssoError) return;
+    const ssoReady = params.get('sso_ready') === '1';
+    if (!token && !mfa && !mfaSetup && !ssoError && !ssoReady) return;
     window.history.replaceState({}, '', '/');
     if (ssoError) {
       setLoginError(decodeURIComponent(ssoError));
       setAuthState('loggedOut');
+      return;
+    }
+    if (ssoReady) {
+      void fetch(`${API_BASE_URL}/api/v1/auth/oidc/result`, {
+        method: 'POST',
+        credentials: 'same-origin',
+      }).then(async (response) => {
+        if (!response.ok) throw new Error(`SSO result ${response.status}`);
+        return response.json() as Promise<{ kind: 'token' | 'mfa' | 'mfaSetup'; token?: string; mfaToken?: string }>;
+      }).then(async (result) => {
+        if (result.kind === 'token' && result.token) {
+          await completeLogin(result.token);
+        } else if ((result.kind === 'mfa' || result.kind === 'mfaSetup') && result.mfaToken) {
+          setMfaToken(result.mfaToken);
+          setAuthState(result.kind === 'mfa' ? 'mfaRequired' : 'mfaSetup');
+        } else {
+          throw new Error('Invalid SSO result');
+        }
+      }).catch(() => {
+        setLoginError('SSO 登录失败，请重试');
+        setAuthState('loggedOut');
+      });
       return;
     }
     if (token) {

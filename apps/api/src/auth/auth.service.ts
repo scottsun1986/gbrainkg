@@ -85,13 +85,19 @@ export class AuthService {
   }
 
   private decode(token: string): TokenPayload | null {
-    const [body, signature] = token.split('.');
+    const parts = token.split('.');
+    if (parts.length !== 2) return null;
+    const [body, signature] = parts;
     if (!body || !signature) return null;
     const expected = createHmac('sha256', this.secret()).update(body).digest('base64url');
-    if (signature.length !== expected.length || !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
+    const supplied = Buffer.from(signature);
+    const expectedBytes = Buffer.from(expected);
+    if (supplied.length !== expectedBytes.length || !timingSafeEqual(supplied, expectedBytes)) return null;
     try {
       const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as TokenPayload;
-      return payload.sub && payload.exp > Math.floor(Date.now() / 1000) ? payload : null;
+      return typeof payload?.sub === 'string' && payload.sub.length > 0 &&
+        Number.isInteger(payload.exp) && payload.exp > Math.floor(Date.now() / 1000)
+        ? payload : null;
     } catch {
       return null;
     }

@@ -998,7 +998,7 @@ ${chunkContent.slice(0, 4000)}
             COALESCE((
               SELECT jsonb_agg(item)
               FROM jsonb_array_elements(relation."provenance") AS item
-              WHERE item->>'documentId' <> ${documentId}
+              WHERE item->>'documentId' IS DISTINCT FROM ${documentId}
             ), '[]'::jsonb) AS remaining
           FROM "GraphRelation" AS relation
           WHERE relation."kbId" = ${kbId}::uuid
@@ -1020,42 +1020,37 @@ ${chunkContent.slice(0, 4000)}
       // Phase 2 — entities. Must run strictly after phase 1 so orphan
       // detection sees the post-cleanup edge set.
       result.entitiesRemoved = await withServiceContext(this.prisma, (tx) => (tx as any).$executeRaw`
-        WITH provenance_updated AS (
-          UPDATE "GraphEntity" AS entity
-          SET "properties" = jsonb_set(
-            COALESCE(entity."properties", '{}'::jsonb),
-            '{docIds}',
+        WITH matched AS (
+          SELECT entity."id",
             COALESCE((
               SELECT jsonb_agg(doc_id)
               FROM jsonb_array_elements_text(entity."properties"->'docIds') AS doc_ids(doc_id)
               WHERE doc_id <> ${documentId}
-            ), '[]'::jsonb),
-            true
-          )
+            ), '[]'::jsonb) AS remaining,
+            NOT EXISTS (
+              SELECT 1 FROM "GraphRelation" AS r
+              WHERE r."sourceId" = entity."id" OR r."targetId" = entity."id"
+            ) AS orphan
+          FROM "GraphEntity" AS entity
           WHERE entity."kbId" = ${kbId}::uuid
             AND COALESCE(entity."properties"->'docIds', '[]'::jsonb)
               @> jsonb_build_array(${documentId})
+        ), provenance_updated AS (
+          UPDATE "GraphEntity" AS entity
+          SET "properties" = jsonb_set(
+            COALESCE(entity."properties", '{}'::jsonb),
+            '{docIds}', matched.remaining, true
+          )
+          FROM matched
+          WHERE entity."id" = matched."id"
+            AND (jsonb_array_length(matched.remaining) > 0 OR NOT matched.orphan)
           RETURNING entity."id"
         )
         DELETE FROM "GraphEntity" AS e
-        WHERE e."kbId" = ${kbId}::uuid
-          AND (
-            -- Orphans: no outgoing and no incoming relation left.
-            NOT EXISTS (
-              SELECT 1 FROM "GraphRelation" AS r
-              WHERE r."sourceId" = e."id" OR r."targetId" = e."id"
-            )
-            OR (
-              -- Entities whose remaining provenance is empty. The trailing
-              -- edge check guards against cascade-deleting shared relations.
-              jsonb_typeof(e."properties" -> 'docIds') = 'array'
-              AND jsonb_array_length(e."properties" -> 'docIds') = 0
-              AND NOT EXISTS (
-                SELECT 1 FROM "GraphRelation" AS r
-                WHERE r."sourceId" = e."id" OR r."targetId" = e."id"
-              )
-            )
-          )
+        USING matched
+        WHERE e."id" = matched."id"
+          AND jsonb_array_length(matched.remaining) = 0
+          AND matched.orphan
       `);
 
       if (result.relationsRemoved || result.entitiesRemoved) {

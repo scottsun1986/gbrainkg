@@ -1,6 +1,6 @@
 import { DocumentAclService } from './document-acl.service';
 
-const mockPrisma = {
+const mockPrisma: any = {
   document: {
     findUnique: jest.fn(),
     findMany: jest.fn(),
@@ -10,6 +10,7 @@ const mockPrisma = {
     findFirst: jest.fn(),
     findUnique: jest.fn(),
     create: jest.fn(),
+    createMany: jest.fn(),
     delete: jest.fn(),
     deleteMany: jest.fn(),
   },
@@ -157,7 +158,15 @@ describe('DocumentAclService mutation helpers', () => {
     expect(mockPrisma.documentAcl.deleteMany).toHaveBeenCalledWith({
       where: { documentId: 'doc-1' },
     });
-    expect(mockPrisma.documentAcl.create).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.documentAcl.createMany).toHaveBeenCalledWith({
+      data: [expect.objectContaining({
+        documentId: 'doc-1',
+        subjectType: 'user',
+        subjectId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        permission: 'read',
+      })],
+      skipDuplicates: true,
+    });
     expect(mockPrisma.brainChangeEvent.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ eventType: 'doc_acl_change', resourceId: 'doc-1' }),
     }));

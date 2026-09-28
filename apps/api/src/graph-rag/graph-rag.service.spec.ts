@@ -1,6 +1,6 @@
 import { GraphRagService } from './graph-rag.service';
 
-const mockPrisma = {
+const mockPrisma: any = {
   $executeRaw: jest.fn(),
   $queryRaw: jest.fn(),
   graphEntity: {
@@ -211,10 +211,13 @@ describe('GraphRagService', () => {
         relations: [],
       });
 
-      expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(1);
-      const sql = mockPrisma.$executeRaw.mock.calls[0][0] as TemplateStringsArray;
+      const provenanceCall = mockPrisma.$executeRaw.mock.calls.find(
+        (call: any[]) => (call[0] as TemplateStringsArray).join(' ').includes('jsonb_to_recordset'),
+      );
+      expect(provenanceCall).toBeDefined();
+      const sql = provenanceCall![0] as TemplateStringsArray;
       expect(sql.join(' ')).toContain('jsonb_to_recordset');
-      expect(mockPrisma.$executeRaw.mock.calls[0]).toContain(
+      expect(provenanceCall).toContain(
         JSON.stringify([{ id: 'ent-1', docId: 'doc-2' }]),
       );
     });

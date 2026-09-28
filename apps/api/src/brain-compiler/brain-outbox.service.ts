@@ -57,28 +57,34 @@ export class BrainOutboxService implements OnModuleInit, OnModuleDestroy {
         ...(this.dispatchCursor ? { cursor: { id: this.dispatchCursor }, skip: 1 } : {}),
       });
       for (const event of events) {
-        const isEnrichment = event.eventType === 'enrichment_request';
-        const isAuxiliary = event.eventType === 'aux_enrichment_request';
-        const queue = isAuxiliary ? this.auxiliaryQueue : isEnrichment ? this.enrichmentQueue : this.compilerQueue;
-        const jobId = isAuxiliary ? `aux-outbox-${event.id}` : isEnrichment ? `enrichment-outbox-${event.id}` : `outbox-event-${event.id}`;
-        const job = await queue.getJob(jobId);
-        if (!job) {
-          if (isEnrichment && coreQueued >= coreLimit) continue;
-          if (isAuxiliary && auxQueued >= auxLimit) continue;
-          await this.enqueueEvent(event.id, event.eventType, event.resourceId, event.payload);
-          if (isEnrichment) coreQueued += 1;
-          if (isAuxiliary) auxQueued += 1;
-        } else {
-          const state = await job.getState();
-          // Never steal an active or delayed BullMQ lease. BullMQ owns stalled
-          // worker detection; replay only terminal jobs with unfinished DB state.
-          if (state === 'failed' || state === 'completed') {
+        try {
+          const isEnrichment = event.eventType === 'enrichment_request';
+          const isAuxiliary = event.eventType === 'aux_enrichment_request';
+          const queue = isAuxiliary ? this.auxiliaryQueue : isEnrichment ? this.enrichmentQueue : this.compilerQueue;
+          const jobId = isAuxiliary ? `aux-outbox-${event.id}` : isEnrichment ? `enrichment-outbox-${event.id}` : `outbox-event-${event.id}`;
+          const job = await queue.getJob(jobId);
+          if (!job) {
             if (isEnrichment && coreQueued >= coreLimit) continue;
             if (isAuxiliary && auxQueued >= auxLimit) continue;
-            await job.retry(state);
+            await this.enqueueEvent(event.id, event.eventType, event.resourceId, event.payload);
             if (isEnrichment) coreQueued += 1;
             if (isAuxiliary) auxQueued += 1;
+          } else {
+            const state = await job.getState();
+            // Never steal an active or delayed BullMQ lease. BullMQ owns stalled
+            // worker detection; replay only terminal jobs with unfinished DB state.
+            if (state === 'failed' || state === 'completed') {
+              if (isEnrichment && coreQueued >= coreLimit) continue;
+              if (isAuxiliary && auxQueued >= auxLimit) continue;
+              await job.retry(state);
+              if (isEnrichment) coreQueued += 1;
+              if (isAuxiliary) auxQueued += 1;
+            }
           }
+        } catch (error) {
+          // One malformed event or terminal-job race must not starve later
+          // events (including permission revocations) in this batch.
+          this.logger.warn(`Outbox event ${event.id} dispatch failed: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
       this.dispatchCursor = events.length === 100 ? events[events.length - 1].id : undefined;

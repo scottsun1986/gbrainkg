@@ -742,8 +742,9 @@ export class BrainRepoAdapter {
         killTimer = setTimeout(() => {
           try { process.kill(-child.pid!, 'SIGKILL'); } catch { /* already gone */ }
         }, 5_000);
+        reject(new Error(`git ${args.join(' ')} timed out after ${timeoutMs}ms`));
       }, timeoutMs);
-      child.on('error', (err) => {
+      child.on('error', (err: Error) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
@@ -813,10 +814,11 @@ export class BrainRepoAdapter {
         killTimer = setTimeout(() => {
           try { process.kill(-child.pid!, 'SIGKILL'); } catch { /* already gone */ }
         }, 5_000);
+        reject(new Error(`git ${args.join(' ')} timed out after ${timeoutMs}ms`));
       }, timeoutMs);
       child.stdout.on('data', (chunk: any) => { stdout += chunk.toString('utf8'); });
       child.stderr.on('data', (chunk: any) => { stderr += chunk.toString('utf8'); });
-      child.on('error', (err) => {
+      child.on('error', (err: Error) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
@@ -829,7 +831,7 @@ export class BrainRepoAdapter {
         clearTimeout(timer);
         if (killTimer) clearTimeout(killTimer);
         if (code === 0) resolveOutput(stdout.trim());
-        else reject(new Error(`git ${args.join(' ')} failed (${code}): ${stderr || stdout}`)));
+        else reject(new Error(`git ${args.join(' ')} failed (${code}): ${stderr || stdout}`));
       });
     });
   }

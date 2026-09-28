@@ -52,7 +52,7 @@ const mockGbrainQuery = jest.fn().mockResolvedValue({
   reranked: true,
 });
 
-const mockPrisma = {
+const mockPrisma: any = {
   $queryRaw: jest.fn(),
   $executeRaw: jest.fn().mockResolvedValue(1),
   $executeRawUnsafe: jest.fn().mockResolvedValue(1),

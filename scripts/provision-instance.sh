@@ -44,14 +44,13 @@ WEB_SERVICE="llmwiki-web-inst${INST_NUM}"
 
 # ---- 每实例独立密钥（P0 安全加固）----
 # 原因：此前 provision 从 inst1 的 production.env 直接 cp，导致 AUTH_SECRET /
-# MODEL_CONFIG_KEY / PARSER_AUTH_TOKEN / AUTH_TOKEN / DB_PASS 跨实例共享。任一
+# MODEL_CONFIG_KEY / AUTH_TOKEN / DB_PASS 跨实例共享。任一
 # 实例泄露即可伪造其它实例的 JWT 会话、篡改模型配置或直连其它实例数据库。
-# 现改为 openssl rand 各自独立生成，禁止从基座/inst1 复制任何凭据。
+# 实例身份凭据独立生成；共享 Redis/Parser 的连接凭据沿用服务端配置。
 INST_DB_PASS="$(openssl rand -hex 32)"
 INST_APP_DB_PASS="$(openssl rand -hex 32)"
 INST_AUTH_SECRET="$(openssl rand -hex 32)"
 INST_MODEL_CONFIG_KEY="$(openssl rand -hex 32)"
-INST_PARSER_AUTH_TOKEN="$(openssl rand -hex 32)"
 INST_AUTH_TOKEN="$(openssl rand -hex 32)"
 # 运行时角色：NOBYPASSRLS，RLS 策略实际生效；迁移/GBrain 仍用 llmwiki(BYPASSRLS)。
 INST_APP_USER="llmwiki_app_inst${INST_NUM}"
@@ -77,6 +76,9 @@ ssh "$PROD_HOST" "
   set -e
   mountpoint -q /data || { echo 'ERROR: /data is not mounted on remote host'; exit 1; }
   [[ -f /home/ubuntu/.config/llmwiki/production.env ]] || { echo 'ERROR: Base production.env not found'; exit 1; }
+  [[ ! -e '$ENV_FILE' ]] || { echo 'ERROR: $ENV_FILE already exists; refusing to rotate its database passwords'; exit 1; }
+  grep -qE '^REDIS_PASS=.+$' /home/ubuntu/.config/llmwiki/production.env || { echo 'ERROR: shared Redis password is missing'; exit 1; }
+  grep -qE '^PARSER_AUTH_TOKEN=.+$' /home/ubuntu/.config/llmwiki/production.env || { echo 'ERROR: shared Parser token is missing'; exit 1; }
 "
 
 # ---- 2. 创建独立数据库与赋权 ----
@@ -127,8 +129,7 @@ ssh "$PROD_HOST" "
 # ---- 4. 生成专属配置文件与 Systemd 服务 ----
 log "[4/5] Generating isolated environment and systemd service files..."
 # 安全：禁止 `cp production.env` 继承 inst1/基座密钥。仅提取非敏感通用配置做模板，
-# 所有凭据（AUTH_SECRET / MODEL_CONFIG_KEY / PARSER_AUTH_TOKEN / AUTH_TOKEN / DB_PASS）
-# 一律用上方 openssl rand 生成的本实例独立值覆写。
+# 实例身份凭据独立生成；Redis 与 Parser 的连接凭据必须匹配共享服务。
 ssh "$PROD_HOST" "
   set -e
   if [[ ! -f '$ENV_FILE' ]]; then
@@ -140,7 +141,10 @@ ssh "$PROD_HOST" "
       touch '$ENV_FILE'
     fi
 
-    # 强制写入本实例独立密钥与连接串（不从任何既有 env 复制）
+    # 仅复制共享中间件的连接凭据；实例身份凭据保持独立。
+    grep -E '^(REDIS_PASS|PARSER_AUTH_TOKEN)=' /home/ubuntu/.config/llmwiki/production.env >> '$ENV_FILE'
+
+    # 强制写入本实例独立密钥与连接串
     cat <<SECRETS >> '$ENV_FILE'
 
 # ---- instance-unique credentials (openssl rand, never copied from inst1) ----
@@ -158,7 +162,6 @@ RLS_ENFORCE=1
 
 AUTH_SECRET=$INST_AUTH_SECRET
 MODEL_CONFIG_KEY=$INST_MODEL_CONFIG_KEY
-PARSER_AUTH_TOKEN=$INST_PARSER_AUTH_TOKEN
 AUTH_TOKEN=$INST_AUTH_TOKEN
 SECRETS
 

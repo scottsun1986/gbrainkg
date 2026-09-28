@@ -2,6 +2,7 @@ import { NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { createSign, generateKeyPairSync } from 'node:crypto';
 import { AuthService } from './auth.service';
 import { OidcService, readOidcEnvConfig, OidcIdentity } from './oidc.service';
+import { OidcController } from './oidc.controller';
 import { getPrismaClient } from '../prisma';
 
 const prisma = getPrismaClient();
@@ -46,7 +47,8 @@ function signRs256IdToken(payloadObj: Record<string, unknown>, privateKey: any, 
   const header = Buffer.from(
     JSON.stringify({ alg: 'RS256', typ: 'JWT', kid }),
   ).toString('base64url');
-  const payload = Buffer.from(JSON.stringify(payloadObj)).toString('base64url');
+  const now = Math.floor(Date.now() / 1000);
+  const payload = Buffer.from(JSON.stringify({ iat: now, exp: now + 300, ...payloadObj })).toString('base64url');
   const signer = createSign('RSA-SHA256');
   signer.update(`${header}.${payload}`);
   const signature = signer.sign(privateKey, 'base64url');
@@ -111,6 +113,12 @@ describe('OIDC SSO (authorization code + JIT provisioning)', () => {
       NotFoundException,
     );
     expect(typeof authService.login).toBe('function');
+  });
+
+  it('rejects malformed state signatures as authentication failures', async () => {
+    const { state } = await oidcService.buildAuthorizationUrl();
+    await expect(oidcService.handleCallback('code', `${state}.extra`)).rejects.toThrow('Invalid OIDC state.');
+    await expect(oidcService.handleCallback('code', `body.${'é'.repeat(43)}`)).rejects.toThrow('Invalid OIDC state signature.');
   });
 
   it('readOidcEnvConfig flags incomplete configuration as unconfigured', () => {
@@ -187,7 +195,7 @@ describe('OIDC SSO (authorization code + JIT provisioning)', () => {
     });
   });
 
-  it('callback binds an existing email user to the OIDC subject instead of duplicating', async () => {
+  it('does not silently bind an existing local account by matching email', async () => {
     const { state } = await oidcService.buildAuthorizationUrl();
     const existing = {
       id: '33333333-3333-4333-8333-333333333333',
@@ -212,18 +220,11 @@ describe('OIDC SSO (authorization code + JIT provisioning)', () => {
       return null;
     });
 
-    const result: any = await oidcService.handleCallback('authz-code', state, {
+    await expect(oidcService.handleCallback('authz-code', state, {
       cookieState: state,
-    });
-
-    expect(result.kind).toBe('token');
+    })).rejects.toThrow('This email has a local account');
     expect(prisma.user.create).not.toHaveBeenCalled();
-    expect(prisma.user.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: existing.id },
-        data: { oidcSub: 'idp-user-1' },
-      }),
-    );
+    expect(prisma.user.update).not.toHaveBeenCalled();
   });
 
   it('callback issues an mfaToken (not a session) when the user has MFA enabled', async () => {
@@ -301,6 +302,8 @@ describe('OIDC id_token RS256 verification fallback (node:crypto + JWKS)', () =>
         preferred_username: 'idtoken3.user',
         name: 'Id Token 3',
         nonce: 'known-nonce',
+        iss: ISSUER,
+        aud: 'gbrainkg-web',
       },
       privateKey,
     );
@@ -361,5 +364,69 @@ describe('OIDC id_token RS256 verification fallback (node:crypto + JWKS)', () =>
     await expect(
       oidcService.resolveIdentity({ access_token: 'x', id_token: idToken }, 'expected-nonce'),
     ).rejects.toThrow(UnauthorizedException);
+  });
+
+  it('rejects an expired signed id_token', async () => {
+    const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const jwk = publicKey.export({ format: 'jwk' }) as any;
+    jwk.kid = 'test-key';
+    const idToken = signRs256IdToken({
+      sub: 'idp-user-3', nonce: 'known-nonce', iss: ISSUER, aud: 'gbrainkg-web',
+      exp: Math.floor(Date.now() / 1000) - 1,
+    }, privateKey);
+    enableOidc();
+    const service = new OidcService(new AuthService());
+    jest.spyOn(globalThis as any, 'fetch').mockImplementation(async (input: any) => {
+      const url = String(input);
+      if (url.includes('/.well-known/openid-configuration')) return jsonResponse({
+        authorization_endpoint: `${ISSUER}/authorize`, token_endpoint: `${ISSUER}/token`, jwks_uri: `${ISSUER}/jwks`,
+      });
+      if (url.endsWith('/jwks')) return jsonResponse({ keys: [jwk] });
+      return jsonResponse({}, 404);
+    });
+    await expect(service.resolveIdentity({ access_token: 'x', id_token: idToken }, 'known-nonce'))
+      .rejects.toThrow('expired or has invalid timestamps');
+  });
+});
+
+describe('OIDC browser handoff', () => {
+  it('redirects without credentials and returns the result through an HttpOnly cookie', async () => {
+    const oidc = {
+      isConfigured: () => true,
+      postLoginRedirect: () => 'https://kb.example.com/',
+      handleCallback: jest.fn().mockResolvedValue({ kind: 'token', token: 'session-secret', user: { id: 'user-1' } }),
+    };
+    const audit = { log: jest.fn().mockResolvedValue(undefined) };
+    const controller = new OidcController(oidc as any, audit as any);
+    const cookies: Record<string, { value: string; options: any }> = {};
+    const response = {
+      cookie: jest.fn((name: string, value: string, options: any) => { cookies[name] = { value, options }; }),
+      clearCookie: jest.fn(),
+      setHeader: jest.fn(),
+      redirect: jest.fn(),
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn(),
+    };
+    await controller.callback(
+      { headers: { cookie: 'llmwiki_oidc_state=valid-state' } } as any,
+      response as any,
+      'idp-code',
+      'valid-state',
+    );
+    expect(response.redirect).toHaveBeenCalledWith(302, 'https://kb.example.com/#sso_ready=1');
+    expect(JSON.stringify(response.redirect.mock.calls)).not.toContain('session-secret');
+    expect(cookies.llmwiki_oidc_result.options).toMatchObject({
+      httpOnly: true,
+      sameSite: 'strict',
+      secure: true,
+      path: '/api/v1/auth/oidc/result',
+    });
+
+    controller.result(
+      { headers: { cookie: `llmwiki_oidc_result=${cookies.llmwiki_oidc_result.value}` } } as any,
+      response as any,
+    );
+    expect(response.json).toHaveBeenCalledWith({ kind: 'token', token: 'session-secret' });
+    expect(response.clearCookie).toHaveBeenCalledWith('llmwiki_oidc_result', { path: '/api/v1/auth/oidc/result' });
   });
 });

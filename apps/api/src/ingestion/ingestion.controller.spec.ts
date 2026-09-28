@@ -2,7 +2,7 @@ import AdmZip = require('adm-zip');
 import { BadRequestException } from '@nestjs/common';
 import { IngestionController } from './ingestion.controller';
 
-const mockPrisma = {
+const mockPrisma: any = {
   knowledgeBase: {
     findUnique: jest.fn(),
   },
@@ -12,6 +12,7 @@ const mockPrisma = {
     update: jest.fn(),
     delete: jest.fn(),
   },
+  $executeRaw: jest.fn().mockResolvedValue(0),
 
   $transaction: jest.fn(async (fn: any) => fn(mockPrisma)),
 };

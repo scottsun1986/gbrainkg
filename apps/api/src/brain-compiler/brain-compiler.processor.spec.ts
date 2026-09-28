@@ -23,6 +23,7 @@ const mockPrisma: any = {
     findMany: jest.fn(),
     updateMany: jest.fn(),
   },
+  $queryRaw: jest.fn(),
 
   $transaction: jest.fn(async (fn: any) => fn(mockPrisma)),
 };
@@ -210,7 +211,7 @@ describe("BrainCompilerProcessor", () => {
       mockPrisma.document.findMany.mockResolvedValue([
         { id: "doc-1", indexReadiness: "pending" },
       ]);
-      chunkEmbedding.documentCoverage.mockResolvedValue({ total: 10, missing: 4 });
+      mockPrisma.$queryRaw.mockResolvedValue([{ id: 'doc-1', total: 10n, missing: 4n }]);
 
       await expect(processor.process(sourceSyncJob())).rejects.toThrow(
         /core indexing incomplete: doc-1 \(4\/10/,
@@ -247,7 +248,7 @@ describe("BrainCompilerProcessor", () => {
       mockPrisma.document.findMany.mockResolvedValue([
         { id: "doc-1", indexReadiness: "enriching" },
       ]);
-      chunkEmbedding.documentCoverage.mockResolvedValue({ total: 10, missing: 0 });
+      mockPrisma.$queryRaw.mockResolvedValue([{ id: 'doc-1', total: 10n, missing: 0n }]);
       compilerService.syncKnowledgeBaseSource.mockResolvedValue({
         sourceKey: "src",
         synced: 1,
@@ -259,7 +260,7 @@ describe("BrainCompilerProcessor", () => {
       await expect(processor.process(sourceSyncJob())).resolves.toMatchObject({
         status: "success",
       });
-      expect(chunkEmbedding.documentCoverage).toHaveBeenCalledWith("doc-1");
+      expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(1);
     });
 
     it("skips the gate when the embedding service is disabled", async () => {

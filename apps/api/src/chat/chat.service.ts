@@ -1753,7 +1753,19 @@ export class ChatService {
       currentModelName,
       userId,
     );
-    if (this.semanticCacheService && !forceQueryRefresh) {
+    trace.start("conversation_context", "历史会话消歧", "读取同一会话的近期上下文");
+    const conversationHistory = await this.loadConversationHistory(
+      userId,
+      conversationId,
+      question,
+    );
+    trace.finish("conversation_context", "success", `已加载 ${Math.max(0, conversationHistory.length - 1)} 条历史消息`, {
+      historyMessages: Math.max(0, conversationHistory.length - 1),
+    });
+    const shouldLoadPersonalMemory = this.shouldLoadPersonalMemory(question, conversationHistory);
+    // A cached first-turn answer cannot account for an earlier conversation
+    // turn or newly available personal memory, even when the question matches.
+    if (this.semanticCacheService && !forceQueryRefresh && conversationHistory.length <= 1 && !shouldLoadPersonalMemory) {
       try {
         const cachedHit = await this.semanticCacheService.lookup(
           question,
@@ -1815,15 +1827,6 @@ export class ChatService {
     const derivedRef = `gbrain://source/llmwiki-d-${userScope.fingerprint}`;
     const sourceRefs = [...rawRefs];
 
-    trace.start("conversation_context", "历史会话消歧", "读取同一会话的近期上下文");
-    const conversationHistory = await this.loadConversationHistory(
-      userId,
-      conversationId,
-      question,
-    );
-    trace.finish("conversation_context", "success", `已加载 ${Math.max(0, conversationHistory.length - 1)} 条历史消息`, {
-      historyMessages: Math.max(0, conversationHistory.length - 1),
-    });
     trace.start("query_rewrite", "检索问题改写", "结合历史指代生成独立检索问题");
     const retrieval = await this.rewriteQueryForRetrieval(
       question,
@@ -1890,10 +1893,6 @@ export class ChatService {
     // boundaries with known standing entities, and recall for an explicit
     // memory need. A policy/document question has neither, so do not make a
     // private-memory subprocess compete with the authoritative Source query.
-    const shouldLoadPersonalMemory = this.shouldLoadPersonalMemory(
-      question,
-      conversationHistory,
-    );
     trace.start("personal_memory", "个人记忆检索", "从当前用户私有 Source 加载相关长期记忆");
     const personalMemoryPromise = shouldLoadPersonalMemory
       ? this.loadPersonalMemoryContext(

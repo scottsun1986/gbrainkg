@@ -1,6 +1,6 @@
 import { EnrichmentProcessor } from './enrichment.processor';
 
-const mockPrisma = {
+const mockPrisma: any = {
   document: { findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
   enrichmentStage: { findMany: jest.fn(), upsert: jest.fn() },
   brainChangeEvent: { update: jest.fn(), upsert: jest.fn() },
@@ -48,7 +48,7 @@ describe('EnrichmentProcessor readiness gating', () => {
     ).rejects.toThrow(/3\/10 chunks missing vectors/);
 
     const readinessWrites = mockPrisma.document.update.mock.calls.map(
-      (call) => call[0].data.indexReadiness,
+      (call: any[]) => call[0].data.indexReadiness,
     );
     expect(readinessWrites).toEqual(['enriching', 'degraded']);
     expect(raptor.indexDocument).not.toHaveBeenCalled();
@@ -64,7 +64,7 @@ describe('EnrichmentProcessor readiness gating', () => {
     ).resolves.toEqual({ readiness: 'ready' });
 
     const readinessWrites = mockPrisma.document.update.mock.calls.map(
-      (call) => call[0].data.indexReadiness,
+      (call: any[]) => call[0].data.indexReadiness,
     );
     expect(readinessWrites).toEqual(['enriching', 'ready']);
   });

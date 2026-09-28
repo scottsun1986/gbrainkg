@@ -64,9 +64,9 @@ export class MfaService {
   async setup(userId: string): Promise<MfaSetupResult> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, username: true, email: true, mfaEnabled: true },
+      select: { id: true, username: true, email: true, mfaEnabled: true, status: true },
     });
-    if (!user) throw new UnauthorizedException('User is inactive or does not exist.');
+    if (!user || user.status !== 'active') throw new UnauthorizedException('User is inactive or does not exist.');
     if (user.mfaEnabled) {
       throw new BadRequestException('MFA is already enabled. Disable it before re-enrolling.');
     }
@@ -80,10 +80,11 @@ export class MfaService {
       digits: 6,
       period: 30,
     });
-    await this.prisma.user.update({
-      where: { id: userId },
+    const updated = await this.prisma.user.updateMany({
+      where: { id: userId, status: 'active', mfaEnabled: false },
       data: { mfaSecret: base32, mfaEnabled: false, mfaEnabledAt: null },
     });
+    if (updated.count !== 1) throw new BadRequestException('MFA state changed. Restart enrolment.');
     this.authService.invalidateUserStatus(userId);
     return {
       secret: base32,
@@ -122,10 +123,11 @@ export class MfaService {
     if (!verifyTotp(base32Decode(user.mfaSecret), code)) {
       throw new UnauthorizedException('Invalid TOTP code.');
     }
-    await this.prisma.user.update({
-      where: { id: userId },
+    const updated = await this.prisma.user.updateMany({
+      where: { id: userId, status: 'active', mfaEnabled: false, mfaSecret: user.mfaSecret },
       data: { mfaEnabled: true, mfaEnabledAt: new Date() },
     });
+    if (updated.count !== 1) throw new BadRequestException('MFA state changed. Restart enrolment.');
     this.authService.invalidateUserStatus(userId);
     if (options.fromMfaToken) {
       return this.authService.completeLogin(userId);

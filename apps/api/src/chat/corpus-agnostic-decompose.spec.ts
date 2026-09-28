@@ -1,7 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { RetrievalArmsService } from './retrieval-arms';
 
-const mockPrisma = {
+const mockPrisma: any = {
   $queryRaw: jest.fn(),
   $executeRaw: jest.fn(),
   knowledgeBase: { findMany: jest.fn() },

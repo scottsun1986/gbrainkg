@@ -1,7 +1,7 @@
 import { ConnectorService } from './connector.service';
 import { WebhookConnector } from './webhook-connector';
 
-const mockPrisma = {
+const mockPrisma: any = {
   connectorSource: {
     create: jest.fn(),
     findUnique: jest.fn(),
@@ -13,6 +13,7 @@ const mockPrisma = {
     create: jest.fn(),
     update: jest.fn(),
     findMany: jest.fn(),
+    findFirst: jest.fn(),
   },
   document: {
     findFirst: jest.fn(),
@@ -21,6 +22,7 @@ const mockPrisma = {
     updateMany: jest.fn(),
   },
 
+  $executeRaw: jest.fn().mockResolvedValue(0),
   $transaction: jest.fn(async (fn: any) => fn(mockPrisma)),
 };
 
@@ -65,6 +67,7 @@ describe('ConnectorService.sync', () => {
     });
     mockPrisma.connectorSource.findUnique.mockResolvedValue({ ...SOURCE });
     mockPrisma.connectorRun.create.mockResolvedValue({ id: 'run-1' });
+    mockPrisma.connectorRun.findFirst.mockResolvedValue(null);
     mockPrisma.connectorRun.update.mockResolvedValue({});
     mockPrisma.connectorSource.update.mockResolvedValue({});
     mockPrisma.document.findFirst.mockResolvedValue(null);
@@ -219,6 +222,40 @@ describe('ConnectorService.sync', () => {
     // cursor 不前进
     const updateArgs = mockPrisma.connectorSource.update.mock.calls[0][0];
     expect(updateArgs.data.cursor).toBeUndefined();
+  });
+
+  it('retains the cursor when any document fails to enqueue', async () => {
+    gitFetch.mockResolvedValue({ changes: [{ externalId: 'x', content: 'hello' }], nextCursor: 'commit-b' });
+    ingestionService.enqueue.mockRejectedValueOnce(new Error('redis unavailable'));
+    const result = await service.sync('src-1');
+    expect(result.failed).toBe(1);
+    expect(mockPrisma.connectorSource.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ cursor: 'commit-a' }),
+    }));
+  });
+
+  it('requeues unchanged content after a failed enqueue', async () => {
+    gitFetch.mockResolvedValue({ changes: [{ externalId: 'x', contentHash: 'hash-1' }], nextCursor: 'commit-b' });
+    mockPrisma.document.findFirst.mockResolvedValueOnce({ id: 'doc-1', contentHash: 'hash-1', status: 'failed', version: 2 });
+    expect((await service.sync('src-1')).ingested).toBe(1);
+    expect(ingestionService.enqueue).toHaveBeenCalledWith('doc-1', 'connector-sync', 2, 3);
+  });
+
+  it('rejects overlapping triggers before the first database read resolves', async () => {
+    let resolveSource!: (value: any) => void;
+    mockPrisma.connectorSource.findUnique.mockReturnValueOnce(new Promise(resolve => { resolveSource = resolve; }));
+    gitFetch.mockResolvedValue({ changes: [] });
+    const first = service.sync('src-1');
+    await expect(service.sync('src-1')).rejects.toThrow('already running');
+    resolveSource(SOURCE);
+    await first;
+  });
+
+  it('releases the local guard when creating a run fails', async () => {
+    mockPrisma.connectorRun.create.mockRejectedValueOnce(new Error('database unavailable'));
+    await expect(service.sync('src-1')).rejects.toThrow('database unavailable');
+    gitFetch.mockResolvedValue({ changes: [] });
+    expect((await service.sync('src-1')).status).toBe('success');
   });
 
   it('maps feishu kind to sourceType feishu', async () => {

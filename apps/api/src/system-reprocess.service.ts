@@ -143,12 +143,17 @@ export class SystemReprocessService {
       }
     }
     try {
-      await this.prisma.systemSetting.upsert({
-        where: { key: REPROCESS_LEASE_KEY },
-        create: { key: REPROCESS_LEASE_KEY, value },
-        update: { value },
+      if (!existing) {
+        await this.prisma.systemSetting.create({ data: { key: REPROCESS_LEASE_KEY, value } });
+        return token;
+      }
+      // Compare the value we read: a concurrent starter may already have
+      // replaced the stale lease while this request was waiting.
+      const updated = await this.prisma.systemSetting.updateMany({
+        where: { key: REPROCESS_LEASE_KEY, value: existing.value },
+        data: { value },
       });
-      return token;
+      return updated.count === 1 ? token : null;
     } catch {
       // Unique-constraint race with a concurrent starter: treat as held.
       return null;
@@ -292,6 +297,30 @@ export class SystemReprocessService {
 
     // Asynchronous background runner
     setImmediate(() => {
+      let stopped = false;
+      let renewing = false;
+      const heartbeat = setInterval(async () => {
+        if (stopped || renewing) return;
+        renewing = true;
+        try {
+          const renewed = await this.prisma.systemSetting.updateMany({
+            where: { key: REPROCESS_LEASE_KEY, value: { endsWith: `|${leaseToken}` } },
+            data: { value: `${new Date().toISOString()}|${leaseToken}` },
+          });
+          if (!stopped && renewed.count !== 1) {
+            this.cancelRequested = true;
+            this.addLog('重处理租约已丢失，停止后续批次。', 'error');
+          }
+        } catch {
+          if (!stopped) {
+            this.cancelRequested = true;
+            this.addLog('重处理租约续期失败，停止后续批次。', 'error');
+          }
+        } finally {
+          renewing = false;
+        }
+      }, 60_000);
+      heartbeat.unref?.();
       this.executeReprocess(options)
         .catch((err) => {
           this.status.running = false;
@@ -300,6 +329,8 @@ export class SystemReprocessService {
           this.addLog(`任务异常中止: ${this.status.error}`, 'error');
         })
         .finally(() => {
+          stopped = true;
+          clearInterval(heartbeat);
           void this.releaseReprocessLease(leaseToken);
         });
     });
