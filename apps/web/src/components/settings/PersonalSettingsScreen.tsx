@@ -48,7 +48,7 @@ export function PersonalSettingsScreen({
   onNotify?: (msg: string, type?: 'success' | 'error' | 'info') => void;
   active?: boolean;
 }) {
-  const [activeTab, setActiveTab] = useState<'credentials' | 'security' | 'docs'>('credentials');
+  const [activeTab, setActiveTab] = useState<'account' | 'credentials' | 'security' | 'docs'>('account');
   const [credentials, setCredentials] = useState<CredentialItem[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -379,76 +379,67 @@ export function PersonalSettingsScreen({
 
   return (
     <div className="settings-page">
-      {/* 头部导航与标题 */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, gap: 12, flexWrap: 'wrap' }}>
-        <div>
-          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600, color: 'var(--ink)' }}>个人设置</h2>
-          <p style={{ margin: '4px 0 0 0', fontSize: 13, color: 'var(--ink-3)' }}>
-            管理对外开放服务接口凭证 (AppId / AppSecret) 及个人账号信息
-          </p>
-        </div>
-        <div style={{ display: 'flex', gap: 8, background: 'var(--bg-2)', padding: 4, borderRadius: 8, maxWidth: '100%', overflowX: 'auto' }}>
-          <button
-            onClick={() => setActiveTab('credentials')}
-            style={{
-              padding: '6px 14px',
-              borderRadius: 6,
-              border: 'none',
-              background: activeTab === 'credentials' ? 'var(--surface)' : 'transparent',
-              color: activeTab === 'credentials' ? 'var(--ink)' : 'var(--ink-2)',
-              fontWeight: 600,
-              cursor: 'pointer',
-              boxShadow: activeTab === 'credentials' ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-            }}
-          >
-            <Icon name="key" size={14} />
-            <span>API 凭证 (OpenAPI / MCP)</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('security')}
-            style={{
-              padding: '6px 14px',
-              borderRadius: 6,
-              border: 'none',
-              background: activeTab === 'security' ? 'var(--surface)' : 'transparent',
-              color: activeTab === 'security' ? 'var(--ink)' : 'var(--ink-2)',
-              fontWeight: 600,
-              cursor: 'pointer',
-              boxShadow: activeTab === 'security' ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-            }}
-          >
-            <Icon name="user" size={14} />
-            <span>账号与安全</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('docs')}
-            style={{
-              padding: '6px 14px',
-              borderRadius: 6,
-              border: 'none',
-              background: activeTab === 'docs' ? 'var(--surface)' : 'transparent',
-              color: activeTab === 'docs' ? 'var(--ink)' : 'var(--ink-2)',
-              fontWeight: 600,
-              cursor: 'pointer',
-              boxShadow: activeTab === 'docs' ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-            }}
-          >
-            <Icon name="doc" size={14} />
-            <span>接口调用说明</span>
-          </button>
-        </div>
+      {/* 标题区 */}
+      <div className="settings-hero">
+        <h2>个人设置</h2>
+        <p>管理你的账户资料、API 凭证与安全设置，保障账号与数据安全。</p>
       </div>
 
-      {/* TAB 1: API 凭证管理 */}
+      <div className="settings-grid">
+        {/* 左侧分区导航 */}
+        <nav className="settings-nav" aria-label="设置分区">
+          {([
+            { k: 'account', l: '账户信息', ic: 'user' },
+            { k: 'credentials', l: 'API 凭证', ic: 'key' },
+            { k: 'security', l: '安全管理', ic: 'shield' },
+            { k: 'docs', l: '接口说明', ic: 'doc' },
+          ] as const).map((item) => (
+            <button
+              key={item.k}
+              type="button"
+              className={`settings-nav-item ${activeTab === item.k ? 'active' : ''}`}
+              onClick={() => setActiveTab(item.k)}
+            >
+              <Icon name={item.ic} size={15} className="sn-ic" />
+              <span>{item.l}</span>
+            </button>
+          ))}
+          <div className="settings-nav-note">凭证用于对外服务（OpenAPI / MCP）鉴权，请妥善保管 AppSecret。</div>
+        </nav>
+
+        <div className="settings-section">
+        {/* 分区 1：账户信息 */}
+        {activeTab === 'account' && (
+          <div className="settings-card">
+            <div className="settings-card-head">
+              <span className="sh-ic"><Icon name="user" size={16} /></span>
+              <div className="sh-txt">
+                <h3>账户信息</h3>
+                <p>你的个人资料与组织身份，由企业管理员统一维护。</p>
+              </div>
+            </div>
+            <div className="settings-card-body">
+              <div className="profile-row">
+                <span className="profile-avatar">{String(user?.displayName || user?.username || '用户').slice(0, 1).toUpperCase()}</span>
+                <div style={{ minWidth: 0 }}>
+                  <div className="profile-name">{user?.displayName || user?.username || '-'}</div>
+                  <div className="profile-org">
+                    {user?.orgs?.map((o) => o.orgNode?.name).filter(Boolean).join(' · ') || '默认组织'}
+                    {' · '}
+                    {user?.roles?.map((r) => r.role?.name).filter(Boolean).join('、') || '普通用户'}
+                  </div>
+                </div>
+              </div>
+              <div className="info-line"><span className="il-k">登录账号</span><span className="il-v"><b>{user?.username || '-'}</b></span></div>
+              <div className="info-line"><span className="il-k">显示姓名</span><span className="il-v">{user?.displayName || '-'}</span></div>
+              <div className="info-line"><span className="il-k">电子邮箱</span><span className="il-v">{user?.email || '-'}</span></div>
+              <div className="info-line"><span className="il-k">所属组织</span><span className="il-v">{user?.orgs?.map((o) => o.orgNode?.name).filter(Boolean).join('、') || '默认组织'}</span></div>
+              <div className="info-line"><span className="il-k">角色身份</span><span className="il-v">{user?.roles?.map((r) => r.role?.name).filter(Boolean).join('、') || '普通用户'}</span></div>
+            </div>
+          </div>
+        )}
+
+        {/* 分区 2：API 凭证 */}
       {activeTab === 'credentials' && (
         <div>
           {/* 提示 Banner */}
@@ -889,47 +880,22 @@ curl -X POST ${getOrigin()}/open-api/v1/chat/completions \\
         </div>
       )}
 
-      {/* TAB 2: 账号与安全 */}
+      {/* 分区 3：安全管理 */}
       {activeTab === 'security' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
-          {/* 基本信息卡片 */}
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 20 }}>
-            <h3 style={{ margin: '0 0 16px 0', fontSize: 15, fontWeight: 600, color: 'var(--ink)' }}>个人基本信息</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, fontSize: 13 }}>
-              <div>
-                <span style={{ color: 'var(--ink-3)', display: 'inline-block', width: 90 }}>登录账号：</span>
-                <b style={{ color: 'var(--ink)' }}>{user?.username || '-'}</b>
-              </div>
-              <div>
-                <span style={{ color: 'var(--ink-3)', display: 'inline-block', width: 90 }}>显示姓名：</span>
-                <span style={{ color: 'var(--ink)' }}>{user?.displayName || '-'}</span>
-              </div>
-              <div>
-                <span style={{ color: 'var(--ink-3)', display: 'inline-block', width: 90 }}>电子邮箱：</span>
-                <span style={{ color: 'var(--ink)' }}>{user?.email || '-'}</span>
-              </div>
-              <div>
-                <span style={{ color: 'var(--ink-3)', display: 'inline-block', width: 90 }}>所属组织：</span>
-                <span style={{ color: 'var(--ink)' }}>
-                  {user?.orgs?.map((o) => o.orgNode?.name).filter(Boolean).join('、') || '默认组织'}
-                </span>
-              </div>
-              <div>
-                <span style={{ color: 'var(--ink-3)', display: 'inline-block', width: 90 }}>角色身份：</span>
-                <span style={{ color: 'var(--ink)' }}>
-                  {user?.roles?.map((r) => r.role?.name).filter(Boolean).join('、') || '普通用户'}
-                </span>
-              </div>
+        <div className="settings-card">
+          <div className="settings-card-head">
+            <span className="sh-ic"><Icon name="shield" size={16} /></span>
+            <div className="sh-txt">
+              <h3>安全管理</h3>
+              <p>定期更换登录密码以提高账户安全性；密码至少 6 位。</p>
             </div>
           </div>
-
-          {/* 修改密码卡片 */}
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 20 }}>
-            <h3 style={{ margin: '0 0 16px 0', fontSize: 15, fontWeight: 600, color: 'var(--ink)' }}>修改登录密码</h3>
+          <div className="settings-card-body" style={{ maxWidth: 460 }}>
             <form onSubmit={handleChangePassword} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div>
-                <label style={{ display: 'block', fontSize: 12, color: 'var(--ink-2)', marginBottom: 4 }}>当前密码</label>
+                <label className="login-label" htmlFor="pwd-current">当前密码</label>
                 <input
+                  id="pwd-current"
                   type="password"
                   className="input"
                   value={currentPassword}
@@ -940,8 +906,9 @@ curl -X POST ${getOrigin()}/open-api/v1/chat/completions \\
                 />
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: 12, color: 'var(--ink-2)', marginBottom: 4 }}>新密码 (≥6位)</label>
+                <label className="login-label" htmlFor="pwd-new">新密码 (≥6位)</label>
                 <input
+                  id="pwd-new"
                   type="password"
                   className="input"
                   value={newPassword}
@@ -952,8 +919,9 @@ curl -X POST ${getOrigin()}/open-api/v1/chat/completions \\
                 />
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: 12, color: 'var(--ink-2)', marginBottom: 4 }}>确认新密码</label>
+                <label className="login-label" htmlFor="pwd-confirm">确认新密码</label>
                 <input
+                  id="pwd-confirm"
                   type="password"
                   className="input"
                   value={confirmPassword}
@@ -965,9 +933,9 @@ curl -X POST ${getOrigin()}/open-api/v1/chat/completions \\
               </div>
               <button
                 type="submit"
-                className="btn btn-primary"
+                className="btn primary"
                 disabled={pwdLoading}
-                style={{ marginTop: 8, padding: '8px 16px' }}
+                style={{ marginTop: 8, width: 'fit-content' }}
               >
                 {pwdLoading ? '正在更新...' : '保存新密码'}
               </button>
@@ -976,7 +944,7 @@ curl -X POST ${getOrigin()}/open-api/v1/chat/completions \\
         </div>
       )}
 
-      {/* TAB 3: OpenAPI 接口说明 */}
+      {/* 分区 4：接口说明 */}
       {activeTab === 'docs' && (
         <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 24 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
@@ -1118,6 +1086,9 @@ curl -X POST ${getOrigin()}/open-api/v1/chat/completions \\
           </div>
         </div>
       )}
+
+        </div>
+      </div>
 
       {/* 新增凭证 Modal */}
       {showAddModal && (

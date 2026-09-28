@@ -456,11 +456,21 @@ export function ChatScreen(){
           <div className="chat-inner">
             {messages.length===0 && (
               <div className="welcome">
-                <h1>问你的大脑。<em>答案可溯源</em>。</h1>
-                <p>这不是搜索碎片——是一份<b>为你持续整理的个人大脑</b>：每当有新知识入库或权限变更，后台都会为你重新编译主题页（Compiled Truth + Timeline 证据链）。回答来自整理好的结论，每条引用可回溯原始文档。</p>
+                <div className="welcome-icon" aria-hidden="true">百</div>
+                <h1>问你的大脑。<em>答案可溯源。</em></h1>
+                <p className="welcome-lead">基于你所在组织的知识库，提供准确、可靠、可追溯的答案。无论是文档、流程、数据还是项目经验，都会先经后台编译整理（Compiled Truth + Timeline 证据链），每条引用都能回溯原始文档。</p>
                 <div className="suggest">
-                  {['数据出境安全评估的新规对申报材料有什么要求？','研发中心的 AI 平台架构是怎样的？','我之前参与过哪些出境评估项目？','Casbin 模型如何支持三级知识库？'].map((q,i)=>(
-                    <button key={i} onClick={()=>send(q)}>{q}</button>
+                  {[
+                    { icon: 'doc', q: '数据出境安全评估的新规对申报材料有什么要求？' },
+                    { icon: 'spark', q: '研发中心的 AI 平台架构是怎样的？' },
+                    { icon: 'users', q: '我之前参与过哪些出境评估项目？' },
+                    { icon: 'model', q: 'Casbin 模型如何支持三级知识库？' },
+                  ].map((s,i)=>(
+                    <button key={i} className="suggest-card" onClick={()=>send(s.q)}>
+                      <span className="sc-ic"><Icon name={s.icon} size={16}/></span>
+                      <span className="sc-q">{s.q}</span>
+                      <Icon name="chevron" size={13} className="sc-arrow"/>
+                    </button>
                   ))}
                 </div>
               </div>

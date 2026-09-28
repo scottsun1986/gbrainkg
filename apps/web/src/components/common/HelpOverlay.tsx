@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 export interface HelpOverlayProps {
   open: boolean;
@@ -7,6 +7,19 @@ export interface HelpOverlayProps {
 
 export function HelpOverlay({ open, onClose }: HelpOverlayProps) {
   const [activeTab, setActiveTab] = useState<'manual' | 'shortcuts'>('manual');
+
+  // 帮助浮层自身承诺「Esc 关闭弹窗」，需要独立监听 Escape。
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [open, onClose]);
 
   if (!open) return null;
 
@@ -122,7 +135,7 @@ export function HelpOverlay({ open, onClose }: HelpOverlayProps) {
           <span className="x" onClick={onClose} style={{ cursor: 'pointer', fontSize: '20px' }}>×</span>
         </div>
 
-        <div className="help-body" style={{ overflowY: 'auto', padding: '16px', flex: 1 }}>
+        <div className="help-body" style={{ overflowY: 'auto', padding: '16px', flex: 1, display: 'block' }}>
           {activeTab === 'manual' ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '18px', lineHeight: 1.6 }}>
               {manualSections.map((sec, idx) => (

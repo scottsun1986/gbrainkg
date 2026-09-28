@@ -381,7 +381,7 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: Knowl
     return groups;
   }, [selectedEdges, selected]);
 
-  const nodeColor: Record<string, string> = { knowledge_base: '#7C6CD9', document: '#3B82F6', concept: '#0D9488' };
+  const nodeColor: Record<string, string> = { knowledge_base: '#2563EB', document: '#0D9488', concept: '#7C6CD9' };
   const labelText = (n: GraphNode) => n.label.length > 14 ? `${n.label.slice(0, 14)}…` : n.label;
   const nodeRadius = (n: GraphNode) => {
     const base = n.type === 'knowledge_base' ? 18 : n.type === 'document' ? 13 : 8;

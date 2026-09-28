@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from 'react';
+import { Icon } from '@/components/common/Icon';
 
 export interface LoginScreenProps {
   onSubmit: (username: string, password: string) => void;
@@ -17,30 +18,37 @@ export function LoginScreen({ onSubmit, error, loading, oidcEnabled, onOidcLogin
   return (
     <div className="login-shell">
       <form className="login-card" onSubmit={(event) => { event.preventDefault(); onSubmit(username, password); }}>
-        <div className="login-brand-mark">百</div>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
-          <span style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.02em', color: 'var(--ink)', fontFamily: '"Source Serif 4","Noto Serif SC",serif' }}>百纳</span>
-          <span style={{ fontSize: 12, color: 'var(--ink-3)', letterSpacing: '0.04em' }}>企业级知识库</span>
+        <div className="login-brand-row">
+          <div className="login-brand-mark">百</div>
+          <div className="login-title">百纳<small>企业级知识库</small></div>
         </div>
-        <div style={{ color: 'var(--ink-3)', fontSize: 14, marginBottom: 28 }}>登录你的企业大脑 · 答案可溯源</div>
-        <label style={{ display: 'block', fontSize: 13, marginBottom: 6, color: 'var(--ink-2)' }}>账号</label>
-        <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" placeholder="请输入账号" style={inputStyle} />
-        <label style={{ display: 'block', fontSize: 13, marginBottom: 6, color: 'var(--ink-2)' }}>密码</label>
-        <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="current-password" autoFocus placeholder="请输入密码" style={{ ...inputStyle, marginBottom: 18 }} />
-        {error && <div style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 14 }}>{error}</div>}
-        <button type="submit" disabled={loading || !username || !password} className="btn primary" style={{ width: '100%', justifyContent: 'center', padding: 11 }}>{loading ? '登录中…' : '登录'}</button>
+        <div className="login-lead">登录你的企业大脑 · 答案可溯源</div>
+        <label className="login-label" htmlFor="login-username">账号</label>
+        <input id="login-username" value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" autoFocus placeholder="请输入账号" style={inputStyle} />
+        <label className="login-label" htmlFor="login-password">密码</label>
+        <input id="login-password" value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="current-password" placeholder="请输入密码" style={{ ...inputStyle, marginBottom: 18 }} />
+        {error && (
+          <div className="login-error" role="alert">
+            <Icon name="alert" size={14} />
+            <span>{error}</span>
+          </div>
+        )}
+        <button type="submit" disabled={loading || !username || !password} className="btn primary" style={{ width: '100%', justifyContent: 'center' }}>
+          {loading ? '登录中…' : '登录'}
+        </button>
         {oidcEnabled && onOidcLogin && (
           <>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '18px 0 14px' }}>
-              <div style={{ flex: 1, height: 1, background: 'var(--border, rgba(0,0,0,0.08))' }} />
+              <div style={{ flex: 1, height: 1, background: 'var(--line)' }} />
               <span style={{ fontSize: 12, color: 'var(--ink-3)' }}>或</span>
-              <div style={{ flex: 1, height: 1, background: 'var(--border, rgba(0,0,0,0.08))' }} />
+              <div style={{ flex: 1, height: 1, background: 'var(--line)' }} />
             </div>
-            <button type="button" onClick={onOidcLogin} className="btn" style={{ width: '100%', justifyContent: 'center', padding: 11 }}>
+            <button type="button" onClick={onOidcLogin} className="btn" style={{ width: '100%', justifyContent: 'center' }}>
               企业 SSO 登录
             </button>
           </>
         )}
+        <div className="login-foot-tip">回答附带原文引用 · 权限边界服务端校验 · 会话数据加密传输</div>
       </form>
     </div>
   );
@@ -62,9 +70,9 @@ export function MfaScreen({ onSubmit, onLogout, error, loading, title, hint }: M
   return (
     <div className="login-shell">
       <form className="login-card" onSubmit={(event) => { event.preventDefault(); if (code.trim()) onSubmit(code.trim()); }}>
-        <div className="login-brand-mark">百</div>
-        <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.02em', color: 'var(--ink)', fontFamily: '"Source Serif 4","Noto Serif SC",serif', marginBottom: 10 }}>
-          {title || '两步验证'}
+        <div className="login-brand-row">
+          <div className="login-brand-mark">百</div>
+          <div className="login-title">{title || '两步验证'}<small>账户安全</small></div>
         </div>
         <div style={{ color: 'var(--ink-3)', fontSize: 14, lineHeight: 1.7, marginBottom: 24 }}>
           {hint || '请输入身份验证器（TOTP）上的 6 位动态验证码。'}
@@ -79,7 +87,7 @@ export function MfaScreen({ onSubmit, onLogout, error, loading, title, hint }: M
           placeholder="000000"
           style={{ ...inputStyle, letterSpacing: '0.3em', fontSize: 18 }}
         />
-        {error && <div style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 14 }}>{error}</div>}
+        {error && <div className="login-error" role="alert"><Icon name="alert" size={14} /><span>{error}</span></div>}
         <button type="submit" disabled={loading || code.trim().length < 6} className="btn primary" style={{ width: '100%', justifyContent: 'center', padding: 11 }}>
           {loading ? '验证中…' : '验证并登录'}
         </button>
@@ -105,9 +113,9 @@ export function MfaSetupScreen({ secret, otpauthUri, onSubmit, onLogout, error, 
   return (
     <div className="login-shell">
       <form className="login-card" onSubmit={(event) => { event.preventDefault(); if (code.trim()) onSubmit(code.trim()); }}>
-        <div className="login-brand-mark">百</div>
-        <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.02em', color: 'var(--ink)', fontFamily: '"Source Serif 4","Noto Serif SC",serif', marginBottom: 10 }}>
-          设置两步验证
+        <div className="login-brand-row">
+          <div className="login-brand-mark">百</div>
+          <div className="login-title">设置两步验证<small>账户安全</small></div>
         </div>
         <div style={{ color: 'var(--ink-3)', fontSize: 14, lineHeight: 1.7, marginBottom: 20 }}>
           请使用身份验证器 App（Google Authenticator / 1Password 等）扫描二维码或手动输入密钥，然后填入 6 位动态验证码完成绑定。
@@ -138,7 +146,7 @@ export function MfaSetupScreen({ secret, otpauthUri, onSubmit, onLogout, error, 
           placeholder="000000"
           style={{ ...inputStyle, letterSpacing: '0.3em', fontSize: 18 }}
         />
-        {error && <div style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 14 }}>{error}</div>}
+        {error && <div className="login-error" role="alert"><Icon name="alert" size={14} /><span>{error}</span></div>}
         <button type="submit" disabled={loading || code.trim().length < 6} className="btn primary" style={{ width: '100%', justifyContent: 'center', padding: 11 }}>
           {loading ? '绑定中…' : '确认绑定'}
         </button>
@@ -169,8 +177,10 @@ export function PasswordChangeScreen({ onSubmit, onLogout, error, loading }: Pas
         setLocalError('');
         onSubmit(currentPassword, newPassword);
       }}>
-        <div className="login-brand-mark">百</div>
-        <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.02em', color: 'var(--ink)', fontFamily: '"Source Serif 4","Noto Serif SC",serif', marginBottom: 10 }}>首次登录安全设置</div>
+        <div className="login-brand-row">
+          <div className="login-brand-mark">百</div>
+          <div className="login-title">首次登录安全设置<small>账户安全</small></div>
+        </div>
         <div style={{ color: 'var(--ink-3)', fontSize: 14, lineHeight: 1.7, marginBottom: 24 }}>为了保护生产环境，请先修改 admin 的初始化密码。</div>
         <label style={{ display: 'block', fontSize: 13, marginBottom: 6, color: 'var(--ink-2)' }}>当前密码</label>
         <input value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} type="password" autoComplete="current-password" style={{ width: '100%', boxSizing: 'border-box' as const, padding: '11px 12px', borderRadius: 8, marginBottom: 16 }} />
@@ -178,7 +188,7 @@ export function PasswordChangeScreen({ onSubmit, onLogout, error, loading }: Pas
         <input value={newPassword} onChange={(event) => setNewPassword(event.target.value)} type="password" autoComplete="new-password" style={{ width: '100%', boxSizing: 'border-box' as const, padding: '11px 12px', borderRadius: 8, marginBottom: 16 }} />
         <label style={{ display: 'block', fontSize: 13, marginBottom: 6, color: 'var(--ink-2)' }}>确认新密码</label>
         <input value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} type="password" autoComplete="new-password" style={{ width: '100%', boxSizing: 'border-box' as const, padding: '11px 12px', borderRadius: 8, marginBottom: 18 }} />
-        {(localError || error) && <div style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 14 }}>{localError || error}</div>}
+        {(localError || error) && <div className="login-error" role="alert"><Icon name="alert" size={14} /><span>{localError || error}</span></div>}
         <button type="submit" disabled={loading || !currentPassword || !newPassword || !confirmPassword} className="btn primary" style={{width:'100%',justifyContent:'center',padding:11}}>{loading ? '保存中…' : '保存新密码'}</button>
         <button type="button" onClick={onLogout} className="btn" style={{width:'100%',justifyContent:'center',padding:11,marginTop:10}}>退出</button>
       </form>

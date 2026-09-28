@@ -1,6 +1,7 @@
 "use client";
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Icon } from '@/components/common/Icon';
+import { FileTypeIcon } from '@/components/common/FileTypeIcon';
 import { Modal } from '@/components/common/Modal';
 import { ConfirmModal } from '@/components/common/ConfirmModal';
 import { TypeBadge, TYPE_BADGE } from '@/components/common/TypeBadge';
@@ -88,7 +89,11 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
         const path = doc.mdPath || '';
         const baseName = path.split('/').pop() || path;
         const original = doc.title && !doc.title.includes('/') ? doc.title : baseName;
-        const ext = original.split('.').pop() || 'file';
+        // 标题常无扩展名（如论文题名）；此时退回存储路径的扩展名
+        // （规范内容均为 .md），保证格式图标可辨识。
+        const titleExt = original.includes('.') ? original.split('.').pop() || '' : '';
+        const pathExt = baseName.includes('.') ? baseName.split('.').pop() || '' : '';
+        const ext = titleExt || pathExt || 'file';
         return {
           id: doc.id,
           name: original,
@@ -519,7 +524,7 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
               tabIndex={0}
             >
               <div className="lbl">
-                <span>总文档</span>
+                <span className="kpi-head"><span className="kpi-ic" data-tone="blue"><Icon name="database" size={13}/></span>总文档</span>
                 {docStatusFilter==='all' && <span className="kpi-indicator">全部</span>}
               </div>
               <div className="val">{statTotal}</div>
@@ -534,7 +539,7 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
               tabIndex={0}
             >
               <div className="lbl">
-                <span>已发布</span>
+                <span className="kpi-head"><span className="kpi-ic" data-tone="green"><Icon name="check" size={13}/></span>已发布</span>
                 {docStatusFilter==='published' && <span className="kpi-indicator">已选</span>}
               </div>
               <div className="val" style={{color: 'var(--ink)'}}>{statPublished}</div>
@@ -549,7 +554,7 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
               tabIndex={0}
             >
               <div className="lbl">
-                <span>处理中</span>
+                <span className="kpi-head"><span className="kpi-ic" data-tone="amber"><Icon name="refresh" size={13}/></span>处理中</span>
                 {(docStatusFilter==='indexing'||docStatusFilter==='parsing') && <span className="kpi-indicator">已选</span>}
               </div>
               <div className="val">{statProcessing}</div>
@@ -564,7 +569,7 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
               tabIndex={0}
             >
               <div className="lbl">
-                <span>待复核</span>
+                <span className="kpi-head"><span className="kpi-ic" data-tone="amber"><Icon name="list" size={13}/></span>待复核</span>
                 {docStatusFilter==='needs_review' && <span className="kpi-indicator">已选</span>}
               </div>
               <div className="val" style={{color: statNeedsReview? 'var(--amber)':'var(--ink)'}}>
@@ -581,7 +586,7 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
               tabIndex={0}
             >
               <div className="lbl">
-                <span>解析失败</span>
+                <span className="kpi-head"><span className="kpi-ic" data-tone="red"><Icon name="alert" size={13}/></span>解析失败</span>
                 {docStatusFilter==='failed' && <span className="kpi-indicator">已选</span>}
               </div>
               <div className="val" style={{color: statFailed? 'var(--danger)':'var(--ink)'}}>
@@ -653,7 +658,7 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
             ) : (
               listRows.map((d,i)=>(
                 <div key={d.id || i} className="doc-row" style={{gridTemplateColumns:'32px 1fr 110px 110px 80px 120px'}}>
-                  <div className="doc-type-icon" data-type={d.type}><Icon name="doc" size={14} color="var(--ink-3)"/></div>
+                  <FileTypeIcon type={d.type} size={28}/>
                   <div style={{ cursor: 'pointer', minWidth: 0 }} onClick={() => previewDocument(d)} title="点击预览文档与标准知识页">
                     <div className="ttl" title={d.name}>
                       {d.name}
