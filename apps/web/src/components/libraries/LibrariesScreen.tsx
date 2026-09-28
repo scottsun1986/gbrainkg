@@ -40,6 +40,12 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
   const [tab, setTab] = useState('docs');
   const [docs, setDocs] = useState<DocRow[]>([]);
+  // 上传钉住：新上传的文档必须始终留在列表中。当当前过滤条件/页码不含该
+  // 文档时，以钉住行渲染在列表顶部，并通过 ids 精确查询实时跟踪其状态，
+  // 直到它出现在服务端当前页为止。避免"出现一下→被过滤消失→发布后才回来"。
+  const [pinnedDocs, setPinnedDocs] = useState<DocRow[]>([]);
+  const serverPageIdsRef = useRef<Set<string>>(new Set());
+  const PIN_TERMINAL = new Set(['published', 'failed', 'needs_review']);
   const [previewDoc, setPreviewDoc] = useState<DocRow | null>(null);
   const [onlinePreview, setOnlinePreview] = useState<PreviewTarget | null>(null);
   const [confirmDoc, setConfirmDoc] = useState<DocRow | null>(null);
@@ -76,7 +82,9 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
       const response = await fetch(`${API_BASE_URL}/api/v1/kbs/${kbId}/documents?${params.toString()}`, {headers:apiHeaders()});
       if (!response.ok) throw new Error('文档列表加载失败');
       const result = await response.json();
-      setDocs((result.items || []).map((doc: any) => {
+      const items: any[] = result.items || [];
+      serverPageIdsRef.current = new Set(items.map((doc: any) => doc.id));
+      setDocs(items.map((doc: any) => {
         const path = doc.mdPath || '';
         const baseName = path.split('/').pop() || path;
         const original = doc.title && !doc.title.includes('/') ? doc.title : baseName;
@@ -98,6 +106,16 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
       }));
       setDocsTotal(Number(result.total) || 0);
       setDocsStatusCounts(result.statusCounts || {});
+      // 文档出现在服务端页时，用服务端状态刷新钉住行；已终态且已在当前页的
+      // 钉住行不再需要，移除以停止对其的额外轮询。
+      setPinnedDocs((ps) => ps.length
+        ? ps
+            .map((p) => {
+              const it = items.find((d: any) => d.id === p.id);
+              return it ? { ...p, status: it.status, uploader: p.uploader, t: p.t } : p;
+            })
+            .filter((p) => !(PIN_TERMINAL.has(p.status) && serverPageIdsRef.current.has(p.id)))
+        : ps);
     } catch (error) { window.dispatchEvent(new CustomEvent('app-toast', {detail: errorMessage(error) || '文档加载失败'})); }
   };
 
@@ -188,6 +206,21 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
       if (isArchive) {
         // 压缩包已在后端自动解压，压缩包本身已物理删除；移除压缩包占位行并提示提取的文档数量
         setDocs((ds) => ds.filter((d) => d.id !== tempId));
+        const extracted: any[] = result.documents || [];
+        // 解压出的每篇文档同样钉住，保证在任意过滤/页码下都可见
+        setPinnedDocs((ps) => [
+          ...extracted.map((doc) => ({
+            id: doc.id,
+            name: doc.title || '解压文档',
+            type: (doc.title || 'file').split('.').pop() || 'file',
+            size: '—',
+            status: doc.status || 'parsing',
+            uploader: '当前用户',
+            t: '刚刚',
+            path: doc.mdPath || '',
+          })),
+          ...ps.filter((p) => !extracted.some((doc) => doc.id === p.id)),
+        ].slice(0, 50));
         const count = result.documents?.length || result.total || 0;
         window.dispatchEvent(
           new CustomEvent('app-toast', {
@@ -198,6 +231,19 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
         const doc = result.documents?.[0];
         if (doc) {
           setDocs((ds) => ds.map((d) => (d.id === tempId ? { ...d, id: doc.id, status: doc.status || 'parsing' } : d)));
+          setPinnedDocs((ps) => [
+            {
+              id: doc.id,
+              name: tempName,
+              type: ext,
+              size: sizeStr,
+              status: doc.status || 'parsing',
+              uploader: '当前用户',
+              t: '刚刚',
+              path: doc.mdPath || '',
+            },
+            ...ps.filter((p) => p.id !== doc.id),
+          ].slice(0, 50));
         }
         window.dispatchEvent(new CustomEvent('app-toast', { detail: `「${tempName}」已上传，后台正在解析与索引` }));
       }
@@ -222,19 +268,43 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
   // 针对处理中（parsing / indexing）文档进行后台轻量级自动轮询，动态更新状态，完全不阻塞上传按钮与区域
   const hasProcessingDocs =
     Number(docsStatusCounts.processing || 0) > 0 ||
-    docs.some((d: any) => d.status === 'parsing' || d.status === 'indexing' || String(d.id).startsWith('temp-'));
+    docs.some((d: any) => d.status === 'parsing' || d.status === 'indexing' || String(d.id).startsWith('temp-')) ||
+    pinnedDocs.some((p) => !PIN_TERMINAL.has(p.status));
 
   useEffect(() => {
     if (!hasProcessingDocs || !current?.id) return;
     const timer = setInterval(() => {
-      loadDocuments(current.id, { page: docPage, limit: docPageSize, search: docSearch, status: docStatusFilter });
+      void loadDocuments(current.id, { page: docPage, limit: docPageSize, search: docSearch, status: docStatusFilter });
+      // 钉住行不在当前服务端页（被过滤/翻页排除）时，按 id 精确拉取其最新状态
+      const missingPins = pinnedDocs.filter((p) => !PIN_TERMINAL.has(p.status) && !serverPageIdsRef.current.has(p.id));
+      if (missingPins.length) {
+        const idsParam = missingPins.map((p) => p.id).join(',');
+        fetch(`${API_BASE_URL}/api/v1/kbs/${current.id}/documents?ids=${idsParam}&limit=50`, { headers: apiHeaders() })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((j) => {
+            const items: any[] = j?.items || [];
+            if (!items.length) return;
+            setPinnedDocs((ps) => ps.map((p) => {
+              const it = items.find((d: any) => d.id === p.id);
+              return it ? { ...p, status: it.status } : p;
+            }));
+          })
+          .catch(() => {});
+      }
     }, 2000);
     return () => clearInterval(timer);
-  }, [hasProcessingDocs, current?.id, docPage, docPageSize, docSearch, docStatusFilter]);
+  }, [hasProcessingDocs, current?.id, docPage, docPageSize, docSearch, docStatusFilter, pinnedDocs]);
 
   useEffect(() => {
     setDocPage(1);
   }, [current?.id, docSearch, docStatusFilter, docPageSize]);
+
+  // 仅在切换知识库时清空钉住行；过滤/翻页变化必须保留钉住，
+  // 否则新上传文档会再次从视野中消失。
+  useEffect(() => {
+    setPinnedDocs([]);
+    serverPageIdsRef.current = new Set();
+  }, [current?.id]);
 
   // Fetch the current server page whenever the KB, page, page size or
   // status/search filters change (search is debounced).
@@ -270,6 +340,13 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
       return true;
     });
   }, [docs, docTypeFilter]);
+
+  // 钉住行（未被当前服务端页包含的近期上传）置顶渲染，保证"上传了就在列表中"。
+  const pinnedNotInPage = useMemo(
+    () => pinnedDocs.filter((p) => !docs.some((d: any) => d.id === p.id)),
+    [pinnedDocs, docs],
+  );
+  const listRows = useMemo(() => [...pinnedNotInPage, ...pagedDocs], [pinnedNotInPage, pagedDocs]);
 
   const totalDocs = docsTotal;
   const docTotalPages = Math.max(1, Math.ceil(totalDocs / docPageSize));
@@ -554,7 +631,7 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
               </button>
             )}
             <div style={{ marginLeft: 'auto', fontSize: '11.5px', color: 'var(--ink-4)' }}>
-              本页 {pagedDocs.length} 篇 · 共 {docsTotal} 篇文档
+              本页 {listRows.length} 篇{pinnedNotInPage.length > 0 ? `（含新上传 ${pinnedNotInPage.length} 篇）` : ''} · 共 {docsTotal} 篇文档
             </div>
           </div>
 
@@ -567,16 +644,21 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
               <div>大小</div>
               <div>操作</div>
             </div>
-            {pagedDocs.length === 0 ? (
+            {listRows.length === 0 ? (
               <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--ink-3)' }}>
                 未找到匹配的文档
               </div>
             ) : (
-              pagedDocs.map((d,i)=>(
+              listRows.map((d,i)=>(
                 <div key={d.id || i} className="doc-row" style={{gridTemplateColumns:'32px 1fr 110px 110px 80px 120px'}}>
                   <div className="doc-type-icon" data-type={d.type}><Icon name="doc" size={14} color="var(--ink-3)"/></div>
                   <div style={{ cursor: 'pointer', minWidth: 0 }} onClick={() => previewDocument(d)} title="点击预览文档与标准知识页">
-                    <div className="ttl" title={d.name}>{d.name}</div>
+                    <div className="ttl" title={d.name}>
+                      {d.name}
+                      {pinnedDocs.some((p) => p.id === d.id) && (
+                        <span style={{ marginLeft: 6, fontSize: 9.5, padding: '1px 5px', borderRadius: 4, background: 'var(--accent-bg, rgba(59,130,246,.12))', color: 'var(--accent, #3b82f6)', verticalAlign: 'middle' }}>新上传</span>
+                      )}
+                    </div>
                     <div className="sub" title={d.path}>{d.path}</div>
                   </div>
                   <div>

@@ -415,6 +415,7 @@ export class KnowledgeBaseController {
     @Query("search") search?: string,
     @Query("page") page = "1",
     @Query("limit") limit = "50",
+    @Query("ids") idsParam?: string,
   ) {
     const userId = await this.currentUser(req);
     const visibleIds =
@@ -423,6 +424,13 @@ export class KnowledgeBaseController {
       throw new NotFoundException("Knowledge base not found.");
     const pageNumber = Math.max(1, Number(page) || 1);
     const pageSize = Math.min(100, Math.max(1, Number(limit) || 50));
+    // 精确按 id 拉取（用于前端"上传钉住"行的状态轮询）：与 status/search 等
+    // 过滤正交，客户端上传后即使当前过滤页不含新文档也能实时跟踪其状态。
+    const pinnedIds = String(idsParam || "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter((id) => isUuid(id))
+      .slice(0, 50);
     if (status && status !== "all" && !DOCUMENT_STATUS_VALUES.has(status))
       throw new BadRequestException(
         `Invalid status filter. Allowed: ${[...DOCUMENT_STATUS_VALUES].join(", ")}`,
@@ -435,19 +443,21 @@ export class KnowledgeBaseController {
       throw new BadRequestException(
         `Invalid indexReadiness filter. Allowed: ${[...INDEX_READINESS_VALUES].join(", ")}`,
       );
-    const where: any = {
-      kbId,
-      ...(status && status !== "all" ? { status } : {}),
-      ...(indexReadiness && indexReadiness !== "all" ? { indexReadiness } : {}),
-      ...(search && search.trim()
-        ? {
-            OR: [
-              { title: { contains: search.trim(), mode: "insensitive" } },
-              { mdPath: { contains: search.trim(), mode: "insensitive" } },
-            ],
-          }
-        : {}),
-    };
+    const where: any = pinnedIds.length
+      ? { kbId, id: { in: pinnedIds } }
+      : {
+          kbId,
+          ...(status && status !== "all" ? { status } : {}),
+          ...(indexReadiness && indexReadiness !== "all" ? { indexReadiness } : {}),
+          ...(search && search.trim()
+            ? {
+                OR: [
+                  { title: { contains: search.trim(), mode: "insensitive" } },
+                  { mdPath: { contains: search.trim(), mode: "insensitive" } },
+                ],
+              }
+            : {}),
+        };
     const [items, total, statusGroups] = await withServiceContext(this.prisma, async (db: any) => Promise.all([
       (db as any).document.findMany({
         where,
