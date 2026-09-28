@@ -1,0 +1,525 @@
+{
+ "bench": "scifact",
+ "kbs": {
+  "SOTA10-SCIFACT": [
+   {
+    "id": "d0000",
+    "title": "[15663829] Mendelian Randomization Study of B-Type Natriuretic Peptide and Type 2 Diabetes: Evidence of Causal Association from Population Studies",
+    "text": "Mendelian Randomization Study of B-Type Natriuretic Peptide and Type 2 Diabetes: Evidence of Causal Association from Population Studies\nBACKGROUND Genetic and epidemiological evidence suggests an inverse association between B-type natriuretic peptide (BNP) levels in blood and risk of type 2 diabetes (T2D), but the prospective association of BNP with T2D is uncertain, and it is unclear whether the association is confounded. METHODS AND FINDINGS We analysed the association between levels of the N-terminal fragment of pro-BNP (NT-pro-BNP) in blood and risk of incident T2D in a prospective case-cohort study and genotyped the variant rs198389 within the BNP locus in three T2D case-control studies. We combined our results with existing data in a meta-analysis of 11 case-control studies. Using a Mendelian randomization approach, we compared the observed association between rs198389 and T2D to that expected from the NT-pro-BNP level to T2D association and the NT-pro-BNP difference per C allele of rs198389. In participants of our case-cohort study who were free of T2D and cardiovascular disease at baseline, we observed a 21% (95% CI 3%-36%) decreased risk of incident T2D per one standard deviation (SD) higher log-transformed NT-pro-BNP levels in analysis adjusted for age, sex, body mass index, systolic blood pressure, smoking, family history of T2D, history of hypertension, and levels of triglycerides, high-density lipoprotein cholesterol, and low-density lipoprotein cholesterol. The association between rs198389 and T2D observed in case-control studies (odds ratio = 0.94 per C allele, 95% CI 0.91-0.97) was similar to that expected (0.96, 0.93-0.98) based on the pooled estimate for the log-NT-pro-BNP level to T2D association derived from a meta-analysis of our study and published data (hazard ratio = 0.82 per SD, 0.74-0.90) and the difference in NT-pro-BNP levels (0.22 SD, 0.15-0.29) per C allele of rs198389. No significant associations were observed between the rs198389 genotype and potential confounders. CONCLUSIONS Our results provide evidence for a potential causal role of the BNP system in the aetiology of T2D. Further studies are needed to investigate the mechanisms underlying this association and possibilities for preventive interventions. Please see later in the article for the Editors' Summary.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0001",
+    "title": "[11369420] Tetraspanin 3 Is Required for the Development and Propagation of Acute Myelogenous Leukemia.",
+    "text": "Tetraspanin 3 Is Required for the Development and Propagation of Acute Myelogenous Leukemia.\nAcute Myelogenous Leukemia (AML) is an aggressive cancer that strikes both adults and children and is frequently resistant to therapy. Thus, identifying signals needed for AML propagation is a critical step toward developing new approaches for treating this disease. Here, we show that Tetraspanin 3 is a target of the RNA binding protein Musashi 2, which plays a key role in AML. We generated Tspan3 knockout mice that were born without overt defects. However, Tspan3 deletion impaired leukemia stem cell self-renewal and disease propagation and markedly improved survival in mouse models of AML. Additionally, Tspan3 inhibition blocked growth of AML patient samples, suggesting that Tspan3 is also important in human disease. As part of the mechanism, we show that Tspan3 deficiency disabled responses to CXCL12/SDF-1 and led to defects in AML localization within the niche. These identify Tspan3 as an important regulator of aggressive leukemias and highlight a role for Tspan3 in oncogenesis.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0002",
+    "title": "[12670680] BASOPHILS AND THE T HELPER 2 ENVIRONMENT CAN PROMOTE THE DEVELOPMENT OF LUPUS NEPHRITIS",
+    "text": "BASOPHILS AND THE T HELPER 2 ENVIRONMENT CAN PROMOTE THE DEVELOPMENT OF LUPUS NEPHRITIS\nIn systemic lupus erythematosus (SLE), self-reactive antibodies can target the kidney (lupus nephritis), leading to functional failure and possible mortality. We report that activation of basophils by autoreactive IgE causes their homing to lymph nodes, promoting T helper type 2 (T(H)2) cell differentiation and enhancing the production of self-reactive antibodies that cause lupus-like nephritis in mice lacking the Src family protein tyrosine kinase Lyn (Lyn(-/-) mice). Individuals with SLE also have elevated serum IgE, self-reactive IgEs and activated basophils that express CD62 ligand (CD62L) and the major histocompatibility complex (MHC) class II molecule human leukocyte antigen-DR (HLA-DR), parameters that are associated with increased disease activity and active lupus nephritis. Basophils were also present in the lymph nodes and spleen of subjects with SLE. Thus, in Lyn(-/-) mice, basophils and IgE autoantibodies amplify autoantibody production that leads to lupus nephritis, and in individuals with SLE IgE autoantibodies and activated basophils are factors associated with disease activity and nephritis.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0003",
+    "title": "[28937856] Stress-dependent regulation of FOXO transcription factors by the SIRT1 deacetylase.",
+    "text": "Stress-dependent regulation of FOXO transcription factors by the SIRT1 deacetylase.\nThe Sir2 deacetylase modulates organismal life-span in various species. However, the molecular mechanisms by which Sir2 increases longevity are largely unknown. We show that in mammalian cells, the Sir2 homolog SIRT1 appears to control the cellular response to stress by regulating the FOXO family of Forkhead transcription factors, a family of proteins that function as sensors of the insulin signaling pathway and as regulators of organismal longevity. SIRT1 and the FOXO transcription factor FOXO3 formed a complex in cells in response to oxidative stress, and SIRT1 deacetylated FOXO3 in vitro and within cells. SIRT1 had a dual effect on FOXO3 function: SIRT1 increased FOXO3's ability to induce cell cycle arrest and resistance to oxidative stress but inhibited FOXO3's ability to induce cell death. Thus, one way in which members of the Sir2 family of proteins may increase organismal longevity is by tipping FOXO-dependent responses away from apoptosis and toward stress resistance.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0004",
+    "title": "[10582939] Induction therapy with autologous mesenchymal stem cells in living-related kidney transplants: a randomized controlled trial.",
+    "text": "Induction therapy with autologous mesenchymal stem cells in living-related kidney transplants: a randomized controlled trial.\nCONTEXT Antibody-based induction therapy plus calcineurin inhibitors (CNIs) reduce acute rejection rates in kidney recipients; however, opportunistic infections and toxic CNI effects remain challenging. Reportedly, mesenchymal stem cells (MSCs) have successfully treated graft-vs-host disease. OBJECTIVE To assess autologous MSCs as replacement of antibody induction for patients with end-stage renal disease who undergo ABO-compatible, cross-match-negative kidney transplants from a living-related donor. DESIGN, SETTING, AND PATIENTS One hundred fifty-nine patients were enrolled in this single-site, prospective, open-label, randomized study from February 2008-May 2009, when recruitment was completed. INTERVENTION Patients were inoculated with marrow-derived autologous MSC (1-2 x 10(6)/kg) at kidney reperfusion and two weeks later. Fifty-three patients received standard-dose and 52 patients received low-dose CNIs (80% of standard); 51 patients in the control group received anti-IL-2 receptor antibody plus standard-dose CNIs. MAIN OUTCOME MEASURES The primary measure was 1-year incidence of acute rejection and renal function (estimated glomerular filtration rate [eGFR]); the secondary measure was patient and graft survival and incidence of adverse events. RESULTS Patient and graft survival at 13 to 30 months was similar in all groups. After 6 months, 4 of 53 patients (7.5%) in the autologous MSC plus standard-dose CNI group (95% CI, 0.4%-14.7%; P = .04) and 4 of 52 patients (7.7%) in the low-dose group (95% CI, 0.5%-14.9%; P = .046) compared with 11 of 51 controls (21.6%; 95% CI, 10.5%-32.6%) had biopsy-confirmed acute rejection. None of the patients in either autologous MSC group had glucorticoid-resistant rejection, whereas 4 patients (7.8%) in the control group did (95% CI, 0.6%-15.1%; overall P = .02). Renal function recovered faster among both MSC groups showing increased eGFR levels during the first month after surgery than the control group. Patients receiving standard-dose CNI had a mean difference of 6.2 mL/min per 1.73 m(2) (95% CI, 0.4-11.9; P=.04) and those in the low-dose CNI of 10.0 mL/min per 1.73 m(2) (95% CI, 3.8-16.2; P=.002). Also, during the 1-year follow-up, combined analysis of MSC-treated groups revealed significantly decreased risk of opportunistic infections than the control group (hazard ratio, 0.42; 95% CI, 0.20-0.85, P=.02)   CONCLUSION Among patients undergoing renal transplant, the use of autologous MSCs compared with anti-IL-2 receptor antibody induction therapy resulted in lower incidence of acute rejection, decreased risk of opportunistic infection, and better estimated renal function at 1 year. TRIAL REGISTRATION clinicaltrials.gov Identifier: NCT00658073.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0005",
+    "title": "[16760369] Comparative determinants of 4-year cardiovascular event rates in stable outpatients at risk of or with atherothrombosis.",
+    "text": "Comparative determinants of 4-year cardiovascular event rates in stable outpatients at risk of or with atherothrombosis.\nCONTEXT Clinicians and trialists have difficulty with identifying which patients are highest risk for cardiovascular events. Prior ischemic events, polyvascular disease, and diabetes mellitus have all been identified as predictors of ischemic events, but their comparative contributions to future risk remain unclear. OBJECTIVE To categorize the risk of cardiovascular events in stable outpatients with various initial manifestations of atherothrombosis using simple clinical descriptors. DESIGN, SETTING, AND PATIENTS Outpatients with coronary artery disease, cerebrovascular disease, or peripheral arterial disease or with multiple risk factors for atherothrombosis were enrolled in the global Reduction of Atherothrombosis for Continued Health (REACH) Registry and were followed up for as long as 4 years. Patients from 3647 centers in 29 countries were enrolled between 2003 and 2004 and followed up until 2008. Final database lock was in April 2009. MAIN OUTCOME MEASURES Rates of cardiovascular death, myocardial infarction, and stroke. RESULTS A total of 45,227 patients with baseline data were included in this 4-year analysis. During the follow-up period, a total of 5481 patients experienced at least 1 event, including 2315 with cardiovascular death, 1228 with myocardial infarction, 1898 with stroke, and 40 with both a myocardial infarction and stroke on the same day. Among patients with atherothrombosis, those with a prior history of ischemic events at baseline (n = 21,890) had the highest rate of subsequent ischemic events (18.3%; 95% confidence interval [CI], 17.4%-19.1%); patients with stable coronary, cerebrovascular, or peripheral artery disease (n = 15,264) had a lower risk (12.2%; 95% CI, 11.4%-12.9%); and patients without established atherothrombosis but with risk factors only (n = 8073) had the lowest risk (9.1%; 95% CI, 8.3%-9.9%) (P < .001 for all comparisons). In addition, in multivariable modeling, the presence of diabetes (hazard ratio [HR], 1.44; 95% CI, 1.36-1.53; P < .001), an ischemic event in the previous year (HR, 1.71; 95% CI, 1.57-1.85; P < .001), and polyvascular disease (HR, 1.99; 95% CI, 1.78-2.24; P < .001) each were associated with a significantly higher risk of the primary end point. CONCLUSION Clinical descriptors can assist clinicians in identifying high-risk patients within the broad range of risk for outpatients with atherothrombosis.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0006",
+    "title": "[8426046] Ribosome Profiling Provides Evidence that Large Noncoding RNAs Do Not Encode Proteins",
+    "text": "Ribosome Profiling Provides Evidence that Large Noncoding RNAs Do Not Encode Proteins\nLarge noncoding RNAs are emerging as an important component in cellular regulation. Considerable evidence indicates that these transcripts act directly as functional RNAs rather than through an encoded protein product. However, a recent study of ribosome occupancy reported that many large intergenic ncRNAs (lincRNAs) are bound by ribosomes, raising the possibility that they are translated into proteins. Here, we show that classical noncoding RNAs and 5' UTRs show the same ribosome occupancy as lincRNAs, demonstrating that ribosome occupancy alone is not sufficient to classify transcripts as coding or noncoding. Instead, we define a metric based on the known property of translation whereby translating ribosomes are released upon encountering a bona fide stop codon. We show that this metric accurately discriminates between protein-coding transcripts and all classes of known noncoding transcripts, including lincRNAs. Taken together, these results argue that the large majority of lincRNAs do not function through encoded proteins.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0007",
+    "title": "[1471041] High abundance of plasma cells secreting transglutaminase 2–specific IgA autoantibodies with limited somatic hypermutation in celiac disease intestinal lesions",
+    "text": "High abundance of plasma cells secreting transglutaminase 2–specific IgA autoantibodies with limited somatic hypermutation in celiac disease intestinal lesions\nCeliac disease is an immune-mediated disorder in which mucosal autoantibodies to the enzyme transglutaminase 2 (TG2) are generated in response to the exogenous antigen gluten in individuals who express human leukocyte antigen HLA-DQ2 or HLA-DQ8 (ref. 3). We assessed in a comprehensive and nonbiased manner the IgA anti-TG2 response by expression cloning of the antibody repertoire of ex vivo–isolated intestinal antibody-secreting cells (ASCs). We found that TG2-specific plasma cells are markedly expanded within the duodenal mucosa in individuals with active celiac disease. TG2-specific antibodies were of high affinity yet showed little adaptation by somatic mutations. Unlike infection-induced peripheral blood plasmablasts, the TG2-specific ASCs had not recently proliferated and were not short-lived ex vivo. Altogether, these observations demonstrate that there is a germline repertoire with high affinity for TG2 that may favor massive generation of autoreactive B cells. TG2-specific antibodies did not block enzymatic activity and served as substrates for TG2-mediated crosslinking when expressed as IgD or IgM but not as IgA1 or IgG1. This could result in preferential recruitment of plasma cells from naive IgD- and IgM-expressing B cells, thus possibly explaining why the antibody response to TG2 bears signs of a primary immune response despite the disease chronicity.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0008",
+    "title": "[4381486] Haematopoietic stem cells do not asymmetrically segregate chromosomes or retain BrdU",
+    "text": "Haematopoietic stem cells do not asymmetrically segregate chromosomes or retain BrdU\nStem cells are proposed to segregate chromosomes asymmetrically during self-renewing divisions so that older (‘immortal’) DNA strands are retained in daughter stem cells whereas newly synthesized strands segregate to differentiating cells. Stem cells are also proposed to retain DNA labels, such as 5-bromo-2-deoxyuridine (BrdU), either because they segregate chromosomes asymmetrically or because they divide slowly. However, the purity of stem cells among BrdU-label-retaining cells has not been documented in any tissue, and the ‘immortal strand hypothesis’ has not been tested in a system with definitive stem cell markers. Here we tested these hypotheses in haematopoietic stem cells (HSCs), which can be highly purified using well characterized markers. We administered BrdU to newborn mice, mice treated with cyclophosphamide and granulocyte colony-stimulating factor, and normal adult mice for 4 to 10 days, followed by 70 days without BrdU. In each case, less than 6% of HSCs retained BrdU and less than 0.5% of all BrdU-retaining haematopoietic cells were HSCs, revealing that BrdU has poor specificity and poor sensitivity as an HSC marker. Sequential administration of 5-chloro-2-deoxyuridine and 5-iodo-2-deoxyuridine indicated that all HSCs segregate their chromosomes randomly. Division of individual HSCs in culture revealed no asymmetric segregation of the label. Thus, HSCs cannot be identified on the basis of BrdU-label retention and do not retain older DNA strands during division, indicating that these are not general properties of stem cells.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0009",
+    "title": "[37549932] Antiapoptotic BCL-2 is required for maintenance of a model leukemia.",
+    "text": "Antiapoptotic BCL-2 is required for maintenance of a model leukemia.\nResistance to apoptosis, often achieved by the overexpression of antiapoptotic proteins, is common and perhaps required in the genesis of cancer. However, it remains uncertain whether apoptotic defects are essential for tumor maintenance. To test this, we generated mice expressing a conditional BCL-2 gene and constitutive c-myc that develop lymphoblastic leukemia. Eliminating BCL-2 yielded rapid loss of leukemic cells and significantly prolonged survival, formally validating BCL-2 as a rational target for cancer therapy. Loss of this single molecule resulted in cell death, despite or perhaps attributable to the presence of other oncogenic events. This suggests a generalizable model in which aberrations inherent to cancer generate tonic death signals that would otherwise kill the cell if not opposed by a requisite apoptotic defect(s).",
+    "origin": "gold"
+   },
+   {
+    "id": "d0010",
+    "title": "[21598000] Structural basis for the activation of microtubule assembly by the EB1 and p150Glued complex.",
+    "text": "Structural basis for the activation of microtubule assembly by the EB1 and p150Glued complex.\nPlus-end tracking proteins, such as EB1 and the dynein/dynactin complex, regulate microtubule dynamics. These proteins are thought to stabilize microtubules by forming a plus-end complex at microtubule growing ends with ill-defined mechanisms. Here we report the crystal structure of two plus-end complex components, the carboxy-terminal dimerization domain of EB1 and the microtubule binding (CAP-Gly) domain of the dynactin subunit p150Glued. Each molecule of the EB1 dimer contains two helices forming a conserved four-helix bundle, while also providing p150Glued binding sites in its flexible tail region. Combining crystallography, NMR, and mutational analyses, our studies reveal the critical interacting elements of both EB1 and p150Glued, whose mutation alters microtubule polymerization activity. Moreover, removal of the key flexible tail from EB1 activates microtubule assembly by EB1 alone, suggesting that the flexible tail negatively regulates EB1 activity. We, therefore, propose that EB1 possesses an auto-inhibited conformation, which is relieved by p150Glued as an allosteric activator.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0011",
+    "title": "[16322674] Birth Size and Breast Cancer Risk: Re-analysis of Individual Participant Data from 32 Studies",
+    "text": "Birth Size and Breast Cancer Risk: Re-analysis of Individual Participant Data from 32 Studies\nBACKGROUND Birth size, perhaps a proxy for prenatal environment, might be a correlate of subsequent breast cancer risk, but findings from epidemiological studies have been inconsistent. We re-analysed individual participant data from published and unpublished studies to obtain more precise estimates of the magnitude and shape of the birth size-breast cancer association. METHODS AND FINDINGS Studies were identified through computer-assisted and manual searches, and personal communication with investigators. Individual participant data from 32 studies, comprising 22,058 breast cancer cases, were obtained. Random effect models were used, if appropriate, to combine study-specific estimates of effect. Birth weight was positively associated with breast cancer risk in studies based on birth records (pooled relative risk [RR] per one standard deviation [SD] [= 0.5 kg] increment in birth weight: 1.06; 95% confidence interval [CI] 1.02-1.09) and parental recall when the participants were children (1.02; 95% CI 0.99-1.05), but not in those based on adult self-reports, or maternal recall during the woman's adulthood (0.98; 95% CI 0.95-1.01) (p for heterogeneity between data sources = 0.003). Relative to women who weighed 3.000-3.499 kg, the risk was 0.96 (CI 0.80-1.16) in those who weighed < 2.500 kg, and 1.12 (95% CI 1.00-1.25) in those who weighed > or = 4.000 kg (p for linear trend = 0.001) in birth record data. Birth length and head circumference from birth records were also positively associated with breast cancer risk (pooled RR per one SD increment: 1.06 [95% CI 1.03-1.10] and 1.09 [95% CI 1.03-1.15], respectively). Simultaneous adjustment for these three birth size variables showed that length was the strongest independent predictor of risk. The birth size effects did not appear to be confounded or mediated by established breast cancer risk factors and were not modified by age or menopausal status. The cumulative incidence of breast cancer per 100 women by age 80 y in the study populations was estimated to be 10.0, 10.0, 10.4, and 11.5 in those who were, respectively, in the bottom, second, third, and top fourths of the birth length distribution. CONCLUSIONS This pooled analysis of individual participant data is consistent with birth size, and in particular birth length, being an independent correlate of breast cancer risk in adulthood.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0012",
+    "title": "[17450673] Intrauterine environments and breast cancer risk: meta-analysis and systematic review",
+    "text": "Intrauterine environments and breast cancer risk: meta-analysis and systematic review\nINTRODUCTION Various perinatal factors, including birth weight, birth order, maternal age, gestational age, twin status, and parental smoking, have been postulated to affect breast cancer risk in daughters by altering the hormonal environment of the developing fetal mammary glands. Despite ample biologic plausibility, epidemiologic studies to date have yielded conflicting results. We investigated the associations between perinatal factors and subsequent breast cancer risk through meta-analyses. METHODS We reviewed breast cancer studies published from January 1966 to February 2007 that included data on birth weight, birth order, maternal age, gestational age, twin status, and maternal or paternal smoking. Meta-analyses using random effect models were employed to summarize the results. RESULTS We found that heavier birth weights were associated with increased breast cancer risk, with studies involving five categories of birth weight identifying odds ratios (ORs) of 1.24 (95% confidence interval [CI] 1.04 to 1.48) for 4,000 g or more and 1.15 (95% CI 1.04 to 1.26) for 3,500 g to 3,999 g, relative to a birth weight of 2,500 to 2,599 g. These studies provided no support for a J-shaped relationship of birthweight to risk. Support for an association with birthweight was also derived from studies based on three birth weight categories (OR 1.15 [95% CI 1.01 to 1.31] for > or =4,000 g relative to <3,000 g) and two birth weight categories (OR 1.09 [95% CI 1.02 to 1.18] for > or =3,000 g relative to <3,000 g). Women born to older mothers and twins were also at some increased risk, but the results were heterogeneous across studies and publication years. Birth order, prematurity, and maternal smoking were unrelated to breast cancer risk. CONCLUSION Our findings provide some support for the hypothesis that in utero exposures reflective of higher endogenous hormone levels could affect risk for development of breast cancer in adulthood.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0013",
+    "title": "[23557241] Intrauterine factors and risk of breast cancer: a systematic review and meta-analysis of current evidence.",
+    "text": "Intrauterine factors and risk of breast cancer: a systematic review and meta-analysis of current evidence.\nBACKGROUND Emerging evidence suggests an association between female prenatal experience and her subsequent risk of developing breast cancer. Potential underlying mechanisms include variation in amounts of maternal endogenous sex hormones and growth hormones, germ-cell mutations, formation of cancer stem-cells, and other genetic or epigenetic events. We reviewed and summarised quantitatively the available data on intrauterine exposures and risk of breast cancer. METHODS We systematically searched for studies that assessed association between perinatal factors and risk of breast cancer. We reviewed separately each of the perinatal factors, including birthweight, birth length, parental age at delivery, gestational age, intrauterine exposure to diethylstilbestrol, twin membership, maternal pre-eclampsia or eclampsia, and other factors. FINDINGS We identified 57 studies published between Oct 1, 1980, and June 21, 2007. Increased risk of breast cancer was noted with increased birthweight (relative risk [RR] 1.15 [95% CI 1.09-1.21]), birth length (1.28 [1.11-1.48]), higher maternal age (1.13 [1.02-1.25]), and paternal age (1.12 [1.05-1.19]). Decreased risk of breast cancer was noted for maternal pre-eclampsia and eclampsia (0.48 [0.30-0.78]) and twin membership (0.93 [0.87-1.00]). No association was noted between risk of breast cancer and gestational age at birth (0.95 [0.71-1.26]) or maternal diethylstilbestrol treatment (1.40 [0.86-2.28]). INTERPRETATION The intrauterine environment contributes to the predisposition of women to breast cancer in adulthood. The in-utero mechanisms responsible for such predisposition need to be elucidated.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0014",
+    "title": "[27123743] Role of birthweight in the etiology of breast cancer.",
+    "text": "Role of birthweight in the etiology of breast cancer.\nBreast cancer may originate in utero. We reviewed the available evidence on the association between birthweight and the risk of breast cancer. To date, 26 research papers addressing this issue have been published. The majority of studies identified a positive link between birthweight and premenopausal, but not postmenopausal, breast cancer. The relative risk estimate for breast cancer comparing women with high birthweight to women with low birthweight combining all studies including both pre- and postmenopausal breast cancer was 1.23 (95% confidence interval 1.13-1.34). The mechanisms underlying this association likely include elevated levels of growth factors that may increase the number of susceptible stem cells in the mammary gland or initiate tumors through DNA mutations. Loss of imprinting (LOI) of growth hormone genes relevant for intrauterine growth, such as insulin-like growth factor 2 (IGF2), leads to abnormally high levels of these hormones evidenced by high birthweight. LOI of IGF2 has also been found in mammary tumor tissue. The role of environmental factors that stimulate such epigenetic regulation of gene expression remains to be elucidated.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0015",
+    "title": "[13230773] Prevalence and cardiovascular disease correlates of low cardiorespiratory fitness in adolescents and adults.",
+    "text": "Prevalence and cardiovascular disease correlates of low cardiorespiratory fitness in adolescents and adults.\nCONTEXT Population surveys indicate that physical activity levels are low in the United States. One consequence of inactivity, low cardiorespiratory fitness, is an established risk factor for cardiovascular disease (CVD) morbidity and mortality, but the prevalence of cardiorespiratory fitness has not been quantified in representative US population samples. OBJECTIVES To describe the prevalence of low fitness in the US population aged 12 through 49 years and to relate low fitness to CVD risk factors in this population. DESIGN, SETTING, AND PARTICIPANTS Inception cohort study using data from the cross-sectional nationally representative National Health and Nutrition Examination Survey 1999-2002. Participants were adolescents (aged 12-19 years; n = 3110) and adults (aged 20-49 years; n = 2205) free from previously diagnosed CVD who underwent submaximal graded exercise treadmill testing to achieve at least 75% to 90% of their age-predicted maximum heart rate. Maximal oxygen consumption (VO2max) was estimated by measuring the heart rate response to reference levels of submaximal work. MAIN OUTCOME MEASURES Low fitness defined using percentile cut points of estimated VO2max from existing external referent populations; anthropometric and other CVD risk factors measured according to standard methods. RESULTS Low fitness was identified in 33.6% of adolescents (approximately 7.5 million US adolescents) and 13.9% of adults (approximately 8.5 million US adults); the prevalence was similar in adolescent females (34.4%) and males (32.9%) (P = .40) but was higher in adult females (16.2%) than in males (11.8%) (P = .03). Non-Hispanic blacks and Mexican Americans were less fit than non-Hispanic whites. In all age-sex groups, body mass index and waist circumference were inversely associated with fitness; age- and race-adjusted odds ratios of overweight or obesity (body mass index > or =25) ranged from 2.1 to 3.7 (P<.01 for all), comparing persons with low fitness with those with moderate or high fitness. Total cholesterol levels and systolic blood pressure were higher and levels of high-density lipoprotein cholesterol were lower among participants with low vs high fitness. CONCLUSION Low fitness in adolescents and adults is common in the US population and is associated with an increased prevalence of CVD risk factors.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0016",
+    "title": "[11899391] Type 1 diabetes-associated IL2RA variation lowers IL-2 signaling and contributes to diminished CD4+CD25+ regulatory T cell function.",
+    "text": "Type 1 diabetes-associated IL2RA variation lowers IL-2 signaling and contributes to diminished CD4+CD25+ regulatory T cell function.\nNumerous reports have demonstrated that CD4(+)CD25(+) regulatory T cells (Tregs) from individuals with a range of human autoimmune diseases, including type 1 diabetes, are deficient in their ability to control autologous proinflammatory responses when compared with nondiseased, control individuals. Treg dysfunction could be a primary, causal event or may result from perturbations in the immune system during disease development. Polymorphisms in genes associated with Treg function, such as IL2RA, confer a higher risk of autoimmune disease. Although this suggests a primary role for defective Tregs in autoimmunity, a link between IL2RA gene polymorphisms and Treg function has not been examined. We addressed this by examining the impact of an IL2RA haplotype associated with type 1 diabetes on Treg fitness and suppressive function. Studies were conducted using healthy human subjects to avoid any confounding effects of disease. We demonstrated that the presence of an autoimmune disease-associated IL2RA haplotype correlates with diminished IL-2 responsiveness in Ag-experienced CD4(+) T cells, as measured by phosphorylation of STAT5a, and is associated with lower levels of FOXP3 expression by Tregs and a reduction in their ability to suppress proliferation of autologous effector T cells. These data offer a rationale that contributes to the molecular and cellular mechanisms through which polymorphisms in the IL-2RA gene affect immune regulation, and consequently upon susceptibility to autoimmune and inflammatory diseases.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0017",
+    "title": "[13923140] Interleukin-2 gene variation impairs regulatory T cell function and causes autoimmunity",
+    "text": "Interleukin-2 gene variation impairs regulatory T cell function and causes autoimmunity\nAutoimmune diseases are thought to result from imbalances in normal immune physiology and regulation. Here, we show that autoimmune disease susceptibility and resistance alleles on mouse chromosome 3 (Idd3) correlate with differential expression of the key immunoregulatory cytokine interleukin-2 (IL-2). In order to test directly that an approximately twofold reduction in IL-2 underpins the Idd3-linked destabilization of immune homeostasis, we show that engineered haplodeficiency of Il2 gene expression not only reduces T cell IL-2 production by twofold but also mimics the autoimmune dysregulatory effects of the naturally occurring susceptibility alleles of Il2. Reduced IL-2 production achieved by either genetic mechanism correlates with reduced function of CD4+ CD25+ regulatory T cells, which are critical for maintaining immune homeostasis.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0018",
+    "title": "[13940200] Large-scale genetic fine mapping and genotype-phenotype associations implicate polymorphism in the IL2RA region in type 1 diabetes",
+    "text": "Large-scale genetic fine mapping and genotype-phenotype associations implicate polymorphism in the IL2RA region in type 1 diabetes\nGenome-wide association studies are now identifying disease-associated chromosome regions. However, even after convincing replication, the localization of the causal variant(s) requires comprehensive resequencing, extensive genotyping and statistical analyses in large sample sets leading to targeted functional studies. Here, we have localized the type 1 diabetes (T1D) association in the interleukin 2 receptor alpha (IL2RA) gene region to two independent groups of SNPs, spanning overlapping regions of 14 and 40 kb, encompassing IL2RA intron 1 and the 5′ regions of IL2RA and RBM17 (odds ratio = 2.04, 95% confidence interval = 1.70–2.45; P = 1.92 × 10−28; control frequency = 0.635). Furthermore, we have associated IL2RA T1D susceptibility genotypes with lower circulating levels of the biomarker, soluble IL-2RA (P = 6.28 × 10−28), suggesting that an inherited lower immune responsiveness predisposes to T1D.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0019",
+    "title": "[12956194] The Extracellular Surface of the GLP-1 Receptor Is a Molecular Trigger for Biased Agonism",
+    "text": "The Extracellular Surface of the GLP-1 Receptor Is a Molecular Trigger for Biased Agonism\nLigand-directed signal bias offers opportunities for sculpting molecular events, with the promise of better, safer therapeutics. Critical to the exploitation of signal bias is an understanding of the molecular events coupling ligand binding to intracellular signaling. Activation of class B G protein-coupled receptors is driven by interaction of the peptide N terminus with the receptor core. To understand how this drives signaling, we have used advanced analytical methods that enable separation of effects on pathway-specific signaling from those that modify agonist affinity and mapped the functional consequence of receptor modification onto three-dimensional models of a receptor-ligand complex. This yields molecular insights into the initiation of receptor activation and the mechanistic basis for biased agonism. Our data reveal that peptide agonists can engage different elements of the receptor extracellular face to achieve effector coupling and biased signaling providing a foundation for rational design of biased agonists.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0020",
+    "title": "[306006] The stimulatory potency of T cell antigens is influenced by the formation of the immunological synapse.",
+    "text": "The stimulatory potency of T cell antigens is influenced by the formation of the immunological synapse.\nT cell activation is predicated on the interaction between the T cell receptor and peptide-major histocompatibility (pMHC) ligands. The factors that determine the stimulatory potency of a pMHC molecule remain unclear. We describe results showing that a peptide exhibiting many hallmarks of a weak agonist stimulates T cells to proliferate more than the wild-type agonist ligand. An in silico approach suggested that the inability to form the central supramolecular activation cluster (cSMAC) could underlie the increased proliferation. This conclusion was supported by experiments that showed that enhancing cSMAC formation reduced stimulatory capacity of the weak peptide. Our studies highlight the fact that a complex interplay of factors determines the quality of a T cell antigen.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0021",
+    "title": "[8290953] Scaffold-based three-dimensional human fibroblast culture provides a structural matrix that supports angiogenesis in infarcted heart tissue.",
+    "text": "Scaffold-based three-dimensional human fibroblast culture provides a structural matrix that supports angiogenesis in infarcted heart tissue.\nBACKGROUND We have developed techniques to implant angiogenic patches onto the epicardium over regions of infarcted cardiac tissue to stimulate revascularization of the damaged tissue. These experiments used a scaffold-based 3D human dermal fibroblast culture (3DFC) as an epicardial patch. The 3DFC contains viable cells that secrete angiogenic growth factors and has previously been shown to stimulate angiogenic activity. The hypothesis tested was that a viable 3DFC cardiac patch would stimulate an angiogenic response within an area of infarcted cardiac tissue. METHODS AND RESULTS A coronary occlusion of a branch of the left anterior descending coronary artery was performed by thermal ligation in severe combined immunodeficient mice. 3DFCs with or without viable cells were sized to the damaged area, implanted in replicate mice onto the epicardium at the site of tissue injury, and compared with animals that received infarct surgery but no implant. Fourteen and 30 days after surgery, hearts were exposed and photographed, and tissue samples were prepared for histology and cytochemistry. Fourteen and 30 days after surgery, the damaged myocardium receiving viable 3DFC exhibited a significantly greater angiogenic response (including arterioles, venules, and capillaries) than nonviable and untreated control groups. CONCLUSIONS In this animal model, viable 3DFC stimulates angiogenesis within a region of cardiac infarction and can augment a repair response in damaged tissue. Therefore, a potential use for 3DFC is the repair of myocardial tissue damaged by infarction.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0022",
+    "title": "[26851674] Dissection of signaling cascades through gp130 in vivo: reciprocal roles for STAT3- and SHP2-mediated signals in immune responses.",
+    "text": "Dissection of signaling cascades through gp130 in vivo: reciprocal roles for STAT3- and SHP2-mediated signals in immune responses.\nWe generated a series of knockin mouse lines, in which the cytokine receptor gp130-dependent STAT3 and/or SHP2 signals were disrupted, by replacing the mouse gp130 gene with human gp130 mutant cDNAs. The SHP2 signal-deficient mice (gp130F759/F759 were born normal but displayed splenomegaly and lymphadenopathy and an enhanced acute phase reaction. In contrast, the STAT3 signal-deficient mice (gp130FXQ/FXXQ) died perinatally, like the gp130-deficient mice (gp130D/D). The gp130F759/F759 mice showed prolonged gp130-induced STAT3 activation, indicating a negative regulatory role for SHP2. Th1-type cytokine production and IgG2a and IgG2b production were increased in the gp130F759/F759 mice, while they were decreased in the gp130FXXQ/FXXQ immune system. These results indicate that the balance of positive and negative signals generated through gp130 regulates the immune responses.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0023",
+    "title": "[22180793] Monoclonal antibody targeting of N-cadherin inhibits prostate cancer growth, metastasis and castration resistance",
+    "text": "Monoclonal antibody targeting of N-cadherin inhibits prostate cancer growth, metastasis and castration resistance\nThe transition from androgen-dependent to castration-resistant prostate cancer (CRPC) is a lethal event of uncertain molecular etiology. Comparing gene expression in isogenic androgen-dependent and CRPC xenografts, we found a reproducible increase in N-cadherin expression, which was also elevated in primary and metastatic tumors of individuals with CRPC. Ectopic expression of N-cadherin in nonmetastatic, androgen-dependent prostate cancer models caused castration resistance, invasion and metastasis. Monoclonal antibodies against the ectodomain of N-cadherin reduced proliferation, adhesion and invasion of prostate cancer cells in vitro. In vivo, these antibodies slowed the growth of multiple established CRPC xenografts, blocked local invasion and metastasis and, at higher doses, led to complete regression. N-cadherin–specific antibodies markedly delayed the time to emergence of castration resistance, markedly affected tumor histology and angiogenesis, and reduced both AKT serine-threonine kinase activity and serum interleukin-8 (IL-8) secretion. These data indicate that N-cadherin is a major cause of both prostate cancer metastasis and castration resistance. Therapeutic targeting of this factor with monoclonal antibodies may have considerable clinical benefit.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0024",
+    "title": "[52873726] Regulation of Hippo pathway transcription factor TEAD by p38 MAPK-induced cytoplasmic translocation",
+    "text": "Regulation of Hippo pathway transcription factor TEAD by p38 MAPK-induced cytoplasmic translocation\nThe Hippo pathway controls organ size and tissue homeostasis, with deregulation leading to cancer. The core Hippo components in mammals are composed of the upstream serine/threonine kinases Mst1/2, MAPK4Ks and Lats1/2. Inactivation of these upstream kinases leads to dephosphorylation, stabilization, nuclear translocation and thus activation of the major functional transducers of the Hippo pathway, YAP and its paralogue TAZ. YAP/TAZ are transcription co-activators that regulate gene expression primarily through interaction with the TEA domain DNA-binding family of transcription factors (TEAD). The current paradigm for regulation of this pathway centres on phosphorylation-dependent nucleocytoplasmic shuttling of YAP/TAZ through a complex network of upstream components. However, unlike other transcription factors, such as SMAD, NF-κB, NFAT and STAT, the regulation of TEAD nucleocytoplasmic shuttling has been largely overlooked. In the present study, we show that environmental stress promotes TEAD cytoplasmic translocation via p38 MAPK in a Hippo-independent manner. Importantly, stress-induced TEAD inhibition predominates YAP-activating signals and selectively suppresses YAP-driven cancer cell growth. Our data reveal a mechanism governing TEAD nucleocytoplasmic shuttling and show that TEAD localization is a critical determinant of Hippo signalling output.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0025",
+    "title": "[14717500] Rare Variants Create Synthetic Genome-Wide Associations",
+    "text": "Rare Variants Create Synthetic Genome-Wide Associations\nGenome-wide association studies (GWAS) have now identified at least 2,000 common variants that appear associated with common diseases or related traits (http://www.genome.gov/gwastudies), hundreds of which have been convincingly replicated. It is generally thought that the associated markers reflect the effect of a nearby common (minor allele frequency >0.05) causal site, which is associated with the marker, leading to extensive resequencing efforts to find causal sites. We propose as an alternative explanation that variants much less common than the associated one may create \"synthetic associations\" by occurring, stochastically, more often in association with one of the alleles at the common site versus the other allele. Although synthetic associations are an obvious theoretical possibility, they have never been systematically explored as a possible explanation for GWAS findings. Here, we use simple computer simulations to show the conditions under which such synthetic associations will arise and how they may be recognized. We show that they are not only possible, but inevitable, and that under simple but reasonable genetic models, they are likely to account for or contribute to many of the recently identified signals reported in genome-wide association studies. We also illustrate the behavior of synthetic associations in real datasets by showing that rare causal mutations responsible for both hearing loss and sickle cell anemia create genome-wide significant synthetic associations, in the latter case extending over a 2.5-Mb interval encompassing scores of \"blocks\" of associated variants. In conclusion, uncommon or rare genetic variants can easily create synthetic associations that are credited to common variants, and this possibility requires careful consideration in the interpretation and follow up of GWAS signals.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0026",
+    "title": "[39281140] Treatment of antidepressant-associated sexual dysfunction with sildenafil: a randomized controlled trial.",
+    "text": "Treatment of antidepressant-associated sexual dysfunction with sildenafil: a randomized controlled trial.\nCONTEXT Sexual dysfunction is a common adverse effect of antidepressants that frequently results in treatment noncompliance. OBJECTIVE To assess the efficacy of sildenafil citrate in men with sexual dysfunction associated with the use of selective and nonselective serotonin reuptake inhibitor (SRI) antidepressants. DESIGN, SETTING, AND PATIENTS Prospective, parallel-group, randomized, double-blind, placebo-controlled trial conducted between November 1, 2000, and January 1, 2001, at 3 US university medical centers among 90 male outpatients (mean [SD] age, 45 [8] years) with major depression in remission and sexual dysfunction associated with SRI antidepressant treatment. INTERVENTION Patients were randomly assigned to take sildenafil (n = 45) or placebo (n = 45) at a flexible dose starting at 50 mg and adjustable to 100 mg before sexual activity for 6 weeks. MAIN OUTCOME MEASURES The primary outcome measure was score on the Clinical Global Impression-Sexual Function (CGI-SF); secondary measures were scores on the International Index of Erectile Function, Arizona Sexual Experience Scale, Massachusetts General Hospital-Sexual Functioning Questionnaire, and Hamilton Rating Scale for Depression (HAM-D). RESULTS Among the 90 randomized patients, 93% (83/89) of patients treated per protocol took at least 1 dose of study drug and 85% (76/89) completed week 6 end-point assessments with last observation carried forward analyses. At a CGI-SF score of 2 or lower, 54.5% (24/44) of sildenafil compared with 4.4% (2/45) of placebo patients were much or very much improved (P<.001). Erectile function, arousal, ejaculation, orgasm, and overall satisfaction domain measures improved significantly in sildenafil compared with placebo patients. Mean depression scores remained consistent with remission (HAM-D score < or =10) in both groups for the study duration. CONCLUSION In our study, sildenafil effectively improved erectile function and other aspects of sexual function in men with sexual dysfunction associated with the use of SRI antidepressants. These improvements may allow patients to maintain adherence with effective antidepressant treatment.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0027",
+    "title": "[3441524] Human TRPML1 channel structures in open and closed conformations",
+    "text": "Human TRPML1 channel structures in open and closed conformations\nTransient receptor potential mucolipin 1 (TRPML1) is a Ca2+-releasing cation channel that mediates the calcium signalling and homeostasis of lysosomes. Mutations in TRPML1 lead to mucolipidosis type IV, a severe lysosomal storage disorder. Here we report two electron cryo-microscopy structures of full-length human TRPML1: a 3.72-Å apo structure at pH 7.0 in the closed state, and a 3.49-Å agonist-bound structure at pH 6.0 in an open state. Several aromatic and hydrophobic residues in pore helix 1, helices S5 and S6, and helix S6 of a neighbouring subunit, form a hydrophobic cavity to house the agonist, suggesting a distinct agonist-binding site from that found in TRPV1, a TRP channel from a different subfamily. The opening of TRPML1 is associated with distinct dilations of its lower gate together with a slight structural movement of pore helix 1. Our work reveals the regulatory mechanism of TRPML channels, facilitates better understanding of TRP channel activation, and provides insights into the molecular basis of mucolipidosis type IV pathogenesis.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0028",
+    "title": "[4942718] High-Throughput Genetic Screens Identify a Large and Diverse Collection of New Sporulation Genes in Bacillus subtilis",
+    "text": "High-Throughput Genetic Screens Identify a Large and Diverse Collection of New Sporulation Genes in Bacillus subtilis\nThe differentiation of the bacterium Bacillus subtilis into a dormant spore is among the most well-characterized developmental pathways in biology. Classical genetic screens performed over the past half century identified scores of factors involved in every step of this morphological process. More recently, transcriptional profiling uncovered additional sporulation-induced genes required for successful spore development. Here, we used transposon-sequencing (Tn-seq) to assess whether there were any sporulation genes left to be discovered. Our screen identified 133 out of the 148 genes with known sporulation defects. Surprisingly, we discovered 24 additional genes that had not been previously implicated in spore formation. To investigate their functions, we used fluorescence microscopy to survey early, middle, and late stages of differentiation of null mutants from the B. subtilis ordered knockout collection. This analysis identified mutants that are delayed in the initiation of sporulation, defective in membrane remodeling, and impaired in spore maturation. Several mutants had novel sporulation phenotypes. We performed in-depth characterization of two new factors that participate in cell-cell signaling pathways during sporulation. One (SpoIIT) functions in the activation of σE in the mother cell; the other (SpoIIIL) is required for σG activity in the forespore. Our analysis also revealed that as many as 36 sporulation-induced genes with no previously reported mutant phenotypes are required for timely spore maturation. Finally, we discovered a large set of transposon insertions that trigger premature initiation of sporulation. Our results highlight the power of Tn-seq for the discovery of new genes and novel pathways in sporulation and, combined with the recently completed null mutant collection, open the door for similar screens in other, less well-characterized processes.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0029",
+    "title": "[30655442] The EMBL nucleotide sequence database.",
+    "text": "The EMBL nucleotide sequence database.\nThe EMBL Nucleotide Sequence Database (http://www.ebi.ac.uk/embl. html ) constitutes Europe's primary nucleotide sequence resource. DNA and RNA sequences are directly submitted from researchers and genome sequencing groups and collected from the scientific literature and patent applications (Fig. 1). In collaboration with DDBJ and GenBank the database is produced, maintained and distributed at the European Bioinformatics Institute. Database releases are produced quarterly and are distributed on CD-ROM. EBI's network services allow access to the most up-to-date data collection via Internet and World Wide Web interface, providing database searching and sequence similarity facilities plus access to a large number of additional databases.",
+    "origin": "gold"
+   }
+  ]
+ },
+ "questions": [
+  {
+   "qid": "517",
+   "question": "High levels of copeptin decrease risk of diabetes.",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0000"
+   ],
+   "beir_gold_ids": [
+    "15663829"
+   ],
+   "type": "beir/scifact"
+  },
+  {
+   "qid": "1150",
+   "question": "Tetraspanin-3 is a causative factor in the development of acute myelogenous leukemia",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0001"
+   ],
+   "beir_gold_ids": [
+    "11369420"
+   ],
+   "type": "beir/scifact"
+  },
+  {
+   "qid": "171",
+   "question": "Basophils counteract disease development in patients with systemic lupus erythematosus (SLE).",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0002"
+   ],
+   "beir_gold_ids": [
+    "12670680"
+   ],
+   "type": "beir/scifact"
+  },
+  {
+   "qid": "431",
+   "question": "FoxO3a activation in neuronal death is mediated by reactive oxygen species (ROS).",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0003"
+   ],
+   "beir_gold_ids": [
+    "28937856"
+   ],
+   "type": "beir/scifact"
+  },
+  {
+   "qid": "142",
+   "question": "Autologous transplantation of mesenchymal stem cells causes a higher rate of opportunistic infections than induction therapy with anti-interleukin-2 receptor antibodies.",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0004"
+   ],
+   "beir_gold_ids": [
+    "10582939"
+   ],
+   "type": "beir/scifact"
+  },
+  {
+   "qid": "1199",
+   "question": "The benefits of colchicine were achieved with effective widespread use of secondary prevention strategies such as high-dose statins.",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0005"
+   ],
+   "beir_gold_ids": [
+    "16760369"
+   ],
+   "type": "beir/scifact"
+  },
+  {
+   "qid": "879",
+   "question": "Occupancy of ribosomes by IncRNAs do not make functional peptides.",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0006"
+   ],
+   "beir_gold_ids": [
+    "8426046"
+   ],
+   "type": "beir/scifact"
+  },
+  {
+   "qid": "552",
+   "question": "IgA plasma cells that are specific for transglutaminase 2 accumulate in the duodenal mucosa on commencement of a gluten-free diet.",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0007"
+   ],
+   "beir_gold_ids": [
+    "1471041"
+   ],
+   "type": "beir/scifact"
+  },
+  {
+   "qid": "100",
+   "question": "All hematopoietic stem cells segregate their chromosomes randomly.",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0008"
+   ],
+   "beir_gold_ids": [
+    "4381486"
+   ],
+   "type": "beir/scifact"
+  },
+  {
+   "qid": "1088",
+   "question": "Silencing of Bcl2 is important for the maintenance and progression of tumors.",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0009"
+   ],
+   "beir_gold_ids": [
+    "37549932"
+   ],
+   "type": "beir/scifact"
+  },
+  {
+   "qid": "127",
+   "question": "Arginine 90 in p150n is important for interaction with EB1.",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0010"
+   ],
+   "beir_gold_ids": [
+    "21598000"
+   ],
+   "type": "beir/scifact"
+  },
+  {
+   "qid": "1379",
+   "question": "Women with a higher birth weight are more likely to develop breast cancer later in life.",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0011",
+    "d0012",
+    "d0013",
+    "d0014"
+   ],
+   "beir_gold_ids": [
+    "16322674",
+    "17450673",
+    "23557241",
+    "27123743"
+   ],
+   "type": "beir/scifact"
+  },
+  {
+   "qid": "513",
+   "question": "High cardiopulmonary fitness causes increased mortality rate.",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0015"
+   ],
+   "beir_gold_ids": [
+    "13230773"
+   ],
+   "type": "beir/scifact"
+  },
+  {
+   "qid": "1029",
+   "question": "Reduced responsiveness to interleukin-2 in regulatory T cells is associated with greater resistance to autoimmune diseases such as Type 1 Diabetes.",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0016",
+    "d0017",
+    "d0018"
+   ],
+   "beir_gold_ids": [
+    "11899391",
+    "13923140",
+    "13940200"
+   ],
+   "type": "beir/scifact"
+  },
+  {
+   "qid": "956",
+   "question": "Pleiotropic coupling of GLP-1R to intracellular effectors promotes distinct profiles of cellular signaling.",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0019"
+   ],
+   "beir_gold_ids": [
+    "12956194"
+   ],
+   "type": "beir/scifact"
+  },
+  {
+   "qid": "1385",
+   "question": "cSMAC formation enhances weak ligand signalling.",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0020"
+   ],
+   "beir_gold_ids": [
+    "306006"
+   ],
+   "type": "beir/scifact"
+  },
+  {
+   "qid": "1362",
+   "question": "Venules have a larger lumen diameter than arterioles.",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0021"
+   ],
+   "beir_gold_ids": [
+    "8290953"
+   ],
+   "type": "beir/scifact"
+  },
+  {
+   "qid": "179",
+   "question": "Birth-weight is positively associated with breast cancer.",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0011",
+    "d0012",
+    "d0013",
+    "d0014"
+   ],
+   "beir_gold_ids": [
+    "16322674",
+    "17450673",
+    "23557241",
+    "27123743"
+   ],
+   "type": "beir/scifact"
+  },
+  {
+   "qid": "729",
+   "question": "Lymphadenopathy is observed in knockin mouse lacking the SHP-2 MAPK pathway.",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0022"
+   ],
+   "beir_gold_ids": [
+    "26851674"
+   ],
+   "type": "beir/scifact"
+  },
+  {
+   "qid": "805",
+   "question": "Monoclonal antibody targeting of N-cadherin inhibits metastasis.",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0023"
+   ],
+   "beir_gold_ids": [
+    "22180793"
+   ],
+   "type": "beir/scifact"
+  },
+  {
+   "qid": "1187",
+   "question": "The YAP1 and TEAD complex tanslocates into the nucleus where it interacts with transcription factors and DNA-binding proteins that modulate target gene transcription.",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0024"
+   ],
+   "beir_gold_ids": [
+    "52873726"
+   ],
+   "type": "beir/scifact"
+  },
+  {
+   "qid": "3",
+   "question": "1,000 genomes project enables mapping of genetic sequence variation consisting of rare variants with larger penetrance effects than common variants.",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0025"
+   ],
+   "beir_gold_ids": [
+    "14717500"
+   ],
+   "type": "beir/scifact"
+  },
+  {
+   "qid": "1086",
+   "question": "Sildenafil improves erectile function in men who experience sexual dysfunction as a result of the use of SSRI antidepressants.",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0026"
+   ],
+   "beir_gold_ids": [
+    "39281140"
+   ],
+   "type": "beir/scifact"
+  },
+  {
+   "qid": "1200",
+   "question": "The binding orientation of the ML-SA1 activator at hTRPML2 is different from the binding orientation of the ML-SA1 activator at hTRPML1.",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0027"
+   ],
+   "beir_gold_ids": [
+    "3441524"
+   ],
+   "type": "beir/scifact"
+  },
+  {
+   "qid": "684",
+   "question": "Lack of clpC does not affect sporulation efficiency in Bacillus subtilis cells.",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0028"
+   ],
+   "beir_gold_ids": [
+    "4942718"
+   ],
+   "type": "beir/scifact"
+  },
+  {
+   "qid": "1191",
+   "question": "The amount of publicly available DNA data doubles every 10 years.",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0029"
+   ],
+   "beir_gold_ids": [
+    "30655442"
+   ],
+   "type": "beir/scifact"
+  }
+ ],
+ "meta": {
+  "source": "BEIR scifact (test qrels, gold-guaranteed subset)",
+  "n_docs": 30,
+  "n_questions": 26,
+  "seed": 42,
+  "doc_budget": 30,
+  "question_budget": 30
+ }
+}

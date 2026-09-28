@@ -1,0 +1,349 @@
+{
+ "rows_qa": [
+  {
+   "qid": "2hop__30905_213732",
+   "type": "2hop",
+   "question": "Who is the child of the person who sponsored the resolution to reopen trade with Vietnam, along with Kerry?",
+   "gold": "Meghan McCain",
+   "answer": "Based on the provided reference materials, the relevant information is not available in the knowledge base.",
+   "citations": [],
+   "ttft": 60.56,
+   "latency": 60.65,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.0,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 0.0
+  },
+  {
+   "qid": "3hop2__103871_20335_9331",
+   "type": "3hop",
+   "question": "What dissolved the privileges in Poland of the empire where Tamar Abakelia was from, the Kingdom that acquired some Thuringian territory in 1815, and the Habsburg Monarchy?",
+   "gold": "March Constitution of Poland",
+   "answer": "Based on the provided reference materials, the relevant information is not available.",
+   "citations": [
+    "Thuringia",
+    "Szlachta",
+    "Charles Frederick II, Duke of Württemberg-Oels",
+    "Szlachta",
+    "USB",
+    "Tamar Abakelia",
+    "Queen Victoria",
+    "Grown Ups (film)"
+   ],
+   "ttft": 47.81,
+   "latency": 60.01,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.0,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "2hop__835710_7298",
+   "type": "2hop",
+   "question": "Along with the Closer performer, what notable pop artist started out his career on adult contemporary radio?",
+   "gold": "Michael Bublé",
+   "answer": "Michael Bublé is the notable pop artist who started his career on adult contemporary radio alongside Josh Groban [1][4].",
+   "citations": [
+    "Adult contemporary music",
+    "Adult contemporary music"
+   ],
+   "ttft": 38.89,
+   "latency": 39.09,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.21052631578947367,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "2hop__757497_78606",
+   "type": "2hop",
+   "question": "In Grown Ups, who plays the wife of the actor who produced The Chosen One?",
+   "gold": "Joyce Van Patten",
+   "answer": "Joyce Van Patten plays the wife of Rob Schneider's character in *Grown Ups* [6]. Rob Schneider is the actor who directed and starred in *The Chosen One* [2].",
+   "citations": [
+    "The Chosen One (2010 film)",
+    "Grown Ups (film)"
+   ],
+   "ttft": 40.71,
+   "latency": 40.9,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.23076923076923078,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "2hop__326404_120065",
+   "type": "2hop",
+   "question": "When did Charles Frederick II's birthplace fall?",
+   "gold": "1738",
+   "answer": "Merseburg fell to the Electorate of Saxony in 1738 [6]. This city was the birthplace of Charles Frederick II [2].",
+   "citations": [
+    "Charles Frederick II, Duke of Württemberg-Oels",
+    "Merseburg"
+   ],
+   "ttft": 65.32,
+   "latency": 79.0,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.11764705882352941,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "3hop1__160324_131905_41948",
+   "type": "3hop",
+   "question": "What body of water was dry land during the last ice age, besides the Irish Channel and the sea near the former Atlantic Hotel?",
+   "gold": "English Channel",
+   "answer": "Based on the provided reference materials, the relevant information is not available in the knowledge base.",
+   "citations": [],
+   "ttft": 35.96,
+   "latency": 36.07,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.0,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 0.0
+  },
+  {
+   "qid": "2hop__56851_343058",
+   "type": "2hop",
+   "question": "Who is the spouse of the actress who played the fairy god mother in Shrek 2?",
+   "gold": "Adrian Edmondson",
+   "answer": "The fairy godmother in *Shrek 2* was voiced by Jennifer Saunders [1][4]. However, the provided reference materials do not contain any information about the spouse of Jennifer Saunders.The actress who played the Fairy Godmother in Shrek 2 is Jennifer Saunders [1][4][5]. The provided reference materials do not record any information about Jennifer Saunders' spouse.",
+   "citations": [
+    "Shrek 2",
+    "Shrek 2",
+    "Shrek 2"
+   ],
+   "ttft": 101.66,
+   "latency": 107.85,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.0,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "3hop2__140194_49541_51068",
+   "type": "3hop",
+   "question": "Who is the actress who plays the role of the Queen of England in 1890, on the network that aired The Dinosaurs!?",
+   "gold": "Jenna - Louise Coleman",
+   "answer": "Jenna Coleman is the actress who played Queen Victoria [2], and The Dinosaurs!aired on PBS [1][5]. However, the reference materials do not confirm that her portrayal of Queen Victoria was broadcast on PBS.",
+   "citations": [
+    "The Dinosaurs!",
+    "Jenna Coleman",
+    "The Dinosaurs!"
+   ],
+   "ttft": 76.11,
+   "latency": 83.54,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.13333333333333333,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "4hop1__836115_49925_13759_736921",
+   "type": "4hop",
+   "question": "Where is the district that the person who wanted to reform and address Vincentas Sladkevičius' religion preached a sermon on Marian devotion before his death located?",
+   "gold": "Saxony-Anhalt",
+   "answer": "Based on the provided reference materials, the information about the district where that specific sermon was preached is not available.Based on the provided reference materials, the relevant information is not available.",
+   "citations": [
+    "Vincentas Sladkevičius",
+    "Vincentas Sladkevičius",
+    "Hamburg",
+    "Islamic Centre Hamburg",
+    "Vincentas Sladkevičius",
+    "Wittenberg (district)",
+    "Reformation",
+    "Mary, mother of Jesus"
+   ],
+   "ttft": 88.81,
+   "latency": 95.0,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.0,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "3hop1__346812_15840_36002",
+   "type": "3hop",
+   "question": "What were the Genesis's advantages over the platform that plays Drac's Night Out?",
+   "gold": "built on 16-bit architectures and offered improved graphics and sound",
+   "answer": "The Genesis's advantages were its 16-bit architecture, which offered improved graphics and sound over the 8-bit NES, the platform for *Drac's Night Out* [2][1][3][12].",
+   "citations": [
+    "Super Nintendo Entertainment System",
+    "Drac's Night Out",
+    "Super Nintendo Entertainment System",
+    "Super Nintendo Entertainment System"
+   ],
+   "ttft": 13.02,
+   "latency": 13.21,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.4,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "2hop__25788_25839",
+   "type": "2hop",
+   "question": "What is the maximum load drawn by the device that was designed to standardize connection of computer peripherals?",
+   "gold": "five unit loads",
+   "answer": "Based on the provided reference materials, the relevant information is not available in the knowledge base.",
+   "citations": [],
+   "ttft": 35.86,
+   "latency": 35.94,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.0,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 0.0
+  },
+  {
+   "qid": "3hop1__239036_15840_36002",
+   "type": "3hop",
+   "question": "What were the Genesis's advantages over the platform of Xexys?",
+   "gold": "built on 16-bit architectures and offered improved graphics and sound",
+   "answer": "Based on the provided reference materials, the relevant information is not available in the knowledge base.",
+   "citations": [],
+   "ttft": 1.11,
+   "latency": 1.19,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.08695652173913043,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 0.0
+  }
+ ],
+ "rows_search": [
+  {
+   "qid": "2hop__30905_213732",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.8503449055347546
+  },
+  {
+   "qid": "3hop2__103871_20335_9331",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.9325210919548239
+  },
+  {
+   "qid": "2hop__835710_7298",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.8772153153380493
+  },
+  {
+   "qid": "2hop__757497_78606",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "2hop__326404_120065",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.8772153153380493
+  },
+  {
+   "qid": "3hop1__160324_131905_41948",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.86034433104172
+  },
+  {
+   "qid": "2hop__56851_343058",
+   "recall@10": 0.5,
+   "full_evidence@10": 0.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.6131471927654584
+  },
+  {
+   "qid": "3hop2__140194_49541_51068",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.9060254355346823
+  },
+  {
+   "qid": "4hop1__836115_49925_13759_736921",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.8485833840018
+  },
+  {
+   "qid": "3hop1__346812_15840_36002",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.8710785440003369
+  },
+  {
+   "qid": "2hop__25788_25839",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "3hop1__239036_15840_36002",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.8385465274895063
+  }
+ ],
+ "summary": {
+  "n": 12,
+  "errors": 0,
+  "containment": 0.4167,
+  "f1": 0.0983,
+  "em": 0.0,
+  "citation_hit": 0.6667,
+  "reject_correct": null,
+  "retrieval_recall@10": 0.9583,
+  "retrieval_full_evidence@10": 0.9167,
+  "retrieval_mrr@10": 1.0,
+  "retrieval_ndcg@10": 0.8729,
+  "latency_p50": 60.01,
+  "latency_p95": 95.0,
+  "ttft_p50": 47.81,
+  "refusal_rate": 0.0
+ },
+ "meta": {
+  "source": "MuSiQue dev (answerable)",
+  "n_docs": 28,
+  "n_questions": 12,
+  "seed": 42,
+  "doc_budget": 30,
+  "question_budget": 30,
+  "skipped_for_budget": 6
+ },
+ "score_sha": "04c797a658684a3c"
+}

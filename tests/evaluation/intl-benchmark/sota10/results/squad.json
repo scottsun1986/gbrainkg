@@ -1,0 +1,794 @@
+{
+ "rows_qa": [
+  {
+   "qid": "572742bd5951b619008f8785",
+   "type": "extractive",
+   "question": "Residential construction practices, technologies, and resources must conform to what?",
+   "gold": "local building authority regulations and codes of practice",
+   "answer": "Residential construction practices, technologies, and resources must conform to local building authority regulations and codes of practice [1][4][5].",
+   "citations": [
+    "Construction (¶1)",
+    "Construction (¶1)",
+    "Construction (¶1)"
+   ],
+   "ttft": 28.57,
+   "latency": 28.76,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.6399999999999999,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "57273f27dd62a815002e9a0a",
+   "type": "extractive",
+   "question": "What are the three construction subsectors?",
+   "gold": "building construction, heavy and civil engineering construction, and specialty trade contractors",
+   "answer": "The three construction subsectors are building construction, heavy and civil engineering construction, and specialty trade contractors [1][2].",
+   "citations": [
+    "Construction (¶2)",
+    "Construction (¶2)"
+   ],
+   "ttft": 8.58,
+   "latency": 8.76,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.846153846153846,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "5727565ef1498d1400e8f674",
+   "type": "extractive",
+   "question": "What is the average construction salary in the Middle East?",
+   "gold": "£42,090",
+   "answer": "The average salary for a professional in the construction industry in the Middle East is £42,090 [1][2][3].",
+   "citations": [
+    "Construction (¶3)",
+    "Construction (¶3)",
+    "Construction (¶3)"
+   ],
+   "ttft": 12.2,
+   "latency": 12.39,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.15384615384615385,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "572744aff1498d1400e8f588",
+   "type": "extractive",
+   "question": "New techniques of building construction are being researched, made possible by advances in what?",
+   "gold": "3D printing technology",
+   "answer": "New building construction techniques are being made possible by advances in 3D printing technology [1][3][4]. Specifically, additive building construction using large 3D printers allows for flexible construction of small commercial buildings and private habitations in around 20 hours, with built-in facilities [1][3][4]. Working versions as of January 2013 could print 2 metres of material per hour, with next-generation printers capable of 3.5 metres per hour [3][4].",
+   "citations": [
+    "Construction (¶4)",
+    "Construction (¶4)",
+    "Construction (¶4)"
+   ],
+   "ttft": 31.92,
+   "latency": 32.13,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.14705882352941177,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "572753335951b619008f8853",
+   "type": "extractive",
+   "question": "In the most common construction procurement, who acts as the project coordinator?",
+   "gold": "the architect or engineer",
+   "answer": "The architect or engineer acts as the project coordinator in the most common method of construction procurement [1]. Their role includes designing the works, preparing specifications and drawings, administering the contract, tendering the works, and managing the project from inception to completion [1].",
+   "citations": [
+    "Construction (¶5)"
+   ],
+   "ttft": 27.78,
+   "latency": 27.98,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.1621621621621622,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "572745c6708984140094db9a",
+   "type": "extractive",
+   "question": "A formal design team may be assembled to do what?",
+   "gold": "plan the physical proceedings, and to integrate those proceedings with the other parts",
+   "answer": "A formal design team may be assembled to plan the physical proceedings and to integrate those proceedings with the other parts of a construction project [1].",
+   "citations": [
+    "Construction (¶6)"
+   ],
+   "ttft": 38.76,
+   "latency": 38.94,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.6875000000000001,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "57274f67708984140094dbf5",
+   "type": "extractive",
+   "question": "What can construction projects suffer from?",
+   "gold": "preventable financial problems",
+   "answer": "Construction projects can suffer from preventable financial problems, safety hazards, undesirable end results, and complex legal/contractual issues [1][2][3][4].\nSpecifically, financial problems include underbids, cash flow issues, and fraud [1]. Safety is a major concern, as construction is one of the most dangerous occupations, with common fatalities from falls, electrocution, and accidents [3]. Projects can also lead to undesirable outcomes like structural collapse, cost overruns, and litigation [2][11]. Furthermore, a complex net of contracts and legal obligations must be carefully managed;poor contracts can lead to confusion and collapse [4][14].",
+   "citations": [
+    "Construction (¶7)",
+    "Construction (¶12)",
+    "Construction (¶9)",
+    "Construction (¶21)",
+    "Construction (¶18)",
+    "Construction (¶21)"
+   ],
+   "ttft": 10.95,
+   "latency": 13.21,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.07228915662650602,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "57273a465951b619008f86ff",
+   "type": "extractive",
+   "question": "What is the process of constructing a building or infrastructure?",
+   "gold": "Construction",
+   "answer": "The process of constructing a building or infrastructure involves planning, design, financing, and execution until the project is ready for use [1]. It typically begins with a formal design team creating drawings and specifications [7], followed by procurement methods where an architect or engineer coordinates the work and manages contracts [5]. Pre-construction steps include verifying existing utilities [6], and the project must adhere to zoning and building codes [12]. Construction itself is the translation of these designs into reality [7] and is often divided into sectors like buildings, infrastructure, and industrial [3].",
+   "citations": [
+    "Construction (¶8)",
+    "Construction (¶17)",
+    "Construction (¶5)",
+    "Construction (¶10)",
+    "Construction (¶6)",
+    "Construction (¶15)"
+   ],
+   "ttft": 45.26,
+   "latency": 45.44,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.025641025641025647,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "572756fe708984140094dc71",
+   "type": "extractive",
+   "question": "What is one of the most dangerous occupations in the world?",
+   "gold": "Construction",
+   "answer": "Construction is one of the most dangerous occupations in the world [1][2][3]. It incurs more occupational fatalities than any other sector in both the United States and the European Union [1][2][3].",
+   "citations": [
+    "Construction (¶9)",
+    "Construction (¶9)",
+    "Construction (¶9)"
+   ],
+   "ttft": 8.3,
+   "latency": 8.48,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.07692307692307693,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "572754fff1498d1400e8f660",
+   "type": "extractive",
+   "question": "Who is required to verify and have existing utility lines marked?",
+   "gold": "contractors",
+   "answer": "Contractors are required to verify and have existing utility lines marked [3].",
+   "citations": [
+    "Construction (¶10)"
+   ],
+   "ttft": 61.23,
+   "latency": 61.41,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.16666666666666669,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "572755b7708984140094dc4d",
+   "type": "extractive",
+   "question": "What is the annual construction industry revenue in 2014?",
+   "gold": "$960 billion",
+   "answer": "The annual construction industry revenue in 2014 was around $960 billion [1][2][3]. Of this total, $680 billion was from the private sector, with the remainder being government revenue [1][2][3].",
+   "citations": [
+    "Construction (¶11)",
+    "Construction (¶11)",
+    "Construction (¶11)"
+   ],
+   "ttft": 6.64,
+   "latency": 6.83,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.15384615384615385,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "57274046dd62a815002e9a12",
+   "type": "extractive",
+   "question": "What is the process of adding structure to real property or construction of buildings?",
+   "gold": "Building construction",
+   "answer": "Building construction is the process of adding structure to real property or the construction of buildings [1][2][3]. This process typically involves planning, design, and financing, continuing until the project is built and ready for use [4]. In the modern industrialized world, it usually involves translating designs into reality, often with a formal design team including various engineers and consultants [5]. Several project structures, such as design-build, can assist the owner in integrating services throughout the process [6].",
+   "citations": [
+    "Construction (¶12)",
+    "Construction (¶12)",
+    "Construction (¶12)",
+    "Construction (¶8)",
+    "Construction (¶6)",
+    "Construction (¶14)"
+   ],
+   "ttft": 43.93,
+   "latency": 44.11,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.05882352941176471,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "5727526cdd62a815002e9b0e",
+   "type": "extractive",
+   "question": "A growing number of new forms of procurement involves what?",
+   "gold": "relationship contracting where the emphasis is on a co-operative relationship",
+   "answer": "A growing number of new forms of procurement involve relationship contracting, emphasizing a co-operative relationship between the principal, contractor, and other stakeholders [1][2][3]. These new forms include partnering, such as Public-Private Partnering (PPPs) or private finance initiatives (PFIs), and alliances such as \"pure\" or \"project\" alliances and \"impure\" or \"strategic\" alliances [1][2][3].",
+   "citations": [
+    "Construction (¶13)",
+    "Construction (¶13)",
+    "Construction (¶13)"
+   ],
+   "ttft": 7.86,
+   "latency": 8.04,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.14545454545454545,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "57274e975951b619008f87f9",
+   "type": "extractive",
+   "question": "What project structures assist the owner in integration?",
+   "gold": "design-build, partnering and construction management",
+   "answer": "The project structures that assist the owner in integration are design-build, partnering, and construction management [1][2][3]. These structures allow the owner to integrate the services of architects, interior designers, engineers, and constructors throughout the design and construction phases [1][2][3]. In a design-build contract, the contractor is given a performance specification and must undertake the project from design to construction [5]. Partnering includes new forms such as Public-Private Partnering (PPPs) and alliances, which emphasize cooperative relationships to ameliorate competitive and adversarial practices [14].",
+   "citations": [
+    "Construction (¶14)",
+    "Construction (¶14)",
+    "Construction (¶14)",
+    "Construction (¶16)",
+    "Construction (¶13)"
+   ],
+   "ttft": 54.05,
+   "latency": 54.26,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.13513513513513511,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "572750e8dd62a815002e9af0",
+   "type": "extractive",
+   "question": "What must a project adhere to?",
+   "gold": "zoning and building code requirements",
+   "answer": "A project must adhere to zoning and building code requirements [1]. Specifically, residential construction must conform to local building authority regulations and codes of practice [9].",
+   "citations": [
+    "Construction (¶15)",
+    "Construction (¶1)"
+   ],
+   "ttft": 8.16,
+   "latency": 8.34,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.3571428571428571,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "57274e0d708984140094dbe5",
+   "type": "extractive",
+   "question": "The modern trend in design is toward integration of what?",
+   "gold": "previously separated specialties",
+   "answer": "The modern trend in design is toward the integration of previously separated specialties [1][2][3]. This means that firms now often combine experts from various fields, such as architecture, interior design, engineering, and construction management, to offer comprehensive \"one-stop shopping\" for projects [1][2].",
+   "citations": [
+    "Construction (¶16)",
+    "Construction (¶16)",
+    "Construction (¶16)"
+   ],
+   "ttft": 10.33,
+   "latency": 10.51,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.17777777777777778,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "57273d8bf1498d1400e8f4fe",
+   "type": "extractive",
+   "question": "What are the three sectors of construction?",
+   "gold": "buildings, infrastructure and industrial",
+   "answer": "The three sectors of construction are buildings, infrastructure, and industrial [1][4].",
+   "citations": [
+    "Construction (¶17)",
+    "Construction (¶17)"
+   ],
+   "ttft": 56.39,
+   "latency": 56.57,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.6153846153846153,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "5727502f708984140094dc07",
+   "type": "extractive",
+   "question": "Who are likely participants in creating an overall plan for the financial management of the building construction project?",
+   "gold": "Mortgage bankers, accountants, and cost engineers",
+   "answer": "Mortgage bankers, accountants, and cost engineers are the likely participants in creating an overall plan for the financial management of a building construction project [1][2][3].",
+   "citations": [
+    "Construction (¶18)",
+    "Construction (¶18)",
+    "Construction (¶18)"
+   ],
+   "ttft": 8.07,
+   "latency": 8.25,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.4615384615384615,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "57273e50dd62a815002e9a02",
+   "type": "extractive",
+   "question": "What is Engineering News-Record?",
+   "gold": "a trade magazine for the construction industry",
+   "answer": "Engineering News-Record (ENR) is a trade magazine for the construction industry that compiles and reports on data about the size of design and construction companies. [1]",
+   "citations": [
+    "Construction (¶19)"
+   ],
+   "ttft": 7.93,
+   "latency": 8.11,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.37037037037037035,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "57275411dd62a815002e9b30",
+   "type": "extractive",
+   "question": "Who produces a list of requirements for a project, giving an overall view of the project's goals?",
+   "gold": "The owner",
+   "answer": "The owner produces a list of requirements for a project [1][2][3].",
+   "citations": [
+    "Construction (¶20)",
+    "Construction (¶20)",
+    "Construction (¶20)"
+   ],
+   "ttft": 28.26,
+   "latency": 28.45,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.25,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "572751b4708984140094dc1b",
+   "type": "extractive",
+   "question": "What is a complex net of contracts and other legal obligations?",
+   "gold": "A construction project",
+   "answer": "A construction project is a complex net of contracts and other legal obligations that all parties must carefully consider [1][2][3]. Contracts are exchanges of obligations between two or more parties, and their design must ensure each side can perform the obligations, as delays in construction are costly and can lead to confusion or collapse [1][2][3]. Clear contracts with well-defined expectations promote smooth project flow, while poorly drafted ones risk adverse outcomes [1][2][3].",
+   "citations": [
+    "Construction (¶21)",
+    "Construction (¶21)",
+    "Construction (¶21)"
+   ],
+   "ttft": 62.51,
+   "latency": 62.7,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.05882352941176471,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "57273cca708984140094db33",
+   "type": "extractive",
+   "question": "Who normally manages a construction job?",
+   "gold": "An architect",
+   "answer": "An architect normally manages a construction job [5]. Supervision is often handled by a construction manager, design engineer, construction engineer, or project manager [5].",
+   "citations": [
+    "Construction (¶22)"
+   ],
+   "ttft": 59.39,
+   "latency": 59.58,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.1,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "5726d7faf1498d1400e8ecdb",
+   "type": "extractive",
+   "question": "What led to the production of tea paraphernalia such as china and caddies during the Georgian period?",
+   "gold": "increase in tea drinking",
+   "answer": "The increase in tea drinking led to the production of tea paraphernalia such as china and caddies during the Georgian period [1][2][3]. This reflects a broader trend in British culture where design responded to wider social and leisure practices [1][2][3].",
+   "citations": [
+    "Victoria_and_Albert_Museum (¶23)",
+    "Victoria_and_Albert_Museum (¶23)",
+    "Victoria_and_Albert_Museum (¶23)"
+   ],
+   "ttft": 44.94,
+   "latency": 45.13,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.21052631578947367,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "572691d7708984140094ca6d",
+   "type": "extractive",
+   "question": "What did the V&A present in July 1973 as part of its youth outreach programme?",
+   "gold": "a rock concert",
+   "answer": "In July 1973, as part of its youth outreach programme, the V&A presented a combined concert/lecture by the British progressive folk-rock band Gryphon [1][2][3].",
+   "citations": [
+    "Victoria_and_Albert_Museum (¶24)",
+    "Victoria_and_Albert_Museum (¶24)",
+    "Victoria_and_Albert_Museum (¶24)"
+   ],
+   "ttft": 6.25,
+   "latency": 6.43,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.0,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "5726710b708984140094c61d",
+   "type": "extractive",
+   "question": "where is the Victoria and Albert Museum located?",
+   "gold": "The V&A is located in the Brompton district of the Royal Borough of Kensington and Chelsea",
+   "answer": "The Victoria and Albert Museum is located in the Brompton district of the Royal Borough of Kensington and Chelsea, London [1][3][4][6][8][9].",
+   "citations": [
+    "Victoria_and_Albert_Museum (¶25)",
+    "Victoria_and_Albert_Museum (¶25)",
+    "Victoria_and_Albert_Museum (¶25)",
+    "Victoria_and_Albert_Museum (¶27)",
+    "Victoria_and_Albert_Museum (¶24)",
+    "Victoria_and_Albert_Museum (¶23)"
+   ],
+   "ttft": 66.26,
+   "latency": 66.44,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.8000000000000002,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "5726cfa3708984140094d209",
+   "type": "extractive",
+   "question": "In which year did the V&A's Word and Image Department began a large scale digitization project?",
+   "gold": "2007",
+   "answer": "The V&A's Word and Image Department began a large-scale digitization project in 2007 [1][2][3].",
+   "citations": [
+    "Victoria_and_Albert_Museum (¶26)",
+    "Victoria_and_Albert_Museum (¶26)",
+    "Victoria_and_Albert_Museum (¶26)"
+   ],
+   "ttft": 43.75,
+   "latency": 43.94,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.16666666666666669,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "5726fb18dd62a815002e96ce",
+   "type": "extractive",
+   "question": "The V&A has the world's most comprehensive collection of sculptures from which period?",
+   "gold": "post-classical European",
+   "answer": "Based on the provided reference materials, the relevant information is not available.",
+   "citations": [
+    "Victoria_and_Albert_Museum (¶27)",
+    "Victoria_and_Albert_Museum (¶27)",
+    "Victoria_and_Albert_Museum (¶27)",
+    "Victoria_and_Albert_Museum (¶25)",
+    "Victoria_and_Albert_Museum (¶26)",
+    "Construction (¶6)",
+    "Construction (¶11)",
+    "Construction (¶9)"
+   ],
+   "ttft": 18.8,
+   "latency": 31.01,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.0,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "5726e680dd62a815002e946e",
+   "type": "extractive",
+   "question": "From which period did the objects in the Soulages collection come from?",
+   "gold": "Italian and French Renaissance",
+   "answer": "The objects in the Soulages collection are from the Italian and French Renaissance period [1][2][3].",
+   "citations": [
+    "Victoria_and_Albert_Museum (¶28)",
+    "Victoria_and_Albert_Museum (¶28)",
+    "Victoria_and_Albert_Museum (¶28)"
+   ],
+   "ttft": 8.55,
+   "latency": 8.73,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.625,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  }
+ ],
+ "rows_search": [
+  {
+   "qid": "572742bd5951b619008f8785",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "57273f27dd62a815002e9a0a",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "5727565ef1498d1400e8f674",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "572744aff1498d1400e8f588",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "572753335951b619008f8853",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "572745c6708984140094db9a",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "57274f67708984140094dbf5",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "57273a465951b619008f86ff",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "572756fe708984140094dc71",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "572754fff1498d1400e8f660",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "572755b7708984140094dc4d",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "57274046dd62a815002e9a12",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "5727526cdd62a815002e9b0e",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "57274e975951b619008f87f9",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "572750e8dd62a815002e9af0",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "57274e0d708984140094dbe5",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "57273d8bf1498d1400e8f4fe",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "5727502f708984140094dc07",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "57273e50dd62a815002e9a02",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "57275411dd62a815002e9b30",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "572751b4708984140094dc1b",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "57273cca708984140094db33",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "5726d7faf1498d1400e8ecdb",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "572691d7708984140094ca6d",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "5726710b708984140094c61d",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "5726cfa3708984140094d209",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "5726fb18dd62a815002e96ce",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "5726e680dd62a815002e946e",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  }
+ ],
+ "summary": {
+  "n": 28,
+  "errors": 0,
+  "containment": 0.9286,
+  "f1": 0.2737,
+  "em": 0.0,
+  "citation_hit": 1.0,
+  "reject_correct": null,
+  "retrieval_recall@10": 1.0,
+  "retrieval_full_evidence@10": 1.0,
+  "retrieval_mrr@10": 1.0,
+  "retrieval_ndcg@10": 1.0,
+  "latency_p50": 28.76,
+  "latency_p95": 62.7,
+  "ttft_p50": 28.26,
+  "refusal_rate": 0.0
+ },
+ "meta": {
+  "source": "SQuAD v1.1 dev (Wikipedia paragraphs)",
+  "n_docs": 28,
+  "n_questions": 28,
+  "seed": 42,
+  "doc_budget": 30,
+  "question_budget": 30
+ },
+ "score_sha": "7d3473997323c9c6"
+}

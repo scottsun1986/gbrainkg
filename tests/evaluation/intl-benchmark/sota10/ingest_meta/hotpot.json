@@ -1,0 +1,17 @@
+{
+ "bench": "hotpot",
+ "kbs": {
+  "SOTA10-HOTPOT": {
+   "kb_id": "b4714d85-a81d-4a9a-b155-a244162e5667",
+   "created": true,
+   "expected": 28,
+   "all_published": true,
+   "final_status": {
+    "published": 28
+   },
+   "post_failures": [],
+   "elapsed_secs": 59.2,
+   "poll_secs": 57
+  }
+ }
+}

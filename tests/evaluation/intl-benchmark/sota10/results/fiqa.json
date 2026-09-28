@@ -1,0 +1,127 @@
+{
+ "rows_search": [
+  {
+   "qid": "2388",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "7467",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "3934",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "6901",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "3859",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "2088",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 0.5,
+   "ndcg@10": 0.6509209298071326
+  },
+  {
+   "qid": "3179",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "2923",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.9270192549176082
+  },
+  {
+   "qid": "8789",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.8385465274895063
+  },
+  {
+   "qid": "859",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.8772153153380493
+  },
+  {
+   "qid": "7344",
+   "recall@10": 0.5,
+   "full_evidence@10": 0.0,
+   "mrr@10": 0.25,
+   "ndcg@10": 0.2640681225725909
+  },
+  {
+   "qid": "6468",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.8315546295836225
+  },
+  {
+   "qid": "4865",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "7326",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 0.5,
+   "ndcg@10": 0.6309297535714575
+  },
+  {
+   "qid": "6807",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  }
+ ],
+ "summary": {
+  "n": 15,
+  "errors": 0,
+  "retrieval_recall@10": 0.9667,
+  "retrieval_full_evidence@10": 0.9333,
+  "retrieval_mrr@10": 0.8833,
+  "retrieval_ndcg@10": 0.868,
+  "search_wall_secs": 11.4
+ },
+ "meta": {
+  "source": "BEIR fiqa (test qrels, gold-guaranteed subset)",
+  "n_docs": 30,
+  "n_questions": 15,
+  "seed": 42,
+  "doc_budget": 30,
+  "question_budget": 30
+ },
+ "score_sha": "41eed3bf21b8cb0f"
+}

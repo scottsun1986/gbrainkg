@@ -1,0 +1,532 @@
+{
+ "bench": "squad",
+ "kbs": {
+  "SOTA10-SQUAD": [
+   {
+    "id": "d0000",
+    "title": "Construction (¶1)",
+    "text": "Residential construction practices, technologies, and resources must conform to local building authority regulations and codes of practice. Materials readily available in the area generally dictate the construction materials used (e.g. brick versus stone, versus timber). Cost of construction on a per square meter (or per square foot) basis for houses can vary dramatically based on site conditions, local regulations, economies of scale (custom designed homes are often more expensive to build) and the availability of skilled tradespeople. As residential construction (as well as all other types of construction) can generate a lot of waste, careful planning again is needed here.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0001",
+    "title": "Construction (¶2)",
+    "text": "The Standard Industrial Classification and the newer North American Industry Classification System have a classification system for companies that perform or otherwise engage in construction. To recognize the differences of companies in this sector, it is divided into three subsectors: building construction, heavy and civil engineering construction, and specialty trade contractors. There are also categories for construction service firms (e.g., engineering, architecture) and construction managers (firms engaged in managing construction projects without assuming direct financial responsibility for completion of the construction project).",
+    "origin": "gold"
+   },
+   {
+    "id": "d0002",
+    "title": "Construction (¶3)",
+    "text": "In 2010 a salary survey revealed the differences in remuneration between different roles, sectors and locations in the construction and built environment industry. The results showed that areas of particularly strong growth in the construction industry, such as the Middle East, yield higher average salaries than in the UK for example. The average earning for a professional in the construction industry in the Middle East, across all sectors, job types and levels of experience, is £42,090, compared to £26,719 in the UK. This trend is not necessarily due to the fact that more affluent roles are available, however, as architects with 14 or more years experience working in the Middle East earn on average £43,389 per annum, compared to £40,000 in the UK. Some construction workers in the US/Canada have made more than $100,000 annually, depending on their trade.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0003",
+    "title": "Construction (¶4)",
+    "text": "New techniques of building construction are being researched, made possible by advances in 3D printing technology. In a form of additive building construction, similar to the additive manufacturing techniques for manufactured parts, building printing is making it possible to flexibly construct small commercial buildings and private habitations in around 20 hours, with built-in plumbing and electrical facilities, in one continuous build, using large 3D printers. Working versions of 3D-printing building technology are already printing 2 metres (6 ft 7 in) of building material per hour as of January 2013[update], with the next-generation printers capable of 3.5 metres (11 ft) per hour, sufficient to complete a building in a week. Dutch architect Janjaap Ruijssenaars's performative architecture 3D-printed building is scheduled to be built in 2014.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0004",
+    "title": "Construction (¶5)",
+    "text": "This is the most common method of construction procurement and is well established and recognized. In this arrangement, the architect or engineer acts as the project coordinator. His or her role is to design the works, prepare the specifications and produce construction drawings, administer the contract, tender the works, and manage the works from inception to completion. There are direct contractual links between the architect's client and the main contractor. Any subcontractor has a direct contractual relationship with the main contractor. The procedure continues until the building is ready to occupy.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0005",
+    "title": "Construction (¶6)",
+    "text": "In the modern industrialized world, construction usually involves the translation of designs into reality. A formal design team may be assembled to plan the physical proceedings, and to integrate those proceedings with the other parts. The design usually consists of drawings and specifications, usually prepared by a design team including Architect, civil engineers, mechanical engineers, electrical engineers, structural engineers, fire protection engineers, planning consultants, architectural consultants, and archaeological consultants. The design team is most commonly employed by (i.e. in contract with) the property owner. Under this system, once the design is completed by the design team, a number of construction companies or construction management companies may then be asked to make a bid for the work, either based directly on the design, or on the basis of drawings and a bill of quantities provided by a quantity surveyor. Following evaluation of bids, the owner typically awards a contract to the most cost efficient bidder.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0006",
+    "title": "Construction (¶7)",
+    "text": "Construction projects can suffer from preventable financial problems. Underbids happen when builders ask for too little money to complete the project. Cash flow problems exist when the present amount of funding cannot cover the current costs for labour and materials, and because they are a matter of having sufficient funds at a specific time, can arise even when the overall total is enough. Fraud is a problem in many fields, but is notoriously prevalent in the construction field. Financial planning for the project is intended to ensure that a solid plan with adequate safeguards and contingency plans are in place before the project is started and is required to ensure that the plan is properly executed over the life of the project.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0007",
+    "title": "Construction (¶8)",
+    "text": "Construction is the process of constructing a building or infrastructure. Construction differs from manufacturing in that manufacturing typically involves mass production of similar items without a designated purchaser, while construction typically takes place on location for a known client. Construction as an industry comprises six to nine percent of the gross domestic product of developed countries. Construction starts with planning,[citation needed] design, and financing and continues until the project is built and ready for use.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0008",
+    "title": "Construction (¶9)",
+    "text": "Construction is one of the most dangerous occupations in the world, incurring more occupational fatalities than any other sector in both the United States and in the European Union. In 2009, the fatal occupational injury rate among construction workers in the United States was nearly three times that for all workers. Falls are one of the most common causes of fatal and non-fatal injuries among construction workers. Proper safety equipment such as harnesses and guardrails and procedures such as securing ladders and inspecting scaffolding can curtail the risk of occupational injuries in the construction industry. Other major causes of fatalities in the construction industry include electrocution, transportation accidents, and trench cave-ins.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0009",
+    "title": "Construction (¶10)",
+    "text": "Before the foundation can be dug, contractors are typically required to verify and have existing utility lines marked, either by the utilities themselves or through a company specializing in such services. This lessens the likelihood of damage to the existing electrical, water, sewage, phone, and cable facilities, which could cause outages and potentially hazardous situations. During the construction of a building, the municipal building inspector inspects the building periodically to ensure that the construction adheres to the approved plans and the local building code. Once construction is complete and a final inspection has been passed, an occupancy permit may be issued.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0010",
+    "title": "Construction (¶11)",
+    "text": "In the United States, the industry in 2014 has around $960 billion in annual revenue according to statistics tracked by the Census Bureau, of which $680 billion is private (split evenly between residential and nonresidential) and the remainder is government. As of 2005, there were about 667,000 firms employing 1 million contractors (200,000 general contractors, 38,000 heavy, and 432,000 specialty); the average contractor employed fewer than 10 employees. As a whole, the industry employed an estimated 5.8 million as of April 2013, with a 13.2% unemployment rate. In the United States, approximately 828,000 women were employed in the construction industry as of 2011.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0011",
+    "title": "Construction (¶12)",
+    "text": "Building construction is the process of adding structure to real property or construction of buildings. The majority of building construction jobs are small renovations, such as addition of a room, or renovation of a bathroom. Often, the owner of the property acts as laborer, paymaster, and design team for the entire project. Although building construction projects typically include various common elements, such as design, financial, estimating and legal considerations, many projects of varying sizes reach undesirable end results, such as structural collapse, cost overruns, and/or litigation. For this reason, those with experience in the field make detailed plans and maintain careful oversight during the project to ensure a positive outcome.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0012",
+    "title": "Construction (¶13)",
+    "text": "There is also a growing number of new forms of procurement that involve relationship contracting where the emphasis is on a co-operative relationship between the principal and contractor and other stakeholders within a construction project. New forms include partnering such as Public-Private Partnering (PPPs) aka private finance initiatives (PFIs) and alliances such as \"pure\" or \"project\" alliances and \"impure\" or \"strategic\" alliances. The focus on co-operation is to ameliorate the many problems that arise from the often highly competitive and adversarial practices within the construction industry.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0013",
+    "title": "Construction (¶14)",
+    "text": "Several project structures can assist the owner in this integration, including design-build, partnering and construction management. In general, each of these project structures allows the owner to integrate the services of architects, interior designers, engineers and constructors throughout design and construction. In response, many companies are growing beyond traditional offerings of design or construction services alone and are placing more emphasis on establishing relationships with other necessary participants through the design-build process.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0014",
+    "title": "Construction (¶15)",
+    "text": "The project must adhere to zoning and building code requirements. Constructing a project that fails to adhere to codes does not benefit the owner. Some legal requirements come from malum in se considerations, or the desire to prevent things that are indisputably bad – bridge collapses or explosions. Other legal requirements come from malum prohibitum considerations, or things that are a matter of custom or expectation, such as isolating businesses to a business district and residences to a residential district. An attorney may seek changes or exemptions in the law that governs the land where the building will be built, either by arguing that a rule is inapplicable (the bridge design will not cause a collapse), or that the custom is no longer needed (acceptance of live-work spaces has grown in the community).",
+    "origin": "gold"
+   },
+   {
+    "id": "d0015",
+    "title": "Construction (¶16)",
+    "text": "The modern trend in design is toward integration of previously separated specialties, especially among large firms. In the past, architects, interior designers, engineers, developers, construction managers, and general contractors were more likely to be entirely separate companies, even in the larger firms. Presently, a firm that is nominally an \"architecture\" or \"construction management\" firm may have experts from all related fields as employees, or to have an associated company that provides each necessary skill. Thus, each such firm may offer itself as \"one-stop shopping\" for a construction project, from beginning to end. This is designated as a \"design build\" contract where the contractor is given a performance specification and must undertake the project from design to construction, while adhering to the performance specifications.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0016",
+    "title": "Construction (¶17)",
+    "text": "In general, there are three sectors of construction: buildings, infrastructure and industrial. Building construction is usually further divided into residential and non-residential (commercial/institutional). Infrastructure is often called heavy/highway, heavy civil or heavy engineering. It includes large public works, dams, bridges, highways, water/wastewater and utility distribution. Industrial includes refineries, process chemical, power generation, mills and manufacturing plants. There are other ways to break the industry into sectors or markets.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0017",
+    "title": "Construction (¶18)",
+    "text": "Mortgage bankers, accountants, and cost engineers are likely participants in creating an overall plan for the financial management of the building construction project. The presence of the mortgage banker is highly likely, even in relatively small projects since the owner's equity in the property is the most obvious source of funding for a building project. Accountants act to study the expected monetary flow over the life of the project and to monitor the payouts throughout the process. Cost engineers and estimators apply expertise to relate the work and materials involved to a proper valuation. Cost overruns with government projects have occurred when the contractor identified change orders or project changes that increased costs, which are not subject to competition from other firms as they have already been eliminated from consideration after the initial bid.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0018",
+    "title": "Construction (¶19)",
+    "text": "Engineering News-Record (ENR) is a trade magazine for the construction industry. Each year, ENR compiles and reports on data about the size of design and construction companies. They publish a list of the largest companies in the United States (Top-40) and also a list the largest global firms (Top-250, by amount of work they are doing outside their home country). In 2014, ENR compiled the data in nine market segments. It was divided as transportation, petroleum, buildings, power, industrial, water, manufacturing, sewer/waste, telecom, hazardous waste plus a tenth category for other projects. In their reporting on the Top 400, they used data on transportation, sewer, hazardous waste and water to rank firms as heavy contractors.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0019",
+    "title": "Construction (¶20)",
+    "text": "The owner produces a list of requirements for a project, giving an overall view of the project's goals. Several D&B contractors present different ideas about how to accomplish these goals. The owner selects the ideas he or she likes best and hires the appropriate contractor. Often, it is not just one contractor, but a consortium of several contractors working together. Once these have been hired, they begin building the first phase of the project. As they build phase 1, they design phase 2. This is in contrast to a design-bid-build contract, where the project is completely designed by the owner, then bid on, then completed.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0020",
+    "title": "Construction (¶21)",
+    "text": "A construction project is a complex net of contracts and other legal obligations, each of which all parties must carefully consider. A contract is the exchange of a set of obligations between two or more parties, but it is not so simple a matter as trying to get the other side to agree to as much as possible in exchange for as little as possible. The time element in construction means that a delay costs money, and in cases of bottlenecks, the delay can be extremely expensive. Thus, the contracts must be designed to ensure that each side is capable of performing the obligations set out. Contracts that set out clear expectations and clear paths to accomplishing those expectations are far more likely to result in the project flowing smoothly, whereas poorly drafted contracts lead to confusion and collapse.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0021",
+    "title": "Construction (¶22)",
+    "text": "Large-scale construction requires collaboration across multiple disciplines. An architect normally manages the job, and a construction manager, design engineer, construction engineer or project manager supervises it. For the successful execution of a project, effective planning is essential. Those involved with the design and execution of the infrastructure in question must consider zoning requirements, the environmental impact of the job, the successful scheduling, budgeting, construction-site safety, availability and transportation of building materials, logistics, inconvenience to the public caused by construction delays and bidding, etc. The largest construction projects are referred to as megaprojects.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0022",
+    "title": "Victoria_and_Albert_Museum (¶23)",
+    "text": "The galleries also link design to wider trends in British culture. For instance, design in the Tudor period was influenced by the spread of printed books and the work of European artists and craftsmen employed in Britain. In the Stuart period, increasing trade, especially with Asia, enabled wider access to luxuries like carpets, lacquered furniture, silks and porcelain. In the Georgian age there was increasing emphasis on entertainment and leisure. For example, the increase in tea drinking led to the production of tea paraphernalia such as china and caddies. European styles seen on the Grand Tour also influenced taste. As the Industrial Revolution took hold, the growth of mass production produced entrepreneurs such as Josiah Wedgwood, Matthew Boulton and Eleanor Coade. In the Victorian era new technology and machinery had a significant effect on manufacturing, and for the first time since the reformation, the Anglican and Roman Catholic Churches had a major effect on art and design such as the Gothic Revival. There is a large display on the Great Exhibition which, among other things, led to the founding of the V&A. In the later 19th century, the increasing backlash against industrialization, led by John Ruskin, contributed to the Arts and Crafts movement.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0023",
+    "title": "Victoria_and_Albert_Museum (¶24)",
+    "text": "In July 1973, as part of its outreach programme to young people, the V&A became the first museum in Britain to present a rock concert. The V&A presented a combined concert/lecture by British progressive folk-rock band Gryphon, who explored the lineage of mediaeval music and instrumentation and related how those contributed to contemporary music 500 years later. This innovative approach to bringing young people to museums was a hallmark of the directorship of Roy Strong and was subsequently emulated by some other British museums.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0024",
+    "title": "Victoria_and_Albert_Museum (¶25)",
+    "text": "The Victoria and Albert Museum (often abbreviated as the V&A), London, is the world's largest museum of decorative arts and design, housing a permanent collection of over 4.5 million objects. It was founded in 1852 and named after Queen Victoria and Prince Albert. The V&A is located in the Brompton district of the Royal Borough of Kensington and Chelsea, in an area that has become known as \"Albertopolis\" because of its association with Prince Albert, the Albert Memorial and the major cultural institutions with which he was associated. These include the Natural History Museum, the Science Museum and the Royal Albert Hall. The museum is a non-departmental public body sponsored by the Department for Culture, Media and Sport. Like other national British museums, entrance to the museum has been free since 2001.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0025",
+    "title": "Victoria_and_Albert_Museum (¶26)",
+    "text": "The Victoria and Albert Museum’s Word and Image Department was under the same pressure being felt in archives around the world, to digitize their collection. A large scale digitization project began in 2007 in that department. That project was entitled the Factory Project to reference Andy Warhol and to create a factory to completely digitize the collection. The first step of the Factory Project was to take photographs utilizing digital cameras. The Word and Image Department had a collection of old photos but they were in black and white and in variant conditions, so new photos were shot. Those new photographs will be accessible to researchers to the Victoria and Albert Museum web-site. 15,000 images were taken during the first year of the Factory Project, including drawings, watercolors, computer-generated art, photographs, posters, and woodcuts. The second step of the Factory Project is to catalog everything. The third step of the Factory Project is to audit the collection. All of those items which were photographed and cataloged, must be audited to make sure everything listed as being in the collection was physically found during the creation of the Factory Project. The fourth goal of the Factory Project is conservation, which means performing some basic preventable procedures to those items in the department. There is a \"Search the Collections\" feature on the Victoria and Albert web-site. The main impetus behind the large-scale digitization project called the Factory Project was to list more items in the collections in those computer databases.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0026",
+    "title": "Victoria_and_Albert_Museum (¶27)",
+    "text": "The sculpture collection at the V&A is the most comprehensive holding of post-classical European sculpture in the world. There are approximately 22,000 objects in the collection that cover the period from about 400 AD to 1914. This covers among other periods Byzantine and Anglo Saxon ivory sculptures, British, French and Spanish medieval statues and carvings, the Renaissance, Baroque, Neo-Classical, Victorian and Art Nouveau periods. All uses of sculpture are represented, from tomb and memorial, to portrait, allegorical, religious, mythical, statues for gardens including fountains, as well as architectural decorations. Materials used include, marble, alabaster, stone, terracotta, wood (history of wood carving), ivory, gesso, plaster, bronze, lead and ceramics.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0027",
+    "title": "Victoria_and_Albert_Museum (¶28)",
+    "text": "The Soulages collection of Italian and French Renaissance objects was acquired between 1859 and 1865, and includes several cassone. The John Jones Collection of French 18th-century art and furnishings was left to the museum in 1882, then valued at £250,000. One of the most important pieces in this collection is a marquetry commode by the ébéniste Jean Henri Riesener dated c1780. Other signed pieces of furniture in the collection include a bureau by Jean-François Oeben, a pair of pedestals with inlaid brass work by André Charles Boulle, a commode by Bernard Vanrisamburgh and a work-table by Martin Carlin. Other 18th-century ébénistes represented in the Museum collection include Adam Weisweiler, David Roentgen, Gilles Joubert & Pierre Langlois. In 1901, Sir George Donaldson donated several pieces of art Nouveau furniture to the museum, which he had acquired the previous year at the Paris Exposition Universelle. This was criticized at the time, with the result that the museum ceased to collect contemporary items and did not do so again until the 1960s. In 1986 the Lady Abingdon collection of French Empire furniture was bequeathed by Mrs T. R. P. Hole.",
+    "origin": "gold"
+   }
+  ]
+ },
+ "questions": [
+  {
+   "qid": "572742bd5951b619008f8785",
+   "question": "Residential construction practices, technologies, and resources must conform to what?",
+   "gold_answer": "local building authority regulations and codes of practice",
+   "gold_variants": [
+    "local building authority regulations and codes of practice"
+   ],
+   "gold_doc_ids": [
+    "d0000"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "57273f27dd62a815002e9a0a",
+   "question": "What are the three construction subsectors?",
+   "gold_answer": "building construction, heavy and civil engineering construction, and specialty trade contractors",
+   "gold_variants": [
+    "building construction, heavy and civil engineering construction, and specialty trade contractors"
+   ],
+   "gold_doc_ids": [
+    "d0001"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "5727565ef1498d1400e8f674",
+   "question": "What is the average construction salary in the Middle East?",
+   "gold_answer": "£42,090",
+   "gold_variants": [
+    "£42,090"
+   ],
+   "gold_doc_ids": [
+    "d0002"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "572744aff1498d1400e8f588",
+   "question": "New techniques of building construction are being researched, made possible by advances in what?",
+   "gold_answer": "3D printing technology",
+   "gold_variants": [
+    "3D printing technology",
+    "advances in 3D printing technology"
+   ],
+   "gold_doc_ids": [
+    "d0003"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "572753335951b619008f8853",
+   "question": "In the most common construction procurement, who acts as the project coordinator?",
+   "gold_answer": "the architect or engineer",
+   "gold_variants": [
+    "the architect or engineer"
+   ],
+   "gold_doc_ids": [
+    "d0004"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "572745c6708984140094db9a",
+   "question": "A formal design team may be assembled to do what?",
+   "gold_answer": "plan the physical proceedings, and to integrate those proceedings with the other parts",
+   "gold_variants": [
+    "plan the physical proceedings, and to integrate those proceedings with the other parts"
+   ],
+   "gold_doc_ids": [
+    "d0005"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "57274f67708984140094dbf5",
+   "question": "What can construction projects suffer from?",
+   "gold_answer": "preventable financial problems",
+   "gold_variants": [
+    "preventable financial problems"
+   ],
+   "gold_doc_ids": [
+    "d0006"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "57273a465951b619008f86ff",
+   "question": "What is the process of constructing a building or infrastructure?",
+   "gold_answer": "Construction",
+   "gold_variants": [
+    "Construction"
+   ],
+   "gold_doc_ids": [
+    "d0007"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "572756fe708984140094dc71",
+   "question": "What is one of the most dangerous occupations in the world?",
+   "gold_answer": "Construction",
+   "gold_variants": [
+    "Construction"
+   ],
+   "gold_doc_ids": [
+    "d0008"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "572754fff1498d1400e8f660",
+   "question": "Who is required to verify and have existing utility lines marked?",
+   "gold_answer": "contractors",
+   "gold_variants": [
+    "contractors"
+   ],
+   "gold_doc_ids": [
+    "d0009"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "572755b7708984140094dc4d",
+   "question": "What is the annual construction industry revenue in 2014?",
+   "gold_answer": "$960 billion",
+   "gold_variants": [
+    "$960 billion"
+   ],
+   "gold_doc_ids": [
+    "d0010"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "57274046dd62a815002e9a12",
+   "question": "What is the process of adding structure to real property or construction of buildings?",
+   "gold_answer": "Building construction",
+   "gold_variants": [
+    "Building construction"
+   ],
+   "gold_doc_ids": [
+    "d0011"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "5727526cdd62a815002e9b0e",
+   "question": "A growing number of new forms of procurement involves what?",
+   "gold_answer": "relationship contracting where the emphasis is on a co-operative relationship",
+   "gold_variants": [
+    "relationship contracting",
+    "relationship contracting where the emphasis is on a co-operative relationship"
+   ],
+   "gold_doc_ids": [
+    "d0012"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "57274e975951b619008f87f9",
+   "question": "What project structures assist the owner in integration?",
+   "gold_answer": "design-build, partnering and construction management",
+   "gold_variants": [
+    "design-build, partnering and construction management"
+   ],
+   "gold_doc_ids": [
+    "d0013"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "572750e8dd62a815002e9af0",
+   "question": "What must a project adhere to?",
+   "gold_answer": "zoning and building code requirements",
+   "gold_variants": [
+    "zoning and building code requirements"
+   ],
+   "gold_doc_ids": [
+    "d0014"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "57274e0d708984140094dbe5",
+   "question": "The modern trend in design is toward integration of what?",
+   "gold_answer": "previously separated specialties",
+   "gold_variants": [
+    "previously separated specialties",
+    "previously separated specialties, especially among large firms"
+   ],
+   "gold_doc_ids": [
+    "d0015"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "57273d8bf1498d1400e8f4fe",
+   "question": "What are the three sectors of construction?",
+   "gold_answer": "buildings, infrastructure and industrial",
+   "gold_variants": [
+    "buildings, infrastructure and industrial"
+   ],
+   "gold_doc_ids": [
+    "d0016"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "5727502f708984140094dc07",
+   "question": "Who are likely participants in creating an overall plan for the financial management of the building construction project?",
+   "gold_answer": "Mortgage bankers, accountants, and cost engineers",
+   "gold_variants": [
+    "Mortgage bankers, accountants, and cost engineers"
+   ],
+   "gold_doc_ids": [
+    "d0017"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "57273e50dd62a815002e9a02",
+   "question": "What is Engineering News-Record?",
+   "gold_answer": "a trade magazine for the construction industry",
+   "gold_variants": [
+    "a trade magazine for the construction industry",
+    "trade magazine for the construction industry"
+   ],
+   "gold_doc_ids": [
+    "d0018"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "57275411dd62a815002e9b30",
+   "question": "Who produces a list of requirements for a project, giving an overall view of the project's goals?",
+   "gold_answer": "The owner",
+   "gold_variants": [
+    "The owner"
+   ],
+   "gold_doc_ids": [
+    "d0019"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "572751b4708984140094dc1b",
+   "question": "What is a complex net of contracts and other legal obligations?",
+   "gold_answer": "A construction project",
+   "gold_variants": [
+    "A construction project"
+   ],
+   "gold_doc_ids": [
+    "d0020"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "57273cca708984140094db33",
+   "question": "Who normally manages a construction job?",
+   "gold_answer": "An architect",
+   "gold_variants": [
+    "An architect",
+    "architect"
+   ],
+   "gold_doc_ids": [
+    "d0021"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "5726d7faf1498d1400e8ecdb",
+   "question": "What led to the production of tea paraphernalia such as china and caddies during the Georgian period?",
+   "gold_answer": "increase in tea drinking",
+   "gold_variants": [
+    "increase in tea drinking"
+   ],
+   "gold_doc_ids": [
+    "d0022"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "572691d7708984140094ca6d",
+   "question": "What did the V&A present in July 1973 as part of its youth outreach programme?",
+   "gold_answer": "a rock concert",
+   "gold_variants": [
+    "a rock concert",
+    "present a rock concert"
+   ],
+   "gold_doc_ids": [
+    "d0023"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "5726710b708984140094c61d",
+   "question": "where is the Victoria and Albert Museum located?",
+   "gold_answer": "The V&A is located in the Brompton district of the Royal Borough of Kensington and Chelsea",
+   "gold_variants": [
+    "London",
+    "The V&A is located in the Brompton district of the Royal Borough of Kensington and Chelsea",
+    "in the Brompton district of the Royal Borough of Kensington and Chelsea"
+   ],
+   "gold_doc_ids": [
+    "d0024"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "5726cfa3708984140094d209",
+   "question": "In which year did the V&A's Word and Image Department began a large scale digitization project?",
+   "gold_answer": "2007",
+   "gold_variants": [
+    "2007"
+   ],
+   "gold_doc_ids": [
+    "d0025"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "5726fb18dd62a815002e96ce",
+   "question": "The V&A has the world's most comprehensive collection of sculptures from which period?",
+   "gold_answer": "post-classical European",
+   "gold_variants": [
+    "post-classical European",
+    "post-classical European sculpture"
+   ],
+   "gold_doc_ids": [
+    "d0026"
+   ],
+   "type": "extractive"
+  },
+  {
+   "qid": "5726e680dd62a815002e946e",
+   "question": "From which period did the objects in the Soulages collection come from?",
+   "gold_answer": "Italian and French Renaissance",
+   "gold_variants": [
+    "Italian and French Renaissance",
+    "Italian and French Renaissance objects",
+    "Renaissance"
+   ],
+   "gold_doc_ids": [
+    "d0027"
+   ],
+   "type": "extractive"
+  }
+ ],
+ "meta": {
+  "source": "SQuAD v1.1 dev (Wikipedia paragraphs)",
+  "n_docs": 28,
+  "n_questions": 28,
+  "seed": 42,
+  "doc_budget": 30,
+  "question_budget": 30
+ }
+}

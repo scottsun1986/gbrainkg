@@ -1,0 +1,17 @@
+{
+ "bench": "nfcorpus",
+ "kbs": {
+  "SOTA10-NFCORPUS": {
+   "kb_id": "9a6c4571-ed59-4491-91da-c178409c89e6",
+   "created": false,
+   "expected": 30,
+   "all_published": true,
+   "final_status": {
+    "published": 30
+   },
+   "post_failures": [],
+   "elapsed_secs": 0.0,
+   "poll_secs": 0
+  }
+ }
+}

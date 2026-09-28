@@ -1,0 +1,17 @@
+{
+ "bench": "squad",
+ "kbs": {
+  "SOTA10-SQUAD": {
+   "kb_id": "fcb71c28-e1b7-40e7-ba3d-c4f4d9263a9f",
+   "created": false,
+   "expected": 28,
+   "all_published": true,
+   "final_status": {
+    "published": 28
+   },
+   "post_failures": [],
+   "elapsed_secs": 0.0,
+   "poll_secs": 0
+  }
+ }
+}

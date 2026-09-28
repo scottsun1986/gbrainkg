@@ -1,0 +1,770 @@
+{
+ "rows_qa": [
+  {
+   "qid": "noise-106",
+   "type": "rgb/noise",
+   "question": "When does The Amazing Race Season 34 premiere?",
+   "gold": [
+    [
+     "September 21",
+     "Sep 21",
+     "Sep. 21",
+     "21 September",
+     "21 Sep",
+     "21 Sep.",
+     "Sept 21",
+     "Sept. 21",
+     "21 Sept",
+     "21 Sept."
+    ]
+   ],
+   "answer": "The Amazing Race Season 34 premiered on September 21, 2022 [1][2].",
+   "citations": [
+    "rgb-doc 106 #1",
+    "rgb-doc 106 #0"
+   ],
+   "ttft": 7.44,
+   "latency": 7.63,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.13793103448275865,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0,
+   "rgb_follow_evidence": 0.0
+  },
+  {
+   "qid": "noise-239",
+   "type": "rgb/noise",
+   "question": "When does Scream VI release?",
+   "gold": [
+    [
+     "March 10",
+     "Mar 10",
+     "Mar. 10",
+     "10 March",
+     "10 Mar",
+     "10 Mar."
+    ]
+   ],
+   "answer": "Scream VI was released digitally and on Paramount+ on April 25, 2023 [1][2][10]. Its theatrical release in the US was on March 10, 2023 [2].",
+   "citations": [
+    "rgb-doc 239 #3",
+    "rgb-doc 239 #0",
+    "rgb-doc 239 #2"
+   ],
+   "ttft": 13.01,
+   "latency": 13.19,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.11764705882352942,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0,
+   "rgb_follow_evidence": 0.0
+  },
+  {
+   "qid": "noise-37",
+   "type": "rgb/noise",
+   "question": "Who is being honored with the 2022 Warrior Award?",
+   "gold": [
+    "Shad Gaspard"
+   ],
+   "answer": "Shad Gaspard is being honored posthumously with the 2022 Warrior Award [1][2].",
+   "citations": [
+    "rgb-doc 37 #0",
+    "rgb-doc 37 #1"
+   ],
+   "ttft": 10.59,
+   "latency": 10.78,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.33333333333333337,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0,
+   "rgb_follow_evidence": 1.0
+  },
+  {
+   "qid": "noise-89",
+   "type": "rgb/noise",
+   "question": "When did Neal Lemlein pass away?",
+   "gold": [
+    [
+     "July 22 2022",
+     "Jul 22, 2022",
+     "Jul. 22, 2022",
+     "July 22, 2022",
+     "22 July 2022",
+     "22 Jul, 2022",
+     "22 Jul., 2022",
+     "22 July, 2022"
+    ]
+   ],
+   "answer": "Neal Charles Lemlein passed away on July 22, 2022 [1][2].",
+   "citations": [
+    "rgb-doc 89 #0",
+    "rgb-doc 89 #1"
+   ],
+   "ttft": 22.35,
+   "latency": 28.54,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.18181818181818182,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0,
+   "rgb_follow_evidence": 0.0
+  },
+  {
+   "qid": "noise-32",
+   "type": "rgb/noise",
+   "question": "Who won the ACC Tournament in 2022?",
+   "gold": [
+    "Virginia Tech"
+   ],
+   "answer": "The Virginia Tech Hokies won the 2022 ACC men's basketball tournament [1][2].",
+   "citations": [
+    "rgb-doc 32 #0",
+    "rgb-doc 32 #2"
+   ],
+   "ttft": 6.79,
+   "latency": 6.97,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.3636363636363636,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0,
+   "rgb_follow_evidence": 1.0
+  },
+  {
+   "qid": "noise-250",
+   "type": "rgb/noise",
+   "question": "What technology has Microsoft incorporated into the new Bing?",
+   "gold": [
+    "ChatGPT"
+   ],
+   "answer": "Microsoft has incorporated artificial intelligence chat technology based on OpenAI's GPT-4 into the new Bing [1][3]. This integration is designed to optimize the chatbot for search queries, making it faster and more advanced than previous public versions [1][13].",
+   "citations": [
+    "rgb-doc 250 #0",
+    "rgb-doc 250 #3",
+    "rgb-doc 250 #1"
+   ],
+   "ttft": 6.64,
+   "latency": 6.83,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.0,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0,
+   "rgb_follow_evidence": 0.0
+  },
+  {
+   "qid": "noise-192",
+   "type": "rgb/noise",
+   "question": "How much does the YouTube Premium family plan cost now?",
+   "gold": [
+    "22.99 per month"
+   ],
+   "answer": "The YouTube Premium family plan now costs $22.99 per month, an increase from the previous price of $17.99 [1][2][3].",
+   "citations": [
+    "rgb-doc 192 #1",
+    "rgb-doc 192 #0",
+    "rgb-doc 192 #2"
+   ],
+   "ttft": 9.42,
+   "latency": 9.6,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.33333333333333337,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0,
+   "rgb_follow_evidence": 1.0
+  },
+  {
+   "qid": "noise-120",
+   "type": "rgb/noise",
+   "question": "Who is the head coach of Virginia Tech football?",
+   "gold": [
+    "Brent Pry"
+   ],
+   "answer": "Brent Pry is the head coach of Virginia Tech football [1][4]. He was named to the position, replacing former coach Justin Fuente [1].",
+   "citations": [
+    "rgb-doc 120 #0",
+    "rgb-doc 120 #1"
+   ],
+   "ttft": 70.94,
+   "latency": 71.12,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.1904761904761905,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0,
+   "rgb_follow_evidence": 1.0
+  },
+  {
+   "qid": "reject-19",
+   "type": "rgb/rejection",
+   "question": "When do the Paralympic Winter Games 2022 start?",
+   "gold": [
+    [
+     "March 4",
+     "Mar 4",
+     "Mar. 4",
+     "4 March",
+     "4 Mar",
+     "4 Mar."
+    ]
+   ],
+   "answer": "The 2022 Winter Paralympic Games started on March 4, 2022. [1]",
+   "citations": [
+    "rgb-rej 19 #0"
+   ],
+   "ttft": 9.32,
+   "latency": 9.52,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.1904761904761905,
+   "em": 0.0,
+   "refusal": false,
+   "reject_correct": 0.0
+  },
+  {
+   "qid": "reject-225",
+   "type": "rgb/rejection",
+   "question": "When is the championship game of the Patriot League Men’s Lacrosse Championship 2023?",
+   "gold": [
+    [
+     "May 7",
+     "May 7",
+     "May. 7",
+     "7 May",
+     "7 May",
+     "7 May."
+    ]
+   ],
+   "answer": "The 2023 Patriot League Men’s Lacrosse Championship game was on May 7, 2023 [2].",
+   "citations": [
+    "rgb-rej 225 #0"
+   ],
+   "ttft": 45.36,
+   "latency": 45.55,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.16666666666666666,
+   "em": 0.0,
+   "refusal": false,
+   "reject_correct": 0.0
+  },
+  {
+   "qid": "reject-24",
+   "type": "rgb/rejection",
+   "question": "When was Lost Ark game release on Steam?",
+   "gold": [
+    [
+     "February 11 2022",
+     "Feb 11, 2022",
+     "Feb. 11, 2022",
+     "February 11, 2022",
+     "11 February 2022",
+     "11 Feb, 2022",
+     "11 Feb., 2022",
+     "11 February, 2022"
+    ]
+   ],
+   "answer": "Lost Ark was released on Steam on February 11, 2022 [2]. The game originally launched in South Korea in December 2019 [1][2].",
+   "citations": [
+    "rgb-rej 24 #2",
+    "rgb-rej 24 #3"
+   ],
+   "ttft": 8.07,
+   "latency": 8.25,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.13953488372093023,
+   "em": 0.0,
+   "refusal": false,
+   "reject_correct": 0.0
+  },
+  {
+   "qid": "reject-295",
+   "type": "rgb/rejection",
+   "question": "What is the name of Apple's headset?",
+   "gold": [
+    "Vision Pro"
+   ],
+   "answer": "The name of Apple's first headset is likely \"Apple Reality Pro\" [1][2].",
+   "citations": [
+    "rgb-rej 295 #0",
+    "rgb-rej 295 #4"
+   ],
+   "ttft": 40.73,
+   "latency": 40.93,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.16666666666666669,
+   "em": 0.0,
+   "refusal": false,
+   "reject_correct": 0.0
+  },
+  {
+   "qid": "reject-103",
+   "type": "rgb/rejection",
+   "question": "What is the new venture launched by Tiger Woods and Rory McIlroy?",
+   "gold": [
+    "TMRW Sports"
+   ],
+   "answer": "Tiger Woods and Rory McIlroy launched **TGL**, a technology-forward, stadium-based golf league featuring team competition in a non-green grass environment. [1][2][5]\nThis new venture is a series of one-day events designed to complement the PGA Tour schedule, with matches planned between January and April. It involves six teams competing in a 15-week schedule, using simulator technology for long shots and an authentic green for chipping and putting. [1][5]",
+   "citations": [
+    "rgb-rej 103 #0",
+    "rgb-rej 103 #1",
+    "rgb-rej 103 #2"
+   ],
+   "ttft": 45.52,
+   "latency": 46.97,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.0,
+   "em": 0.0,
+   "refusal": false,
+   "reject_correct": 0.0
+  },
+  {
+   "qid": "reject-220",
+   "type": "rgb/rejection",
+   "question": "Which company won Yahoo Finance's 2022 \"Company of the Year\" Award?",
+   "gold": [
+    "Costco"
+   ],
+   "answer": "Based on the provided reference materials, the name of Yahoo Finance's 2022 \"Company of the Year\" award winner is not available [1][2]. The materials document winners from 2014 through 2021, including the 2021 winner Microsoft [2], but do not record the recipient for 2022.Based on the provided reference materials, the relevant information is not available.",
+   "citations": [
+    "rgb-rej 220 #1",
+    "rgb-rej 220 #0"
+   ],
+   "ttft": 22.79,
+   "latency": 22.97,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.0,
+   "em": 0.0,
+   "refusal": false,
+   "reject_correct": 0.0
+  },
+  {
+   "qid": "reject-205",
+   "type": "rgb/rejection",
+   "question": "Who designed Naomi Biden's wedding dress?",
+   "gold": [
+    "Ralph Lauren"
+   ],
+   "answer": "Alexandra O'Neill of Markarian designed Naomi Biden's wedding reception dress [1][3]. It was a custom white beaded fringe minidress with hand-done beadwork, bows, and satin trains [1]. O'Neill's studio previously gained prominence after First Lady Jill Biden wore their designs [3].Naomi Biden's reception dress was designed by Alexandra O'Neill of Markarian [1][3]. However, the provided reference materials do not specify the designer of her ceremony dress, only that she wore Tiffany & Co. earrings for the ceremony [3].",
+   "citations": [
+    "rgb-rej 205 #0",
+    "rgb-rej 205 #2"
+   ],
+   "ttft": 22.68,
+   "latency": 22.86,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.0,
+   "em": 0.0,
+   "refusal": false,
+   "reject_correct": 0.0
+  },
+  {
+   "qid": "reject-297",
+   "type": "rgb/rejection",
+   "question": "Who won the U.S. Open golf tournament 2023?",
+   "gold": [
+    "Wyndham Clark"
+   ],
+   "answer": "Based on the provided reference materials, the winner of the 2023 U.S. Open golf tournament is not explicitly stated [1][2][3][12].\nThe materials confirm the tournament was held from June 15–18, 2023, at the Los Angeles Country Club, with a purse of $17.5 million [2][3]. They list key participants like Jon Rahm, Scottie Scheffler, and Brooks Koepka, and note that Scottie Scheffler finished third and Rickie Fowler was a runner-up [12]. However, the specific name of the champion is not recorded in the provided sources.",
+   "citations": [
+    "rgb-rej 297 #1",
+    "rgb-rej 297 #2",
+    "rgb-rej 297 #4",
+    "rgb-rej 297 #3"
+   ],
+   "ttft": 20.52,
+   "latency": 28.77,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.0,
+   "em": 0.0,
+   "refusal": false,
+   "reject_correct": 0.0
+  },
+  {
+   "qid": "int-90",
+   "type": "rgb/integration",
+   "question": "What is the datesof the 2023 and 2022 NBA Draft?",
+   "gold": "June 22",
+   "answer": "The 2023 NBA Draft was held on June 22, 2023 [1], and the 2022 NBA Draft took place on June 23, 2022 [3].",
+   "citations": [
+    "rgb-int 90 #0",
+    "rgb-int 90 #1"
+   ],
+   "ttft": 45.2,
+   "latency": 45.38,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.1904761904761905,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0,
+   "rgb_follow_evidence": 1.0
+  },
+  {
+   "qid": "int-12",
+   "type": "rgb/integration",
+   "question": "What chips do the iPhone 14 and iPhone 14 pro have?",
+   "gold": "A15",
+   "answer": "The iPhone 14 uses the A15 chip, and the iPhone 14 Pro uses the new A16 chip [1][2].",
+   "citations": [
+    "rgb-int 12 #0",
+    "rgb-int 12 #1"
+   ],
+   "ttft": 43.28,
+   "latency": 43.46,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.14285714285714288,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0,
+   "rgb_follow_evidence": 1.0
+  },
+  {
+   "qid": "int-77",
+   "type": "rgb/integration",
+   "question": "Who trained LLaMA and Alpaca? ",
+   "gold": "Meta",
+   "answer": "they only mention Meta AI as the source of the official weights [7].Stanford trained Alpaca, which is an instruction-following model built on LLaMA [15]. The reference materials do not specify who trained the original LLaMA model;",
+   "citations": [
+    "rgb-int 77 #0",
+    "rgb-int 77 #1"
+   ],
+   "ttft": 9.14,
+   "latency": 9.33,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.06451612903225806,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0,
+   "rgb_follow_evidence": 1.0
+  },
+  {
+   "qid": "int-43",
+   "type": "rgb/integration",
+   "question": "Who killed Shinzo Abe and when it happened?",
+   "gold": "Tetsuya Yamagami",
+   "answer": "Tetsuya Yamagami killed Shinzo Abe on July 8, 2022 [1][3]. Yamagami, an unemployed 41-year-old former sailor, shot Abe from behind with a handmade firearm while Abe was giving a campaign speech in Nara, Japan [1][5].",
+   "citations": [
+    "rgb-int 43 #0",
+    "rgb-int 43 #1",
+    "rgb-int 43 #4"
+   ],
+   "ttft": 44.17,
+   "latency": 44.36,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.125,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0,
+   "rgb_follow_evidence": 1.0
+  },
+  {
+   "qid": "fact-88",
+   "type": "rgb/counterfactual",
+   "question": "When was Pixel 6 announced?",
+   "gold": "October 19, 2011",
+   "answer": "Based on the provided reference materials, the relevant information is not available.The Google Pixel 6 was announced on October 19, 2021 [18][19].Google Pixel 6 was announced at the Pixel Fall Launch event on October 19, 2021 [18][19].",
+   "citations": [
+    "rgb-fact 88 #2",
+    "rgb-fact 88 #3"
+   ],
+   "ttft": 12.91,
+   "latency": 25.1,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.1111111111111111,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 0.0,
+   "rgb_follow_evidence": 0.0
+  },
+  {
+   "qid": "fact-28",
+   "type": "rgb/counterfactual",
+   "question": "Who is the Walter Camp Award winner in 2017?",
+   "gold": "Joe Burrow",
+   "answer": "Based on the provided reference materials, the relevant information is not available.",
+   "citations": [
+    "rgb-fact 28 #3",
+    "rgb-fact 28 #1",
+    "rgb-fact 28 #0",
+    "rgb-fact 28 #4",
+    "rgb-doc 120 #0",
+    "rgb-doc 37 #2",
+    "rgb-doc 120 #1",
+    "rgb-doc 37 #1"
+   ],
+   "ttft": 21.8,
+   "latency": 33.99,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.0,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0,
+   "rgb_follow_evidence": 0.0
+  },
+  {
+   "qid": "fact-99",
+   "type": "rgb/counterfactual",
+   "question": "which city hosted the olympic games in 2004?",
+   "gold": "New York",
+   "answer": "New York hosted the Olympic Games in 2004 [1][2]. The 2004 Summer Olympic Games were held in New York from August 13–29, 2004 [1], making it one of only four cities at the time to have hosted the Summer Olympics twice [2].",
+   "citations": [
+    "rgb-fact 99 #1",
+    "rgb-fact 99 #0"
+   ],
+   "ttft": 12.99,
+   "latency": 13.17,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.1081081081081081,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0,
+   "rgb_follow_evidence": 1.0
+  },
+  {
+   "qid": "fact-3",
+   "type": "rgb/counterfactual",
+   "question": "Who acquired WhatsApp?",
+   "gold": "Apple",
+   "answer": "Apple acquired WhatsApp in 2014 [13][18].",
+   "citations": [
+    "rgb-fact 3 #0",
+    "rgb-fact 3 #1"
+   ],
+   "ttft": 6.28,
+   "latency": 6.46,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.33333333333333337,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0,
+   "rgb_follow_evidence": 1.0
+  }
+ ],
+ "rows_search": [
+  {
+   "qid": "noise-106",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "noise-239",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 0.5,
+   "ndcg@10": 0.6509209298071326
+  },
+  {
+   "qid": "noise-37",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "noise-89",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "noise-32",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 0.5,
+   "ndcg@10": 0.6509209298071326
+  },
+  {
+   "qid": "noise-250",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.8772153153380493
+  },
+  {
+   "qid": "noise-192",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "noise-120",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "reject-19",
+   "recall@10": 0.0,
+   "full_evidence@10": 0.0,
+   "mrr@10": 0.0,
+   "ndcg@10": 0.0
+  },
+  {
+   "qid": "reject-225",
+   "recall@10": 0.0,
+   "full_evidence@10": 0.0,
+   "mrr@10": 0.0,
+   "ndcg@10": 0.0
+  },
+  {
+   "qid": "reject-24",
+   "recall@10": 0.0,
+   "full_evidence@10": 0.0,
+   "mrr@10": 0.0,
+   "ndcg@10": 0.0
+  },
+  {
+   "qid": "reject-295",
+   "recall@10": 0.0,
+   "full_evidence@10": 0.0,
+   "mrr@10": 0.0,
+   "ndcg@10": 0.0
+  },
+  {
+   "qid": "reject-103",
+   "recall@10": 0.0,
+   "full_evidence@10": 0.0,
+   "mrr@10": 0.0,
+   "ndcg@10": 0.0
+  },
+  {
+   "qid": "reject-220",
+   "recall@10": 0.0,
+   "full_evidence@10": 0.0,
+   "mrr@10": 0.0,
+   "ndcg@10": 0.0
+  },
+  {
+   "qid": "reject-205",
+   "recall@10": 0.0,
+   "full_evidence@10": 0.0,
+   "mrr@10": 0.0,
+   "ndcg@10": 0.0
+  },
+  {
+   "qid": "reject-297",
+   "recall@10": 0.0,
+   "full_evidence@10": 0.0,
+   "mrr@10": 0.0,
+   "ndcg@10": 0.0
+  },
+  {
+   "qid": "int-90",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.9197207891481876
+  },
+  {
+   "qid": "int-12",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "int-77",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 0.1111111111111111,
+   "ndcg@10": 0.36181498356361597
+  },
+  {
+   "qid": "int-43",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.9197207891481876
+  },
+  {
+   "qid": "fact-88",
+   "recall@10": 0.5,
+   "full_evidence@10": 0.0,
+   "mrr@10": 0.2,
+   "ndcg@10": 0.23719771276929622
+  },
+  {
+   "qid": "fact-28",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 0.5,
+   "ndcg@10": 0.6934264036172708
+  },
+  {
+   "qid": "fact-99",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "fact-3",
+   "recall@10": 0.5,
+   "full_evidence@10": 0.0,
+   "mrr@10": 0.3333333333333333,
+   "ndcg@10": 0.3065735963827292
+  }
+ ],
+ "summary": {
+  "n": 24,
+  "errors": 0,
+  "containment": 0.4167,
+  "f1": 0.1415,
+  "em": 0.0,
+  "citation_hit": 0.9375,
+  "reject_correct": 0.0,
+  "retrieval_recall@10": 0.625,
+  "retrieval_full_evidence@10": 0.5833,
+  "retrieval_mrr@10": 0.506,
+  "retrieval_ndcg@10": 0.5257,
+  "latency_p50": 22.97,
+  "latency_p95": 46.97,
+  "ttft_p50": 20.52,
+  "refusal_rate": 0.0
+ },
+ "meta": {
+  "source": "RGB (noise/rejection/integration/counterfactual)",
+  "n_docs": 118,
+  "n_questions": 24,
+  "seed": 42,
+  "doc_budget": 30,
+  "question_budget": 30,
+  "docs_per_kb": {
+   "SOTA10-RGB-main": 78,
+   "SOTA10-RGB-reject": 40
+  },
+  "note": "RGB 为逐案例证据设计,文档随案例提供;题目数遵守 ≤30 约束"
+ },
+ "score_sha": "85453e1eb2113d4f"
+}

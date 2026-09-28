@@ -1,0 +1,17 @@
+{
+ "bench": "musique",
+ "kbs": {
+  "SOTA10-MUSIQUE": {
+   "kb_id": "97a0584d-4516-4411-a6e4-8cb68fc50889",
+   "created": false,
+   "expected": 28,
+   "all_published": true,
+   "final_status": {
+    "published": 28
+   },
+   "post_failures": [],
+   "elapsed_secs": 0.0,
+   "poll_secs": 0
+  }
+ }
+}

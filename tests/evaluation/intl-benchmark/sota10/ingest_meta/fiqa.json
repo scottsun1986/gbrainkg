@@ -1,0 +1,17 @@
+{
+ "bench": "fiqa",
+ "kbs": {
+  "SOTA10-FIQA": {
+   "kb_id": "c5bf8ddf-5815-4c49-a8d3-81950a1980cf",
+   "created": false,
+   "expected": 30,
+   "all_published": true,
+   "final_status": {
+    "published": 30
+   },
+   "post_failures": [],
+   "elapsed_secs": 15.1,
+   "poll_secs": 15
+  }
+ }
+}

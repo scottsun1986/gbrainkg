@@ -1,0 +1,17 @@
+{
+ "bench": "scifact",
+ "kbs": {
+  "SOTA10-SCIFACT": {
+   "kb_id": "47c7113c-3ceb-4cec-bf95-97ba1aaece31",
+   "created": false,
+   "expected": 30,
+   "all_published": true,
+   "final_status": {
+    "published": 30
+   },
+   "post_failures": [],
+   "elapsed_secs": 45.3,
+   "poll_secs": 45
+  }
+ }
+}

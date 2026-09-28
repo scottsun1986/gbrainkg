@@ -1,0 +1,204 @@
+{
+ "rows_search": [
+  {
+   "qid": "517",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "1150",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "171",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "431",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "142",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "1199",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 0.2,
+   "ndcg@10": 0.38685280723454163
+  },
+  {
+   "qid": "879",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "552",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "100",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "1088",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "127",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "1379",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "513",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "1029",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "956",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "1385",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "1362",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "179",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.9828920819566879
+  },
+  {
+   "qid": "729",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "805",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "1187",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "3",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "1086",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "1200",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "684",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "1191",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  }
+ ],
+ "summary": {
+  "n": 26,
+  "errors": 0,
+  "retrieval_recall@10": 1.0,
+  "retrieval_full_evidence@10": 1.0,
+  "retrieval_mrr@10": 0.9692,
+  "retrieval_ndcg@10": 0.9758,
+  "search_wall_secs": 5.5
+ },
+ "meta": {
+  "source": "BEIR scifact (test qrels, gold-guaranteed subset)",
+  "n_docs": 30,
+  "n_questions": 26,
+  "seed": 42,
+  "doc_budget": 30,
+  "question_budget": 30
+ },
+ "score_sha": "d29b42edf798bce8"
+}

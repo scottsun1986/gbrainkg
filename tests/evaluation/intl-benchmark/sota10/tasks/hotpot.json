@@ -1,0 +1,382 @@
+{
+ "bench": "hotpot",
+ "kbs": {
+  "SOTA10-HOTPOT": [
+   {
+    "id": "d0000",
+    "title": "Ryuji Yokoe",
+    "text": "Ryuji Yokoe (横江竜司 , Yokoe Ryūji , born 18 January 1978) is a Japanese motorcycle racer. He currently competes in the All Japan Road Race ST600 Championship aboard a Yamaha YZF-R6. Fastest lap record holder in Sugo race way on ST600, he won the MFJ All Japan Road Race ST600 Championship in 2015 for the Yamaha Thailand Racing Team aboard a Yamaha YZF-R6. Yokoe has previously competed in the MFJ All Japan Road Race GP125 Championship, the MFJ All Japan Road Race GP250 Championship – where he finished as champion in 2006 – and the MFJ All Japan Road Race JSB1000 Championship.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0001",
+    "title": "Yamaha YZF-R6",
+    "text": "The Yamaha YZF-R6 is a Yamaha 600 class sport bike motorcycle, first introduced in 1998, updated in 2001, 2003, 2006, 2008, 2017, and revised in the years in between.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0002",
+    "title": "Ira Lewis",
+    "text": "Ira Lewis Metsky (27 August 1932 — 4 April 2015) was an American actor, writer, and playwright. Lewis was best known for his one-act play, \"Chinese Coffee\", which opened at the Circle in the Square Theatre in 1992, starring Al Pacino. A film adaptation of \"Chinese Coffee\", also starring Pacino, as well as Jerry Orbach, was released in 2000. Ira Lewis wrote the film's screenplay, while Pacino directed the adaptation.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0003",
+    "title": "Jerry Orbach",
+    "text": "Jerome Bernard \"Jerry\" Orbach (October 20, 1935 – December 28, 2004) was an American actor and singer, described at the time of his death as \"one of the last\" bona fide\" leading men of the Broadway musical and global celebrity on television\" and a \"versatile stage and film actor\".",
+    "origin": "gold"
+   },
+   {
+    "id": "d0004",
+    "title": "Lapta (game)",
+    "text": "Lapta (Russian: лапта́ ) is a Russian bat and ball game first known to be played in the 14th century. Mentions of lapta have been found in medieval manuscripts, and balls and bats were found in the 14th-century layers during excavations in Novgorod. It is similar to cricket, brännboll, Rounders, baseball, oină, (Italy) and pesäpallo.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0005",
+    "title": "Rounders",
+    "text": "Rounders (Irish: \"cluiche corr\" ) is a bat-and-ball game played between two teams. Rounders is a striking and fielding team game that involves hitting a small, hard, leather-cased ball with a rounded end wooden, plastic or metal bat. The players score by running around the four bases on the field.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0006",
+    "title": "Chien-Shiung Wu",
+    "text": "Chien-Shiung Wu (; May 31, 1912 – February 16, 1997) was a Chinese-American experimental physicist who made significant contributions in the field of nuclear physics. Wu worked on the Manhattan Project, where she helped develop the process for separating uranium metal into uranium-235 and uranium-238 isotopes by gaseous diffusion. She is best known for conducting the Wu experiment, which contradicted the hypothetical law of conservation of parity. This discovery resulted in her colleagues Tsung-Dao Lee and Chen-Ning Yang winning the 1957 Nobel Prize in physics, and also earned Wu the inaugural Wolf Prize in Physics a mere two decades later in 1978. Her expertise in experimental physics evoked comparisons to Marie Curie. Her nicknames include \"the First Lady of Physics\", \"the Chinese Madame Curie\", and the \"Queen of Nuclear Research\".",
+    "origin": "gold"
+   },
+   {
+    "id": "d0007",
+    "title": "Marie Curie",
+    "text": "Marie Skłodowska Curie ( ; ] ; ] ; 7 November 18674 July 1934; born Maria Salomea Skłodowska; ] ) was a Polish and naturalized-French physicist and chemist who conducted pioneering research on radioactivity. She was the first woman to win a Nobel Prize, the first person and only woman to win twice, the only person to win a Nobel Prize in two different sciences, and was part of the Curie family legacy of five Nobel Prizes. She was also the first woman to become a professor at the University of Paris, and in 1995 became the first woman to be entombed on her own merits in the Panthéon in Paris.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0008",
+    "title": "Mazatlán",
+    "text": "Mazatlán (] ) is a city in the Mexican state of Sinaloa. The city serves as the municipal seat for the surrounding \"municipio\", known as the Mazatlán Municipality. It is located at on the Pacific coast, across from the southernmost tip of the Baja California Peninsula.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0009",
+    "title": "Villa Unión, Sinaloa",
+    "text": "Villa Unión is the second largest town in the municipality of Mazatlán, after the port of Mazatlán. It is located twenty kilometers south of the city on the banks of the Presidio River.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0010",
+    "title": "Ellis Island",
+    "text": "Ellis Island, in Upper New York Bay, was the gateway for over 12 million immigrants to the United States as the nation's busiest immigrant inspection station for over sixty years from 1892 until 1954. The island was greatly expanded with land reclamation between 1892 and 1934. Before that, the much smaller original island was the site of Fort Gibson and later a naval magazine. The island was made part of the Statue of Liberty National Monument in 1965, and has hosted a museum of immigration since 1990.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0011",
+    "title": "History of Italian Americans in Boston",
+    "text": "Not all of the 5.3 million Italians who immigrated to the United States between 1820 and 1978 came through Ellis Island. Many came through other ports, including the Port of Boston. Exactly how many stayed in Boston is not known, but it was enough to make Italians the second largest ancestry group in Boston, after the Irish. Most settled initially in the North End; others settled in East Boston, the West End, Roxbury, and other neighborhoods.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0012",
+    "title": "Lars Eller",
+    "text": "Lars Fosgaard Eller (born 8 May 1989) is a Danish professional ice hockey player currently playing for the Washington Capitals of the National Hockey League (NHL). He was drafted by the St. Louis Blues in the first round, 13th overall in the 2007 NHL Entry Draft.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0013",
+    "title": "Olaf Eller",
+    "text": "Olaf Eller (born June 13, 1960) is a Danish ice hockey coach. He is currently the head coach of Denmark men's national junior ice hockey team. His son is Lars Eller, who was drafted 13th overall to the St. Louis Blues in 2007 and currently plays for the Washington Capitals. His son Mads Eller won the Memorial Cup with the Edmonton Oil Kings of the Western Hockey League, and currently plays for the Gentofte Stars in the Danish Metal Ligaen.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0014",
+    "title": "Arthur Saint-Léon",
+    "text": "Arthur Saint-Léon (17 September 1821, Paris – 2 September 1870) was the \"Maître de Ballet\" of St. Petersburg Imperial Ballet from 1859 until 1869 and is famous for creating the choreography of the ballet \"Coppélia\".",
+    "origin": "gold"
+   },
+   {
+    "id": "d0015",
+    "title": "Mariinsky Ballet",
+    "text": "The Mariinsky Ballet is the resident classical ballet company of the Mariinsky Theatre in Saint Petersburg, Russia. Founded in the 18th century and originally known as the Imperial Russian Ballet, the Mariinsky Ballet is one of the world's leading ballet companies. Internationally, the Mariinsky Ballet continues to be known by its former Soviet name the Kirov Ballet. The Mariinsky Ballet is the parent company of the \"Vaganova Ballet Academy\", a leading international ballet school.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0016",
+    "title": "Robert Mackenzie (sound engineer)",
+    "text": "Robert Mackenzie is an Australian supervising sound editor. He is best known for his work on \"Animal Kingdom\" (2010), \"The Hunter\" (2011), \"Lore\" (2012), \"Felony\" (2013), \"The Grandmaster\" (2013), \"The Rover\" (2014), \"Deadline Gallipoli\" (2015), \"Partisan\" (2015), \"Lion\", and critically acclaimed war-drama film \"Hacksaw Ridge\", for which he received two Academy Award nominations at the 89th Academy Awards, Best Sound Editing and Best Sound Mixing .",
+    "origin": "gold"
+   },
+   {
+    "id": "d0017",
+    "title": "The Grandmaster (film)",
+    "text": "The Grandmaster is a 2013 Hong Kong-Chinese martial arts drama film based on the life story of the Wing Chun grandmaster Ip Man. The film was directed and written by Wong Kar-wai and stars Tony Leung as Ip Man. It was released on 8 January 2013 in China. It was the opening film at the 63rd Berlin International Film Festival in February 2013. The film was selected as part of the 2013 Hong Kong International Film Festival. The Weinstein Company acquired the international distribution rights for the film. The film was selected as the Hong Kong entry for the Best Foreign Language Film at the 86th Academy Awards, making the January shortlist, but did not get the nomination. The film was nominated for Best Cinematography (Philippe Le Sourd) and Best Costume Design (William Chang Suk Ping) at the 86th Academy Awards.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0018",
+    "title": "Remain in Light",
+    "text": "Remain in Light is the fourth studio album by American new wave band Talking Heads, released on October 8, 1980, on Sire Records. It was recorded at Compass Point Studios in the Bahamas and Sigma Sound Studios in Philadelphia between July and August 1980 and was produced by the quartet's long-time collaborator Brian Eno.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0019",
+    "title": "The Name of This Band Is Talking Heads",
+    "text": "The Name of This Band Is Talking Heads is a double live album by Talking Heads, originally released in 1982. The first disc featured the original quartet in recordings from 1977 and 1979, and the second disc the expanded ten-piece lineup that toured in 1980 and 1981. The album contains live versions of songs that appear on their first four studio albums, \"\", \"More Songs About Buildings and Food\", \"Fear of Music\", and \"Remain in Light.\" The cassette edition of the album included \"Cities\" as a bonus track not included on the vinyl edition – this track has been included on the subsequent CD release.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0020",
+    "title": "Battle of the Rosebud",
+    "text": "The Battle of the Rosebud (also known as the Battle of Rosebud Creek) occurred June 17, 1876, in the Montana Territory between the United States Army and its Crow and Shoshoni allies against a force consisting mostly of Lakota Sioux and Northern Cheyenne Indians during the Great Sioux War of 1876. The Cheyenne called it the Battle Where the Girl Saved Her Brother, because of an incident during the fight involving Buffalo Calf Road Woman. General George Crook's offensive was stymied by the Indians, led by Crazy Horse, and he awaited reinforcements before resuming the campaign in August.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0021",
+    "title": "The Other Magpie",
+    "text": "The Other Magpie was a Crow woman who fought in the Battle of the Rosebud on the side of General Crook against the Sioux and Cheyenne. Pretty Shield, a Crow author and medicine woman, described her as being wild and attractive, but not having a man. She fought because her brother had recently been killed by the Sioux and she sought revenge against them. Most of the Crow carried rifles, but The Other Magpie carried only her belt knife and her coup stick. She counted coup on a Sioux warrior and eventually killed and scalped him. The scalp that she took was one of only eleven taken in the battle. Pretty Shield described her as having tied a feather on the end of her coup stick to symbolize her achievement. Later, she cut the scalp into pieces and gave them to the male warriors so they would have more scalps for the dance after the battle.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0022",
+    "title": "2017–18 Wigan Athletic F.C. season",
+    "text": "The 2017–18 season is Wigan Athletic's 86th year in existence and their first back in League One, after being relegated the previous season. Along with competing in the league, the club will also participate in the FA Cup, EFL Cup and EFL Trophy. Paul Cook was appointed as manager on 31 May 2017, signing a 3 year deal, following the departure of much of the previous coaching staff the day before.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0023",
+    "title": "EFL Cup",
+    "text": "The EFL Cup (referred to historically, and colloquially, as simply the League Cup), currently known as the Carabao Cup for sponsorship reasons, is an annual knockout football competition in men's domestic English football. Organised by the English Football League (EFL), it is open to any club within the top four levels of the English football league system – 92 clubs in total – comprising the top level Premier League, and the three divisions of the English Football League's own league competition (Championship, League One and League Two).",
+    "origin": "gold"
+   },
+   {
+    "id": "d0024",
+    "title": "Howard Van Doren Shaw",
+    "text": "Howard Van Doren Shaw AIA (May 7, 1869 – May 7, 1926) was an American architect. He became one of the best-known architects of his generation in the Chicago, Illinois area. Shaw was considered a leader in the American Craftsman movement, best exemplified in his 1900 remodel of Second Presbyterian Church in Chicago. He designed Marktown, Clayton Mark's planned worker community in Northwest Indiana.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0025",
+    "title": "Marktown",
+    "text": "Marktown is an urban planned worker community in East Chicago, Indiana, United States, built during the Progressive Era in 1917 from marshland to provide a complete community for workers at The Mark Manufacturing Company.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0026",
+    "title": "Bonkyll Castle",
+    "text": "Bonkyll Castle (also variously spelled Bonkyl, Boncle, Buncle, Bunkle or Bonkill) was a medieval fortress situated in the eastern Scottish Borders of which little remains. The site is protected as a scheduled monument.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0027",
+    "title": "Buncle",
+    "text": "Buncle is a Celtic derived surname originating from Bonkyll Castle, Berwickshire, Scotland. It has many modern variations that are phonetically similar, for example: Bonkle, Bonkyll, Bonkill, Bonkylle, Bonkile, Bunkle, Bunkall and Bonckle. The names' meaning is believed to refer to a chapel at the bottom of hill.",
+    "origin": "gold"
+   }
+  ]
+ },
+ "questions": [
+  {
+   "qid": "5ab5f249554299488d4d9a5d",
+   "question": "What class of yamaha class sport bike motorcycle did Ryuji Yokoa use when he finished as champion in the MFJ All Japan Road Race GP250 Championship in 2006?",
+   "gold_answer": "Yamaha 600 class",
+   "gold_doc_ids": [
+    "d0000",
+    "d0001"
+   ],
+   "gold_titles": [
+    "Ryuji Yokoe",
+    "Yamaha YZF-R6"
+   ],
+   "type": "bridge/hard"
+  },
+  {
+   "qid": "5adcdea85542992c1e3a2441",
+   "question": "What film adaptation do both Jerome Bernard and Ira Lewis have in common?",
+   "gold_answer": "Chinese Coffee",
+   "gold_doc_ids": [
+    "d0002",
+    "d0003"
+   ],
+   "gold_titles": [
+    "Ira Lewis",
+    "Jerry Orbach"
+   ],
+   "type": "bridge/hard"
+  },
+  {
+   "qid": "5ab850b255429916710eb036",
+   "question": "What items are used to play both Lapta and Rounders?",
+   "gold_answer": "bat and ball",
+   "gold_doc_ids": [
+    "d0004",
+    "d0005"
+   ],
+   "gold_titles": [
+    "Lapta (game)",
+    "Rounders"
+   ],
+   "type": "bridge/hard"
+  },
+  {
+   "qid": "5aba3bb855429955dce3ede7",
+   "question": "Chien-Shiung Wu's expertise in experimental physics evoked comparisons to a scientist who passed away in which year ?",
+   "gold_answer": "1934",
+   "gold_doc_ids": [
+    "d0006",
+    "d0007"
+   ],
+   "gold_titles": [
+    "Chien-Shiung Wu",
+    "Marie Curie"
+   ],
+   "type": "bridge/hard"
+  },
+  {
+   "qid": "5ae762835542997b22f6a711",
+   "question": "Were was the Mexican state after which there is Villa Unión, Sinaloa located? ",
+   "gold_answer": "tip of the Baja California",
+   "gold_doc_ids": [
+    "d0008",
+    "d0009"
+   ],
+   "gold_titles": [
+    "Mazatlán",
+    "Villa Unión, Sinaloa"
+   ],
+   "type": "bridge/hard"
+  },
+  {
+   "qid": "5a80e5f5554299260e20a1ae",
+   "question": "How many of the 12 million immigrants to the United States through Ellis Island were Italian immigrants?",
+   "gold_answer": "5.3 million",
+   "gold_doc_ids": [
+    "d0010",
+    "d0011"
+   ],
+   "gold_titles": [
+    "Ellis Island",
+    "History of Italian Americans in Boston"
+   ],
+   "type": "bridge/hard"
+  },
+  {
+   "qid": "5a8ced46554299441c6b9f82",
+   "question": "When was the father of the professional ice hockey player with the middle name \"Fosgaard\" born?",
+   "gold_answer": "June 13, 1960",
+   "gold_doc_ids": [
+    "d0012",
+    "d0013"
+   ],
+   "gold_titles": [
+    "Lars Eller",
+    "Olaf Eller"
+   ],
+   "type": "bridge/hard"
+  },
+  {
+   "qid": "5ae6196d5542995703ce8afd",
+   "question": "Arthur Saint-Léon was the \"Maître de Ballet\" of the ballet company now known as?",
+   "gold_answer": "The Mariinsky Ballet",
+   "gold_doc_ids": [
+    "d0014",
+    "d0015"
+   ],
+   "gold_titles": [
+    "Arthur Saint-Léon",
+    "Mariinsky Ballet"
+   ],
+   "type": "bridge/hard"
+  },
+  {
+   "qid": "5ac017945542997d642959bc",
+   "question": "What film did the sound editor for a 2013 Hong Kong-Chinese martial arts drama film based on the life story of the Wing Chun grandmaster Ip Man win two Academy Awards for?",
+   "gold_answer": "\"Hacksaw Ridge\"",
+   "gold_doc_ids": [
+    "d0016",
+    "d0017"
+   ],
+   "gold_titles": [
+    "Robert Mackenzie (sound engineer)",
+    "The Grandmaster (film)"
+   ],
+   "type": "bridge/hard"
+  },
+  {
+   "qid": "5ac3d1d9554299204fd21e8a",
+   "question": "How many albums had been recorded by Talking Heads by November, 1980?",
+   "gold_answer": "four",
+   "gold_doc_ids": [
+    "d0018",
+    "d0019"
+   ],
+   "gold_titles": [
+    "Remain in Light",
+    "The Name of This Band Is Talking Heads"
+   ],
+   "type": "bridge/hard"
+  },
+  {
+   "qid": "5ae8167b55429952e35eaa06",
+   "question": "What 1876 battle featured the Other Magpie?",
+   "gold_answer": "Battle of the Rosebud",
+   "gold_doc_ids": [
+    "d0020",
+    "d0021"
+   ],
+   "gold_titles": [
+    "Battle of the Rosebud",
+    "The Other Magpie"
+   ],
+   "type": "bridge/hard"
+  },
+  {
+   "qid": "5aba7cfe554299232ef4a2fd",
+   "question": "The 2017–18 Wigan Athletic F.C. season will be a year in which the team competes in the league cup known as what for sponsorship reasons?",
+   "gold_answer": "Carabao Cup",
+   "gold_doc_ids": [
+    "d0022",
+    "d0023"
+   ],
+   "gold_titles": [
+    "2017–18 Wigan Athletic F.C. season",
+    "EFL Cup"
+   ],
+   "type": "bridge/hard"
+  },
+  {
+   "qid": "5ac532335542994611c8b41c",
+   "question": "Howard Van Doren Shaw was the designer of which 1917 Progressive Era community? ",
+   "gold_answer": "Marktown",
+   "gold_doc_ids": [
+    "d0024",
+    "d0025"
+   ],
+   "gold_titles": [
+    "Howard Van Doren Shaw",
+    "Marktown"
+   ],
+   "type": "bridge/hard"
+  },
+  {
+   "qid": "5a7263e05542997f82783998",
+   "question": "What medieval fortress is believed to refer to a chapel at the bottom of a hill?",
+   "gold_answer": "Bonkyll Castle",
+   "gold_doc_ids": [
+    "d0026",
+    "d0027"
+   ],
+   "gold_titles": [
+    "Bonkyll Castle",
+    "Buncle"
+   ],
+   "type": "bridge/hard"
+  }
+ ],
+ "meta": {
+  "source": "HotpotQA dev (distractor setting)",
+  "n_docs": 28,
+  "n_questions": 14,
+  "seed": 42,
+  "doc_budget": 30,
+  "question_budget": 30,
+  "skipped_for_budget": 0
+ }
+}

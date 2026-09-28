@@ -1,0 +1,365 @@
+{
+ "bench": "mintaka",
+ "kbs": {
+  "SOTA10-MINTAKA": [
+   {
+    "id": "d0000",
+    "title": "Star Wars",
+    "text": "**Star Wars** (Q462) — epic space opera multimedia franchise created by George Lucas.\nKey facts:\n- topic's main Wikimedia portal: Q8208664\n- topic's main category: Q8810540\n- official website: https://www.starwars.com\n- instance of: Q196600\n- instance of: Q431289\n- Freebase ID: /m/06mmr\n- Commons gallery: Star Wars\n- Commons category: Star Wars\n- Library of Congress Authorities ID: n83731695\n- IdRef ID: 027434850\n- Bibliothèque nationale de France ID: 11947696w\n- NDL Authority ID: 001113398\n- movement: Q377616\n- Box Office Mojo franchise ID (former scheme): starwars\n- X (Twitter) username: StarWars (point in time=2020-03-19T; start time=2009-02-04T)\n- X (Twitter) username: starwarsjapan (point in time=2020-01-06T; start time=2017-02-01T)\n- Encyclopædia Britannica Online ID: topic/Star-Wars-film-series\n- Rotten Tomatoes ID: franchise/star-wars-saga\n- Rotten Tomatoes ID: franchise/star_wars_saga\n- Facebook username: StarWars\n- OMDb film ID: 10\n- Quora topic ID: Star-Wars-creative-franchise\n- Quora topic ID: Star-Wars-Movies\n- Weibo user ID: starwarsCN\n- has part(s): Q22092344",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0001",
+    "title": "Q219758",
+    "text": "**Q219758** (Q219758) — Canadian video game developer.\nKey facts:\n- instance of: Q210167\n- headquarters location: Q2096\n- VIAF cluster ID: 131574181\n- Library of Congress Authorities ID: nr2003028123\n- Bibliothèque nationale de France ID: 14048244n\n- Commons category: BioWare\n- founder: Q2567234\n- founder: Q3105330\n- owned by: Q173941\n- logo image: BioWare 2018.svg\n- industry: Q941594\n- topic's main category: Q8300412\n- MusicBrainz label ID: ab7d496c-8b24-4301-ac1e-006542408c0b\n- Freebase ID: /m/0j2c3\n- inception: 1995-02-00T\n- parent organization or unit: Q173941 (start time=2007-10-11T)\n- country: Q16\n- official website: https://www.bioware.com/\n- location of formation: Q2096\n- legal form: Q134161\n- Quora topic ID: BioWare\n- ISNI: 0000000106613359\n- product or material produced: Q7397\n- MobyGames company ID (former scheme): bioware-edmonton\n- MobyGames company ID (former scheme): bioware-austin-llc",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0002",
+    "title": "role-playing game",
+    "text": "**role-playing game** (Q160738) — game in which players assume the roles of characters in a fictional setting.\nKey facts:\n- subclass of: Q11410\n- subclass of: Q1361181\n- Commons category: Role-playing games\n- BNCF Thesaurus ID: 3372\n- image: RPG-2009-Berlin-2.jpg (point in time=2009-03-01T)\n- image: Bicolline La Grande Bataille 1005.jpg (point in time=2005-00-00T)\n- Freebase ID: /m/06c9r\n- topic's main category: Q7421798\n- Curlie ID: Games/Roleplaying/\n- GND ID: 4050453-0\n- topic has template: Q13365213\n- topic has template: Q14386643\n- Library of Congress Authorities ID: sh85047162\n- FAST ID: 920831\n- has list: Q2245850\n- Quora topic ID: Role-Playing-Games-table-top\n- JSTOR topic ID (archived): fantasy-games\n- Encyclopædia Universalis ID: jeux-de-role\n- BabelNet ID: 01895825n\n- subreddit: Roleplay (start time=2009-01-23T)\n- Encyclopædia Britannica Online ID: topic/role-playing-game\n- instance of: Q107551175\n- instance of: Q66467327\n- IAB code: 272\n- Encyclopedia of Science Fiction ID: role_playing_game",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0003",
+    "title": "Canada",
+    "text": "**Canada** (Q16) — country in North America.\nKey facts:\n- Great Russian Encyclopedia Online ID (2017): 2040017\n- participant in: Q184425\n- participant in: Q215112\n- coordinates of southernmost point: {\"latitude\": 41.681388888889, \"longitude\": -82.682\n- Tripadvisor ID: 153339\n- New York Times topic ID: destination/canada\n- GND ID: 4029456-0\n- category of associated people: Q6994944\n- FAST ID: 1204310\n- BHL creator ID: 214410\n- electrical plug type: Q24288454\n- electrical plug type: Q24288456\n- foundational text: Q868884\n- BabelNet ID: 00015115n\n- office held by the head of government: Q839078\n- Gini coefficient: 32.1 (point in time=2005-01-01T)\n- Gini coefficient: 33.3 (point in time=2017-00-00T)\n- patron saint: Q128267\n- patron saint: Q713402\n- native label: {\"text\": \"Canada\", \"language\": \"en\"}\n- native label: {\"text\": \"Canada\", \"language\": \"fr\"}\n- MusicBrainz area ID: 71bbafaa-e825-3e15-8ca9-017dcad1748b\n- Canadian Encyclopedia article ID: canada\n- INSEE countries and foreign territories code: 99401\n- diplomatic relation: Q30",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0004",
+    "title": "United States",
+    "text": "**United States** (Q30) — country located primarily in North America.\nKey facts:\n- Great Russian Encyclopedia Online ID (2017): 3590227\n- participant in: Q488\n- participant in: Q280468\n- Libraries Australia ID: 35562417\n- coordinates of southernmost point: {\"latitude\": 24.5442989, \"longitude\": -81.8051241,\n- Tripadvisor ID: 191\n- Omni topic ID: 9050eaf972828656c88d8704360f0b8e65bee3f0\n- New York Times topic ID: destination/united-states\n- GND ID: 4078704-7\n- category of associated people: Q3919762\n- emergency phone number: Q533806\n- electrical plug type: Q24288454\n- electrical plug type: Q24288456\n- vehicle registration plate code: USA (start time=1952-00-00T)\n- BabelNet ID: 00003341n\n- location map: Usa edcp location map.svg\n- location map: Location map of USA (+HI +AK +Unincorporated territories + DC).svg\n- Gini coefficient: 47.7 (point in time=2011-01-01T)\n- Gini coefficient: 34.6 (point in time=1979-00-00T)\n- category for people who died here: Q6334989\n- Encyclopædia Universalis ID: etats-unis-d-amerique-vue-d-ensemble\n- native label: {\"text\": \"United States of America\", \"language\": \"\n- native label: {\"text\": \"Estados Unidos de América\", \"language\": \n- MusicBrainz area ID: 489ce91b-6658-3307-9877-795b68554c98\n- public holiday: Q86591",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0005",
+    "title": "The Healer",
+    "text": "**The Healer** (Q288231) — album by John Lee Hooker.\nKey facts:\n- performer: Q44570\n- instance of: Q482994\n- record label: Q5069751\n- MusicBrainz release group ID: 2de52330-f003-310c-bc99-94438bf5a904\n- lyricist: Q44570\n- Freebase ID: /m/01j0h59\n- publication date: 1989-01-01T\n- genre: Q9759\n- Discogs master ID: 107069\n- AllMusic album ID: mw0000201557\n- different from: Q5690209\n- duration: 2503\n- producer: Q7373318\n- Amazon Standard Identification Number: B01BIMABZW\n- form of creative work: Q208569",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0006",
+    "title": "Sonic the Hedgehog",
+    "text": "**Sonic the Hedgehog** (Q1046812) — Sega video game franchise.\nKey facts:\n- Commons category: Sonic the Hedgehog\n- instance of: Q141546978\n- official website: https://www.sonicthehedgehog.com/\n- official website: http://sonic.sega.jp/\n- characters: Q191626\n- characters: Q1136987\n- topic's main category: Q7215321\n- Freebase ID: /m/08b26_\n- Encyclopædia Britannica Online ID: topic/Sonic-the-Hedgehog\n- Giant Bomb ID (former scheme): 3025-383\n- MobyGames group ID (former scheme): sonic-the-hedgehog-universe\n- VGMdb product ID: 3\n- topic has template: Q5887037\n- MusicBrainz series ID: 7a895c17-c3ff-4fac-96d8-ef61b16493fd\n- MusicBrainz series ID: 5d33a69c-2364-4a47-9a38-563bbc26c22f\n- developer: Q1140960\n- developer: Q219758\n- subreddit: SonicTheHedgehog (start time=2010-01-31T; point in time=2023-05-23T)\n- publisher: Q122741\n- designed by: Q658384\n- designed by: Q726119\n- takes place in fictional universe: Q50917996\n- Garaph group ID: 61\n- country of origin: Q17\n- narrative location: Q20049834",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0007",
+    "title": "Nintendo 64",
+    "text": "**Nintendo 64** (Q184839) — fifth-generation home video game console by Nintendo.\nKey facts:\n- instance of: Q62008942\n- manufacturer: Q8093\n- image: Nintendo-64-wController-L.jpg\n- Commons category: Nintendo 64\n- follows: Q183259\n- followed by: Q182172\n- topic's main category: Q7430536\n- GND ID: 4525190-3\n- Freebase ID: /m/05h5m\n- part of: Q129728\n- official website: http://www.nintendo.com/consumer/systems/nintendo64/index.jsp\n- Commons gallery: Nintendo 64\n- Quora topic ID: Project-Reality\n- Quora topic ID: Nintendo-64-video-game-console\n- publication date: 1996-06-23T\n- subreddit: n64 (start time=2010-08-30T)\n- Giant Bomb ID (former scheme): 3045-43\n- GAMECIP platform ID: 1122\n- GAMECIP platform ID: 1028\n- subclass of: Q17589470\n- subclass of: Q8076\n- Internet Game Database platform ID: n64\n- MobyGames platform ID: n64\n- old-computers.com ID: 1242\n- GameFAQs platform ID: n64",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0008",
+    "title": "Japan",
+    "text": "**Japan** (Q17) — island country in East Asia.\nKey facts:\n- Great Russian Encyclopedia Online ID (2017): 4919294\n- Libraries Australia ID: 35242950\n- coordinates of southernmost point: {\"latitude\": 30.994416666667, \"longitude\": 130.660\n- coordinates of southernmost point: {\"latitude\": 20.425277777778, \"longitude\": 136.069\n- Tripadvisor ID: 294232\n- New York Times topic ID: destination/japan\n- GND ID: 4028495-5\n- category of associated people: Q9072262\n- category of associated people: Q6994491\n- emergency phone number: Q2807090\n- emergency phone number: Q25648823\n- electrical plug type: Q24288454\n- electrical plug type: Q24288456\n- vehicle registration plate code: J (start time=1964-00-00T)\n- BabelNet ID: 00047985n\n- Fandom wiki ID: japan\n- native label: {\"text\": \"日本\", \"language\": \"ja\"}\n- MusicBrainz area ID: 2db42837-c832-3c27-b4a3-08198f75693c\n- public holiday: Q483226\n- public holiday: Q1059995\n- flag image: Flag of Japan.svg (start time=1999-08-13T)\n- flag image: Flag of Japan (1870–1999).svg (start time=1870-02-27T; end time=1999-08-12T)\n- UIC alphabetical country code: J\n- Comic Vine ID: 4020-55746\n- INSEE countries and foreign territories code: 99217",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0009",
+    "title": "Final Fantasy",
+    "text": "**Final Fantasy** (Q1415970) — 1987 role-playing video game originally for the NES.\nKey facts:\n- instance of: Q7889\n- genre: Q744038\n- game mode: Q208850\n- platform: Q172742\n- platform: Q188642\n- PEGI rating: Q14915512\n- USK rating: Q14920391\n- USK rating: Q14920387\n- Freebase ID: /m/0dvxy\n- publisher: Q739552\n- developer: Q739552\n- composer: Q312327\n- publication date: 1987-12-18T\n- publication date: 2009-05-26T\n- designed by: Q312525\n- distribution format: Q633454\n- distribution format: Q54820071\n- programmer: Q1934555\n- ESRB rating: Q14864328\n- ESRB rating: Q14864329\n- CERO rating: Q11389850\n- official website: https://www.jp.square-enix.com/game/detail/ff/\n- programmed in: Q165436\n- IMDb ID: tt0207484\n- MobyGames game ID (former scheme): final-fantasy",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0010",
+    "title": "Kajagoogoo",
+    "text": "**Kajagoogoo** (Q608271) — British new wave band.\nKey facts:\n- discography: Q6348843\n- MusicBrainz artist ID: 7bc51021-6a84-4a04-ada3-0541615a97bc\n- Freebase ID: /m/01chff\n- instance of: Q215380\n- Discogs artist ID: 99929\n- AllMusic artist ID: mn0000354609\n- VIAF cluster ID: 146716039\n- image: Kajagoogoo in Germany Bochum 2008.jpg\n- official website: http://www.kajagoogoo.com\n- inception: 1982-00-00T\n- genre: Q187760\n- genre: Q1298934\n- location of formation: Q2462645\n- record label: Q55965015\n- has part(s): Q921176\n- has part(s): Q98457211\n- Songkick artist ID: 201177\n- Commons category: Kajagoogoo\n- Bibliothèque nationale de France ID: 139043316\n- ISNI: 0000000115166482\n- Songfacts artist ID: kajagoogoo\n- Billboard artist ID: kajagoogoo\n- Library of Congress Authorities ID: n91031129\n- country of origin: Q145\n- start of work period: 1978-00-00T",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0011",
+    "title": "United Kingdom",
+    "text": "**United Kingdom** (Q145) — island country in north-west Europe.\nKey facts:\n- Great Russian Encyclopedia Online ID (2017): 4351848\n- Great Russian Encyclopedia Online ID (2017): 1905018\n- participant in: Q1088364\n- participant in: Q1137302\n- Libraries Australia ID: 35142153\n- coordinates of southernmost point: {\"latitude\": 49.95673883, \"longitude\": -5.20697638\n- Omni topic ID: bd04b10d4118a29abe12eaeaf4dcadd08775d47c\n- category for films shot at this location: Q6834520\n- GND ID: 4022153-2\n- category of associated people: Q3919830\n- category of associated people: Q32670711\n- emergency phone number: Q3086706\n- emergency phone number: Q1061257\n- electrical plug type: Q1528507\n- vehicle registration plate code: GB (start time=1910-01-01T; end time=2021-09-27T)\n- vehicle registration plate code: UK (start time=2021-09-28T)\n- BabelNet ID: 00013173n\n- office held by the head of government: Q14211\n- Gini coefficient: 32.8 (point in time=2012-01-01T)\n- Curlie ID: Regional/Europe/United_Kingdom/\n- native label: {\"text\": \"United Kingdom of Great Britain and Nort\n- MusicBrainz area ID: 8a754a16-0027-3a29-b6d7-2b40ea0481ed\n- public holiday: Q196627\n- public holiday: Q19809\n- UIC alphabetical country code: GB",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0012",
+    "title": "Tom Hanks",
+    "text": "**Tom Hanks** (Q2263) — American actor and film producer (born 1956).\nKey facts:\n- Commons category: Tom Hanks\n- VIAF cluster ID: 19874894\n- ISNI: 0000000121232378\n- occupation: Q10800557\n- occupation: Q2526255\n- country of citizenship: Q30\n- country of citizenship: Q41\n- Library of Congress Authorities ID: n87910188\n- GND ID: 119287781\n- IMDb ID: nm0000158\n- MusicBrainz artist ID: 065d44ce-48cf-4b1c-85ad-555d0345ba6e\n- IdRef ID: 052201805\n- Bibliothèque nationale de France ID: 13981774h\n- NDL Authority ID: 00649764\n- date of birth: 1956-07-09T\n- sex or gender: Q6581097\n- image: Tom Hanks at the Elvis Premiere 2022.jpg (point in time=2022-06-06T)\n- instance of: Q5\n- place of birth: Q490441\n- Freebase ID: /m/0bxtg\n- award received: Q103916 (point in time=1994-03-21T)\n- award received: Q103916 (point in time=1995-03-27T)\n- child: Q318134\n- child: Q20993894\n- spouse: Q20993893 (start time=1978-01-24T; end time=1987-03-19T)",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0013",
+    "title": "Q39476",
+    "text": "**Q39476** (Q39476) — English actress (born 1990).\nKey facts:\n- occupation: Q4610556\n- occupation: Q10800557\n- place of birth: Q90\n- IMDb ID: nm0914612\n- Commons category: Emma Watson\n- VIAF cluster ID: 59289665\n- ISNI: 0000000114453711\n- country of citizenship: Q145\n- GND ID: 131379097\n- Library of Congress Authorities ID: no2002045826\n- IdRef ID: 07728433X\n- Bibliothèque nationale de France ID: 140714773\n- NDL Authority ID: 001117380\n- date of birth: 1990-04-15T\n- instance of: Q5\n- educated at: Q780745 (start time=2011-00-00T; end time=2012-00-00T)\n- educated at: Q49114 (end time=2014-05-25T; start time=2009-00-00T)\n- Freebase ID: /m/0134w7\n- given name: Q541194 (series ordinal=1)\n- given name: Q264002 (series ordinal=2)\n- Munzinger person ID: 00000026227\n- family name: Q1184721\n- NNDB people ID: 036/000028949\n- AlloCiné person ID: 65003\n- X (Twitter) username: EmmaWatson (start time=2010-07-14T; point in time=2020-12-20T)",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0014",
+    "title": "New York",
+    "text": "**New York** (Q1384) — state of the United States of America.\nKey facts:\n- located in or next to body of water: Q5492\n- located in or next to body of water: Q134750\n- named after: Q337222\n- topic's main Wikimedia portal: Q14615964\n- locator map image: New York in United States.svg\n- coordinate location: {\"latitude\": 43, \"longitude\": -75, \"altitude\": nul\n- contains the administrative territorial entity: Q500416\n- contains the administrative territorial entity: Q108408\n- shares border with: Q1408\n- shares border with: Q16551\n- capital: Q24861\n- flag image: Flag of New York.svg\n- flag: Q19016\n- country: Q30\n- Dewey Decimal Classification: 2--747\n- Dewey Decimal Classification: 974.7\n- ISO 3166-2 code: US-NY\n- Commons category: New York (state)\n- OpenStreetMap relation ID: 61320\n- located in the administrative territorial entity: Q30\n- page banner: New York (state) banner Bear Mountain Bridge.jpg\n- GND ID: 4042012-7\n- topic's main category: Q6808114\n- Curlie ID: Regional/North_America/United_States/New_York/\n- MusicBrainz area ID: 75e398a3-5f3f-4224-9cd8-0fe44715bc95",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0015",
+    "title": "Greece",
+    "text": "**Greece** (Q41) — country in Southeast Europe.\nKey facts:\n- Great Russian Encyclopedia Online ID (2017): 2378081\n- participant in: Q1139479\n- participant in: Q55153903\n- population: 9716889 (point in time=2021-00-00T)\n- population: 10482487 (point in time=2021-00-00T)\n- Getty Thesaurus of Geographic Names ID: 1000074\n- topic's main Wikimedia portal: Q6218181\n- National Library of Greece ID: 4335\n- coordinates of southernmost point: {\"latitude\": 34.69698, \"longitude\": 24.09585, \"alt\n- motto: Q2746673\n- Wikimedia outline: Q7112276\n- NDL Authority ID: 00562473\n- currency: Q4916 (start time=2002-01-01T)\n- currency: Q1546443 (start time=1833-02-08T; end time=2002-02-28T)\n- New York Times topic ID: destination/greece\n- ethnic group: Q539051\n- GeoNames ID: 390903\n- GND ID: 4022047-3\n- WIPO ST.3: GR\n- Unicode character: 🇬🇷\n- category of associated people: Q6992654\n- emergency phone number: Q1061257\n- emergency phone number: Q25648793\n- UNESCO Thesaurus ID: concept907\n- electrical plug type: Q1378312",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0016",
+    "title": "female",
+    "text": "**female** (Q6581072) — to be used in \"sex or gender\" (P21) to indicate that the human subject is a female or \"semantic gender\" (P10339) to indicate that a word refers to a female person.\nKey facts:\n- Wikidata usage instructions: {\"text\": \"use with Property:P21 sex or gender. For\n- Wikidata usage instructions: {\"text\": \"usar con la propiedad P21 sexo o género.\n- Wolfram Language entity code: Entity[\"Gender\", \"Female\"]\n- image: Venus symbol.svg\n- Unicode character: 🚺\n- has characteristic: Q11879590\n- has characteristic: Q66502812\n- opposite of: Q6581097\n- short name: {\"text\": \"жін.\", \"language\": \"uk\"}\n- short name: {\"text\": \"♀\", \"language\": \"zxx\"}\n- exact match: https://schema.org/Female\n- instance of: Q4369513\n- instance of: Q48264\n- Library of Congress Demographic Group Terms ID: dg2015060004\n- part of: Q20686840\n- part of: Q5530970\n- Art & Architecture Thesaurus ID: 300189557\n- icon: Venus symbol.svg\n- Commons category: Female people\n- Colon Classification: S55\n- Homosaurus ID (V2): females\n- topic's main category: Q7464256\n- Fandom article ID: pt-br.identidades:Feminino\n- Fandom article ID: es.sucepedia:Género_femenino\n- FactGrid item ID: Q17",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0017",
+    "title": "Alice in Wonderland",
+    "text": "**Alice in Wonderland** (Q174385) — 2010 film directed by Tim Burton.\nKey facts:\n- IMDb ID: tt1014759\n- Commons category: Alice in Wonderland (2010 film)\n- original language of film or TV show: Q1860\n- instance of: Q11424\n- director: Q56008\n- FilmAffinity film ID: 362992\n- screenwriter: Q1072923\n- based on: Q92640\n- based on: Q220331\n- producer: Q919992\n- producer: Q359311\n- production company: Q191224\n- production company: Q24737523\n- director of photography: Q902080\n- cast member: Q37175\n- cast member: Q36301\n- genre: Q157394\n- genre: Q1957385\n- Freebase ID: /m/04jpg2p\n- country of origin: Q145\n- country of origin: Q30\n- GND ID: 7691842-7\n- AlloCiné film ID: 132663\n- Rotten Tomatoes ID: m/1221547-alice_in_wonderland\n- publication date: 2010-03-05T",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0018",
+    "title": "Super Smash Bros.",
+    "text": "**Super Smash Bros.** (Q2778220) — video game series.\nKey facts:\n- topic's main category: Q7464579\n- instance of: Q7058673\n- has part(s): Q870981\n- has part(s): Q1052131\n- genre: Q21192427\n- genre: Q846224\n- Commons category: Super Smash Bros.\n- topic has template: Q7463975\n- Freebase ID: /m/05cwrp\n- characters: Q12379\n- characters: Q210593\n- list of characters: Q6358289\n- official website: https://www.smashbros.com/\n- Quora topic ID: Super-Smash-Bros-series\n- subreddit: smashbros (start time=2008-06-02T)\n- subreddit: supersmashbros\n- Giant Bomb ID (former scheme): 3025-318\n- MobyGames group ID (former scheme): super-smash-brothers-series\n- NicoNicoPedia ID: 大乱闘スマッシュブラザーズシリーズ\n- platform: Q184839\n- platform: Q182172\n- game mode: Q208850\n- game mode: Q6895044\n- record label: Q3070639\n- X (Twitter) topic ID: 854950593248468992",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0019",
+    "title": "The Legend of Zelda",
+    "text": "**The Legend of Zelda** (Q12393) — video game series.\nKey facts:\n- instance of: Q7058673\n- Commons category: The Legend of Zelda\n- genre: Q42409239\n- genre: Q1422746\n- characters: Q6039019\n- characters: Q1067046\n- creator: Q12382\n- creator: Q509121\n- topic's main category: Q6591954\n- Freebase ID: /m/07d5v\n- publisher: Q8093\n- MusicBrainz series ID: 9b36ba4a-55f1-49ef-a0e6-a53e89ca8873\n- official website: https://www.zelda.com/\n- official website: https://www.nintendo.co.jp/character/zelda/index.html\n- takes place in fictional universe: Q1399781\n- narrative location: Q16511354\n- topic has template: Q10514313\n- X (Twitter) username: ZeldaOfficialJP (point in time=2018-05-10T; start time=2015-01-05T)\n- list of characters: Q2698862\n- list of characters: Q2533508\n- topic's main Wikimedia portal: Q14616564\n- Facebook username: LegendofZeldaUK\n- Facebook username: LegendofZelda\n- developer: Q8093\n- country of origin: Q17",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0020",
+    "title": "President of the United States",
+    "text": "**President of the United States** (Q11696) — head of state and head of government of the United States of America.\nKey facts:\n- instance of: Q17279032\n- country: Q30\n- official residence: Q35525 (start time=1800-11-01T)\n- official residence: Q7412321 (start time=1789-04-23T; end time=1790-02-23T)\n- Commons category: Presidents of the United States\n- flag: Q2975851\n- honorific prefix: Q5306663\n- honorific prefix: Q2746176\n- GND ID: 2033432-1\n- Commons gallery: President of the United States\n- Freebase ID: /m/060d2\n- Library of Congress Authorities ID: n80001199\n- Library of Congress Authorities ID: sh85106465\n- VIAF cluster ID: 129529146\n- VIAF cluster ID: 123879793\n- Bibliothèque nationale de France ID: 11863688j\n- Bibliothèque nationale de France ID: 120466967\n- IdRef ID: 026377519\n- appointed by: Q47586\n- appointed by: Q11701\n- has seal, badge, or sigil: Q524901\n- applies to jurisdiction: Q30\n- Facebook username: POTUS\n- has list: Q35073\n- Ballotpedia ID: President_of_the_United_States",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0021",
+    "title": "Spanish",
+    "text": "**Spanish** (Q1321) — Romance language originating in the Iberian Peninsula.\nKey facts:\n- Great Russian Encyclopedia Online ID (2017): 2024508\n- Commons category: Spanish language\n- Glottolog code: stan1288\n- Art & Architecture Thesaurus ID: 300389311\n- PSH ID: 6758\n- topic's main Wikimedia portal: Q15146843\n- ISO 639-2 code: spa\n- different from: Q16775638\n- different from: Q241649\n- topic's main category: Q7237581\n- NDL Authority ID: 00571703\n- Universal Decimal Classification: 811.134.2\n- New York Times topic ID: subject/spanish-language\n- GND ID: 4077640-2\n- UNESCO language status: Q20672086\n- linguistic typology: Q651641\n- linguistic typology: Q7888569\n- UNESCO Thesaurus ID: concept10219\n- language regulatory body: Q607959\n- BabelNet ID: 00073092n\n- IETF language tag: es\n- Encyclopædia Britannica Online ID: topic/Spanish-language\n- category for films in this language: Q6840508\n- has grammatical gender: Q499327\n- has grammatical gender: Q1775415",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0022",
+    "title": "People's Republic of China",
+    "text": "**People's Republic of China** (Q148) — country in East Asia.\nKey facts:\n- demonym: {\"text\": \"چيني\", \"language\": \"ps\"}\n- demonym: {\"text\": \"Кинези\", \"language\": \"sr\"}\n- official name: {\"text\": \"中华人民共和国\", \"language\": \"zh-hans\"}\n- official name: {\"text\": \"中華人民共和國\", \"language\": \"zh-hant\"}\n- Dewey Decimal Classification: 2--51\n- central bank: Q249203\n- topic's main Wikimedia portal: Q13365337\n- Commons gallery: 中华人民共和国\n- diplomatic relation: Q30 (start time=1979-01-01T)\n- diplomatic relation: Q159 (start time=1949-10-02T)\n- instance of: Q3624078\n- instance of: Q842112\n- continent: Q48\n- capital: Q956 (start time=1949-10-01T)\n- official language: Q727694\n- official language: Q7850\n- currency: Q39099\n- flag image: Flag of the People's Republic of China.svg (start time=1949-09-27T)\n- shares border with: Q711\n- shares border with: Q232\n- anthem: Q156136\n- top-level Internet domain: Q38900\n- top-level Internet domain: Q11837308\n- flag: Q131147\n- contains the administrative territorial entity: Q956",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0023",
+    "title": "U.S. state",
+    "text": "**U.S. state** (Q35657) — constituent political entity of the United States of America.\nKey facts:\n- country: Q30\n- Commons category: States of the United States\n- subclass of: Q852446\n- subclass of: Q107390\n- quantity: 50 (start time=1959-08-21T)\n- quantity: 49 (start time=1959-01-03T; end time=1959-08-21T)\n- Freebase ID: /m/0d0xs\n- topic's main category: Q6447755\n- Quora topic ID: States-of-the-USA\n- Quora topic ID: States-and-Territories-of-the-USA\n- has list: Q150340\n- has list: Q906228\n- instance of: Q28872924\n- instance of: Q135236673\n- topic has template: Q6192209\n- image: Map of USA with state names.svg\n- BabelNet ID: 01110993n\n- short name: {\"text\": \"U.S. state\", \"language\": \"en\"}\n- native label: {\"text\": \"state of the United States\", \"language\":\n- native label: {\"text\": \"U.S. state\", \"language\": \"en\"}\n- Library of Congress Authorities ID: sh96008759\n- FAST ID: 1160235\n- Bibliothèque nationale de France ID: 12182520r\n- KBpedia ID: State-UnitedStates\n- Great Norwegian Encyclopedia ID: Delstater_i_USA",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0024",
+    "title": "Asia",
+    "text": "**Asia** (Q48) — terrestrial continent, mainly in the northeastern quadrant.\nKey facts:\n- Great Russian Encyclopedia Online ID (2017): 3988825\n- Great Russian Encyclopedia Online ID (2017): 1803680\n- U.S. National Archives Identifier: 10035693\n- population: 947000000 (point in time=1900-00-00T)\n- population: 800000000 (point in time=1893-00-00T)\n- Getty Thesaurus of Geographic Names ID: 1000004\n- topic's main Wikimedia portal: Q8252068\n- category for films shot at this location: Q7140349\n- topic's main category: Q5610083\n- Wikimedia outline: Q7112190\n- NDL Authority ID: 00560427\n- Tripadvisor ID: 2\n- category for people buried here: Q23657023\n- locator map image: Asia (orthographic projection).svg\n- locator map image: Asia on the globe (white-red).svg\n- UK Parliament thesaurus ID: 8437\n- Dewey Decimal Classification: 2--5\n- GeoNames ID: 6255147\n- GND ID: 4003217-6\n- area: 44614500\n- Le Monde diplomatique subject ID: pays/asie\n- number of out-of-school children: 143000000 (point in time=2015-01-01T)\n- number of out-of-school children: 144000000 (point in time=2014-01-01T)\n- archINFORM location ID: 3065\n- UNESCO Thesaurus ID: concept812",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0025",
+    "title": "country",
+    "text": "**country** (Q6256) — distinct territorial body or political entity.\nKey facts:\n- topic's main Wikimedia portal: Q6988967\n- OpenStreetMap tag: place=country\n- OpenStreetMap tag: admin_level=2\n- said to be the same as: Q7275\n- subclass of: Q4835091\n- subclass of: Q1048835\n- Commons category: Countries\n- topic's main category: Q4026570\n- topic's main category: Q9699162\n- GND ID: 4056618-3\n- main Wikidata property: country\n- main Wikidata property: country of origin\n- Freebase ID: /m/01lff\n- equivalent class: http://dbpedia.org/ontology/Country\n- equivalent class: https://schema.org/Country\n- properties for this type: country\n- properties for this type: continent\n- contains the administrative territorial entity: Q10864048\n- permanent duplicated item: Q22828881\n- topic has template: Q5621162\n- topic has template: Q5047\n- different from: Q231002\n- different from: Q7275\n- JSTOR topic ID (archived): countries\n- Quora topic ID: Countries-of-the-World-1",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0026",
+    "title": "Mexico",
+    "text": "**Mexico** (Q96) — country in North America.\nKey facts:\n- VIAF cluster ID: 154311247\n- permanent duplicated item: Q26258142\n- permanent duplicated item: Q27103592\n- continent: Q49\n- NACSIS-CAT author ID: DA02943005\n- Wikimedia outline: Q16191907\n- BBC Things ID: 3deb0e53-87ed-4c7d-97c8-d53b5ab50359\n- total fertility rate: 2.8 (point in time=1999-00-00T)\n- total fertility rate: 2.747 (point in time=2000-00-00T)\n- Commons gallery: México\n- Biblioteca Nacional de México ID: 000040641\n- MusicBrainz area ID: 3e08b2cd-69f3-317c-b1e4-e71be581839e\n- basic form of government: Q512187\n- basic form of government: Q5255892\n- National Library of Israel ID (old): 000983119\n- age of majority: 18\n- Encyclopædia Universalis ID: mexique\n- X (Twitter) username: mexico (point in time=2020-02-27T; start time=2011-04-18T)\n- Global Anabaptist Mennonite Encyclopedia Online ID: Mexico\n- The Guardian topic ID: world/mexico\n- image: States of Mexico.svg\n- image: Division politica mexico.svg\n- Libraries Australia ID: 36590136\n- WIPO ST.3: MX\n- country: Q96",
+    "origin": "wikidata"
+   },
+   {
+    "id": "d0027",
+    "title": "Daniel Day-Lewis",
+    "text": "**Daniel Day-Lewis** (Q166389) — British actor.\nKey facts:\n- mother: Q3178689\n- sex or gender: Q6581097\n- spouse: Q508184 (start time=1996-11-13T)\n- father: Q954383\n- Commons category: Daniel Day-Lewis\n- occupation: Q10800557\n- occupation: Q483501\n- VIAF cluster ID: 103647327\n- ISNI: 0000000121461760\n- Library of Congress Authorities ID: n95030987\n- GND ID: 119403269\n- IMDb ID: nm0000358\n- IdRef ID: 060649348\n- Bibliothèque nationale de France ID: 13999326p\n- NDL Authority ID: 00620563\n- date of birth: 1957-04-29T\n- image: Daniel Day-Lewis - BFI Southbank - Wednesday 15th October 2025.jpg\n- instance of: Q5\n- place of birth: Q288781\n- place of birth: Q84\n- educated at: Q608723\n- educated at: Q2275185\n- country of citizenship: Q27\n- country of citizenship: Q145\n- unmarried partner: Q106383 (start time=1989-01-01T; end time=1995-01-01T)",
+    "origin": "wikidata"
+   }
+  ]
+ },
+ "questions": [
+  {
+   "qid": "472d740f",
+   "question": "Which blues performer recorded The Healer?",
+   "gold_answer": "John Lee Hooker",
+   "gold_variants": [
+    "John Lee Hooker",
+    "John Lee Hooker"
+   ],
+   "gold_doc_ids": [
+    "d0005"
+   ],
+   "gold_titles": [
+    "The Healer"
+   ],
+   "mintaka": {
+    "entity_ids": [
+     "Q288231"
+    ],
+    "answer_labels": [
+     "John Lee Hooker",
+     "John Lee Hooker"
+    ],
+    "ctype": "generic",
+    "category": "music"
+   },
+   "type": "kbqa/generic"
+  },
+  {
+   "qid": "a9ebf18e",
+   "question": "Was there a Sonic game for Nintendo 64?",
+   "gold_answer": "False",
+   "gold_variants": [
+    "False",
+    "No"
+   ],
+   "gold_doc_ids": [
+    "d0006",
+    "d0007"
+   ],
+   "gold_titles": [
+    "Sonic the Hedgehog",
+    "Nintendo 64"
+   ],
+   "mintaka": {
+    "entity_ids": [
+     "Q1046812",
+     "Q184839",
+     "Q17"
+    ],
+    "answer_labels": [
+     "False",
+     "No"
+    ],
+    "ctype": "yesno",
+    "category": "videogames"
+   },
+   "type": "kbqa/yesno"
+  },
+  {
+   "qid": "1e81dfc8",
+   "question": "What year did the biggest hit of the band Kajagoogoo come out?",
+   "gold_answer": "1983",
+   "gold_variants": [
+    "1983",
+    "1983"
+   ],
+   "gold_doc_ids": [
+    "d0010"
+   ],
+   "gold_titles": [
+    "Kajagoogoo"
+   ],
+   "mintaka": {
+    "entity_ids": [
+     "Q608271",
+     "Q145"
+    ],
+    "answer_labels": [
+     "1983",
+     "1983"
+    ],
+    "ctype": "multihop",
+    "category": "music"
+   },
+   "type": "kbqa/multihop"
+  },
+  {
+   "qid": "83b1edf0",
+   "question": "Has Tom Hanks ever been in a movie with Emma Watson?",
+   "gold_answer": "True",
+   "gold_variants": [
+    "True",
+    "Yes"
+   ],
+   "gold_doc_ids": [
+    "d0012",
+    "d0013"
+   ],
+   "gold_titles": [
+    "Tom Hanks",
+    "Q39476"
+   ],
+   "mintaka": {
+    "entity_ids": [
+     "Q2263",
+     "Q39476",
+     "Q1384",
+     "Q41",
+     "Q6581072"
+    ],
+    "answer_labels": [
+     "True",
+     "Yes"
+    ],
+    "ctype": "yesno",
+    "category": "movies"
+   },
+   "type": "kbqa/yesno"
+  },
+  {
+   "qid": "9e25a7d3",
+   "question": "In what year did the newest U.S. state join the Union?",
+   "gold_answer": "1959",
+   "gold_variants": [
+    "1959",
+    "1959"
+   ],
+   "gold_doc_ids": [
+    "d0004"
+   ],
+   "gold_titles": [
+    "United States"
+   ],
+   "mintaka": {
+    "entity_ids": [
+     "Q11696",
+     "Q1321",
+     "Q148",
+     "Q35657",
+     "Q48",
+     "Q6256",
+     "Q96"
+    ],
+    "answer_labels": [
+     "1959",
+     "1959"
+    ],
+    "ctype": "multihop",
+    "category": "geography"
+   },
+   "type": "kbqa/multihop"
+  },
+  {
+   "qid": "88045d48",
+   "question": "When was Daniel Day Lewis born?",
+   "gold_answer": "1957",
+   "gold_variants": [
+    "1957",
+    "1957"
+   ],
+   "gold_doc_ids": [
+    "d0027"
+   ],
+   "gold_titles": [
+    "Daniel Day-Lewis"
+   ],
+   "mintaka": {
+    "entity_ids": [
+     "Q166389"
+    ],
+    "answer_labels": [
+     "1957",
+     "1957"
+    ],
+    "ctype": "generic",
+    "category": "movies"
+   },
+   "type": "kbqa/generic"
+  }
+ ],
+ "meta": {
+  "source": "Mintaka dev (KBQA) + Wikidata evidence; types: generic/yesno/ordinal/intersection/multihop",
+  "n_docs": 28,
+  "n_questions": 6,
+  "seed": 42,
+  "doc_budget": 30,
+  "question_budget": 30,
+  "note": "comparative/difference/superlative/count 类需要跨实体聚合证据,不在闭库协议内"
+ }
+}

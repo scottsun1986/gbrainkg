@@ -1,0 +1,71 @@
+{
+ "rows_search": [
+  {
+   "qid": "PLAIN-2408",
+   "recall@10": 0.4,
+   "full_evidence@10": 0.0,
+   "mrr@10": 0.25,
+   "ndcg@10": 0.27727342735504823
+  },
+  {
+   "qid": "PLAIN-1161",
+   "recall@10": 0.0,
+   "full_evidence@10": 0.0,
+   "mrr@10": 0.0,
+   "ndcg@10": 0.0
+  },
+  {
+   "qid": "PLAIN-817",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 0.14285714285714285,
+   "ndcg@10": 0.3333333333333333
+  },
+  {
+   "qid": "PLAIN-1962",
+   "recall@10": 0.3076923076923077,
+   "full_evidence@10": 0.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.513528549750033
+  },
+  {
+   "qid": "PLAIN-418",
+   "recall@10": 0.6666666666666666,
+   "full_evidence@10": 0.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.7653606369886217
+  },
+  {
+   "qid": "PLAIN-541",
+   "recall@10": 0.5,
+   "full_evidence@10": 0.0,
+   "mrr@10": 0.5,
+   "ndcg@10": 0.4725458388387121
+  },
+  {
+   "qid": "PLAIN-3131",
+   "recall@10": 0.3333333333333333,
+   "full_evidence@10": 0.0,
+   "mrr@10": 0.14285714285714285,
+   "ndcg@10": 0.1963279042557385
+  }
+ ],
+ "summary": {
+  "n": 7,
+  "errors": 0,
+  "retrieval_recall@10": 0.4582,
+  "retrieval_full_evidence@10": 0.1429,
+  "retrieval_mrr@10": 0.4337,
+  "retrieval_ndcg@10": 0.3655,
+  "search_wall_secs": 6.5
+ },
+ "meta": {
+  "source": "BEIR nfcorpus (test qrels, gold-guaranteed subset)",
+  "n_docs": 30,
+  "n_questions": 7,
+  "seed": 42,
+  "doc_budget": 30,
+  "question_budget": 30
+ },
+ "score_sha": "3d9c9d42c68c00be"
+}

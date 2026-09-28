@@ -1,0 +1,177 @@
+{
+ "rows_qa": [
+  {
+   "qid": "472d740f",
+   "type": "kbqa/generic",
+   "question": "Which blues performer recorded The Healer?",
+   "gold": "John Lee Hooker",
+   "answer": "John Lee Hooker recorded The Healer [1].",
+   "citations": [
+    "The Healer"
+   ],
+   "ttft": 44.03,
+   "latency": 44.24,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.7499999999999999,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "a9ebf18e",
+   "type": "kbqa/yesno",
+   "question": "Was there a Sonic game for Nintendo 64?",
+   "gold": "False",
+   "answer": "Based on the provided reference materials, the relevant information is not available in the knowledge base.",
+   "citations": [],
+   "ttft": 3.55,
+   "latency": 3.64,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.0,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 0.0
+  },
+  {
+   "qid": "1e81dfc8",
+   "type": "kbqa/multihop",
+   "question": "What year did the biggest hit of the band Kajagoogoo come out?",
+   "gold": "1983",
+   "answer": "Based on the provided reference materials, the relevant information is not available. The entry for the band Kajagoogoo [1] lists general facts like its inception year (1982) and genres, but does not include details about specific songs, their release years, or chart performance.Based on the provided reference materials, the relevant information is not available.",
+   "citations": [
+    "Kajagoogoo"
+   ],
+   "ttft": 25.37,
+   "latency": 31.57,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.0,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "83b1edf0",
+   "type": "kbqa/yesno",
+   "question": "Has Tom Hanks ever been in a movie with Emma Watson?",
+   "gold": "True",
+   "answer": "Based on the provided reference materials, the relevant information is not available in the knowledge base.",
+   "citations": [],
+   "ttft": 2.84,
+   "latency": 2.93,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.0,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 0.0
+  },
+  {
+   "qid": "9e25a7d3",
+   "type": "kbqa/multihop",
+   "question": "In what year did the newest U.S. state join the Union?",
+   "gold": "1959",
+   "answer": "Based on the provided reference materials, the relevant information is not available in the knowledge base.",
+   "citations": [],
+   "ttft": 2.77,
+   "latency": 2.85,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.0,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 0.0
+  },
+  {
+   "qid": "88045d48",
+   "type": "kbqa/generic",
+   "question": "When was Daniel Day Lewis born?",
+   "gold": "1957",
+   "answer": "Daniel Day-Lewis was born on April 29, 1957 [1].",
+   "citations": [
+    "Daniel Day-Lewis"
+   ],
+   "ttft": 49.91,
+   "latency": 50.09,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.2222222222222222,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  }
+ ],
+ "rows_search": [
+  {
+   "qid": "472d740f",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "a9ebf18e",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "1e81dfc8",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "83b1edf0",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "9e25a7d3",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 0.25,
+   "ndcg@10": 0.43067655807339306
+  },
+  {
+   "qid": "88045d48",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  }
+ ],
+ "summary": {
+  "n": 6,
+  "errors": 0,
+  "containment": 0.5,
+  "f1": 0.162,
+  "em": 0.0,
+  "citation_hit": 0.5,
+  "reject_correct": null,
+  "retrieval_recall@10": 1.0,
+  "retrieval_full_evidence@10": 1.0,
+  "retrieval_mrr@10": 0.875,
+  "retrieval_ndcg@10": 0.9051,
+  "latency_p50": 3.64,
+  "latency_p95": 50.09,
+  "ttft_p50": 3.55,
+  "refusal_rate": 0.0
+ },
+ "meta": {
+  "source": "Mintaka dev (KBQA) + Wikidata evidence; types: generic/yesno/ordinal/intersection/multihop",
+  "n_docs": 28,
+  "n_questions": 6,
+  "seed": 42,
+  "doc_budget": 30,
+  "question_budget": 30,
+  "note": "comparative/difference/superlative/count 类需要跨实体聚合证据,不在闭库协议内"
+ },
+ "score_sha": "efd632c34bdaee36"
+}

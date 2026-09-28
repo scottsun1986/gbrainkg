@@ -1,0 +1,17 @@
+{
+ "bench": "2wiki",
+ "kbs": {
+  "SOTA10-2WIKI": {
+   "kb_id": "9831b9ad-e439-45ff-b532-70b012c7dde5",
+   "created": false,
+   "expected": 28,
+   "all_published": true,
+   "final_status": {
+    "published": 28
+   },
+   "post_failures": [],
+   "elapsed_secs": 0.1,
+   "poll_secs": 0
+  }
+ }
+}

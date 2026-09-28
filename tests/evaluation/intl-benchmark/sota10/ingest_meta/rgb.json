@@ -1,0 +1,29 @@
+{
+ "bench": "rgb",
+ "kbs": {
+  "SOTA10-RGB-main": {
+   "kb_id": "eab22f1d-fba8-4644-a028-45790399da5b",
+   "created": false,
+   "expected": 78,
+   "all_published": true,
+   "final_status": {
+    "published": 78
+   },
+   "post_failures": [],
+   "elapsed_secs": 15.1,
+   "poll_secs": 15
+  },
+  "SOTA10-RGB-reject": {
+   "kb_id": "5eb914d6-976d-4417-ba3c-e9e4c1a33861",
+   "created": true,
+   "expected": 40,
+   "all_published": true,
+   "final_status": {
+    "published": 40
+   },
+   "post_failures": [],
+   "elapsed_secs": 109.4,
+   "poll_secs": 96
+  }
+ }
+}

@@ -1,0 +1,17 @@
+{
+ "bench": "mintaka",
+ "kbs": {
+  "SOTA10-MINTAKA": {
+   "kb_id": "808fa893-4a3e-4012-a64c-6657d34d0f04",
+   "created": false,
+   "expected": 28,
+   "all_published": true,
+   "final_status": {
+    "published": 28
+   },
+   "post_failures": [],
+   "elapsed_secs": 0.0,
+   "poll_secs": 0
+  }
+ }
+}

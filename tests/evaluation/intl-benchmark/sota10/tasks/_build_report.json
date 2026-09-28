@@ -1,0 +1,56 @@
+{
+ "rgb": {
+  "source": "RGB (noise/rejection/integration/counterfactual)",
+  "n_docs": 118,
+  "n_questions": 24,
+  "seed": 42,
+  "doc_budget": 30,
+  "question_budget": 30,
+  "docs_per_kb": {
+   "SOTA10-RGB-main": 78,
+   "SOTA10-RGB-reject": 40
+  },
+  "note": "RGB 为逐案例证据设计,文档随案例提供;题目数遵守 ≤30 约束"
+ },
+ "scifact": {
+  "source": "BEIR scifact (test qrels, gold-guaranteed subset)",
+  "n_docs": 30,
+  "n_questions": 26,
+  "seed": 42,
+  "doc_budget": 30,
+  "question_budget": 30
+ },
+ "nfcorpus": {
+  "source": "BEIR nfcorpus (test qrels, gold-guaranteed subset)",
+  "n_docs": 30,
+  "n_questions": 7,
+  "seed": 42,
+  "doc_budget": 30,
+  "question_budget": 30
+ },
+ "fiqa": {
+  "source": "BEIR fiqa (test qrels, gold-guaranteed subset)",
+  "n_docs": 30,
+  "n_questions": 15,
+  "seed": 42,
+  "doc_budget": 30,
+  "question_budget": 30
+ },
+ "arguana": {
+  "source": "BEIR arguana (test qrels, gold-guaranteed subset)",
+  "n_docs": 30,
+  "n_questions": 30,
+  "seed": 42,
+  "doc_budget": 30,
+  "question_budget": 30
+ },
+ "mintaka": {
+  "source": "Mintaka dev (KBQA) + Wikidata evidence; types: generic/yesno/ordinal/intersection/multihop",
+  "n_docs": 28,
+  "n_questions": 6,
+  "seed": 42,
+  "doc_budget": 30,
+  "question_budget": 30,
+  "note": "comparative/difference/superlative/count 类需要跨实体聚合证据,不在闭库协议内"
+ }
+}

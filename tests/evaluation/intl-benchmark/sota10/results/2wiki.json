@@ -1,0 +1,329 @@
+{
+ "rows_qa": [
+  {
+   "qid": "1c9f9261087f11ebbd6bac1f6bf848b6",
+   "type": "bridge_comparison",
+   "question": "Which film has the director who died first, Pusthakamlo Konni Pageelu Missing or The Hunchback Of Rome?",
+   "gold": "Pusthakamlo Konni Pageelu Missing",
+   "answer": "\"Pusthakamlo Konni Pageelu Missing\" has the director who died first [1][6][11][15]. Its director, Sajid Qureshi, died on June 21, 2013 [15], while Carlo Lizzani, director of \"The Hunchback Of Rome,\" died on October 5, 2013 [6][11].",
+   "citations": [
+    "Pusthakamlo Konni Pageelu Missing",
+    "Carlo Lizzani",
+    "The Hunchback of Rome",
+    "Sajid Qureshi"
+   ],
+   "ttft": 43.65,
+   "latency": 43.85,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.2285714285714286,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "ccd5b3dc08e611ebbda5ac1f6bf848b6",
+   "type": "bridge_comparison",
+   "question": "Which film has the director who was born first, Swayamkrushi or Reign Over Me?",
+   "gold": "Swayamkrushi",
+   "answer": "Swayamkrushi has the director who was born first, as K. Viswanath was born on 19 February 1930 [9], while Mike Binder, director of Reign Over Me, was born on June 2, 1958 [7].",
+   "citations": [
+    "Mike Binder",
+    "K. Viswanath"
+   ],
+   "ttft": 52.46,
+   "latency": 52.65,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.06451612903225806,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "05f0e6680bdb11eba7f7acde48001122",
+   "type": "compositional",
+   "question": "Where did Carl Von Fersen's wife die?",
+   "gold": "Stockholm",
+   "answer": "Carl von Fersen's wife, Charlotta Sparre, died in Stockholm [2].",
+   "citations": [
+    "Carl von Fersen"
+   ],
+   "ttft": 68.65,
+   "latency": 68.85,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.19999999999999998,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "3017c9dc0bb011ebab90acde48001122",
+   "type": "inference",
+   "question": "Who is the mother of William Vii Of Jülich, 1St Duke Of Berg?",
+   "gold": "Margaret of Ravensberg",
+   "answer": "The mother of William VII of Jülich, 1st Duke of Berg, is Margaret, daughter and heiress of Otto IV, Count of Ravensberg, and Margaret of Berg [3][5][6].",
+   "citations": [
+    "William VII of Jülich, 1st Duke of Berg",
+    "William VII of Jülich, 1st Duke of Berg",
+    "William VII of Jülich, 1st Duke of Berg"
+   ],
+   "ttft": 37.02,
+   "latency": 37.21,
+   "error": null,
+   "containment": 0.0,
+   "f1": 0.21428571428571425,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "159fcc8a08d611ebbd98ac1f6bf848b6",
+   "type": "comparison",
+   "question": "Who was born first out of Eric Tanenblatt and Craig L. Fuller?",
+   "gold": "Craig L. Fuller",
+   "answer": "Craig L. Fuller was born first. He was born on February 16, 1951 [1][2][3], while Eric Tanenblatt was born on August 15, 1966 [5][6][7].",
+   "citations": [
+    "Craig L. Fuller",
+    "Craig L. Fuller",
+    "Craig L. Fuller",
+    "Eric Tanenblatt",
+    "Eric Tanenblatt",
+    "Eric Tanenblatt"
+   ],
+   "ttft": 65.74,
+   "latency": 65.93,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.24000000000000002,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "183402b6086511ebbd5eac1f6bf848b6",
+   "type": "bridge_comparison",
+   "question": "Which film has the director died later, The Yellow Mask or The Return Of The Tall Blond Man With One Black Shoe?",
+   "gold": "The Return Of The Tall Blond Man With One Black Shoe",
+   "answer": "*The Return Of The Tall Blond Man With One Black Shoe* has the director who died later. Its director, Yves Robert, died on May 10, 2002 [9], while *The Yellow Mask*'s director, Harry Lachman, died on March 19, 1975 [2][4].",
+   "citations": [
+    "Harry Lachman",
+    "Harry Lachman",
+    "Yves Robert"
+   ],
+   "ttft": 65.92,
+   "latency": 66.11,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.4186046511627907,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "17a489a40bdc11eba7f7acde48001122",
+   "type": "compositional",
+   "question": "Where did Rune Ottosen's father graduate from?",
+   "gold": "University of Bergen",
+   "answer": "Kristian Ottosen, the father of Rune Ottosen, finished his studies at the University of Bergen after the war [6]. He subsequently became the leader of Det Norske Studentersamfund in Bergen and then a full-time employee at the University of Oslo [6].",
+   "citations": [
+    "Kristian Ottosen"
+   ],
+   "ttft": 74.25,
+   "latency": 74.47,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.16666666666666669,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "e37181580bdd11eba7f7acde48001122",
+   "type": "compositional",
+   "question": "What is the place of birth of Vsevolod Gantmakher's father?",
+   "gold": "Odessa",
+   "answer": "The place of birth of Vsevolod Gantmakher's father, Felix Gantmacher, is not recorded in the provided reference materials [1][3][5].\nThe documents confirm that Vsevolod Gantmakher was born in Moscow as the son of the mathematician Felix Gantmacher [1][3][4], and they provide biographical details about Felix, such as his participation in a seminar in Odessa in 1925–1926 [5], but they do not specify his own birthplace.",
+   "citations": [
+    "Vsevolod Gantmakher",
+    "Vsevolod Gantmakher",
+    "Vsevolod Gantmakher",
+    "Felix Gantmacher"
+   ],
+   "ttft": 84.47,
+   "latency": 84.67,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.03508771929824561,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "8ce6e92608c311ebbd8dac1f6bf848b6",
+   "type": "comparison",
+   "question": "Are North East Institute Of Management Science and Sambalpur University both located in the same country?",
+   "gold": "yes",
+   "answer": "Yes, both institutions are located in India [3][4][1][2].Yes, both institutions are located in the same country, India [1][3].",
+   "citations": [
+    "Sambalpur University",
+    "Sambalpur University",
+    "North East Institute of Management Science",
+    "North East Institute of Management Science"
+   ],
+   "ttft": 72.6,
+   "latency": 84.79,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.11764705882352941,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "92382be808ea11ebbda7ac1f6bf848b6",
+   "type": "comparison",
+   "question": "Who was born later, Emil Fackenheim or Jay'Ed?",
+   "gold": "Jay'Ed",
+   "answer": "Jay'ed was born later than Emil Fackenheim [7]. Emil Fackenheim was born on 22 June 1916 [3][5], and Jay'ed was born on 16 September 1981 [7].",
+   "citations": [
+    "Emil Fackenheim",
+    "Emil Fackenheim",
+    "Jay'ed"
+   ],
+   "ttft": 43.11,
+   "latency": 43.32,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.08333333333333333,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  },
+  {
+   "qid": "c43dabfa0baf11ebab90acde48001122",
+   "type": "inference",
+   "question": "Who is Somerset Butler, 1St Earl Of Carrick's paternal grandmother?",
+   "gold": "Eleanor Redman",
+   "answer": "Somerset Butler, 1st Earl of Carrick's paternal grandmother was Eleanor Redman [1].",
+   "citations": [
+    "Somerset Butler, 1st Earl of Carrick"
+   ],
+   "ttft": 66.82,
+   "latency": 67.0,
+   "error": null,
+   "containment": 1.0,
+   "f1": 0.3076923076923077,
+   "em": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0
+  }
+ ],
+ "rows_search": [
+  {
+   "qid": "1c9f9261087f11ebbd6bac1f6bf848b6",
+   "recall@10": 0.5,
+   "full_evidence@10": 0.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.6366824387328317
+  },
+  {
+   "qid": "ccd5b3dc08e611ebbda5ac1f6bf848b6",
+   "recall@10": 0.75,
+   "full_evidence@10": 0.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.7757386182436072
+  },
+  {
+   "qid": "05f0e6680bdb11eba7f7acde48001122",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.9197207891481876
+  },
+  {
+   "qid": "3017c9dc0bb011ebab90acde48001122",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.8772153153380493
+  },
+  {
+   "qid": "159fcc8a08d611ebbd98ac1f6bf848b6",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.9197207891481876
+  },
+  {
+   "qid": "183402b6086511ebbd5eac1f6bf848b6",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.8843252268199594
+  },
+  {
+   "qid": "17a489a40bdc11eba7f7acde48001122",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.8503449055347546
+  },
+  {
+   "qid": "e37181580bdd11eba7f7acde48001122",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.8772153153380493
+  },
+  {
+   "qid": "8ce6e92608c311ebbd8dac1f6bf848b6",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "92382be808ea11ebbda7ac1f6bf848b6",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 1.0
+  },
+  {
+   "qid": "c43dabfa0baf11ebab90acde48001122",
+   "recall@10": 1.0,
+   "full_evidence@10": 1.0,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.8772153153380493
+  }
+ ],
+ "summary": {
+  "n": 11,
+  "errors": 0,
+  "containment": 0.9091,
+  "f1": 0.1888,
+  "em": 0.0,
+  "citation_hit": 1.0,
+  "reject_correct": null,
+  "retrieval_recall@10": 0.9318,
+  "retrieval_full_evidence@10": 0.8182,
+  "retrieval_mrr@10": 1.0,
+  "retrieval_ndcg@10": 0.8744,
+  "latency_p50": 66.11,
+  "latency_p95": 84.79,
+  "ttft_p50": 65.92,
+  "refusal_rate": 0.0
+ },
+ "meta": {
+  "source": "2WikiMultiHopQA dev",
+  "n_docs": 28,
+  "n_questions": 11,
+  "seed": 42,
+  "doc_budget": 30,
+  "question_budget": 30,
+  "skipped_for_budget": 0
+ },
+ "score_sha": "f4c7546ab45bad8b"
+}

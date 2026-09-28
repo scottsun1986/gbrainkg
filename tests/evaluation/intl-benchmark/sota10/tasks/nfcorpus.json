@@ -1,0 +1,337 @@
+{
+ "bench": "nfcorpus",
+ "kbs": {
+  "SOTA10-NFCORPUS": [
+   {
+    "id": "d0000",
+    "title": "[MED-1356] Association between physical activity and mental disorders among adults in the United States.",
+    "text": "Association between physical activity and mental disorders among adults in the United States.\nBACKGROUND: The objective of this study was to determine the association between regular physical activity and mental disorders among adults in the United States. METHODS: Multiple logistic regression analyses were used to compare the prevalence of mental disorders among those who did and did not report regular physical activity using data from the National Comorbidity Survey (n = 8098), a nationally representative sample of adults ages 15-54 in the United States. CONCLUSIONS: Slightly over one-half of adults reported regular physical activity (60.3%). Regular physical activity was associated with a significantly decreased prevalence of current major depression and anxiety disorders, but was not significantly associated with other affective, substance use, or psychotic disorders. The association between regular physical activity and lower prevalence of current major depression (OR = 0.75 (0.6,0.94)), panic attacks (OR = 0.73 (0.56, 0.96)), social phobia (OR = 0.65 (0.53, 0.8)), specific phobia (OR = 0.78 (0.63, 0.97)), and agoraphobia (OR = 0.64 (0.43, 0.94)) persisted after adjusting for differences in sociodemographic characteristics, self-reported physical disorders, and comorbid mental disorders. Self-reported frequency of physical activity also showed a dose-response relation with current mental disorders. DISCUSSION: These data document a negative association between regular physical activity and depressive and anxiety disorders among adults in the U.S. population. Future research that investigates the mechanism of this association using longitudinal data to examine the link between physical activity and incident and recurrent mental disorders across the lifespan is needed.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0001",
+    "title": "[MED-1357] Effects of exercise training on older patients with major depression.",
+    "text": "Effects of exercise training on older patients with major depression.\nBACKGROUND: Previous observational and interventional studies have suggested that regular physical exercise may be associated with reduced symptoms of depression. However, the extent to which exercise training may reduce depressive symptoms in older patients with major depressive disorder (MDD) has not been systematically evaluated. OBJECTIVE: To assess the effectiveness of an aerobic exercise program compared with standard medication (ie, antidepressants) for treatment of MDD in older patients, we conducted a 16-week randomized controlled trial. METHODS: One hundred fifty-six men and women with MDD (age, > or = 50 years) were assigned randomly to a program of aerobic exercise, antidepressants (sertraline hydrochloride), or combined exercise and medication. Subjects underwent comprehensive evaluations of depression, including the presence and severity of MDD using Diagnostic and Statistical Manual of Mental Disorders, Fourth Edition criteria and Hamilton Rating Scale for Depression (HAM-D) and Beck Depression Inventory (BDI) scores before and after treatment. Secondary outcome measures included aerobic capacity, life satisfaction, self-esteem, anxiety, and dysfunctional cognitions. RESULTS: After 16 weeks of treatment, the groups did not differ statistically on HAM-D or BDI scores (P = .67); adjustment for baseline levels of depression yielded an essentially identical result. Growth curve models revealed that all groups exhibited statistically and clinically significant reductions on HAM-D and BDI scores. However, patients receiving medication alone exhibited the fastest initial response; among patients receiving combination therapy, those with less severe depressive symptoms initially showed a more rapid response than those with initially more severe depressive symptoms. CONCLUSIONS: An exercise training program may be considered an alternative to antidepressants for treatment of depression in older persons. Although antidepressants may facilitate a more rapid initial therapeutic response than exercise, after 16 weeks of treatment exercise was equally effective in reducing depression among patients with MDD.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0002",
+    "title": "[MED-1358] The acute effects of exercise on mood state.",
+    "text": "The acute effects of exercise on mood state.\nThis paper documents the recent (1976-1995) literature on the acute mood effects associated with participation in single sessions of exercise. Issues regarding experimental design, \"ecological validity' and the operational definition of mood are addressed. Results from these studies suggest that both clinical and nonclinical subjects may benefit acutely from even a single bout of exercise. Finally, possible mechanisms and recommendations for future research are discussed.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0003",
+    "title": "[MED-1359] Physical exercise intervention in depressive disorders: meta-analysis and systematic review.",
+    "text": "Physical exercise intervention in depressive disorders: meta-analysis and systematic review.\nPrevious meta-analyses investigating the effect of exercise on depression have included trials where the control condition has been categorized as placebo despite the fact that this particular placebo intervention (e.g., meditation, relaxation) has been recognized as having an antidepressant effect. Because meditation and mindfulness-based interventions are associated with depression reduction, it is impossible to separate the effect of the physical exercise from the meditation-related parts. The present study determined the efficacy of exercise in reducing symptoms of depression compared with no treatment, placebo conditions or usual care among clinically defined depressed adults. Of 89 retrieved studies, 15 passed the inclusion criteria of which 13 studies presented sufficient information for calculating effect sizes. The main result showed a significant large overall effect favoring exercise intervention. The effect size was even larger when only trials that had used no treatment or placebo conditions were analyzed. Nevertheless, effect size was reduced to a moderate level when only studies with high methodological quality were included in the analysis. Exercise may be recommended for people with mild and moderate depression who are willing, motivated, and physically healthy enough to engage in such a program. © 2013 John Wiley & Sons A/S. Published by John Wiley & Sons Ltd.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0004",
+    "title": "[MED-1360] Exercise and Pharmacotherapy in the Treatment of Major Depressive Disorder",
+    "text": "Exercise and Pharmacotherapy in the Treatment of Major Depressive Disorder\nObjective To assess whether patients receiving aerobic exercise training performed either at home or in a supervised group setting achieve reductions in depression comparable to standard antidepressant medication (sertraline) and greater reductions in depression compared to placebo controls. Methods Between October 2000 and November 2005, we performed a prospective, randomized controlled trial (SMILE study) with allocation concealment and blinded outcome assessment in a tertiary care teaching hospital. A total of 202 adults (153 women; 49 men) diagnosed with major depression were assigned randomly to one of four conditions: supervised exercise in a group setting; home-based exercise; antidepressant medication (sertraline, 50–200 mg daily); or placebo pill for 16 weeks. Patients underwent the structured clinical interview for depression and completed the Hamilton Depression Rating Scale (HAM-D). Results After 4 months of treatment, 41% of the participants achieved remission, defined as no longer meeting the criteria for major depressive disorder (MDD) and a HAM-D score of <8. Patients receiving active treatments tended to have higher remission rates than the placebo controls: supervised exercise = 45%; home-based exercise = 40%; medication = 47%; placebo = 31% (p = .057). All treatment groups had lower HAM-D scores after treatment; scores for the active treatment groups were not significantly different from the placebo group (p = .23). Conclusions The efficacy of exercise in patients seems generally comparable with patients receiving antidepressant medication and both tend to be better than the placebo in patients with MDD. Placebo response rates were high, suggesting that a considerable portion of the therapeutic response is determined by patient expectations, ongoing symptom monitoring, attention, and other nonspecific factors.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0005",
+    "title": "[MED-4281] Beneficial effects of L-arginine on reducing obesity: potential mechanisms and important implications for human health.",
+    "text": "Beneficial effects of L-arginine on reducing obesity: potential mechanisms and important implications for human health.\nOver the past 20 years, growing interest in the biochemistry, nutrition, and pharmacology of L-arginine has led to extensive studies to explore its nutritional and therapeutic roles in treating and preventing human metabolic disorders. Emerging evidence shows that dietary L-arginine supplementation reduces adiposity in genetically obese rats, diet-induced obese rats, finishing pigs, and obese human subjects with Type-2 diabetes mellitus. The mechanisms responsible for the beneficial effects of L-arginine are likely complex, but ultimately involve altering the balance of energy intake and expenditure in favor of fat loss or reduced growth of white adipose tissue. Recent studies indicate that L-arginine supplementation stimulates mitochondrial biogenesis and brown adipose tissue development possibly through the enhanced synthesis of cell-signaling molecules (e.g., nitric oxide, carbon monoxide, polyamines, cGMP, and cAMP) as well as the increased expression of genes that promote whole-body oxidation of energy substrates (e.g., glucose and fatty acids) Thus, L-arginine holds great promise as a safe and cost-effective nutrient to reduce adiposity, increase muscle mass, and improve the metabolic profile in animals and humans.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0006",
+    "title": "[MED-4841] Humoral immunity to cow's milk proteins and gliadin within the etiology of recurrent aphthous ulcers?",
+    "text": "Humoral immunity to cow's milk proteins and gliadin within the etiology of recurrent aphthous ulcers?\nOBJECTIVES: The goal of this study was to determine the incidence of serum antibodies to gliadin and to cow's milk proteins (CMP) using ELISA test, within patients who have recurrent aphthous ulcers (RAU). SUBJECTS AND METHODS: Fifty patients with recurrent aphthous ulcers and fifty healthy people were included in this research. Levels of serum IgA and IgG antibodies to gliadin and IgA, IgG and IgE to CMP were determined using ELISA. RESULTS: The levels of serum antigliadin IgA and IgG antibodies were not significantly higher in patients with RAU in comparison with the controls (P = 0.937 and P = 0.1854 respectively). The levels of serum anti-CMP IgA, IgG and IgE antibodies were significantly higher in patients with RAU in comparison with the controls (P < 0.005, P < 0.002 and P < 0.001 respectively). In general, the increased humoral (IgA or IgG) immunoreactivity to CMP was found in 32 of 50 patients, while 17 of them showed the increased levels of both IgA and IgG immunoreactivity to CMP. At the same time, 16 out of 50 patients had IgA, IgG and IgE immunoreactivity to CMP. CONCLUSION: These results indicate the strong association between high levels of serum anti-CMP IgA, IgG and IgE antibodies and clinical manifestations of recurrent aphthous ulcers.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0007",
+    "title": "[MED-2826] Diverse effects of a low dose supplement of lipidated curcumin in healthy middle aged people",
+    "text": "Diverse effects of a low dose supplement of lipidated curcumin in healthy middle aged people\nBackground Curcumin extracts of turmeric are proposed to produce health benefits. To date, human intervention studies have focused mainly on people with existing health problems given high doses of poorly absorbed curcumin. The purpose of the current study was to check whether in healthy people, a low dose of a lipidated curcumin extract could alter wellness-related measures. Methods The present study was conducted in healthy middle aged people (40–60 years old) with a low dose of curcumin (80 mg/day) in a lipidated form expected to have good absorption. Subjects were given either curcumin (N = 19) or placebo (N = 19) for 4 wk. Blood and saliva samples were taken before and after the 4 weeks and analyzed for a variety of blood and saliva measures relevant to health promotion. Results Curcumin, but not placebo, produced the following statistically significant changes: lowering of plasma triglyceride values, lowering of salivary amylase levels, raising of salivary radical scavenging capacities, raising of plasma catalase activities, lowering of plasma beta amyloid protein concentrations, lowering of plasma sICAM readings, increased plasma myeloperoxidase without increased c-reactive protein levels, increased plasma nitric oxide, and decreased plasma alanine amino transferase activities. Conclusion Collectively, these results demonstrate that a low dose of a curcumin-lipid preparation can produce a variety of potentially health promoting effects in healthy middle aged people.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0008",
+    "title": "[MED-2827] Soy protein may alleviate osteoarthritis symptoms.",
+    "text": "Soy protein may alleviate osteoarthritis symptoms.\nAlternative and complementary therapeutic approaches, such as the use of a wide array of herbal, nutritional, and physical manipulations, are becoming popular for relieving symptoms of osteoarthritis (OA). The present study evaluated the efficacy of soy protein (SP) supplementation in relieving the pain and discomfort associated with OA. One hundred and thirty-five free-living individuals (64 men and 71 women) with diagnosed OA or with self-reported chronic knee joint pain not attributed to injury or rheumatoid arthritis were recruited for this double-blind, placebo-controlled, parallel design study. Study participants were assigned randomly to consume 40 g of either supplemental SP or milk-based protein (MP) daily for 3 months. Pain, knee range of motion, and overall physical activity were evaluated prior to the start of treatment and monthly thereafter. Serum levels of glycoprotein 39 (YKL-40), a marker of cartilage degradation, and insulin-like growth factor-I (IGF-I), a growth factor associated with cartilage synthesis, were assessed at baseline and at the end of the study. Overall, SP improved OA-associated symptoms such as range of motion and several factors associated with pain and quality of life in comparison to MP. However, these beneficial effects were mainly due to the effect of SP in men rather than women. Biochemical markers of cartilage metabolism further support the efficacy of SP in men as indicated by a significant increase in serum level of IGF-I and a significant decrease in serum level of YKL-40 compared to MP. This study is the first to provide evidence of possible beneficial effects of SP in the management of OA. Examining and verifying the long-term effects of SP on improving symptoms of OA, particularly in men, is warranted.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0009",
+    "title": "[MED-2830] Bioavailability of herbs and spices in humans as determined by ex vivo inflammatory suppression and DNA strand breaks.",
+    "text": "Bioavailability of herbs and spices in humans as determined by ex vivo inflammatory suppression and DNA strand breaks.\nOBJECTIVE: The aim of this work was to determine the bioavailability of herbs and spices after human consumption by measuring the ability to protect lymphocytes from an oxidative injury and by examining the impact on inflammatory biomarkers in activated THP-1 cells. METHODS: Ten to 12 subjects in each of 13 groups consumed a defined amount of herb or spice for 7 days. Blood was drawn from subjects before consumption and 1 hour after taking the final herb or spice capsules. Subject serum and various extractions of the herbs and spices were analyzed for antioxidant capacity by oxygen radical absorbance capacity (ORAC) analysis or by 1,1-diphenyl-2-picrylhydrzyl (DPPH). Subject peripheral blood mononuclear cells (PBMCs) in medium with10% autologous serum were incubated with hydrogen peroxide to induce DNA strand breaks. Subject serum was also used to treat activated THP-1 cells to determine relative quantities of 3 inflammatory cytokine (tumor necrosis factor-α [TNF-α], interleukin-1α [IL-1α], and IL-6) mRNAs. RESULTS: Herbs and spices that protected PBMCs against DNA strand breaks were paprika, rosemary, ginger, heat-treated turmeric, sage, and cumin. Paprika also appeared to protect cells from normal apoptotic processes. Of the 3 cytokine mRNAs studied (TNF-α, IL-1α, and IL-6), TNF-α was the most sensitive responder to oxidized LDL-treated macrophages. Clove, ginger, rosemary, and turmeric were able to significantly reduce oxidized LDL-induced expression of TNF-α. Serum from those consuming ginger reduced all three inflammatory biomarkers. Ginger, rosemary, and turmeric showed protective capacity by both oxidative protection and inflammation measures. CONCLUSIONS: DNA strand breaks and inflammatory biomarkers are a good functional measure of a food's bioavailability.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0010",
+    "title": "[MED-2831] Curcumin: an orally bioavailable blocker of TNF and other pro-inflammatory biomarkers",
+    "text": "Curcumin: an orally bioavailable blocker of TNF and other pro-inflammatory biomarkers\nTNFs are major mediators of inflammation and inflammation-related diseases, hence, the United States Food and Drug Administration (FDA) has approved the use of blockers of the cytokine, TNF-α, for the treatment of osteoarthritis, inflammatory bowel disease, psoriasis and ankylosis. These drugs include the chimeric TNF antibody (infliximab), humanized TNF-α antibody (Humira) and soluble TNF receptor-II (Enbrel) and are associated with a total cumulative market value of more than $20 billion a year. As well as being expensive ($15 000–20 000 per person per year), these drugs have to be injected and have enough adverse effects to be given a black label warning by the FDA. In the current report, we describe an alternative, curcumin (diferuloylmethane), a component of turmeric (Curcuma longa) that is very inexpensive, orally bioavailable and highly safe in humans, yet can block TNF-α action and production in in vitro models, in animal models and in humans. In addition, we provide evidence for curcumin's activities against all of the diseases for which TNF blockers are currently being used. Mechanisms by which curcumin inhibits the production and the cell signalling pathways activated by this cytokine are also discussed. With health-care costs and safety being major issues today, this golden spice may help provide the solution. Linked Articles This article is part of a themed section on Emerging Therapeutic Aspects in Oncology. To view the other articles in this section visit http://dx.doi.org/10.1111/bph.2013.169.issue-8",
+    "origin": "gold"
+   },
+   {
+    "id": "d0011",
+    "title": "[MED-2999] Western diseases and their emergence related to diet.",
+    "text": "Western diseases and their emergence related to diet.\nMany of the commonest diseases in the economically more developed communities are characteristic of modern Western culture. Evidence is presented suggesting that they represent a failure of adaptation to the dramatic changes in diet that have been associated with the emergence of modern Western culture. Dietary changes aimed at the alleviation and prevention of these diseases are discussed and recommended.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0012",
+    "title": "[MED-3000] Red meat consumption and cancer: reasons to suspect involvement of bovine infectious factors in colorectal cancer.",
+    "text": "Red meat consumption and cancer: reasons to suspect involvement of bovine infectious factors in colorectal cancer.\nAn increased risk for colorectal cancer has been consistently reported for long-time consumption of cooked and processed red meat. This has frequently been attributed to chemical carcinogens arising during the cooking process of meat. Long-time fish or poultry consumption apparently does not increase the risk, although similar or higher concentrations of chemical carcinogens were recorded in their preparation for consumption. The geographic epidemiology of colorectal cancer seems to correspond to regions with a high rate of beef consumption. Countries with a virtual absence of beef in the diet (India) or where preferably lamb or goat meat is consumed (several Arabic countries) reveal low rates of colorectal cancer. In China, pork consumption has a long tradition, with an intermediate colorectal cancer rate. In Japan and Korea, large scale beef and pork imports started after World War II or after the Korean War. A steep rise in colorectal cancer incidence was noted after 1970 in Japan and 1990 in Korea. The consumption of undercooked beef (e.g., shabu-shabu, Korean yukhoe and Japanese yukke) became very popular in both countries. The available data are compatible with the interpretation that a specific beef factor, suspected to be one or more thermoresistant potentially oncogenic bovine viruses (e.g., polyoma-, papilloma- or possibly single-stranded DNA viruses) may contaminate beef preparations and lead to latent infections in the colorectal tract. Preceding, concomitant or subsequent exposure to chemical carcinogens arising during cooking procedures should result in increased risk for colorectal cancer synergistic with these infections. Copyright © 2011 UICC.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0013",
+    "title": "[MED-3001] Towards a new system of health: the challenge of Western disease.",
+    "text": "Towards a new system of health: the challenge of Western disease.\nOver the last three decades, the concept of Western disease has become well established. Medicine has approached this group of diseases by searching for new cures but has achieved relatively little success. We argue that medicine should now accept the failure of this strategy and place a major emphasis on prevention. The key objective is to change the climate of opinion so that prevention is taken seriously by the general population. The chief activity should be a wide ranging public education campaign so as to persuade people to live a healthier lifestyle. Medicine will require restructuring in order to carry out this work. Medical education needs to be reformed so that medical students receive the necessary training. This must be done as part of an integrated approach in which government, industry and medical research all play a major role. Governments should use taxation and subsidies in areas such as food and tobacco so as to shift consumption patterns towards healthier products. Governments must also tighten laws on tobacco sales and advertising, support health education, and improve food labelling. Industry must be made far more responsive to the health needs of the population. This should be done both by public education, so as to alter demand, and by government action. Medical research should change its emphasis from studying the detailed mechanisms of disease (\"complex research\") to studying the role of lifestyle factors (\"simple research\").",
+    "origin": "gold"
+   },
+   {
+    "id": "d0014",
+    "title": "[MED-3615] Evaluation of chromosomal aberrations, micronuclei, and sister chromatid exchanges in hospital workers chronically exposed to ionizing radiation.",
+    "text": "Evaluation of chromosomal aberrations, micronuclei, and sister chromatid exchanges in hospital workers chronically exposed to ionizing radiation.\nCytogenetic analysis was performed in peripheral blood lymphocytes from hospital workers chronically exposed to ionizing radiation in comparison to matched non-exposed individuals. The accumulated absorbed doses calculated for the radiation workers ranged from 9.5 to 209.4 mSv. The endpoints used were chromosomal aberrations (CA), micronuclei (MN), and sister chromatid exchanges (SCE). The frequencies of CA/100 cells observed for the exposed group were significantly (P=0.018) higher than in the control group: 3.2 and 2.6, respectively. Similarly, the mean numbers of SCE per cell were statistically higher (P=0.025) in the exposed group (6.2) in comparison with the control group (5.8). In the case of micronuclei analysis, no significant (P=0,06) difference between both groups was found, but these data should be cautiously interpreted since an increase in the frequencies of MN was found for radiation workers (3.0 MN/100 cells), compared to the control group (2.6 MN/100 cells) and this increase occur in parallel to CA and SCE frequencies. The difference between the results could be explained by the nature of CA and MN generation. The increased frequencies of CA and SCE in radiation workers indicate the cumulative effect of low-level chronic exposure to ionizing radiation, and the relevance of conducting cytogenetic analysis in parallel to physical dosimetry in the working place. Copyright 2001 Wiley-Liss, Inc.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0015",
+    "title": "[MED-3617] High dietary antioxidant intakes are associated with decreased chromosome translocation frequency in airline pilots",
+    "text": "High dietary antioxidant intakes are associated with decreased chromosome translocation frequency in airline pilots\nBackground: Dietary antioxidants may protect against DNA damage induced by endogenous and exogenous sources, including ionizing radiation (IR), but data from IR-exposed human populations are limited. Objective: The objective was to examine the association between the frequency of chromosome translocations, as a biomarker of cumulative DNA damage, and intakes of vitamins C and E and carotenoids in 82 male airline pilots. Design: Dietary intakes were estimated by using a self-administered semiquantitative food-frequency questionnaire. Translocations were scored by using fluorescence in situ hybridization with whole chromosome paints. Negative binomial regression was used to estimate rate ratios and 95% CIs, adjusted for potential confounders. Results: Significant and inverse associations were observed between translocation frequency and intakes of vitamin C, β-carotene, β-cryptoxanthin, and lutein-zeaxanthin from food (P < 0.05). Translocation frequency was not associated with the intake of vitamin E, α-carotene, or lycopene from food; total vitamin C or E from food and supplements; or vitamin C or E or multivitamin supplements. The adjusted rate ratios (95% CI) for ≥median compared with <median servings per week of high–vitamin C fruit and vegetables, citrus fruit, and green leafy vegetables were 0.61 (0.43, 0.86), 0.64 (0.46, 0.89), and 0.59 (0.43, 0.81), respectively. The strongest inverse association was observed for ≥median compared with <median combined intakes of vitamins C and E, β-carotene, β-cryptoxanthin, and lutein-zeaxanthin from food: 0.27 (0.14, 0.55). Conclusion: High combined intakes of vitamins C and E, β-carotene, β-cryptoxanthin, and lutein-zeaxanthin from food, or a diet high in their food sources, may protect against cumulative DNA damage in IR-exposed persons.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0016",
+    "title": "[MED-3618] The use of dental radiographs: update and recommendations.",
+    "text": "The use of dental radiographs: update and recommendations.\nBACKGROUND AND OVERVIEW: The National Council on Radiation Protection & Measurements updated its recommendations on radiation protection in dentistry in 2003, the Centers for Disease Control and Prevention published its Guidelines for Infection Control in Dental Health-Care Settings in 2003, and the U.S. Food and Drug Administration updated its selection criteria for dental radiographs in 2004. This report summarizes the recommendations presented in these documents and addresses additional topics such as patient selection criteria, film selection for conventional radiographs, collimation, beam filtration, patient protective equipment, film holders, operator protection, film exposure and processing, infection control, quality assurance, image viewing, direct digital radiography and continuing education of dental health care workers who expose radiographs. CONCLUSIONS: This report discusses implementation of proper radiographic practices. In addition to these guidelines, dentists should be aware of, and comply with, applicable federal and state regulations. CLINICAL IMPLICATIONS: Dentists should weigh the benefits of dental radiographs against the consequences of increasing a patient's exposure to radiation and implement appropriate radiation control procedures.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0017",
+    "title": "[MED-3620] Dietary factors and cancer mortality among atomic-bomb survivors.",
+    "text": "Dietary factors and cancer mortality among atomic-bomb survivors.\nDietary factors such as fruit and vegetables are thought to reduce the risk of cancer incidence and mortality. We investigated the effect of a diet rich in fruit and vegetables against the long-term effects of radiation exposure on the risk of cancer. A cohort of 36,228 atomic-bomb survivors of Hiroshima and Nagasaki, for whom radiation dose estimates were currently available, had their diet assessed in 1980. They were followed for a period of 20 years for cancer mortality. The joint-effect of fruit and vegetables intake and radiation exposure on risk of cancer death was examined, in additive (sum of effects of diet alone and radiation alone) and multiplicative (product of effects of diet alone and radiation alone) models. In the additive model, a daily intake of fruit and vegetables significantly reduced the risk of cancer deaths by 13%, compared to an intake of once or less per week. Radiation exposure of 1 Sievert (Sv) increased significantly the risk of cancer death by 48-49%. The additive joint-effects showed a lower risk of cancer among those exposed to 1 Sv who had a diet rich in vegetables (49%-13%=36%) or fruit (48%-13%=35%). The multiplicative model gave similar results. The cancer risk reduction by vegetables in exposed persons went from 52% (effect of radiation alone) to 32% (product of effect of vegetables and radiation), and cancer risk reduction by fruit was 52% (radiation alone) to 34% (product of effect of fruit and radiation). There was no significant evidence to reject either the additive or the multiplicative model. A daily intake of fruit and vegetables was beneficial to the persons exposed to radiation in reducing their risks of cancer death.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0018",
+    "title": "[MED-3621] Dental X-rays and Risk of Meningioma",
+    "text": "Dental X-rays and Risk of Meningioma\nContext Ionizing radiation is a consistently identified and potentially modifiable risk factor for meningioma, the most frequently reported primary brain tumor in the United States. Objective To examine the association between dental x-rays, the most common artificial source of ionizing radiation, and risk of intra-cranial meningioma. Design and Setting Population-based case-control study design. Participants The study includes 1433 intra-cranial meningioma cases aged 29-79 years diagnosed among residents of the states of Connecticut, Massachusetts, North Carolina, the San Francisco Bay Area and eight Houston, Texas counties between May 1, 2006 and April 28, 2011 and 1350 controls that were frequency-matched on age, sex and geography. Main Outcome Measure The association of intra-cranial meningioma diagnosis with self-report of bitewing, full-mouth, and panorex dental x-rays. Results Over a lifetime, cases were more than twice (Odds ratio (OR) = 2.0, 95% confidence interval (CI), 1.4-2.9) as likely as controls to report having ever had a bitewing exam. Regardless of the age at which the films were received, persons who reported receiving bitewing films on a yearly or greater frequency had an elevated risk with odds ratios of 1.4 (95%CI: 1.0-1.8), 1.6 (95%CI: 1.2-2.0), 1.9 (95%CI: 1.4-2.6), and 1.5 (95%CI: 1.1-2.0) for ages <10, 10-19, 20-49, and 50+ years, respectively. Increased risk of meningioma was also associated with panorex films taken at a young age or on a yearly or greater frequency with persons reporting receiving such films under the age of 10 years at 4.9 times (95%CI: 1.8-13.2) increased risk of meningioma. No association was appreciated with location of tumor above or below the tentorium. Conclusion Exposure to some dental x-rays performed in the past, when radiation exposure was greater than in the current era, appears to be associated with increased risk of intra-cranial meningioma. As with all sources of artificial ionizing radiation, considered use of this modifiable risk factor may be of benefit to patients.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0019",
+    "title": "[MED-3622] Dietary and clastogenic factors in children who immigrated to Israel from regions contaminated by the Chernobyl accident.",
+    "text": "Dietary and clastogenic factors in children who immigrated to Israel from regions contaminated by the Chernobyl accident.\nThe authors evaluated the possible association between dietary history and plasma clastogenic factors in children who immigrated to Israel between 1989 and 1993 from regions contaminated by the Chernobyl accident. The authors compared questionnaire data about demographic variables, dietary histories before and after immigration occurred, and health status with clastogenic factor scores for 162 immigrants. Logistic regression analysis revealed a negative association between clastogenic factor scores and frequency of consumption of fresh vegetables and fruit among children < or = 7 yr of age during the postimmigration period. Intake of eggs and fish by boys who were < or = 7 yr of age prior to immigration was associated positively with clastogenic factor scores. Consumption of fresh vegetables and fruits afforded protection to the immune systems of children who were < or = 7 yr of age.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0020",
+    "title": "[MED-3714] Differences in antioxidant levels of fresh, frozen and freeze-dried strawberries and strawberry jam.",
+    "text": "Differences in antioxidant levels of fresh, frozen and freeze-dried strawberries and strawberry jam.\nThe present study was conducted to determine differences in antioxidant levels of fresh, frozen, and freeze-dried strawberries, and strawberry jam. Hydrophilic antioxidant activity (HAA) and lipophilic antioxidant activity (LAA) were measured using the ABTS/H₂O₂/HRP decoloration method. HAA and LAA were then summed to calculate the total antioxidant activity (TAA). Mean differences in HAA and LAA were analyzed using one-way analysis of variance and Dunnett's T3 pairwise comparisons. The mean TAA for freeze-dried strawberries based on an 'as consumed' weight (95% confidence interval [CI]: 29.58, 30.58) was significantly higher than for fresh (95% CI: 3.18, 3.66), frozen (95% CI: 2.58, 2.79), and jam (95% CI: 1.10, 1.22). The mean TAA based on dry weight for fresh strawberries (95% CI: 40.48, 46.67) was significantly higher than for freeze-dried (95% CI: 29.58, 30.58), frozen (95% CI: 24.62, 26.59), and jam (95% CI: 1.48, 1.64). Results agree with previous studies reporting that strawberries are a valuable source of antioxidants for consumers.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0021",
+    "title": "[MED-4545] Açai Palm Fruit (Euterpe oleracea Mart.) Pulp Improves Survival of Flies on a High Fat Diet",
+    "text": "Açai Palm Fruit (Euterpe oleracea Mart.) Pulp Improves Survival of Flies on a High Fat Diet\nReducing oxidative damage is thought to be an effective aging intervention. Açai, a fruit indigenous to the Amazon, is rich in phytochemicals that possesses high anti-oxidant activities, and has anti-inflammatory, anti-cancer and anti-cardiovascular disease properties. However, little is known about its potential anti-aging properties especially at the organismal level. Here we evaluated the effect of açai pulp on modulating lifespan in Drosophila melanogaster. We found that açai supplementation at 2% in the food increased the lifespan of female flies fed a high fat diet compared to the non-supplemented control. We measured transcript changes induced by açai for age-related genes. Although transcript levels of most genes tested were not altered, açai increased the transcript level of l(2)efl, a small heat-shock-related protein, and two detoxification genes, gstD1 and mtnA, while decreasing the transcript level of phosphoenolpyruvate carboxykinase (Pepck), a key gene involved in gluconeogenesis. Furthermore, açai increased the lifespan of oxidative stressed females caused by sod1 RNAi. This suggests that açai improves survival of flies fed a high fat diet through activation of stress response pathways and suppression of Pepck expression. Açai has the potential to antagonize the detrimental effect of fat in the diet and alleviate oxidative stress in aging.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0022",
+    "title": "[MED-917] Effect of freezing and storage on the phenolics, ellagitannins, flavonoids, and antioxidant capacity of red raspberries.",
+    "text": "Effect of freezing and storage on the phenolics, ellagitannins, flavonoids, and antioxidant capacity of red raspberries.\nScottish-grown red raspberries are a rich source of vitamin C and phenolics, most notably, the anthocyanins cyanidin-3-sophoroside, cyanidin-3-(2(G)-glucosylrutinoside), and cyanidin-3-glucoside, and two ellagitannins, sanguiin H-6 and lambertianin C, which are present together with trace levels of flavonols, ellagic acid, and hydroxycinnamates. The antioxidant capacity of the fresh fruit and the levels of vitamin C and phenolics were not affected by freezing. When fruit were stored at 4 degrees C for 3 days and then at 18 degrees C for 24 h, mimicking the route fresh fruit takes after harvest to the supermarket and onto the consumer's table, anthocyanin levels were unaffected while vitamin C levels declined and those of elligitannins increased, and overall, there was no effect on the antioxidant capacity of the fruit. It is concluded, therefore, that freshly picked, fresh commercial, and frozen raspberries all contain similar levels of phytochemicals and antioxidants per serving.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0023",
+    "title": "[MED-3619] Update on the biological effects of ionizing radiation, relative dose factors and radiation hygiene.",
+    "text": "Update on the biological effects of ionizing radiation, relative dose factors and radiation hygiene.\nDiagnostic imaging is an indispensable part of contemporary medical and dental practice. Over the last few decades there has been a dramatic increase in the use of ionizing radiation for diagnostic imaging. The carcinogenic effects of high-dose exposure are well known. Does diagnostic radiation rarely cause cancer? We don't know but we should act as if it does. Accordingly, dentists should select patients wisely - only make radiographs when there is patient-specific reason to believe there is a reasonable expectation the radiograph will offer unique information influencing diagnosis or treatment. Low-dose examinations should be made: intraoral imaging - use fast film or digital sensors, thyroid collars, rectangular collimation; panoramic and lateral cephalometric imaging - use digital systems or rare-earth film screen combinations; and cone beam computed tomography - use low-dose machines, restrict field size to region of interest, reduce mA and length of exposure arc as appropriate. © 2012 Australian Dental Association.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0024",
+    "title": "[MED-4514] Low-carbohydrate diets and all-cause and cause-specific mortality: Two cohort Studies",
+    "text": "Low-carbohydrate diets and all-cause and cause-specific mortality: Two cohort Studies\nBackground Data on the long-term association between low-carbohydrate diets and mortality are sparse. Objective To examine the association of low-carbohydrate diets with mortality during 26 years of follow-up in women and 20 years in men. Design A prospective cohort study of women and men, followed from 1980 (women) or 1986 (men) until 2006. Low-carbohydrate diets, either animal-based (emphasizing animal sources of fat and protein), or vegetable-based (emphasizing vegetable sources of fat and protein) were computed from multiple validated food frequency questionnaire assessed during follow-up. Setting Nurses' Health Study and Health Professionals' Follow-up Study Participants 85,168 women (aged 34-59 years at baseline) and 44,548 men (aged 40-75 years at baseline) without heart disease, cancer, or diabetes. Measurement Investigator documented 12,555 deaths (2,458 cardiovascular, 5,780 cancer) in women and 8,678 deaths (2,746 cardiovascular, 2,960 cancer) in men. Results The overall low-carbohydrate score was associated with a modest increase in overall mortality in pooled analysis (Hazard Ratio, HR, comparing extreme deciles=1.12 (95% CI=1.01-1.24, p-trend=0.14). The animal low-carbohydrate score was associated with a higher all-cause mortality (pooled HR comparing extreme deciles=1.23, 95% CI=1.11-1.37, p-trend=0.05), cardiovascular mortality (corresponding HR=1.14, 95% CI=1.01-1.29, p-trend=0.029), and cancer mortality (corresponding HR=1.28, 95% CI 1.02-1.60, p for trend = 0.09). In contrast, a higher vegetable low-carbohydrate score was associated with lower all-cause (HR=0.80, 95% CI=0.75-0.85, p-trend<0.001) and cardiovascular mortality (HR=0.77, 95% CI=0.68-0.87, p-trend<0.001). Limitations Diet and lifestyle characteristics were assessed with some degree of error, however, sensitivity analyses indicated that results were not unlikely to be substantially affected by residual or confounding or an unmeasured confounder. In addition, participants were not a representative sample of the U.S. population. Conclusion A low-carbohydrate diet based on animal sources was associated with higher all-cause mortality in both men and women, whereas a vegetable-based low-carbohydrate diet was associated with lower all-cause and cardiovascular disease mortality rates. Primary funding source NIH grants CA87969, HL60712, and CA95589",
+    "origin": "gold"
+   },
+   {
+    "id": "d0025",
+    "title": "[MED-4515] The effect of a plant-based low-carbohydrate (\"Eco-Atkins\") diet on body weight and blood lipid concentrations in hyperlipidemic subjects.",
+    "text": "The effect of a plant-based low-carbohydrate (\"Eco-Atkins\") diet on body weight and blood lipid concentrations in hyperlipidemic subjects.\nBACKGROUND: Low-carbohydrate, high-animal protein diets, which are advocated for weight loss, may not promote the desired reduction in low-density lipoprotein cholesterol (LDL-C) concentration. The effect of exchanging the animal proteins and fats for those of vegetable origin has not been tested. Our objective was to determine the effect on weight loss and LDL-C concentration of a low-carbohydrate diet high in vegetable proteins from gluten, soy, nuts, fruits, vegetables, cereals, and vegetable oils compared with a high-carbohydrate diet based on low-fat dairy and whole grain products. METHODS: A total of 47 overweight hyperlipidemic men and women consumed either (1) a low-carbohydrate (26% of total calories), high-vegetable protein (31% from gluten, soy, nuts, fruit, vegetables, and cereals), and vegetable oil (43%) plant-based diet or (2) a high-carbohydrate lacto-ovo vegetarian diet (58% carbohydrate, 16% protein, and 25% fat) for 4 weeks each in a parallel study design. The study food was provided at 60% of calorie requirements. RESULTS: Of the 47 subjects, 44 (94%) (test, n = 22 [92%]; control, n = 22 [96%]) completed the study. Weight loss was similar for both diets (approximately 4.0 kg). However, reductions in LDL-C concentration and total cholesterol-HDL-C and apolipoprotein B-apolipoprotein AI ratios were greater for the low-carbohydrate compared with the high-carbohydrate diet (-8.1% [P = .002], -8.7% [P = .004], and -9.6% [P = .001], respectively). Reductions in systolic and diastolic blood pressure were also seen (-1.9% [P = .052] and -2.4% [P = .02], respectively). CONCLUSION: A low-carbohydrate plant-based diet has lipid-lowering advantages over a high-carbohydrate, low-fat weight-loss diet in improving heart disease risk factors not seen with conventional low-fat diets with animal products.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0026",
+    "title": "[MED-4618] In vitro evaluation of genotoxicity of avocado (Persea americana) fruit and leaf extracts in human peripheral lymphocytes.",
+    "text": "In vitro evaluation of genotoxicity of avocado (Persea americana) fruit and leaf extracts in human peripheral lymphocytes.\nPersea americana is much sought after both for the nutritional value of its fruit and the medicinal values of its various plant parts. A chromosomal aberration assay was undertaken to evaluate the potential genotoxicity of crude extracts from avocado fruits and leaves. Chromosomal aberrations were observed in cultured human peripheral lymphocytes exposed to separately increasing concentrations of 50% methanolic extracts of Persea americana fruit and leaves. The groups exposed to leaf and fruit extracts, respectively, showed a concentration-dependent increase in chromosomal aberrations as compared to that in a control group. The mean percentage total aberrant metaphases at 100 mg/kg, 200 mg/kg, and 300 mg/kg concentrations of leaf extract were found respectively to be 58 ± 7.05, 72 ± 6.41, and 78 ± 5.98, which were significantly higher (p < 0.0001 each) than that in the control group (6 ± 3.39). The mean percentage total aberrant metaphases at 100 mg/kg, 200 mg/kg, and 300 mg/kg concentrations of fruit extract were found to be 18 ± 5.49, 40 ± 10.00, and 52 ± 10.20, respectively, which were significantly higher (p = 0.033, p < 0.0001, and p < 0.0001, respectively) than that for control (6 ± 3.39). Acrocentric associations and premature centromeric separation were the two most common abnormalities observed in both the exposed groups. The group exposed to leaf extracts also showed a significant number of a variety of other structural aberrations, including breaks, fragments, dicentrics, terminal deletion, minutes, and Robertsonian translocations. The group exposed to leaf extract showed higher frequency of all types of aberrations at equal concentrations as compared to the group exposed to fruit extract.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0027",
+    "title": "[MED-4619] Selective induction of apoptosis of human oral cancer cell lines by avocado extracts via a ROS-mediated mechanism.",
+    "text": "Selective induction of apoptosis of human oral cancer cell lines by avocado extracts via a ROS-mediated mechanism.\nAvocados have a high content of phytochemicals with potential chemopreventive activity. Previously we reported that phytochemicals extracted from avocado meat into a chloroform partition (D003) selectively induced apoptosis in cancer but not normal, human oral epithelial cell lines. In the present study, we observed that treatment of human oral cancer cell lines containing high levels of reactive oxygen (ROS) with D003 increased ROS levels twofold to threefold and induced apoptosis. In contrast, ROS levels increased only 1.3-fold, and apoptosis was not induced in the normal cell lines containing much lower levels of basal ROS. When cellular ROS levels in the malignant cell lines were reduced by N-acetyl-l-cysteine (NAC), cells were resistant to D003 induced apoptosis. NAC also delayed the induction of apoptosis in dominant negative FADD-expressing malignant cell lines. D003 increased ROS levels via mitochondrial complex I in the electron transport chain to induce apoptosis. Normal human oral epithelial cell lines transformed with HPV16 E6 or E7 expressed higher basal levels of ROS and became sensitive to D003. These data suggest that perturbing the ROS levels in human oral cancer cell lines may be a key factor in selective apoptosis and molecular targeting for chemoprevention by phytochemicals.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0028",
+    "title": "[MED-4620] Chemopreventive characteristics of avocado fruit.",
+    "text": "Chemopreventive characteristics of avocado fruit.\nPhytochemicals are recognized as playing an important role in cancer prevention by fruits and vegetables. The avocado is a widely grown and consumed fruit that is high in nutrients and low in calories, sodium, and fats. Studies have shown that phytochemicals extracted from the avocado fruit selectively induce cell cycle arrest, inhibit growth, and induce apoptosis in precancerous and cancer cell lines. Our recent studies indicate that phytochemicals extracted with chloroform from avocado fruits target multiple signaling pathways and increase intracellular reactive oxygen leading to apoptosis. This review summarizes the reported phytochemicals in avocado fruit and discusses their molecular mechanisms and targets. These studies suggest that individual and combinations of phytochemicals from the avocado fruit may offer an advantageous dietary strategy in cancer prevention.",
+    "origin": "gold"
+   },
+   {
+    "id": "d0029",
+    "title": "[MED-4621] Acute and Sub-Acute Toxicological Assessment of the Aqueous Seed Extract of Persea Americana Mill (Lauraceae) in Rats",
+    "text": "Acute and Sub-Acute Toxicological Assessment of the Aqueous Seed Extract of Persea Americana Mill (Lauraceae) in Rats\nThe aqueous seed extract of Persea americana Mill (Lauraceae) is used by herbalists in Nigeria for the management of hypertension. As part of our on-going scientific evaluation of the extract, we designed the present study to assess its acute and sub-acute toxicity profiles in rats. Experiments were conducted to determine the oral median lethal dose (LD50) and other gross toxicological manifestations on acute basis. In the sub-acute experiments, the animals were administered 2.5 g/kg (p.o) per day of the extract for 28 consecutive days. Animal weight and fluid intake were recorded during the 28 days period. Terminally, kidneys, hearts, blood/sera were obtained for weight, haematological and biochemical markers of toxicity. Results show that the LD50 could not be determined after a maximum dose of 10 g/kg. Sub-acute treatment with the extract neither affected whole body weight nor organ-to-body weight ratios but significantly increased the fluid intake (P < 0.0001). Haematological parameters and the levels of ALT, AST, albumin and creatinine were not significantly altered. However, the concentration of total proteins was significantly increased in the treated group. In conclusion, the aqueous seed extract of P. americana is safe on sub-acute basis but extremely high doses may not be advisable.",
+    "origin": "gold"
+   }
+  ]
+ },
+ "questions": [
+  {
+   "qid": "PLAIN-2408",
+   "question": "Zoloft",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0000",
+    "d0001",
+    "d0002",
+    "d0003",
+    "d0004"
+   ],
+   "beir_gold_ids": [
+    "MED-1356",
+    "MED-1357",
+    "MED-1358",
+    "MED-1359",
+    "MED-1360"
+   ],
+   "type": "beir/nfcorpus"
+  },
+  {
+   "qid": "PLAIN-1161",
+   "question": "fava beans",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0005"
+   ],
+   "beir_gold_ids": [
+    "MED-4281"
+   ],
+   "type": "beir/nfcorpus"
+  },
+  {
+   "qid": "PLAIN-817",
+   "question": "canker sores",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0006"
+   ],
+   "beir_gold_ids": [
+    "MED-4841"
+   ],
+   "type": "beir/nfcorpus"
+  },
+  {
+   "qid": "PLAIN-1962",
+   "question": "pumpkin",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0007",
+    "d0008",
+    "d0009",
+    "d0010",
+    "d0011",
+    "d0012",
+    "d0013",
+    "d0014",
+    "d0015",
+    "d0016",
+    "d0017",
+    "d0018",
+    "d0019"
+   ],
+   "beir_gold_ids": [
+    "MED-2826",
+    "MED-2827",
+    "MED-2830",
+    "MED-2831",
+    "MED-2999",
+    "MED-3000",
+    "MED-3001",
+    "MED-3615",
+    "MED-3617",
+    "MED-3618",
+    "MED-3620",
+    "MED-3621",
+    "MED-3622"
+   ],
+   "type": "beir/nfcorpus"
+  },
+  {
+   "qid": "PLAIN-418",
+   "question": "Fresh fruit versus frozen--which is better?",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0020",
+    "d0021",
+    "d0022"
+   ],
+   "beir_gold_ids": [
+    "MED-3714",
+    "MED-4545",
+    "MED-917"
+   ],
+   "type": "beir/nfcorpus"
+  },
+  {
+   "qid": "PLAIN-541",
+   "question": "American Dental Association",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0015",
+    "d0016",
+    "d0023",
+    "d0017",
+    "d0018",
+    "d0019"
+   ],
+   "beir_gold_ids": [
+    "MED-3617",
+    "MED-3618",
+    "MED-3619",
+    "MED-3620",
+    "MED-3621",
+    "MED-3622"
+   ],
+   "type": "beir/nfcorpus"
+  },
+  {
+   "qid": "PLAIN-3131",
+   "question": "Are Avocados Good for You?",
+   "gold_answer": null,
+   "gold_doc_ids": [
+    "d0024",
+    "d0025",
+    "d0026",
+    "d0027",
+    "d0028",
+    "d0029"
+   ],
+   "beir_gold_ids": [
+    "MED-4514",
+    "MED-4515",
+    "MED-4618",
+    "MED-4619",
+    "MED-4620",
+    "MED-4621"
+   ],
+   "type": "beir/nfcorpus"
+  }
+ ],
+ "meta": {
+  "source": "BEIR nfcorpus (test qrels, gold-guaranteed subset)",
+  "n_docs": 30,
+  "n_questions": 7,
+  "seed": 42,
+  "doc_budget": 30,
+  "question_budget": 30
+ }
+}

@@ -1,0 +1,17 @@
+{
+ "bench": "arguana",
+ "kbs": {
+  "SOTA10-ARGUANA": {
+   "kb_id": "742c231e-043a-40a9-bb36-27aeb78639f4",
+   "created": false,
+   "expected": 30,
+   "all_published": true,
+   "final_status": {
+    "published": 30
+   },
+   "post_failures": [],
+   "elapsed_secs": 0.0,
+   "poll_secs": 0
+  }
+ }
+}
