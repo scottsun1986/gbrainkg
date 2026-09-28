@@ -7,6 +7,8 @@ const mockPrisma = {
   knowledgeBase: { findMany: jest.fn() },
   chunk: { findMany: jest.fn() },
   document: { findMany: jest.fn() },
+
+  $transaction: jest.fn(async (fn: any) => fn(mockPrisma)),
 };
 
 jest.mock('@prisma/client', () => ({

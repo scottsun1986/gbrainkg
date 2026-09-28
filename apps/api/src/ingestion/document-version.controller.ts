@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '../auth/auth.guard';
+import { PermissionService } from '../permission/permission.service';
 import { getPrismaClient } from '../prisma';
 import { VersionChainService } from './version-chain.service';
 
@@ -19,7 +20,22 @@ import { VersionChainService } from './version-chain.service';
 export class DocumentVersionController {
   private prisma = getPrismaClient();
 
-  constructor(private readonly versionChain: VersionChainService) {}
+  constructor(
+    private readonly versionChain: VersionChainService,
+    private readonly permissionService: PermissionService,
+  ) {}
+
+  private async assertCanRead(userId: string, documentId: string) {
+    const doc = await this.prisma.document.findUnique({
+      where: { id: documentId },
+      select: { id: true, kbId: true },
+    });
+    if (!doc) throw new NotFoundException('document not found');
+    const visibleKbs = await this.permissionService.getVisibleKnowledgeBases(userId);
+    if (!visibleKbs.includes(doc.kbId)) {
+      throw new ForbiddenException('无权访问该文档');
+    }
+  }
 
   private async assertCanWrite(userId: string, documentId: string) {
     const doc = await this.prisma.document.findUnique({
@@ -44,7 +60,9 @@ export class DocumentVersionController {
   }
 
   @Get(':id/chain')
-  async chain(@Param('id') id: string) {
+  async chain(@Param('id') id: string, @Req() req: any) {
+    const userId = req.user.id as string;
+    await this.assertCanRead(userId, id);
     return this.versionChain.listChain(id);
   }
 

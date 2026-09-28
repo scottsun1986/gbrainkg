@@ -5,6 +5,7 @@ describe('CitationAssemblyService ACL revalidation', () => {
 
   function createService(readableIds: string[], restrictedDocs: Array<{ documentId: string; document: { kbId: string } }> = []) {
     const prisma = {
+  $transaction: jest.fn(async (fn: any) => fn({})),
       document: { findMany: jest.fn().mockResolvedValue([]) },
       documentAcl: { findMany: jest.fn().mockResolvedValue(restrictedDocs) },
       brainDerivedPage: { findMany: jest.fn().mockResolvedValue([]) },

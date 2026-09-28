@@ -8,7 +8,7 @@ import { BrainScopeService } from "./brain-scope.service";
 import { BrainOutboxService } from "./brain-outbox.service";
 import { ChunkEmbeddingService } from "../embedding/chunk-embedding.service";
 
-const mockPrisma = {
+const mockPrisma: any = {
   knowledgeBase: { findUnique: jest.fn() },
   brainChangeEvent: { findUnique: jest.fn(), update: jest.fn() },
   brainRepo: {
@@ -23,6 +23,8 @@ const mockPrisma = {
     findMany: jest.fn(),
     updateMany: jest.fn(),
   },
+
+  $transaction: jest.fn(async (fn: any) => fn(mockPrisma)),
 };
 
 const mockGbrainAdapter = {

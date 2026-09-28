@@ -140,7 +140,15 @@ export function sectionAlignMultiplier(query: string, input: SectionAlignInput):
   return mult;
 }
 
-/** 原地按结构对齐重排分数；返回是否有任何乘子 ≠ 1。 */
+/**
+ * 原地按结构对齐重排分数；返回是否有任何乘子 ≠ 1。
+ *
+ * 幂等：乘子记在 `sectionAlignMult` 上，再次调用先除回旧乘子再乘新乘子。
+ * 调用方最多三处（重排前、小节救援后、重排后），直接连乘会让分数膨胀到
+ * 1.35³ ≈ ×2.46；追踪替换后净乘子恒为当前 m。
+ * 分数在两次调用之间被重排覆盖时（写入新的校准分），旧乘子除回再乘同一 m
+ * 恰好还原，净效果仍是一次对齐。
+ */
 export function applySectionAlign<T extends SectionAlignInput & { score?: number | null }>(
   query: string,
   citations: T[],
@@ -148,11 +156,13 @@ export function applySectionAlign<T extends SectionAlignInput & { score?: number
   let changed = false;
   for (const c of citations) {
     const m = sectionAlignMultiplier(query, c);
-    if (m !== 1) {
-      changed = true;
-      const base = Number(c.score ?? 0);
-      c.score = Number((base * m).toFixed(4));
-    }
+    const base = Number(c.score ?? 0);
+    const previous = Number((c as any).sectionAlignMult ?? 1);
+    const restored = previous > 0 ? base / previous : base;
+    const next = Number((restored * m).toFixed(4));
+    if (next !== base) changed = true;
+    c.score = next;
+    (c as any).sectionAlignMult = m;
   }
   return changed;
 }

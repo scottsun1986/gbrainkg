@@ -23,7 +23,7 @@ export class AuthService {
    */
   private static readonly USER_STATUS_TTL_MS = Math.max(
     0,
-    Number(process.env.AUTH_USER_STATUS_TTL_MS ?? 30_000),
+    Number(process.env.AUTH_USER_STATUS_TTL_MS ?? 5_000),
   );
   private readonly userStatusCache = new Map<
     string,
@@ -56,7 +56,9 @@ export class AuthService {
 
   private secret(): string {
     const secret = process.env.AUTH_SECRET;
-    if (!secret && process.env.NODE_ENV === 'production') {
+    const env = String(process.env.NODE_ENV || '').toLowerCase();
+    const isExplicitDev = env === 'development' || env === 'dev' || env === 'test';
+    if (!secret && !isExplicitDev) {
       throw new UnauthorizedException('AUTH_SECRET is not configured.');
     }
     return secret || 'llmwiki-local-development-secret';
@@ -233,8 +235,8 @@ export class AuthService {
   }
 
   async changePassword(userId: string, currentPassword: string, newPassword: string) {
-    if (newPassword.length < 6) {
-      throw new BadRequestException('New password must contain at least 6 characters.');
+    if (newPassword.length < 12) {
+      throw new BadRequestException('New password must contain at least 12 characters.');
     }
     if (currentPassword === newPassword) {
       throw new BadRequestException('New password must be different from the current password.');

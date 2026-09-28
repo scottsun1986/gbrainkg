@@ -847,7 +847,7 @@ export class CitationAssemblyService {
   ) {
     trace.start("citation_validation", "引用校验与映射", "校验回答角标并绑定到原始文档预览");
     // If the LLM cited specific [n] sources, match and retain them
-    const safeAnswer = stripInvalidCitationMarkers(fullAnswer, citations.length);
+    let safeAnswer = stripInvalidCitationMarkers(fullAnswer, citations.length);
     const citedMatches = safeAnswer.match(/\[(\d+)\]/g) || [];
     const citedIndices = new Set(
       citedMatches.map((m) => parseInt(m.replace(/\D/g, ""), 10)),
@@ -890,6 +890,13 @@ export class CitationAssemblyService {
       }
       return true;
     });
+    if (finalCitations.length < preAclCount) {
+      const survivingIndices = new Set(finalCitations.map((f) => f.originalIndex));
+      safeAnswer = safeAnswer.replace(/\[(\d+)\]/g, (full, rawIndex) => {
+        const index = Number(rawIndex);
+        return index >= 1 && index <= survivingIndices.size && survivingIndices.has(index) ? full : '';
+      });
+    }
 
     const statements = safeAnswer.split(/(?:\n+|[。！？])/).map(s => s.trim()).filter(s => s.length >= 5);
     const totalStatements = statements.length;
@@ -917,15 +924,15 @@ export class CitationAssemblyService {
         ungroundedStatements.push(stmt);
       }
     }
-    // When the deterministic overlap heuristic reports weak coverage, confirm
-    // the ungrounded statements with an LLM entailment judge (NLI-style). This
-    // removes false positives from paraphrase without letting the model
-    // "support" statements that genuinely lack evidence.
+    // Route EVERY deterministically-ungrounded statement to the entailment
+    // judge (NLI-style), regardless of the grounding ratio: an isolated
+    // fabrication must face the judge even when the rest of the answer is
+    // well grounded. The 0.6 ratio no longer gates the judge — it only decides
+    // whether the trace warns about low coverage below.
     if (
       process.env.SEMANTIC_COVERAGE_JUDGE !== 'false' &&
       finalCitations.length > 0 &&
-      ungroundedStatements.length > 0 &&
-      groundedStatements / Math.max(1, totalStatements) < 0.6
+      ungroundedStatements.length > 0
     ) {
       const evidenceText = finalCitations
         .map((item: any) => String(item.citation.context || item.citation.snippet || ""))
@@ -951,7 +958,7 @@ export class CitationAssemblyService {
       traceMsg = finalCitations.length > 0
         ? `标准拒答；仍返回 ${finalCitations.length} 个候选证据页面供人工核对`
         : "标准拒答，未返回可绑定证据";
-    } else if (citations.length > 0 && coverageRatio < 0.5) {
+    } else if (citations.length > 0 && coverageRatio < 0.6) {
       traceStatus = "warning";
       traceMsg += `，但证据语义覆盖率偏低 (${Math.round(coverageRatio * 100)}%)，部分结论缺少明确引用支撑`;
     }

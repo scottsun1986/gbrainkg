@@ -107,7 +107,7 @@ describe('OIDC SSO (authorization code + JIT provisioning)', () => {
     expect(oidcService.isConfigured()).toBe(false);
     expect(readOidcEnvConfig().configured).toBe(false);
     await expect(oidcService.buildAuthorizationUrl()).rejects.toThrow(NotFoundException);
-    await expect(oidcService.handleCallback('code', 'state', { skipCookieCheck: true })).rejects.toThrow(
+    await expect(oidcService.handleCallback('code', 'state')).rejects.toThrow(
       NotFoundException,
     );
     expect(typeof authService.login).toBe('function');

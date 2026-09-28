@@ -19,6 +19,8 @@ const mockPrisma = {
     create: jest.fn(),
     findMany: jest.fn(),
   },
+
+  $transaction: jest.fn(async (fn: any) => fn(mockPrisma)),
 };
 
 jest.mock('@prisma/client', () => ({

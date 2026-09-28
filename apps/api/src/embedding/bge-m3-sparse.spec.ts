@@ -9,7 +9,9 @@ jest.mock('../observability/failopen', () => ({
   recordFailopen: jest.fn(),
 }));
 
-const mockPrisma: any = { $queryRaw: jest.fn() };
+const mockPrisma: any = { $queryRaw: jest.fn(),
+  $executeRaw: jest.fn().mockResolvedValue(1),
+  $executeRawUnsafe: jest.fn().mockResolvedValue(1) };
 jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => mockPrisma) }));
 jest.mock('../prisma', () => ({ getPrismaClient: jest.fn(() => mockPrisma) }));
 

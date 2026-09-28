@@ -140,11 +140,15 @@ export class ObjectStorageService {
     await fsp.rm(this.resolveLocal(objectKey), { force: true });
   }
 
+  private assertSafeKey(key: string): void {
+    if (key.includes('\\') || /(^|\/)\.\.(\/|$)/.test(key) || key.startsWith('/')) {
+      throw new Error(`object key escapes storage root: ${key}`);
+    }
+  }
+
   private resolveLocal(objectKey: string): string {
     // Reject traversal outright — never silently rewrite caller input.
-    if (objectKey.includes('\\') || /(^|\/)\.\.(\/|$)/.test(objectKey)) {
-      throw new Error(`object key escapes storage root: ${objectKey}`);
-    }
+    this.assertSafeKey(objectKey);
     const cleaned = normalize(objectKey).replace(/^\/+/, '');
     const abs = resolve(this.localRoot, cleaned);
     if (abs !== this.localRoot && !abs.startsWith(this.localRoot + sep)) {
@@ -198,6 +202,7 @@ export class ObjectStorageService {
     body?: Buffer,
     contentType = 'application/octet-stream',
   ): Promise<Buffer> {
+    if (key !== '/') this.assertSafeKey(key);
     const cfg = this.minio!;
     return new Promise((resolvePromise, rejectPromise) => {
       void (async () => {

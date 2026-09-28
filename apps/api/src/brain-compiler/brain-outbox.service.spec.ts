@@ -1,6 +1,8 @@
 import { BrainOutboxService } from './brain-outbox.service';
 const mockFindMany = jest.fn();
-const mockPrisma = { brainChangeEvent: { findMany: mockFindMany } };
+const mockPrisma = { brainChangeEvent: { findMany: mockFindMany },
+  $transaction: jest.fn(async (fn: any) => fn(mockPrisma)),
+};
 jest.mock('../prisma', () => ({ getPrismaClient: () => mockPrisma }));
 
 describe('durable pending outbox dispatcher', () => {

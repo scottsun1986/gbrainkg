@@ -78,13 +78,15 @@ export class PermissionService implements OnModuleInit {
   }
 
   async isSystemAdmin(userId: string): Promise<boolean> {
+    // Only the dedicated system-admin role names grant system administration.
+    // Matching on `builtin: true` alone would promote any future built-in
+    // role (e.g. an internal service role) to system admin.
     return Boolean(
       await this.prisma.userRole.findFirst({
         where: {
           userId,
           role: {
             OR: [
-              { builtin: true },
               { name: "超级管理员" },
               { name: "系统管理员" },
             ],
@@ -154,13 +156,22 @@ export class PermissionService implements OnModuleInit {
       ...managedRoots.map((item) => item.orgNodeId),
       ...memberships.map((item) => item.orgNodeId),
     ]);
+    // Index children by parent first: the previous BFS used queue.shift()
+    // (O(n) per dequeue) with a full scan per node — O(n²) overall.
+    const childrenByParent = new Map<string, string[]>();
+    for (const node of nodes) {
+      if (!node.parentId) continue;
+      const list = childrenByParent.get(node.parentId) ?? [];
+      list.push(node.id);
+      childrenByParent.set(node.parentId, list);
+    }
     const queue = [...managed];
     while (queue.length) {
-      const parentId = queue.shift()!;
-      for (const node of nodes) {
-        if (node.parentId === parentId && !managed.has(node.id)) {
-          managed.add(node.id);
-          queue.push(node.id);
+      const parentId = queue.pop()!;
+      for (const childId of childrenByParent.get(parentId) ?? []) {
+        if (!managed.has(childId)) {
+          managed.add(childId);
+          queue.push(childId);
         }
       }
     }
@@ -378,20 +389,12 @@ export class PermissionService implements OnModuleInit {
   }
 
   async resolveUserId(requestedUserId?: string): Promise<string | null> {
-    if (requestedUserId) {
-      const user = await this.prisma.user.findFirst({
-        where: { id: requestedUserId, status: "active" },
-        select: { id: true },
-      });
-      return user?.id ?? null;
-    }
-    if (process.env.NODE_ENV === "production") return null;
-    const firstUser = await this.prisma.user.findFirst({
-      where: { status: "active" },
-      orderBy: { createdAt: "asc" },
+    if (!requestedUserId) return null;
+    const user = await this.prisma.user.findFirst({
+      where: { id: requestedUserId, status: "active" },
       select: { id: true },
     });
-    return firstUser?.id ?? null;
+    return user?.id ?? null;
   }
 
   /**

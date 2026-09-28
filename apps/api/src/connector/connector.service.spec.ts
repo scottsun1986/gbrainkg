@@ -20,6 +20,8 @@ const mockPrisma = {
     update: jest.fn(),
     updateMany: jest.fn(),
   },
+
+  $transaction: jest.fn(async (fn: any) => fn(mockPrisma)),
 };
 
 jest.mock('../prisma', () => ({

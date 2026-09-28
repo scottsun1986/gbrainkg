@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -6,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { getPrismaClient } from '../prisma';
 import { withServiceContext } from '../db/tenant-context.service';
 import { IngestionService } from '../ingestion/ingestion.service';
@@ -37,6 +38,7 @@ export class ConnectorService {
   private readonly uploadRoot =
     process.env.UPLOAD_ROOT || '/tmp/llmwiki/uploads';
   private readonly connectors: Map<string, EnterpriseConnector>;
+  private readonly runningSyncs = new Set<string>();
 
   constructor(
     // 复用 IngestionService：创建文档后走既有解析/索引管线
@@ -57,6 +59,16 @@ export class ConnectorService {
       throw new NotFoundException(`unsupported connector kind: ${kind}`);
     }
     return connector;
+  }
+
+  /**
+   * Central raw-file path resolution. rawFileOid is stored as an absolute
+   * path under uploadRoot, but legacy rows may hold relative values —
+   * resolve both against uploadRoot instead of assuming one convention.
+   */
+  private resolveRawPath(rawFileOid: string | null | undefined): string | null {
+    if (!rawFileOid) return null;
+    return isAbsolute(rawFileOid) ? rawFileOid : join(this.uploadRoot, rawFileOid);
   }
 
   async createSource(input: {
@@ -103,7 +115,12 @@ export class ConnectorService {
 
   async deleteSource(sourceId: string) {
     await this.getSource(sourceId);
-    await this.prisma.connectorSource.delete({ where: { id: sourceId } });
+    // Soft delete: listSources filters status != 'deleted', so a hard delete
+    // would make that filter dead code (and lose the sync history).
+    await this.prisma.connectorSource.update({
+      where: { id: sourceId },
+      data: { status: 'deleted' },
+    });
     return { id: sourceId, deleted: true };
   }
 
@@ -117,8 +134,24 @@ export class ConnectorService {
    * （sourceType feishu/git，sourceExternalId）→ 写进度与 cursor。
    */
   async sync(sourceId: string): Promise<SyncRunSummary> {
+    // Concurrency guard: reject a second trigger while a run is in flight.
+    // The in-memory set covers same-process double triggers; the DB check
+    // covers runs left in 'running' by a crashed process.
+    if (this.runningSyncs.has(sourceId)) {
+      throw new ConflictException(`connector source ${sourceId} sync is already running`);
+    }
+    const staleRun = await this.prisma.connectorRun.findFirst({
+      where: { sourceId, status: 'running' },
+      select: { id: true },
+    });
+    if (staleRun) {
+      throw new ConflictException(
+        `connector source ${sourceId} already has a running sync (run ${staleRun.id})`,
+      );
+    }
     const source = await this.getSource(sourceId);
     const connector = this.getConnector(source.kind);
+    this.runningSyncs.add(sourceId);
     const run = await withServiceContext(this.prisma, (tx) => tx.connectorRun.create({
       data: {
         id: randomUUID(),
@@ -216,6 +249,8 @@ export class ConnectorService {
         skipped,
         error: message,
       };
+    } finally {
+      this.runningSyncs.delete(sourceId);
     }
   }
 
@@ -260,8 +295,9 @@ export class ConnectorService {
     const sourceType = sourceTypeForKind(source.kind);
     const title = String(change.title || change.externalId).slice(0, 200);
 
-    if (existing && existing.rawFileOid) {
-      await writeFile(existing.rawFileOid, content, 'utf8');
+    const existingRawPath = this.resolveRawPath(existing?.rawFileOid);
+    if (existing && existingRawPath) {
+      await writeFile(existingRawPath, content, 'utf8');
       const nextVersion = (existing.version || 1) + 1;
       await this.prisma.document.update({
         where: { id: existing.id },

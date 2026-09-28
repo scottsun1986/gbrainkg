@@ -304,6 +304,8 @@ export class OidcService {
     idToken: string,
     jwks: any[],
     expectedNonce?: string,
+    expectedIssuer?: string,
+    expectedClientId?: string,
   ): Record<string, unknown> | null {
     const parts = String(idToken || '').split('.');
     if (parts.length !== 3 || !Array.isArray(jwks) || jwks.length === 0) return null;
@@ -316,8 +318,23 @@ export class OidcService {
     } catch {
       return null;
     }
-    if (payload.nonce && expectedNonce && payload.nonce !== expectedNonce) {
-      throw new UnauthorizedException('OIDC id_token nonce mismatch.');
+    if (expectedNonce) {
+      if (!payload.nonce) {
+        throw new UnauthorizedException('OIDC id_token is missing the expected nonce.');
+      }
+      if (payload.nonce !== expectedNonce) {
+        throw new UnauthorizedException('OIDC id_token nonce mismatch.');
+      }
+    }
+    if (expectedIssuer && payload.iss !== expectedIssuer) {
+      throw new UnauthorizedException('OIDC id_token issuer mismatch.');
+    }
+    if (expectedClientId) {
+      const aud = payload.aud;
+      const audList = Array.isArray(aud) ? aud : [aud];
+      if (!audList.includes(expectedClientId)) {
+        throw new UnauthorizedException('OIDC id_token audience mismatch.');
+      }
     }
     if (header.alg !== 'RS256') {
       this.logger.warn(
@@ -364,7 +381,7 @@ export class OidcService {
       if (endpoints.jwks_uri) {
         jwks = await this.loadJwks(endpoints.jwks_uri);
       }
-      claims = this.verifyIdToken(String(tokenPayload.id_token), jwks, expectedNonce);
+      claims = this.verifyIdToken(String(tokenPayload.id_token), jwks, expectedNonce, config.issuer, config.clientId);
     }
     if (!claims) {
       throw new UnauthorizedException(
@@ -410,6 +427,11 @@ export class OidcService {
           'This email is already linked to a different SSO identity. Contact an administrator.',
         );
       }
+      if (!byEmail.oidcSub) {
+        throw new BadRequestException(
+          'This email has a local account. Please sign in with your existing credentials or contact an administrator to link SSO.',
+        );
+      }
       await this.prisma.user.update({
         where: { id: byEmail.id },
         data: { oidcSub: identity.sub },
@@ -451,15 +473,11 @@ export class OidcService {
   async handleCallback(
     code: string,
     state: string,
-    options: { cookieState?: string | null; skipCookieCheck?: boolean } = {},
+    options: { cookieState?: string | null } = {},
   ): Promise<OidcCallbackResult> {
     const config = this.requireConfig();
     if (!code) throw new BadRequestException('Missing authorization `code`.');
-    if (options.skipCookieCheck) {
-      this.verifyState(state);
-    } else {
-      this.assertStateMatchesCookie(state, options.cookieState);
-    }
+    this.assertStateMatchesCookie(state, options.cookieState);
     const statePayload = this.verifyState(state);
     const endpoints = await this.loadEndpoints(config);
     const tokenPayload = await this.exchangeCode(config, endpoints, code);

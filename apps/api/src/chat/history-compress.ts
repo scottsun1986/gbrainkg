@@ -59,12 +59,17 @@ export function extractiveDigest(content: string, maxChars: number): string {
     .replace(/\s+/g, " ")
     .trim();
   if (cleaned.length <= maxChars) return cleaned;
-  const slice = cleaned.slice(0, maxChars);
-  const boundaries = ["。", "！", "？", "；", ".", "!", "?"];
-  let boundary = -1;
-  for (const marker of boundaries) {
-    boundary = Math.max(boundary, slice.lastIndexOf(marker));
-  }
-  const trimmed = boundary >= maxChars * 0.5 ? slice.slice(0, boundary + 1) : slice;
-  return `${trimmed.trim()}…`;
+  // Conclusions and decisions usually live at the END of an assistant
+  // reply; a pure prefix slice drops exactly the parts that matter. Keep
+  // the head for context and the tail for the conclusion.
+  const headChars = Math.min(120, Math.max(20, Math.floor(maxChars * 0.6)));
+  const tailChars = Math.max(20, maxChars - headChars);
+  const head = cleaned.slice(0, headChars);
+  const tail = cleaned.slice(cleaned.length - tailChars);
+  // Cut head and tail at sentence boundaries
+  const headBoundary = head.search(/[。！？.!?](?=\s|$)/);
+  const tailBoundary = tail.search(/[。！？.!?](?=\s|$)/);
+  const headFinal = headBoundary >= 0 ? head.slice(0, headBoundary + 1) : head;
+  const tailFinal = tailBoundary >= 0 ? tail.slice(tailBoundary + 1) : tail;
+  return `${headFinal.trim()} … ${tailFinal.trim()}…`;
 }

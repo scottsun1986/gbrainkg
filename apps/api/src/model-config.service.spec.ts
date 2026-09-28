@@ -12,6 +12,8 @@ const mockPrisma = {
   modelConfig: { findFirst: jest.fn() },
   modelProvider: { update: jest.fn() },
   $disconnect: jest.fn(),
+
+  $transaction: jest.fn(async (fn: any) => fn(mockPrisma)),
 };
 jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => mockPrisma) }));
 

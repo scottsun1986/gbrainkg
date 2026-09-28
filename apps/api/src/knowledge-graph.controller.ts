@@ -46,7 +46,6 @@ function extractTerms(title: string, chunks: Array<{ content: string; metadata: 
     const content = chunk.content || '';
     for (const match of content.matchAll(/^#{1,6}\s+(.+)$/gmu)) addTerm(terms, match[1]);
     for (const match of content.matchAll(/[《「“]([^》」”]{2,60})[》」”]/gu)) addTerm(terms, match[1]);
-    for (const match of content.matchAll(/([\p{L}\p{N}]{2,32}(?:公司|中心|部门|医院|集团|平台|系统|项目|规范|制度|管理|评估|安全|组织|小组))/gu)) addTerm(terms, match[1]);
     for (const match of content.matchAll(/\[\[([^\]]+)\]\]/gu)) addTerm(terms, match[1]);
   }
   return [...terms].slice(0, 40);

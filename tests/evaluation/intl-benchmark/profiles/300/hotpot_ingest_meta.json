@@ -1,0 +1,21 @@
+{
+  "profile": "300",
+  "dataset": "hotpot",
+  "kb_id": "4e72751f-e826-4b81-9140-67488d1a33f5",
+  "kb_name": "公开基准-HotpotQA-EN-300docs-seed42-1503dff30414",
+  "selected_corpus_sha256": "1503dff30414bc625b847c31f03ba77079fbce486975fc895bfc3b17a205d024",
+  "manifest_sha256": "e471e371100bb26d66c651846e067bfff82f94b12e38e8438b90be18ec3b3a5f",
+  "gold_documents": 200,
+  "negative_documents": 100,
+  "corpus": 300,
+  "all_published": true,
+  "exact_manifest": true,
+  "published_count": 300,
+  "final_status": {
+    "total": 300,
+    "published": 300,
+    "processing": 0
+  },
+  "post_failures": [],
+  "finished_at": "2026-09-27T07:42:58+0800"
+}

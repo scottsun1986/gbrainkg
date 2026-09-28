@@ -50,7 +50,7 @@ const UNIT_TABLE: Record<string, UnitSpec> = {
 };
 
 const NUMBER_UNIT_RE =
-  /(\d+(?:\.\d+)?)\s*(毫秒|ms|分钟|min|小时|千米|公里|km|厘米|cm|秒|分|天|日|周|月|年|米|m|%|万|亿|h|s)/gi;
+  /(\d+(?:\.\d+)?)\s*(毫秒|ms|分钟|min|小时|千米|公里|km|厘米|cm|秒|分|天|日|周|月|年|米|m|%|万|亿|h|s)(?![A-Za-z])/gi;
 
 export function extractNumberUnits(text: string): NumberUnit[] {
   if (!text) return [];
@@ -101,7 +101,9 @@ export function numericClaimsSupportedBy(statement: string, evidence: string): b
   const evidenceUnits = extractNumberUnits(evidence);
 
   return claims.every((claim) => {
-    if (normEvidence.includes(claim.replace(/\s+/g, ""))) return true;
+    const claimNorm = claim.replace(/\s+/g, "");
+    const boundaryRe = new RegExp(`(?<![\\d.])${claimNorm}(?![\\d.])`);
+    if (boundaryRe.test(normEvidence)) return true;
     const unit = unitByRaw.get(claim);
     if (!unit) return false;
     const spec = unitSpec(unit);

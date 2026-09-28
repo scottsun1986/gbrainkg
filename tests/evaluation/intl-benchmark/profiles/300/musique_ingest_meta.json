@@ -1,0 +1,21 @@
+{
+  "profile": "300",
+  "dataset": "musique",
+  "kb_id": "3f5ef9e4-635f-451b-9b2a-a9a80a44e77b",
+  "kb_name": "公开基准-MuSiQue-EN-300docs-seed42-25af5a411204",
+  "selected_corpus_sha256": "25af5a411204167109880c8c487929b2eceaea3f3dab25a56e60733ef7fbcbed",
+  "manifest_sha256": "fba6eb17394bdf6d58ec8865a6883faeb817cd8c23fa894329c88910eab4db3d",
+  "gold_documents": 213,
+  "negative_documents": 87,
+  "corpus": 300,
+  "all_published": true,
+  "exact_manifest": true,
+  "published_count": 300,
+  "final_status": {
+    "total": 300,
+    "published": 300,
+    "processing": 0
+  },
+  "post_failures": [],
+  "finished_at": "2026-09-27T08:08:38+0800"
+}

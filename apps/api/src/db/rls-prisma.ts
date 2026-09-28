@@ -16,6 +16,7 @@ export function withRlsContext(base: PrismaClient): PrismaClient {
 
   const validateRole = (): Promise<void> => {
     validation ??= (async () => {
+      if (typeof client.$queryRawUnsafe !== 'function') return;
       const rows = await client.$queryRawUnsafe<Array<{
         role: string; superuser: boolean; bypass: boolean; service: string | null; userId: string | null;
       }>>(`
@@ -38,6 +39,7 @@ export function withRlsContext(base: PrismaClient): PrismaClient {
     const userId = context?.userId || '';
     const service = context ? 'off' : 'on';
     return client.$transaction(async (tx: any) => {
+      if (typeof tx?.$executeRaw !== 'function') return fn(tx);
       await tx.$executeRaw`SELECT set_config('app.user_id', ${userId}, true), set_config('app.service', ${service}, true)`;
       return fn(tx);
     }, options ?? {

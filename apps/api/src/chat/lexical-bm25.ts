@@ -37,8 +37,13 @@ export function buildBm25Pool(
     const len = Math.max(1, lower.length);
     for (const kw of kwList) {
       if (!lower.includes(kw)) continue;
-      const parts = lower.split(kw);
-      tf.set(kw, parts.length - 1);
+      // Count token occurrences, not raw substring occurrences: "aa" inside
+      // "aaaa" or "he" inside "the" must not inflate the term frequency.
+      // Word boundaries are required on both sides of the match.
+      const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?=[^\\p{L}\\p{N}]|$)`, 'gu');
+      const matches = lower.match(re);
+      tf.set(kw, matches ? matches.length : 0);
     }
     return { id, len, tf };
   });

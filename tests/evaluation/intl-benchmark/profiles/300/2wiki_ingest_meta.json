@@ -1,0 +1,21 @@
+{
+  "profile": "300",
+  "dataset": "2wiki",
+  "kb_id": "8613a8db-1ab8-4d68-9177-ef40f0edc366",
+  "kb_name": "公开基准-2WikiMultiHopQA-EN-300docs-seed42-2097f903ac3e",
+  "selected_corpus_sha256": "2097f903ac3ecf11533e5ed614e7b47ffde332b5e69e28d6844d33a5773cf2f6",
+  "manifest_sha256": "307f7d85122e4d98eec67d7b6e4a7f4467a6d77be27a0ab056727a0dc6bca9a8",
+  "gold_documents": 261,
+  "negative_documents": 39,
+  "corpus": 300,
+  "all_published": true,
+  "exact_manifest": true,
+  "published_count": 300,
+  "final_status": {
+    "total": 300,
+    "published": 300,
+    "processing": 0
+  },
+  "post_failures": [],
+  "finished_at": "2026-09-27T07:38:46+0800"
+}

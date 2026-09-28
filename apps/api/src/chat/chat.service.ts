@@ -3830,10 +3830,18 @@ export class ChatService {
       }
     }
     if (freshlyCompiledCards.length > 0) {
-      citations.unshift(...freshlyCompiledCards);
-      this.logger.log(
-        `Compile-and-Inject: Pre-pended ${freshlyCompiledCards.length} freshly compiled cards into citations.`,
-      );
+      const visibleKbs = await this.permissionService.getVisibleKnowledgeBases(userId);
+      const filtered = freshlyCompiledCards.filter((card: any) => {
+        const doc = citations.find((c: any) => c.docId === card.docId);
+        if (!doc || !doc.kbId) return false;
+        return visibleKbs.includes(doc.kbId);
+      });
+      if (filtered.length > 0) {
+        citations.unshift(...filtered);
+        this.logger.log(
+          `Compile-and-Inject: Pre-pended ${filtered.length} freshly compiled cards into citations.`,
+        );
+      }
     }
     trace.finish(
       "lazy_compile",
@@ -4054,7 +4062,7 @@ export class ChatService {
           if (!conflictTitles.includes(cit.docTitle)) {
             conflictTitles.push(cit.docTitle);
             const effective = latestDateLabel;
-            versionConflictNote += `\n【多版本/制度冲突比对指示】检测到关于该事项存在多版本/多份制度（库中包含: v${cit.versionConflict.allVersions.join(', v')}，现行有效版为 v${latest.version}《${latest.title}》）。在回答中，请务必同时完整陈述各版本/各制度的具体规定（包括各版本各自规定的具体上下班时间、作息安排或相关条款），并清晰对比其条文差异，同时说明各自的版本号、生效/废止状态与适用关系。切勿只展示单一版本而遗漏另一版本的具体规定。`;
+            versionConflictNote += `\n【多版本/制度冲突比对指示】检测到关于该事项存在多版本/多份制度（库中包含: v${cit.versionConflict.allVersions.join(', v')}，现行有效版为 v${latest.version}《${latest.title}》）。在回答中，请务必同时完整陈述各版本/各制度的具体规定，并清晰对比其条文差异，同时说明各自的版本号、生效/废止状态与适用关系。切勿只展示单一版本而遗漏另一版本的具体规定。`;
           }
         }
         trace.finish(
@@ -4208,7 +4216,7 @@ export class ChatService {
       queryResult.answer.trim().length >= 15 &&
       !queryResult.answer.includes("No truth found");
 
-    const fastRefusalFloor = Number(process.env.RETRIEVAL_FAST_REFUSAL_THRESHOLD || 0.25);
+    const fastRefusalFloor = Number(process.env.RETRIEVAL_FAST_REFUSAL_THRESHOLD || 0.4);
     // Missing scores are unknown, not perfect evidence: treating them as 1 used
     // to let unscored candidates bypass the hallucination gate.
     //
@@ -4216,11 +4224,14 @@ export class ChatService {
     // 0.88/0.999 placement constants) are excluded here. They are comparable to
     // each other for ordering, but the min-max arm always awards its top hit
     // 0.95, so including them made this gate clearable by construction — i.e.
-    // the "fast refusal" never fired exactly when retrieval was weakest.
+    // the "fast refusal" never fired exactly when retrieval was weakest. The
+    // synthetic floor therefore sits at 0.999, above every synthetic constant
+    // the fallback arms can produce, so a synthetic-only pool cannot clear
+    // the gate by construction.
     const sufficiency = decideEvidenceSufficiency(orderedCitations, {
       calibratedFloor: fastRefusalFloor,
       syntheticFloor: Number(
-        process.env.RETRIEVAL_FAST_REFUSAL_SYNTHETIC_THRESHOLD || fastRefusalFloor,
+        process.env.RETRIEVAL_FAST_REFUSAL_SYNTHETIC_THRESHOLD || 0.999,
       ),
     });
     // Without a calibrated score the deployment has no reranker configured (or
@@ -4828,7 +4839,7 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
         }
       }
       if (!fullAnswer.trim() && reasoningBuf.trim()) {
-        const drafted = extractAnswerFromReasoning(reasoningBuf);
+        const drafted = extractAnswerFromReasoning(reasoningBuf, question);
         if (drafted) {
           this.logger.warn('LLM returned no content; using the sanitized reasoning draft.');
           gatePush(drafted);
@@ -5086,7 +5097,7 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
       const message = payload?.choices?.[0]?.message || {};
       const content = String(message.content || '').trim();
       if (content) return content;
-      return extractAnswerFromReasoning(String(message.reasoning_content || ''));
+      return extractAnswerFromReasoning(String(message.reasoning_content || ''), params.question);
     } catch (err) {
       this.logger.warn(
         `Focused refusal retry unavailable: ${err instanceof Error ? err.message : String(err)}`,
@@ -5127,7 +5138,7 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
       const message = payload?.choices?.[0]?.message || {};
       const content = String(message.content || '').trim();
       if (content) return content;
-      return extractAnswerFromReasoning(String(message.reasoning_content || ''));
+      return extractAnswerFromReasoning(String(message.reasoning_content || ''), params.userMessage);
     } catch (err) {
       this.logger.warn(
         `Answer-only retry unavailable: ${err instanceof Error ? err.message : String(err)}`,

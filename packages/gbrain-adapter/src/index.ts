@@ -303,7 +303,7 @@ class ProcessSemaphore {
 }
 
 /** Resolve the gbrain CLI without hardcoding any personal home directory. */
-function resolveGBrainBin(): string {
+export function resolveGBrainBin(): string {
   const configured = String(process.env.GBRAIN_BIN || '').trim();
   if (configured) return configured;
   // Fall back to a PATH lookup (which/where semantics); spawn() resolves a
@@ -323,7 +323,7 @@ function resolveGBrainBin(): string {
 }
 
 /** Resolve the gbrain state directory from the environment or $HOME. */
-function resolveGBrainHome(): string {
+export function resolveGBrainHome(): string {
   const configured = String(process.env.GBRAIN_HOME || '').trim();
   if (configured) return configured;
   const home = String(process.env.HOME || '').trim() || homedir();
@@ -440,7 +440,13 @@ export class BrainRepoAdapter {
       LC_ALL: 'C.UTF-8',
       GBRAIN_HOME: this.gbrainHome,
       GBRAIN_POOL_SIZE: process.env.GBRAIN_POOL_SIZE || '2',
-      GBRAIN_ALLOW_UNVERIFIED_REMOTE: '1',
+      // SECURITY: GBRAIN_ALLOW_UNVERIFIED_REMOTE=1 disables TLS certificate
+      // verification for the child's remote-git HTTPS connections. It is a
+      // blanket MITM exposure — only enable it explicitly via the environment
+      // (e.g. a private CA-less lab setup), never by default.
+      ...(process.env.GBRAIN_ALLOW_UNVERIFIED_REMOTE === '1'
+        ? { GBRAIN_ALLOW_UNVERIFIED_REMOTE: '1' }
+        : {}),
       PATH: `${dirname(this.gbrainBin)}:/usr/local/bin:/usr/bin:${process.env.PATH || ''}`,
     };
     // Prisma accepts the `schema` query parameter, but the GBrain CLI treats
@@ -459,7 +465,10 @@ export class BrainRepoAdapter {
       env.GBRAIN_DATABASE_URL = normalizedDatabaseUrl;
     }
     return new Promise((resolve, reject) => {
-      const child = spawn(this.gbrainBin, args, { env, stdio: 'pipe', cwd });
+      // detached: true puts the child in its own process group so a timeout
+      // can SIGTERM the whole tree (-pid) instead of orphaning grandchildren
+      // (embedding/rerank workers spawned by the CLI) that would keep running.
+      const child = spawn(this.gbrainBin, args, { env, stdio: 'pipe', cwd, detached: true });
       let stdout = '';
       let stderr = '';
       const configuredLimit = Number(process.env.GBRAIN_MAX_OUTPUT_BYTES || 8 * 1024 * 1024);
@@ -467,15 +476,23 @@ export class BrainRepoAdapter {
       let outputBytes = 0;
       let failureCode: string | undefined;
       let killTimer: ReturnType<typeof setTimeout> | undefined;
+      const killTree = (signal: 'SIGTERM' | 'SIGKILL') => {
+        if (child.pid === undefined) return;
+        try {
+          process.kill(-child.pid, signal);
+        } catch {
+          try { child.kill(signal); } catch { /* already gone */ }
+        }
+      };
       const terminate = (reason: string) => {
         if (failureCode) return;
         failureCode = reason;
-        child.kill('SIGTERM');
-        killTimer = setTimeout(() => { if (!settled) child.kill('SIGKILL'); }, 5_000);
+        killTree('SIGTERM');
+        killTimer = setTimeout(() => { if (!settled) killTree('SIGKILL'); }, 5_000);
       };
       const isSync = args[0] === 'sync';
       const timeoutMs = isSync
-        ? Math.max(10_000, Number(process.env.GBRAIN_SYNC_TIMEOUT_MS || 15_000))
+        ? Math.max(30_000, Number(process.env.GBRAIN_SYNC_TIMEOUT_MS || 120_000))
         : Math.max(30_000, Number(process.env.GBRAIN_COMMAND_TIMEOUT_MS || 180_000));
       let settled = false;
       const timer = setTimeout(() => {
@@ -504,7 +521,12 @@ export class BrainRepoAdapter {
       child.stdout.on('data', (chunk: any) => collect(chunk, 'stdout'));
       child.stderr.on('data', (chunk: any) => collect(chunk, 'stderr'));
       child.on('error', () => finish(() => reject(new Error('GBRAIN_SPAWN_FAILED'))));
-      child.stdin.on('error', () => terminate('GBRAIN_STDIN_FAILED'));
+      child.stdin.on('error', (err: any) => {
+        // A command that exits before consuming all stdin produces EPIPE on
+        // the write side; that is normal, not a failure.
+        if (err?.code === 'EPIPE') return;
+        terminate('GBRAIN_STDIN_FAILED');
+      });
       child.on('close', (code: number) => {
         if (code === 0 && !failureCode) finish(() => resolve({ stdout, stderr }));
         else {
@@ -706,12 +728,42 @@ export class BrainRepoAdapter {
     }
   }
 
+  /** Spawn git with a SIGTERM → SIGKILL escalation timeout so a hung git
+   *  (large repo, network-backed remote) can never block the adapter forever. */
+  private spawnGit(args: string[], cwd: string, timeoutMs: number): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const child = spawn('git', args, { cwd, stdio: 'ignore', detached: true });
+      let settled = false;
+      let killTimer: ReturnType<typeof setTimeout> | undefined;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        try { process.kill(-child.pid!, 'SIGTERM'); } catch { /* already gone */ }
+        killTimer = setTimeout(() => {
+          try { process.kill(-child.pid!, 'SIGKILL'); } catch { /* already gone */ }
+        }, 5_000);
+      }, timeoutMs);
+      child.on('error', (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (killTimer) clearTimeout(killTimer);
+        reject(err);
+      });
+      child.on('close', (code: number) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (killTimer) clearTimeout(killTimer);
+        if (code === 0) resolve();
+        else reject(new Error(`git ${args.join(' ')} failed`));
+      });
+    });
+  }
+
   private async runGit(args: string[], cwd: string): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn('git', args, { cwd, stdio: 'ignore' });
-      child.on('error', reject);
-      child.on('close', (code: number) => code === 0 ? resolve() : reject(new Error(`git ${args.join(' ')} failed`)));
-    }).catch(async (err) => {
+    const timeoutMs = Math.max(30_000, Number(process.env.GBRAIN_GIT_TIMEOUT_MS || 120_000));
+    await this.spawnGit(args, cwd, timeoutMs).catch(async (err) => {
       if (args[0] === 'commit') return;
       // A crashed/killed git run leaves .git/index.lock behind forever; every
       // subsequent add/commit in that repo then fails until manual cleanup
@@ -720,11 +772,7 @@ export class BrainRepoAdapter {
       // holds it — remove it and retry once.
       if (['add', 'commit', 'reset'].includes(args[0]) && String((err as Error)?.message || '').includes('failed')) {
         if (await this.clearStaleIndexLock(cwd)) {
-          await new Promise<void>((resolve, reject) => {
-            const child = spawn('git', args, { cwd, stdio: 'ignore' });
-            child.on('error', reject);
-            child.on('close', (code: number) => code === 0 ? resolve() : reject(new Error(`git ${args.join(' ')} failed`)));
-          }).catch((retryErr) => {
+          await this.spawnGit(args, cwd, timeoutMs).catch((retryErr) => {
             if (args[0] !== 'commit') throw retryErr;
           });
           return;
@@ -751,16 +799,38 @@ export class BrainRepoAdapter {
   }
 
   private async runGitOutput(args: string[], cwd: string): Promise<string> {
+    const timeoutMs = Math.max(30_000, Number(process.env.GBRAIN_GIT_TIMEOUT_MS || 120_000));
     return new Promise<string>((resolveOutput, reject) => {
-      const child = spawn('git', args, { cwd, stdio: 'pipe' });
+      const child = spawn('git', args, { cwd, stdio: 'pipe', detached: true });
       let stdout = '';
       let stderr = '';
+      let settled = false;
+      let killTimer: ReturnType<typeof setTimeout> | undefined;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        try { process.kill(-child.pid!, 'SIGTERM'); } catch { /* already gone */ }
+        killTimer = setTimeout(() => {
+          try { process.kill(-child.pid!, 'SIGKILL'); } catch { /* already gone */ }
+        }, 5_000);
+      }, timeoutMs);
       child.stdout.on('data', (chunk: any) => { stdout += chunk.toString('utf8'); });
       child.stderr.on('data', (chunk: any) => { stderr += chunk.toString('utf8'); });
-      child.on('error', reject);
-      child.on('close', (code: number) => code === 0
-        ? resolveOutput(stdout.trim())
-        : reject(new Error(`git ${args.join(' ')} failed (${code}): ${stderr || stdout}`)));
+      child.on('error', (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (killTimer) clearTimeout(killTimer);
+        reject(err);
+      });
+      child.on('close', (code: number) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (killTimer) clearTimeout(killTimer);
+        if (code === 0) resolveOutput(stdout.trim());
+        else reject(new Error(`git ${args.join(' ')} failed (${code}): ${stderr || stdout}`)));
+      });
     });
   }
 

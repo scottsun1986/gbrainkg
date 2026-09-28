@@ -94,15 +94,16 @@ export class DocumentAclService {
     const normalized = entries.map(normalizeAclEntry);
     await withServiceContext(this.prisma, async (tx) => {
       await tx.documentAcl.deleteMany({ where: { documentId } });
-      for (const entry of normalized) {
-        await tx.documentAcl.create({
-          data: {
+      if (normalized.length > 0) {
+        await tx.documentAcl.createMany({
+          data: normalized.map((entry) => ({
             id: randomUUID(),
             documentId,
             subjectType: entry.subjectType,
             subjectId: entry.subjectId,
             permission: entry.permission ?? 'read',
-          },
+          })),
+          skipDuplicates: true,
         });
       }
       await this.recordAclChange(tx, documentId);
@@ -285,8 +286,8 @@ export class DocumentAclService {
         continue;
       }
       // KB 不可见 → 拒绝（与 app_document_readable 的前置门一致）。
-      // opts.docs 场景下 kbId 可能缺失：调用方已按可见 KB 过滤过，跳过此门。
-      if (doc.kbId && !visibleKbIds.has(doc.kbId)) continue;
+      // kbId 缺失同样拒绝（deny-by-default）：调用方必须显式传入可见的 kbId。
+      if (!doc.kbId || !visibleKbIds.has(doc.kbId)) continue;
       const acls = aclsByDoc.get(doc.id) || [];
       // 空 ACL = 继承 KB 可见性。
       if (!acls.length) {

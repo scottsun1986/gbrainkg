@@ -6,6 +6,32 @@ import {
   encryptModelCredential,
   isEncryptedModelCredential,
 } from "./model-credential";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { delimiter, join } from "node:path";
+
+function resolveGBrainBin(): string {
+  const configured = String(process.env.GBRAIN_BIN || '').trim();
+  if (configured) return configured;
+  const pathValue = String(process.env.PATH || '');
+  for (const dir of pathValue.split(delimiter)) {
+    if (!dir) continue;
+    const candidate = join(dir, 'gbrain');
+    try {
+      if (existsSync(candidate)) return candidate;
+    } catch {
+      // Unreadable PATH entry: keep searching.
+    }
+  }
+  return 'gbrain';
+}
+
+function resolveGBrainHome(): string {
+  const configured = String(process.env.GBRAIN_HOME || '').trim();
+  if (configured) return configured;
+  const home = String(process.env.HOME || '').trim() || homedir();
+  return join(home, '.config', 'gbrain');
+}
 
 export type ModelKind = "llm" | "fast_llm" | "embedding" | "rerank";
 
@@ -308,8 +334,8 @@ export class ModelConfigService {
     return {
       routes,
       gbrain: {
-        bin: process.env.GBRAIN_BIN || "/home/scottsun/.bun/bin/gbrain",
-        home: process.env.GBRAIN_HOME || "/home/scottsun/.config/gbrain",
+        bin: resolveGBrainBin(),
+        home: resolveGBrainHome(),
         poolSize: Math.max(1, Number(process.env.GBRAIN_POOL_SIZE || 2)),
         scopeSynthesizeEnabled: process.env.GBRAIN_SCOPE_SYNTHESIZE_ENABLED !== "0",
         graphExtractEnabled: process.env.GBRAIN_GRAPH_EXTRACT_ENABLED !== "0",

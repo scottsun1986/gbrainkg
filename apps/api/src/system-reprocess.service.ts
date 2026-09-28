@@ -1,4 +1,5 @@
 import { Injectable, Logger, BadRequestException, Optional } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { getPrismaClient } from './prisma';
 import { ChunkEmbeddingService } from './embedding/chunk-embedding.service';
 import { EmbeddingService } from './embedding/embedding.service';
@@ -46,6 +47,12 @@ export interface ReprocessStatus {
   stats: ReprocessStats;
   logs: ReprocessLogEntry[];
 }
+
+/** Lease key for the system-wide reprocess run, persisted in SystemSetting
+ *  so idempotency survives restarts and works across replicas. */
+const REPROCESS_LEASE_KEY = 'system_reprocess_lease';
+/** A lease older than this is considered stale (process crashed mid-run). */
+const REPROCESS_LEASE_TTL_MS = 30 * 60 * 1000;
 
 export interface CorpusStatistics {
   totalDocuments: number;
@@ -113,6 +120,48 @@ export class SystemReprocessService {
     this.cancelRequested = true;
     this.addLog('已收到用户取消重处理任务请求，将在当前批次结束后终止。', 'warn');
     return { success: true, message: '取消请求已发送。' };
+  }
+
+  /**
+   * Acquire the persisted reprocess lease. Returns false when another run
+   * still holds a fresh lease. A stale lease (older than the TTL, i.e. the
+   * owner crashed without releasing) is taken over.
+   *
+   * The lease value is `<ISO timestamp>|<run token>` so a releasing owner
+   * only clears its own lease and never a successor's.
+   */
+  private async acquireReprocessLease(): Promise<string | null> {
+    const token = randomUUID();
+    const value = `${new Date().toISOString()}|${token}`;
+    const existing = await this.prisma.systemSetting.findUnique({
+      where: { key: REPROCESS_LEASE_KEY },
+    });
+    if (existing?.value) {
+      const heldAt = Date.parse(existing.value.split('|')[0]);
+      if (Number.isFinite(heldAt) && Date.now() - heldAt < REPROCESS_LEASE_TTL_MS) {
+        return null;
+      }
+    }
+    try {
+      await this.prisma.systemSetting.upsert({
+        where: { key: REPROCESS_LEASE_KEY },
+        create: { key: REPROCESS_LEASE_KEY, value },
+        update: { value },
+      });
+      return token;
+    } catch {
+      // Unique-constraint race with a concurrent starter: treat as held.
+      return null;
+    }
+  }
+
+  private async releaseReprocessLease(token: string): Promise<void> {
+    // Conditional delete: only clear the lease if it is still ours.
+    await this.prisma.systemSetting
+      .deleteMany({
+        where: { key: REPROCESS_LEASE_KEY, value: { contains: `|${token}` } },
+      })
+      .catch(() => undefined);
   }
 
   private addLog(message: string, level: 'info' | 'warn' | 'error' = 'info') {
@@ -206,6 +255,14 @@ export class SystemReprocessService {
       throw new BadRequestException('全系统数据重处理任务正在运行中，请等待其执行完成。');
     }
 
+    // Persisted lease: a restart mid-run must not allow a second concurrent
+    // run. An existing lease is honoured only when still fresh; a stale lease
+    // (owner crashed) is taken over.
+    const leaseToken = await this.acquireReprocessLease();
+    if (!leaseToken) {
+      throw new BadRequestException('全系统数据重处理任务正在运行中，请等待其执行完成。');
+    }
+
     this.cancelRequested = false;
     this.status = {
       running: true,
@@ -235,12 +292,16 @@ export class SystemReprocessService {
 
     // Asynchronous background runner
     setImmediate(() => {
-      this.executeReprocess(options).catch((err) => {
-        this.status.running = false;
-        this.status.error = err instanceof Error ? err.message : String(err);
-        this.status.completedAt = new Date().toISOString();
-        this.addLog(`任务异常中止: ${this.status.error}`, 'error');
-      });
+      this.executeReprocess(options)
+        .catch((err) => {
+          this.status.running = false;
+          this.status.error = err instanceof Error ? err.message : String(err);
+          this.status.completedAt = new Date().toISOString();
+          this.addLog(`任务异常中止: ${this.status.error}`, 'error');
+        })
+        .finally(() => {
+          void this.releaseReprocessLease(leaseToken);
+        });
     });
 
     return { started: true, message: '全系统数据重处理任务已在后台启动。' };
@@ -361,7 +422,6 @@ export class SystemReprocessService {
               const docChunks = await this.prisma.chunk.findMany({
                 where: { documentId: doc.id },
                 orderBy: { ord: 'asc' },
-                take: 50,
                 select: { id: true, content: true, metadata: true },
               });
 

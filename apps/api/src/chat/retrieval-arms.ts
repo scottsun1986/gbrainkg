@@ -1163,24 +1163,16 @@ export class RetrievalArmsService {
     const targets = pickRescueTargets(query, citations);
     if (!targets.length) return [];
     try {
-    const anchors = filterRescueHits(query, [
-      {
-        id: '__probe__',
-        documentId: '__',
-        kbId: '__',
-        ord: 0,
-        content: '',
-        section: query,
-        tableRole: 'unknown',
-      } as RescueChunk,
-    ]); // unused probe to keep import warm; filtering happens per-hit below
-    void anchors;
     const out: any[] = [];
     for (const target of targets) {
       const rows = await (this.prisma as any).chunk.findMany({
         where: {
           documentId: target.documentId,
           ...(target.kbId ? { kbId: target.kbId } : {}),
+          // The KB filter alone is not enough when kbId is unpublished-missing:
+          // require the parent Document to exist and be published so rescue
+          // can never pull chunks of an unpublished/repealed document.
+          document: { status: 'published' },
         },
         select: {
           id: true,

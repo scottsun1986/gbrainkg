@@ -56,6 +56,11 @@ export function contextualRequestKey(
 
 const MIN_CHUNK_TOKENS = 50;
 const MIN_DOC_LENGTH = 500;
+// The prompt asks for a 50-100 character description, but max_tokens is a
+// hard token cap, not a character cap: a misbehaving model can emit far more.
+// Anything longer than this is not a context description — reject it instead
+// of polluting the chunk with an unbounded prefix.
+const MAX_CONTEXT_DESC_CHARS = 200;
 // Cost guard budget: per-chunk LLM enrichment is O(chunks). Instead of a hard
 // cliff that skipped whole documents above the limit (a 300/301 behaviour
 // flip), over-budget documents are section-stratified sampled down to this
@@ -276,11 +281,6 @@ export async function enrichChunksWithContext(
           }
           const message = data.choices?.[0]?.message || {};
           if (message.content?.trim()) return message.content.trim();
-          const reasoning = String(message.reasoning_content || '').trim();
-          if (reasoning) {
-            const tail = reasoning.split(/\n+/).filter(Boolean).slice(-3).join(' ');
-            return tail.length > 10 && tail.length < 400 ? tail : null;
-          }
           return null;
         };
 
@@ -301,6 +301,8 @@ export async function enrichChunksWithContext(
             enrichedChunks[originalIndex] = {
               ...chunk,
               content: prefix + chunk.content,
+              charStart: (chunk.charStart ?? 0) + prefix.length,
+              charEnd: (chunk.charEnd ?? 0) + prefix.length,
               metadata: {
                 ...chunk.metadata,
                 rawText: chunk.content,
@@ -332,6 +334,13 @@ export async function enrichChunksWithContext(
         } catch (error) {
           console.warn(`[ContextualRetrieval] Error enriching chunk ${originalIndex}:`, error);
           failCount++;
+        }
+
+        if (contextDescription && contextDescription.length > MAX_CONTEXT_DESC_CHARS) {
+          console.warn(
+            `[ContextualRetrieval] Rejecting oversized context description for chunk ${originalIndex} (${contextDescription.length} chars > ${MAX_CONTEXT_DESC_CHARS})`,
+          );
+          contextDescription = null;
         }
 
         if (contextDescription) {
@@ -407,7 +416,18 @@ export async function enrichChunksWithContext(
           try {
             return JSON.parse(cleanJson);
           } catch {
-            return null;
+            // Fallback: models occasionally emit truncated or prose-wrapped
+            // JSON. Extract "key": "value" pairs directly instead of giving
+            // up on the whole batch.
+            const extracted: Record<string, string> = {};
+            for (const m of content.matchAll(/"(\w+)"\s*:\s*"((?:[^"\\]|\\.)*)"/g)) {
+              try {
+                extracted[m[1]] = JSON.parse(`"${m[2]}"`);
+              } catch {
+                extracted[m[1]] = m[2];
+              }
+            }
+            return Object.keys(extracted).length > 0 ? extracted : null;
           }
         };
 
@@ -450,7 +470,15 @@ export async function enrichChunksWithContext(
 
         chunkIndices.forEach((originalIndex, pos) => {
           const chunk = enrichedChunks[originalIndex];
-          const desc = parsedDescriptions ? (parsedDescriptions[String(pos)] || parsedDescriptions[`chunk_${pos}`]) : null;
+          const rawDesc = parsedDescriptions ? (parsedDescriptions[String(pos)] || parsedDescriptions[`chunk_${pos}`]) : null;
+          const desc = typeof rawDesc === 'string' && rawDesc.length <= MAX_CONTEXT_DESC_CHARS
+            ? rawDesc
+            : null;
+          if (rawDesc && !desc) {
+            console.warn(
+              `[ContextualRetrieval] Rejecting oversized context description for chunk ${originalIndex} (${String(rawDesc).length} chars > ${MAX_CONTEXT_DESC_CHARS})`,
+            );
+          }
           if (desc) {
             const prefix = `[上下文: ${desc.trim()}]\n\n`;
             enrichedChunks[originalIndex] = {

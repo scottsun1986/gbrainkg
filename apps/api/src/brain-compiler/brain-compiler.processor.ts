@@ -151,6 +151,7 @@ export class BrainCompilerProcessor extends WorkerHost {
       });
       if (!event) return { status: "skipped", reason: "Event not found" };
       if (event.status === 'completed') return { status: 'skipped', reason: 'Event already completed' };
+      if (event.status === 'processing') return { status: 'skipped', reason: 'event already processing' };
 
       await db.brainChangeEvent.update({
         where: { id: eventId },
@@ -437,6 +438,7 @@ export class BrainCompilerProcessor extends WorkerHost {
   /**
    * Documents among `docIds` whose required chunks are not fully embedded.
    * Skipped entirely when the chunk-embedding service is not enabled.
+   * Uses a single GROUP BY query instead of per-document coverage lookups.
    */
   private async findCoreIncompleteDocuments(
     docIds: string[],
@@ -446,12 +448,18 @@ export class BrainCompilerProcessor extends WorkerHost {
       where: { id: { in: docIds } },
       select: { id: true, indexReadiness: true },
     });
-    const incomplete: Array<{ id: string; total: number; missing: number }> = [];
-    for (const document of documents) {
-      if (document.indexReadiness === "ready") continue;
-      const coverage = await this.chunkEmbeddingService.documentCoverage(document.id);
-      if (coverage.missing > 0) incomplete.push({ id: document.id, ...coverage });
-    }
-    return incomplete;
+    const pending = documents.filter((doc) => doc.indexReadiness !== "ready");
+    if (!pending.length) return [];
+    const rows = await this.prisma.$queryRaw<Array<{ id: string; total: bigint; missing: bigint }>>`
+      SELECT c."documentId"::text AS id,
+             COUNT(*)::bigint AS total,
+             COUNT(*) FILTER (WHERE c.embedding IS NULL)::bigint AS missing
+      FROM "Chunk" c
+      WHERE c."documentId" = ANY(${pending.map((d) => d.id)}::uuid[])
+      GROUP BY c."documentId"
+    `;
+    return rows
+      .filter((row) => Number(row.missing) > 0)
+      .map((row) => ({ id: row.id, total: Number(row.total), missing: Number(row.missing) }));
   }
 }

@@ -4,6 +4,8 @@ const mockPrisma = {
   document: { findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
   enrichmentStage: { findMany: jest.fn(), upsert: jest.fn() },
   brainChangeEvent: { update: jest.fn(), upsert: jest.fn() },
+
+  $transaction: jest.fn(async (fn: any) => fn(mockPrisma)),
 };
 jest.mock('../prisma', () => ({ getPrismaClient: () => mockPrisma }));
 

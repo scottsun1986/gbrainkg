@@ -30,7 +30,8 @@ import {
 import { BrainOutboxService } from "./brain-compiler/brain-outbox.service";
 import { AuditService } from "./audit/audit.service";
 import { ChunkEmbeddingService } from "./embedding/chunk-embedding.service";
-import { execSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
 import { Inject, Optional } from "@nestjs/common";
@@ -47,6 +48,9 @@ function normalizeServiceBaseUrl(value: unknown): string {
   if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
     throw new BadRequestException("Provider base URL must use HTTP(S) and cannot contain credentials.");
   }
+  if (isBlockedHostname(parsed.hostname)) {
+    throw new BadRequestException("Provider base URL must not point to internal or reserved addresses.");
+  }
   parsed.hash = '';
   return parsed.toString().replace(/\/$/, '').replace(/\/chat\/completions$/i, '');
 }
@@ -59,9 +63,61 @@ function boundedInteger(value: unknown, field: string, min: number, max: number)
   return number;
 }
 
+// 受保护角色 = 数据库内置的"系统管理员"与"超级管理员"（见 permission/permissions.ts
+// 的 DEFAULT_ROLES：二者 builtin: true 且 permissions: ["*"]）。角色 ID 由数据库
+// 生成、无法硬编码，因此在此以名称集中维护"显示名 → 受保护身份"的映射。判定不得
+// 依赖 builtin 标记：builtin 只是种子数据属性，自定义角色一旦被误置为 builtin: true
+// 就会形成提权漏洞。
+const PROTECTED_ROLE_NAMES = new Set(["超级管理员", "系统管理员"]);
+const ORG_ADMIN_ROLE_NAME = "组织管理员";
+const BASIC_USER_ROLE_NAME = "普通用户";
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const BLOCKED_HOSTNAMES = new Set(["localhost", "0.0.0.0", "metadata.google.internal"]);
+
+function isBlockedHostname(host: string): boolean {
+  const h = host.toLowerCase();
+  if (BLOCKED_HOSTNAMES.has(h)) return true;
+  if (h.endsWith(".local") || h.endsWith(".internal") || h.endsWith(".localdomain")) {
+    return true;
+  }
+  if (h.startsWith("[")) {
+    const inner = h.slice(1, -1);
+    if (inner === "::" || inner === "::1") return true;
+    if (inner.startsWith("fc") || inner.startsWith("fd")) return true;
+    if (/^fe[89ab]/.test(inner)) return true;
+    return false;
+  }
+  if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  return false;
+}
+
+async function dirBytes(path: string): Promise<number> {
+  try {
+    const { stdout } = await execFileAsync("du", ["-sb", path]);
+    const bytes = parseInt(stdout.trim().split(/\s+/)[0], 10);
+    return Number.isFinite(bytes) ? bytes : 0;
+  } catch {
+    try {
+      const { stdout } = await execFileAsync("du", ["-sk", path]);
+      const kb = parseInt(stdout.trim().split(/\s+/)[0], 10);
+      return Number.isFinite(kb) ? kb * 1024 : 0;
+    } catch {
+      return 0;
+    }
+  }
+}
+
 // Keep the admin directory's public shape explicit. A User model may gain new
 // authentication fields over time; spreading a Prisma User into an HTTP reply
 // would expose them by default.
+const execFileAsync = promisify(execFile);
+
 const ADMIN_USER_SELECT = {
   id: true,
   username: true,
@@ -348,6 +404,7 @@ export class AdminController {
         createdAt: true,
       },
       orderBy: { createdAt: "desc" as const },
+      take: 1000,
     });
     const kbIds = [...new Set(grants.map((g: any) => g.kbId))];
     const kbs: any[] = kbIds.length
@@ -367,10 +424,17 @@ export class AdminController {
     @Query("auditLimit") auditLimitParam?: string,
     @Query("dreamPage") dreamPageParam?: string,
     @Query("telemetry") telemetryParam?: string,
+    @Query("limit") limitParam?: string,
   ) {
     const auditPage = Math.max(1, Math.min(10000, Number.parseInt(auditPageParam || "1", 10) || 1));
     const auditLimit = Math.max(1, Math.min(100, Number.parseInt(auditLimitParam || "20", 10) || 20));
     const dreamPage = Math.max(1, Math.min(10000, Number.parseInt(dreamPageParam || "1", 10) || 1));
+    // 管理面清单查询的统一上限：默认 1000，可经 ?limit= 调整（1-5000）。万级用户/
+    // 知识库部署下，无上限的 findMany 会让每次 admin shell  bootstrap 拉回 MB 级载荷。
+    const inventoryLimit = Math.max(
+      1,
+      Math.min(5000, Number.parseInt(limitParam || "1000", 10) || 1000),
+    );
     // Dream + system-status telemetry account for ~1.6MB of this payload and
     // only the monitoring views consume them. Default them OFF so the app
     // bootstrap (which calls this endpoint just to render the shell) is not
@@ -423,6 +487,7 @@ export class AdminController {
       const users = await (db as any).user.findMany({
         select: ADMIN_USER_SELECT,
         orderBy: { createdAt: "asc" },
+        take: inventoryLimit,
       });
       const allOrgs = await (db as any).orgNode.findMany({
         where: { status: "active" },
@@ -449,6 +514,7 @@ export class AdminController {
           },
         },
         orderBy: [{ path: "asc" }, { sort: "asc" }],
+        take: inventoryLimit,
       });
       const orgs =
         canReadOrg || canReadIndustry
@@ -480,6 +546,7 @@ export class AdminController {
           },
           _count: { select: { documents: true } },
         },
+        take: inventoryLimit,
       });
       // 审计流水只需要标题/状态/时间等汇总字段；不带 parserMetadata 等大
       // JSON 列，避免为拼审计文案把整张文档表（含 MB 级元数据）拉进内存。
@@ -488,12 +555,17 @@ export class AdminController {
           (db as any).role.findMany({
             include: { _count: { select: { users: true } } },
             orderBy: { name: "asc" },
+            take: inventoryLimit,
           }),
           this.loadGrantsWithKb(),
-          (db as any).modelProvider.findMany({ orderBy: { name: "asc" } }),
+          (db as any).modelProvider.findMany({
+            orderBy: { name: "asc" },
+            take: inventoryLimit,
+          }),
           (db as any).modelConfig.findMany({
             include: { provider: true },
             orderBy: { createdAt: "asc" },
+            take: inventoryLimit,
           }),
           (db as any).compileJob.findMany({
             select: {
@@ -571,11 +643,10 @@ export class AdminController {
                 user.orgs.some((org: any) => managedOrgIds.has(org.orgNodeId)),
             );
       const safeUsers = directoryUsers.map((user: any) => {
+        // 仅按受保护角色名判定，不再信任 builtin 标记（自定义角色可能被误置
+        // builtin: 名称集合见文件顶部 PROTECTED_ROLE_NAMES 注释）。
         const isTargetSystemAdmin = user.roles.some(
-          (r: any) =>
-            r.role?.builtin ||
-            r.role?.name === "超级管理员" ||
-            r.role?.name === "系统管理员",
+          (r: any) => r.role?.name !== undefined && PROTECTED_ROLE_NAMES.has(r.role.name),
         );
         const canManage =
           isSystemAdmin ||
@@ -594,25 +665,54 @@ export class AdminController {
         visibleKbIdSet.has(doc.kbId),
       );
       const userById = new Map<string, any>(users.map((user: any) => [user.id, user]));
-      const privateDocumentIds = isSystemAdmin
-        ? new Set(
-            (await (db as any).document.findMany({
-              where: {
-                kb: {
-                  type: "personal",
-                  ownerUserId: { not: adminId },
+      // 个人库文档 ID 不再全量载入内存：只把已加载编译任务窗口（≤ auditWindow 条）里
+      // 出现的证据 ID 交给 SQL 子查询过滤，"是否他人个人库文档"完全下推到数据库，
+      // 随语料规模增长不再有 bind-parameter 上限或内存膨胀问题。
+      const jobEvidenceIds = [
+        ...new Set(
+          compileJobs.flatMap((job: any) =>
+            Array.isArray(job.inputEvidenceIds)
+              ? job.inputEvidenceIds.map((id: unknown) => String(id))
+              : [],
+          ),
+        ),
+      ];
+      const privateDocumentIds = new Set<string>(
+        jobEvidenceIds.length
+          ? (
+              await (db as any).document.findMany({
+                where: {
+                  id: { in: jobEvidenceIds },
+                  kb: { type: "personal", ownerUserId: { not: adminId } },
                 },
-              },
-              select: { id: true },
-            })).map((document: any) => document.id),
-          )
-        : new Set<string>();
-      const allCompileJobEvidence = isSystemAdmin
-        ? await (db as any).compileJob.findMany({ select: { inputEvidenceIds: true } })
-        : [];
+                select: { id: true },
+              })
+            ).map((document: any) => document.id)
+          : [],
+      );
       const hasPrivateEvidence = (job: any) =>
         Array.isArray(job.inputEvidenceIds) &&
         job.inputEvidenceIds.some((id: string) => privateDocumentIds.has(id));
+      // 引用他人个人库证据的编译任务数（用于审计总数扣除）。生产环境用 SQL
+      // 精确统计；测试替身等无 $queryRawUnsafe 原语的环境中回退到已加载窗口内
+      // 的客户端过滤。
+      const privateEvidenceJobCount = isSystemAdmin
+        ? typeof (db as any).$queryRawUnsafe === "function"
+          ? await (db as any).$queryRawUnsafe(
+              `SELECT count(*)::int AS count
+               FROM "CompileJob" cj
+               WHERE jsonb_typeof(cj."inputEvidenceIds"::jsonb) = 'array'
+                 AND EXISTS (
+                   SELECT 1
+                   FROM jsonb_array_elements_text(cj."inputEvidenceIds"::jsonb) AS e(id)
+                   JOIN "Document" d ON d.id::text = e.id
+                   JOIN "KnowledgeBase" kb ON d."kbId" = kb.id
+                   WHERE kb.type = 'personal' AND d."ownerUserId" <> $1
+                 )`,
+              adminId,
+            ).then((rows: any[]) => Number(rows?.[0]?.count ?? 0))
+          : compileJobs.filter(hasPrivateEvidence).length
+        : 0;
       const safeCompileJobs = (isSystemAdmin
         ? compileJobs
         : compileJobs.filter((job: any) => job.userId === adminId)
@@ -680,10 +780,7 @@ export class AdminController {
             ])
           : [0, 0, 0];
       const auditCompileJobsTotal = isSystemAdmin
-        ? Math.max(
-            0,
-            auditCompileJobsTotalRaw - allCompileJobEvidence.filter(hasPrivateEvidence).length,
-          )
+        ? Math.max(0, auditCompileJobsTotalRaw - privateEvidenceJobCount)
         : auditCompileJobsTotalRaw;
       const auditTotal = auditDocumentsTotal + auditCompileJobsTotal + auditGrantsTotal;
       const audit = auditItems.slice((auditPage - 1) * auditLimit, auditPage * auditLimit);
@@ -872,16 +969,12 @@ export class AdminController {
     // 2. GBrain Sources & Disk Materialization
     const repoBasePath = process.env.BRAIN_REPO_BASE_PATH || "/home/scottsun/.local/share/llmwiki/brain_repos";
     const uploadRoot = process.env.UPLOAD_ROOT || "/home/scottsun/.local/share/llmwiki/uploads";
-    let repoBytes = 0;
-    let uploadBytes = 0;
-    try {
-      const duOut = execSync(`du -sb "${repoBasePath}" 2>/dev/null || du -sk "${repoBasePath}" 2>/dev/null`, { encoding: "utf8" });
-      repoBytes = parseInt(duOut.trim().split(/\s+/)[0], 10) * (duOut.includes("-sb") ? 1 : 1024);
-    } catch {}
-    try {
-      const duOut2 = execSync(`du -sb "${uploadRoot}" 2>/dev/null || du -sk "${uploadRoot}" 2>/dev/null`, { encoding: "utf8" });
-      uploadBytes = parseInt(duOut2.trim().split(/\s+/)[0], 10) * (duOut2.includes("-sb") ? 1 : 1024);
-    } catch {}
+    // 异步执行 du：execSync 会阻塞事件循环，且原实现按输出内容判断 -sb/-sk
+    // 永远不会命中（输出里不含 "-sb"），导致单位换算错误。
+    const [repoBytes, uploadBytes] = await Promise.all([
+      dirBytes(repoBasePath),
+      dirBytes(uploadRoot),
+    ]);
 
     const personalSources = await db.brainSource.findMany({
       where: { status: "active" },
@@ -985,7 +1078,8 @@ export class AdminController {
       safeScopeIds.length,
       db.brainDerivedPage.findMany({
         where: { scopeId: { in: safeScopeIds } },
-        select: { id: true, slug: true, title: true, kind: true, scopeId: true, derivedFrom: true, updatedAt: true }
+        select: { id: true, slug: true, title: true, kind: true, scopeId: true, derivedFrom: true, updatedAt: true },
+        take: 1000,
       })
     ]);
 
@@ -1407,15 +1501,25 @@ export class AdminController {
       include: { kbs: { select: { id: true } } },
     });
     if (!org) throw new NotFoundException("Organization not found.");
-    const userIds = Array.isArray(body?.userIds) ? body.userIds : [];
+    // 数组元素先过滤为合法 UUID 字符串：对象/数组等脏值传给 Prisma 的
+    // id: { in: [...] } 会直接抛错并 500。
+    const rawUserIds: unknown[] = Array.isArray(body?.userIds) ? body.userIds : [];
+    const userIds = [
+      ...new Set(
+        rawUserIds
+          .map((value: unknown) => (typeof value === "string" ? value.trim() : ""))
+          .filter((value: string) => UUID_RE.test(value)),
+      ),
+    ];
     const activeUsers = await this.prisma.user.findMany({
       where: { id: { in: userIds }, status: "active" },
       select: { id: true },
     });
-    if (activeUsers.length !== new Set(userIds).size)
+    if (activeUsers.length !== userIds.length)
       throw new BadRequestException(
         "Organization administrators must be active users.",
       );
+    const orgKbIds: string[] = org.kbs.map((kb: any) => kb.id);
     await this.prisma.$transaction(async (tx) => {
       await tx.orgAdmin.deleteMany({ where: { orgNodeId: id } });
       if (userIds.length) {
@@ -1424,7 +1528,7 @@ export class AdminController {
         });
         // 确保被指定的管理员自动获得“组织管理员”角色（如果尚未拥有），赋予其进入后台管理对应节点的权限
         const orgAdminRole = await tx.role.findFirst({
-          where: { name: "组织管理员" },
+          where: { name: ORG_ADMIN_ROLE_NAME },
         });
         if (orgAdminRole) {
           for (const uid of userIds) {
@@ -1439,12 +1543,17 @@ export class AdminController {
           }
         }
       }
-      for (const kb of org.kbs) {
-        await tx.kbAdmin.deleteMany({ where: { kbId: kb.id } });
-        if (userIds.length)
+      // 组织下所有知识库的 KbAdmin 映射合并到一次 deleteMany + 一次 createMany，
+      // 避免按库循环的 N+1 事务写入。
+      if (orgKbIds.length) {
+        await tx.kbAdmin.deleteMany({ where: { kbId: { in: orgKbIds } } });
+        if (userIds.length) {
           await tx.kbAdmin.createMany({
-            data: userIds.map((userId: string) => ({ kbId: kb.id, userId })),
+            data: orgKbIds.flatMap((kbId: string) =>
+              userIds.map((userId: string) => ({ kbId, userId })),
+            ),
           });
+        }
       }
     });
     await this.scheduleAccessReconciliation();
@@ -1487,8 +1596,10 @@ export class AdminController {
       });
       const descendantSet = new Set<string>([id]);
       const queue = [id];
-      while (queue.length > 0) {
-        const currId = queue.shift()!;
+      // 用索引指针代替 queue.shift()：shift() 每次调用都是 O(n)，会让整轮
+      // BFS 退化为 O(n²)。
+      for (let head = 0; head < queue.length; head++) {
+        const currId = queue[head];
         for (const n of allActive) {
           if (
             !descendantSet.has(n.id) &&
@@ -1660,7 +1771,7 @@ export class AdminController {
       : [];
     await this.validateAssignableRoles(operatorId, roleIds);
     const basicRole = await this.prisma.role.findUnique({
-      where: { name: "普通用户" },
+      where: { name: BASIC_USER_ROLE_NAME },
       select: { id: true },
     });
     const finalRoleIds = roleIds.length
@@ -1668,14 +1779,9 @@ export class AdminController {
       : basicRole
         ? [basicRole.id]
         : [];
-    if (
-      process.env.NODE_ENV === "production" &&
-      !String(body?.password || "").trim()
-    )
-      throw new BadRequestException(
-        "A temporary password is required in production.",
-      );
-    const password = String(body?.password || "LLMwiki@2026");
+    if (!String(body?.password || "").trim())
+      throw new BadRequestException("A password is required.");
+    const password = String(body?.password || "").trim();
     const existing = await this.prisma.user.findFirst({
       where: { OR: [{ username }, { email }] },
     });
@@ -1877,9 +1983,7 @@ export class AdminController {
     if (
       roles.some(
         (role) =>
-          role.builtin ||
-          role.name === "超级管理员" ||
-          role.name === "系统管理员" ||
+          PROTECTED_ROLE_NAMES.has(role.name) ||
           (Array.isArray(role.permissions) && role.permissions.includes("*")),
       )
     ) {
@@ -2506,8 +2610,11 @@ export class AdminController {
     let status = "failed";
     try {
       const key = decryptModelCredential(config.provider.apiKeyEncrypted);
+      // baseUrl 来自数据库（可能在本次 SSRF 校验上线前就已保存），必须在
+      // fetch 前重新校验主机名，阻断回环/私网/链路本地等内网地址。
+      const providerBaseUrl = normalizeServiceBaseUrl(config.provider.baseUrl);
       const response = await fetch(
-        `${config.provider.baseUrl.replace(/\/$/, "")}/models`,
+        `${providerBaseUrl.replace(/\/$/, "")}/models`,
         {
           headers: key ? { Authorization: `Bearer ${key}` } : {},
           signal: AbortSignal.timeout(10_000),

@@ -20,6 +20,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, rm, unlink, writeFile } from "node:fs/promises";
 import { ObjectStorageService } from "../storage/object-storage.service";
 import { extname, join } from "node:path";
+import { withServiceContext } from "../db/tenant-context.service";
 import { PermissionService } from "../permission/permission.service";
 import { AuthService } from "../auth/auth.service";
 import { BrainCompilerService } from "../brain-compiler/brain-compiler.service";
@@ -57,6 +58,20 @@ function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
     value,
   );
+}
+
+/**
+ * True when the buffer holds at least one non-whitespace character.
+ * Scans in 64KB chunks so a 200MB upload is never materialised as a single
+ * JS string (the previous `buffer.toString("utf8")` did exactly that).
+ */
+function bufferHasNonWhitespace(buffer: Buffer): boolean {
+  const CHUNK = 64 * 1024;
+  for (let offset = 0; offset < buffer.length; offset += CHUNK) {
+    const chunk = buffer.subarray(offset, Math.min(offset + CHUNK, buffer.length));
+    if (chunk.toString("utf8").trim().length > 0) return true;
+  }
+  return false;
 }
 
 @UseGuards(AuthGuard)
@@ -101,7 +116,7 @@ export class IngestionController {
     const textLikeExtensions = new Set([".md", ".txt", ".csv", ".html", ".htm"]);
     if (
       textLikeExtensions.has(extension) &&
-      !file.buffer.toString("utf8").trim()
+      !bufferHasNonWhitespace(file.buffer)
     ) {
       throw new BadRequestException("文件内容为空或纯空白，已拒绝受理。");
     }
@@ -204,37 +219,51 @@ export class IngestionController {
       throw new BadRequestException("Unsupported file type.");
     }
     const contentHash = createHash('sha256').update(file.buffer).digest('hex');
-    if (duplicateMode === 'skip') {
-      const existing = await this.prisma.document.findFirst({
-        where: { kbId, title: filename, contentHash, lifecycleStatus: 'current', status: { not: 'failed' } },
-      });
-      if (existing) return { documents: [existing], status: 'accepted', reused: true };
-    }
     const rawPath = `${documentId}/${filename}`;
     await mkdir(join(this.uploadRoot, documentId), { recursive: true });
     await writeFile(join(this.uploadRoot, rawPath), file.buffer);
-    let objectKey: string | undefined;
-    let storageProvider = "local";
+    // check-then-act race: two concurrent uploads of identical content can
+    // both pass the duplicate check and both insert. Serialize them by
+    // locking the KB row (SELECT ... FOR UPDATE) so the second uploader
+    // observes the first one's committed document and reuses it.
+    const upload = await withServiceContext(this.prisma, async (tx) => {
+      await tx.$executeRaw`SELECT id FROM "KnowledgeBase" WHERE id = ${kbId}::uuid FOR UPDATE`;
+      if (duplicateMode === 'skip') {
+        const existing = await tx.document.findFirst({
+          where: { kbId, title: filename, contentHash, lifecycleStatus: 'current', status: { not: 'failed' } },
+        });
+        if (existing) return { reused: true as const, document: existing };
+      }
+      const created = await tx.document.create({
+        data: {
+          id: documentId,
+          kbId,
+          mdPath: `${documentId}/content.md`,
+          title: filename,
+          contentHash,
+          sourceType: "upload",
+          rawFileOid: join(this.uploadRoot, rawPath),
+          objectKey: undefined,
+          storageProvider: "local",
+          uploadedById: userId,
+          status: "parsing",
+        },
+      });
+      return { reused: false as const, document: created };
+    });
+    if (upload.reused) {
+      return { documents: [upload.document], status: 'accepted', reused: true };
+    }
     try {
       const stored = await this.objectStorage.put(`raw/${documentId}`, file.buffer);
-      objectKey = stored.objectKey;
-      storageProvider = stored.provider;
+      await this.prisma.document.update({
+        where: { id: documentId },
+        data: { objectKey: stored.objectKey, storageProvider: stored.provider },
+      });
+      upload.document.objectKey = stored.objectKey;
+      upload.document.storageProvider = stored.provider;
     } catch { /* fail-open to local raw path */ }
-    const document = await this.prisma.document.create({
-      data: {
-        id: documentId,
-        kbId,
-        mdPath: `${documentId}/content.md`,
-        title: filename,
-        contentHash,
-        sourceType: "upload",
-        rawFileOid: join(this.uploadRoot, rawPath),
-        objectKey,
-        storageProvider,
-        uploadedById: userId,
-        status: "parsing",
-      },
-    });
+    const document = upload.document;
     await this.ingestionService.enqueue(
       document.id,
       "upload",

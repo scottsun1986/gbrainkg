@@ -18,22 +18,22 @@
  * (planning voice / transport failure), never a business entity or topic.
  */
 
+import { answerTypeOf, matchesAnswerType } from "./bridge-rescue";
+
 /** Planning / scratchpad voice. Kept narrow so real answers survive. */
 const PLANNING_CUES: RegExp[] = [
   /\bhmm\b/i,
   /\blet['’]?s\b/i,
   /\blet me\b/i,
   /\bi (?:need|should|will|must|have|can)\b/i,
-  /\bwe (?:need|should|must|have|can)\b/i,
+  /\bwe (?:need|should|must|can)\b/i,
   /\bthe user (?:is asking|asks|wants|said|question)/i,
   /\bthe (?:question|query) (?:is|asks|wants|means)/i,
   /\b(?:just|only) need(?: to)?\b/i,
-  /\bno (?:extra|additional|further) (?:details|context|information)\b/i,
   /\bstep[- ]?by[- ]?step\b/i,
   /\bthe answer is (?:straightforward|simple|obvious)\b/i,
   /\b(?:not need|doesn['’]?t need|don['’]?t need)(?: to)?\b/i,
   /\bas per the (?:guidelines|instructions)\b/i,
-  /\bhowever,? the sources? (?:don['’]?t|do not|does not)\b/i,
   /我们需要|我先|让我|用户(?:的)?问题|一步步|逐步|思考[:：]|用户想要/,
   // Observed verbatim in enterprise no-answer runs (2026-09-21): the model
   // narrated the request instead of answering it, and a fragment of that
@@ -48,6 +48,23 @@ const PLANNING_CUES: RegExp[] = [
   /所以[，,](?:我|答案)/,
 ];
 
+/**
+ * Absence/process phrasings that double as legitimate answer content, so they
+ * are evaluated per sentence with guards instead of matching anywhere:
+ *   "However, the sources do not state the budget [1]." — cited absence claim
+ *   "There are no further details in the materials."   — existential claim about
+ *     the materials
+ *   "We have two editions of this regulation."        — enumerated fact
+ * Their planning-voice readings ("however, the sources don't say…" as scratchpad
+ * narration, "no extra details needed", "we have to check the sources") are
+ * uncited, not sentence-initial, or carry no entity, so they stay detected.
+ */
+const GUARDED_PLANNING_CUES: RegExp[] = [
+  /^however,? the sources? (?:don['’]?t|do not|does not)\b/i,
+  /\bno (?:extra|additional|further) (?:details|context|information)\b/i,
+  /\bwe have\b/i,
+];
+
 /** Strong cues: text at or after one of these is scratchpad, not answer. */
 const STRONG_PLANNING_CUES: RegExp[] = [
   /\bhmm\b/i,
@@ -57,7 +74,6 @@ const STRONG_PLANNING_CUES: RegExp[] = [
   /\bwe (?:need|should|must)\b/i,
   /\bthe user (?:is asking|asks|wants|said)/i,
   /\b(?:just|only) need(?: to)?\b/i,
-  /\bno (?:extra|additional|further) (?:details|context|information)\b/i,
   /\bstep[- ]?by[- ]?step\b/i,
   /\bthe answer is (?:straightforward|simple|obvious)\b/i,
   /我们需要|我先|让我|用户(?:的)?问题|一步步|思考[:：]/,
@@ -88,6 +104,49 @@ const PROVIDER_ERROR_CUES: RegExp[] = [
 /** Minimum length for recovered text to count as a drafted answer. */
 const MIN_DRAFT_CHARS = 20;
 
+/** Split into trimmed non-empty sentences (Latin and CJK terminals). */
+function splitSentences(text: string): string[] {
+  return String(text || '')
+    .split(/(?<=[.!?。！？；;])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** "There are no further details …" — an existence claim about the materials. */
+const EXISTENTIAL_ABSENCE =
+  /\bthere\s+(?:are|is|were|was)\s+no\s+(?:extra|additional|further)\s+(?:details|context|information)\b/i;
+
+/**
+ * A sentence carries a number or a named entity. The leading "We" of a
+ * "we have …" sentence is excluded so the whitelist cannot fire on the
+ * sentence's own subject. Ordinal adverbs ("first", "second") are NOT
+ * numbers here — "we have to check the sources first" is planning voice.
+ */
+function hasNumberOrEntity(sentence: string): boolean {
+  const rest = sentence.replace(/^we\s+/i, '');
+  return /(?:\d|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty)\b|\p{Lu})/u.test(
+    rest,
+  );
+}
+
+/**
+ * True when a sentence matches a guarded absence/process cue in its
+ * planning-voice reading: uncited, and (for "we have") without any number or
+ * entity to anchor a factual statement.
+ */
+function isGuardedPlanningSentence(sentence: string): boolean {
+  if (!GUARDED_PLANNING_CUES.some((pattern) => pattern.test(sentence))) return false;
+  // A cited sentence is real content, whatever process words it contains.
+  if (/\[\d+\]/.test(sentence)) return false;
+  // "There are no further details …" asserts absence in the materials —
+  // an answer, not scratchpad.
+  if (EXISTENTIAL_ABSENCE.test(sentence)) return false;
+  // "We have two editions of this regulation" states a fact; only the
+  // process reading ("we have to check…") is planning voice.
+  if (/\bwe have\b/i.test(sentence) && hasNumberOrEntity(sentence)) return false;
+  return true;
+}
+
 /**
  * True when the text mostly re-states the user's question instead of answering
  * it. Observed on the answer-only retry path (MuSiQue, 2026-09-20), where the
@@ -107,8 +166,15 @@ const MIN_DRAFT_CHARS = 20;
  */
 const META_DISCOURSE_CUES: RegExp[] = [
   /用户/, /提问/, /问题末尾/, /问题中/, /测试用例/, /规范要求/, /复显/, /不应复显/,
-  /\bthe user\b/i, /\bthe question (?:adds|says|asks|ends)\b/i, /\btest case\b/i,
-  /\binstructions?\b/i, /\bprompt\b/i,
+  // Narration shapes only: "the user asked/added/wants…". The bare cue
+  // `\bthe user\b` false-positived on technical vocabulary ("The user manual
+  // specifies…"), and `\bprompt\b` / `\binstructions?\b` matched ordinary
+  // corpus words, so they are dropped; "user manual" is covered by the
+  // compound shape below never firing.
+  /\bthe user\s+(?:asked|asks|added|adds|wants|wanted|said|says|tells|told|requires?|wished|noted|wrote|mentioned|included|provided)\b/i,
+  /\bthe question (?:adds|says|asks|ends)\b/i,
+  /\btest case\b/i,
+  /\baccording to the instructions?\b/i,
 ];
 
 export function looksLikeMetaDiscourse(text: string): boolean {
@@ -148,7 +214,10 @@ function countMatches(patterns: RegExp[], text: string): number {
 export function isPlanningLikeText(text: string): boolean {
   const body = (text || '').trim();
   if (!body) return true;
-  return countMatches(PLANNING_CUES, body) > 0;
+  if (countMatches(PLANNING_CUES, body) > 0) return true;
+  // Guarded absence/process phrasings count only in their planning-voice
+  // reading (uncited, non-sentence-initial, or entity-free sentences).
+  return splitSentences(body).some((sentence) => isGuardedPlanningSentence(sentence));
 }
 
 /** True when the text is an upstream transport/gateway failure message. */
@@ -158,9 +227,17 @@ export function isProviderErrorText(text: string): boolean {
   return countMatches(PROVIDER_ERROR_CUES, body) > 0;
 }
 
-function hasSubstance(text: string): boolean {
+function hasSubstance(text: string, question?: string): boolean {
   const body = (text || '').trim();
-  if (body.replace(/\s+/g, '').length < MIN_DRAFT_CHARS) return false;
+  if (body.replace(/\s+/g, '').length < MIN_DRAFT_CHARS) {
+    // The 20-char floor existed to keep fragments out of the answer, but it
+    // also discarded real short answers: "Paris." (6 chars) or "1978 [1]".
+    // A fragment that carries a citation marker is a cited fact, and one that
+    // already matches the type of fact the question asks for is an answer.
+    if (/\[\d+\]/.test(body)) return true;
+    const type = question ? answerTypeOf(question) : 'unknown';
+    return type !== 'unknown' && matchesAnswerType(body, type);
+  }
   // A whole paragraph of punctuation/emoji is not an answer either.
   return /[\p{L}\p{N}]{3,}/u.test(body);
 }
@@ -174,7 +251,7 @@ function hasSubstance(text: string): boolean {
  * is an upstream error, or carries no substance — an honest empty answer beats
  * a leaked scratchpad, both for users and for scoring.
  */
-export function extractAnswerFromReasoning(reasoning: string): string {
+export function extractAnswerFromReasoning(reasoning: string, question?: string): string {
   const text = (reasoning || '').trim();
   if (!text) return '';
   // A trace that starts from a gateway failure carries nothing trustworthy.
@@ -184,6 +261,14 @@ export function extractAnswerFromReasoning(reasoning: string): string {
   for (const pattern of STRONG_PLANNING_CUES) {
     const match = pattern.exec(text);
     if (match && match.index >= 0 && match.index < cut) cut = match.index;
+  }
+  // Guarded cues cut at the start of the sentence that carries them, so a
+  // cited absence claim ("However, the sources do not state the budget [1].")
+  // survives while scratchpad narration is still dropped.
+  for (const sentence of splitSentences(text)) {
+    if (!isGuardedPlanningSentence(sentence)) continue;
+    const start = text.indexOf(sentence);
+    if (start >= 0 && start < cut) cut = start;
   }
   let candidate = text.slice(0, cut).trim();
 
@@ -195,7 +280,7 @@ export function extractAnswerFromReasoning(reasoning: string): string {
   }
 
   candidate = candidate.replace(/^["'`\s]+|["'`\s]+$/g, '').trim();
-  if (!hasSubstance(candidate)) return '';
+  if (!hasSubstance(candidate, question)) return '';
   if (isPlanningLikeText(candidate)) return '';
   if (isProviderErrorText(candidate)) return '';
   return candidate;

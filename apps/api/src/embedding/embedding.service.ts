@@ -329,6 +329,7 @@ export class EmbeddingService {
           this.logger.warn(
             `Embedding batch failed (${batch.length} inputs): ${err instanceof Error ? err.message : String(err)}`,
           );
+          void import('../observability/failopen').then(({ recordFailopen }) => recordFailopen('embedding_batch')).catch(() => undefined);
           return new Array(batch.length).fill(null);
         }
       }

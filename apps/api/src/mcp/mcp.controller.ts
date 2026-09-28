@@ -80,16 +80,12 @@ export class McpController implements OnModuleDestroy {
     const appId =
       headers['x-app-id'] ||
       headers['app-id'] ||
-      headers['x-appid'] ||
-      query.app_id ||
-      query.appId;
+      headers['x-appid'];
 
     const appSecret =
       headers['x-app-secret'] ||
       headers['app-secret'] ||
-      headers['x-appsecret'] ||
-      query.app_secret ||
-      query.appSecret;
+      headers['x-appsecret'];
 
     if (appId && appSecret) {
       const verified = await this.userCredentialService.verifyCredential(
@@ -122,6 +118,16 @@ export class McpController implements OnModuleDestroy {
     if (authHeader.startsWith('Bearer ')) {
       try {
         const userId = await this.authService.userIdFromRequest(req);
+        const rate = this.rateLimitService.check(userId);
+        if (!rate.allowed) {
+          throw new HttpException(
+            {
+              code: 429,
+              message: `请求过于频繁：每分钟最多 ${this.rateLimitService.limitPerMinute} 次请求，请在 ${rate.retryAfterSec} 秒后重试`,
+            },
+            429,
+          );
+        }
         const user = await this.prisma.user.findUnique({
           where: { id: userId, status: 'active' },
           include: {

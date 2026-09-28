@@ -78,6 +78,12 @@ export class ChatController {
     @Res() response: Response,
   ): Promise<void> {
     const userId = await this.authService.userIdFromRequest(req);
+    // express.json only populates req.body on a matching content-type, so a
+    // request without a JSON body yields undefined — destructuring it threw
+    // a TypeError and surfaced as a 500. Treat it as a bad request instead.
+    if (!body || typeof body !== "object") {
+      throw new BadRequestException("Request body is required.");
+    }
     const { message, kb_scope } = body;
     const normalizedMessage = String(message || "").trim();
     if (!normalizedMessage)

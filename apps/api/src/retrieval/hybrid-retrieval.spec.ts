@@ -1,6 +1,10 @@
 import { HybridRetrievalService, lateInteractionScore } from './hybrid-retrieval.service';
 
-const mockPrisma = { $queryRaw: jest.fn() };
+const mockPrisma = { $queryRaw: jest.fn(),
+  $executeRaw: jest.fn().mockResolvedValue(1),
+  $executeRawUnsafe: jest.fn().mockResolvedValue(1),
+  $transaction: jest.fn(async (fn: any) => fn(mockPrisma)),
+};
 jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => mockPrisma) }));
 
 describe('BGE-M3 hybrid retrieval', () => {

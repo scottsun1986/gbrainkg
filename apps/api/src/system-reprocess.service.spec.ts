@@ -20,6 +20,8 @@ const mockPrisma = {
   },
   $queryRaw: jest.fn(),
   $executeRaw: jest.fn(),
+
+  $transaction: jest.fn(async (fn: any) => fn(mockPrisma)),
 };
 
 jest.mock('./prisma', () => ({

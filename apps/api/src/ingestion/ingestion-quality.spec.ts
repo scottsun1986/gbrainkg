@@ -9,6 +9,8 @@ const mockPrisma = {
   // query, because the Prisma `path/equals` form compiles to `#>`/`#>>`
   // extraction which the GIN index cannot serve (verified with EXPLAIN).
   $queryRaw: jest.fn(),
+  $executeRaw: jest.fn().mockResolvedValue(1),
+  $executeRawUnsafe: jest.fn().mockResolvedValue(1),
   $transaction: jest.fn(),
 };
 // Interactive-transaction client delegating to the shared mocks so specs keep

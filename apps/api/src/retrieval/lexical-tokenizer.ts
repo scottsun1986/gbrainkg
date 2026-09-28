@@ -41,6 +41,35 @@ const KEEP_CHAR = /[\p{L}\p{N}]/u;
 const ALNUM_RUN = /[A-Za-z0-9]+/g;
 
 /**
+ * High-frequency CJK function words that carry no retrieval signal on their
+ * own. Without this set, single characters like 的/了/是 become index terms
+ * and pollute both the term space and the BM25 length normalisation.
+ */
+const CJK_STOPWORDS = new Set([
+  "的", "了", "是", "在", "与", "及", "或", "而", "且", "于",
+  "以", "为", "之", "其", "我", "你", "他", "她", "它", "们",
+  "这", "那", "有", "没", "不", "也", "都", "就", "还", "但", "对",
+  "从", "到", "向", "被", "把", "让", "给", "等", "个", "上", "下",
+  "并", "将", "会", "能", "要", "很", "太", "最", "该", "各",
+]);
+
+/**
+ * Coarse script bucket for one character. Bigrams are only emitted within a
+ * single bucket: a Latin+CJK boundary pair such as "n编" pollutes the CJK
+ * term space — it never occurs in a pure-CJK query, so it only adds noise to
+ * the BM25 postings while index and query still agree term for term.
+ */
+function scriptBucketOf(ch: string): string {
+  if (CJK_CHAR.test(ch)) return 'cjk';
+  if (/[A-Za-z]/.test(ch)) return 'latin';
+  if (/[\u0400-\u04FF]/.test(ch)) return 'cyrillic';
+  if (/[\u0370-\u03FF]/.test(ch)) return 'greek';
+  if (/[\u0600-\u06FF]/.test(ch)) return 'arabic';
+  if (/[\u0590-\u05FF]/.test(ch)) return 'hebrew';
+  return 'other';
+}
+
+/**
  * Minimal structural types for Intl.Segmenter: the API exists in Node 18+ but
  * is not part of every TS lib target this project compiles against.
  */
@@ -116,13 +145,16 @@ export function tokenize(text: string, options: TokenizeOptions = {}): string[] 
     if (hasCjk) {
       if (withUnigrams) {
         for (const ch of chars) {
-          if (KEEP_CHAR.test(ch)) push(ch);
+          if (KEEP_CHAR.test(ch) && !CJK_STOPWORDS.has(ch)) push(ch);
         }
       }
       if (withBigrams) {
         for (let i = 0; i + 1 < chars.length; i += 1) {
-          const pair = `${chars[i]}${chars[i + 1]}`;
-          if (KEEP_CHAR.test(chars[i]) && KEEP_CHAR.test(chars[i + 1])) push(pair);
+          if (!KEEP_CHAR.test(chars[i]) || !KEEP_CHAR.test(chars[i + 1])) continue;
+          // Cross-script bigrams (e.g. the Latin+CJK boundary "n编") never match
+          // a pure-CJK query term; keep the CJK term space clean.
+          if (scriptBucketOf(chars[i]) !== scriptBucketOf(chars[i + 1])) continue;
+          push(`${chars[i]}${chars[i + 1]}`);
         }
       }
       continue;

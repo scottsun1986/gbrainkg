@@ -2,6 +2,7 @@ import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ChatService } from '../chat/chat.service';
 import { PermissionService } from '../permission/permission.service';
 import { IngestionService } from '../ingestion/ingestion.service';
+import { DocumentAclService } from '../permission/document-acl.service';
 import { getPrismaClient } from '../prisma';
 import { extname, join } from 'node:path';
 import * as fs from 'node:fs/promises';
@@ -30,6 +31,7 @@ export class McpService {
     private readonly chatService: ChatService,
     private readonly permissionService: PermissionService,
     @Optional() private readonly ingestionService?: IngestionService,
+    @Optional() private readonly documentAclService?: DocumentAclService,
   ) {}
 
   /**
@@ -583,6 +585,11 @@ export class McpService {
 
         if (!document) {
           throw new Error('未找到该文档或无权限查看');
+        }
+        const aclService = this.documentAclService;
+        if (aclService) {
+          const readable = await aclService.isDocumentReadable(userId, docId).catch(() => false);
+          if (!readable) throw new Error('无权限查看该文档');
         }
 
         return {

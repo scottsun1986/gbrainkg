@@ -10,6 +10,11 @@ export interface WebhookPayload {
   content: string;
 }
 
+/** Per-source queue cap: an unbounded in-memory queue is an OOM vector when
+ *  sync is slow or stalled — a burst of webhooks would otherwise grow the
+ *  heap without limit. */
+const MAX_QUEUE_PER_SOURCE = 1000;
+
 /**
  * 通用 Webhook 连接器：外部系统推送 {externalId,title,content} 入队，
  * 下一次 sync 时作为变更拉走（至少一次投递，cursor 保证同批不重复返回）。
@@ -33,6 +38,12 @@ export class WebhookConnector implements EnterpriseConnector {
     }
     const item = { externalId, title, content };
     const list = this.pending.get(key) || [];
+    if (list.length >= MAX_QUEUE_PER_SOURCE) {
+      // Evict oldest: the newest payloads are the ones a stalled sync most
+      //  needs to catch up on, and dropping the tail would silently lose the
+      //  latest external state.
+      list.shift();
+    }
     list.push(item);
     this.pending.set(key, list);
     return item;

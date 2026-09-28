@@ -117,6 +117,29 @@ function brainTopicSlug(title: string): string {
   );
 }
 
+// Document.status / Document.indexReadiness enum values. Query params are
+// passed straight into the Prisma `where` clause; an unknown value makes
+// Prisma throw a validation error (HTTP 500), so reject it with 400 instead.
+const DOCUMENT_STATUS_VALUES = new Set([
+  "parsing",
+  "uploading",
+  "pending",
+  "parsed",
+  "indexing",
+  "published",
+  "failed",
+  "needs_review",
+  "archived",
+  "uploaded",
+]);
+const INDEX_READINESS_VALUES = new Set([
+  "legacy",
+  "pending",
+  "enriching",
+  "ready",
+  "degraded",
+]);
+
 @UseGuards(AuthGuard)
 @Controller("api/v1/kbs")
 export class KnowledgeBaseController {
@@ -400,6 +423,18 @@ export class KnowledgeBaseController {
       throw new NotFoundException("Knowledge base not found.");
     const pageNumber = Math.max(1, Number(page) || 1);
     const pageSize = Math.min(100, Math.max(1, Number(limit) || 50));
+    if (status && status !== "all" && !DOCUMENT_STATUS_VALUES.has(status))
+      throw new BadRequestException(
+        `Invalid status filter. Allowed: ${[...DOCUMENT_STATUS_VALUES].join(", ")}`,
+      );
+    if (
+      indexReadiness &&
+      indexReadiness !== "all" &&
+      !INDEX_READINESS_VALUES.has(indexReadiness)
+    )
+      throw new BadRequestException(
+        `Invalid indexReadiness filter. Allowed: ${[...INDEX_READINESS_VALUES].join(", ")}`,
+      );
     const where: any = {
       kbId,
       ...(status && status !== "all" ? { status } : {}),
@@ -513,7 +548,7 @@ export class KnowledgeBaseController {
     });
     if (!document) throw new NotFoundException("Document not found.");
     const uploadRoot =
-      process.env.UPLOAD_DIR || join(homedir(), ".local/share/llmwiki/uploads");
+      process.env.UPLOAD_ROOT || "/tmp/llmwiki/uploads";
     const mdFile = join(
       uploadRoot,
       document.mdPath || `${document.id}/content.md`,
@@ -581,10 +616,10 @@ export class KnowledgeBaseController {
     const fileToken = signPreviewPayload({ userId, kbId, docId, exp });
     const storageBase =
       process.env.PREVIEW_STORAGE_BASE_URL ||
-      `${req.protocol || "http"}://${req.get?.("host") || req.headers.host}`;
+      (() => { throw new Error('PREVIEW_STORAGE_BASE_URL is not configured'); })();
     const documentServerUrl =
       process.env.ONLYOFFICE_URL ||
-      `${req.protocol || "http"}://${String(req.headers.host || "localhost").split(":")[0]}:8090`;
+      (() => { throw new Error('ONLYOFFICE_URL is not configured'); })();
     const fileUrl = `${storageBase.replace(/\/$/, "")}/api/v1/kbs/${kbId}/documents/${docId}/preview-file?token=${encodeURIComponent(fileToken)}`;
     return {
       documentServerUrl,

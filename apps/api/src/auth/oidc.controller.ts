@@ -120,12 +120,13 @@ export class OidcController {
             details: { method: 'oidc' },
           })
           .catch(() => undefined);
-        target.hash = `token=${encodeURIComponent(result.token)}`;
+        target.searchParams.set('code', Buffer.from(result.token).toString('base64url'));
       } else if (result.kind === 'mfa') {
-        target.hash = `mfa_token=${encodeURIComponent(result.mfaToken)}`;
+        target.searchParams.set('code', Buffer.from(result.mfaToken).toString('base64url'));
       } else {
-        target.hash = `mfa_setup_token=${encodeURIComponent(result.mfaToken)}`;
+        target.searchParams.set('code', Buffer.from(result.mfaToken).toString('base64url'));
       }
+      res.setHeader('Cache-Control', 'no-store');
       return res.redirect(302, target.toString());
     } catch (err) {
       this.auditService

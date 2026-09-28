@@ -23,8 +23,11 @@ export interface ExtractArchiveOptions {
 }
 
 const DEFAULT_MAX_FILES = 500;
-const DEFAULT_MAX_TOTAL_BYTES = 500 * 1024 * 1024; // 500MB
-const DEFAULT_MAX_SINGLE_FILE_BYTES = 200 * 1024 * 1024; // 200MB
+// AdmZip materialises the whole archive (plus every inflated entry) in
+// heap memory, so the ceiling must stay well below the 200MB upload limit
+// to avoid OOM on large archives.
+const DEFAULT_MAX_TOTAL_BYTES = 100 * 1024 * 1024; // 100MB
+const DEFAULT_MAX_SINGLE_FILE_BYTES = 50 * 1024 * 1024; // 50MB
 
 const TEXT_LIKE_EXTENSIONS = new Set(['.md', '.txt', '.csv', '.html', '.htm']);
 

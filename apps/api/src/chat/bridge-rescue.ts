@@ -183,11 +183,9 @@ export function planSecondHopRescue(input: BridgeRescueInput): BridgeRescuePlan 
     // passage to literally contain the question's aspect word rejected real
     // bridges — "Who is Magnus Julius De La Gardie's paternal grandmother?" names
     // "Axel Julius De la Gardie" (his father), whose page answers with
-    // "son of … and Ebba Brahe" and never says "grandmother".
-    const namedByEvidence = selectedLower.includes(name.toLowerCase());
-    if (!namedByEvidence && !missingAspects.some((aspect) => mentionsAspect(candidateText, aspect))) {
-      continue;
-    }
+    // "son of … and Ebba Brahe" and never says "grandmother". The guard above
+    // (selectedLower.includes(name)) already guarantees the name came from the
+    // hop-1 text, so no further aspect check is applied here.
     plan.indices.push(index);
     plan.names.push(name);
   }

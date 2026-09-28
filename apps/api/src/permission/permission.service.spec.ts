@@ -1,8 +1,9 @@
 import { Test, TestingModule } from "@nestjs/testing";
+import { PrismaClient } from "@prisma/client";
 import { PermissionService } from "./permission.service";
 
 // Mock PrismaClient
-const mockPrisma = {
+const mockPrisma: Partial<PrismaClient> = {
   knowledgeBase: {
     findMany: jest.fn(),
     findFirst: jest.fn(),
@@ -27,11 +28,13 @@ const mockPrisma = {
     findMany: jest.fn(),
     deleteMany: jest.fn(),
   },
+
+  $transaction: jest.fn(async (fn: (tx: any) => Promise<any>) => fn(mockPrisma as any)),
 };
 
 jest.mock("@prisma/client", () => {
   return {
-    PrismaClient: jest.fn().mockImplementation(() => mockPrisma),
+    PrismaClient: jest.fn().mockImplementation(() => mockPrisma as PrismaClient),
   };
 });
 

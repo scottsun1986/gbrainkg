@@ -4,6 +4,8 @@ const executeRaw = jest.fn();
 
 const mockPrisma = {
   $executeRaw: executeRaw,
+
+  $transaction: jest.fn(async (fn: any) => fn(mockPrisma)),
 };
 
 jest.mock('@prisma/client', () => ({

@@ -446,59 +446,120 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
             );
           });
     if (options.forceFull || toSync.length) {
-      const documents = await this.prisma.document.findMany({
-        where: { id: { in: toSync.map((doc) => doc.id) } },
-        include: {
-          kb: { select: { name: true, type: true } },
-          chunks: {
-            orderBy: { ord: "asc" },
-            select: {
-              content: true,
-              charStart: true,
-              charEnd: true,
-              metadata: true,
+      const sourceRef = `gbrain://source/${definition.sourceKey}`;
+      const allDocIds = toSync.map((doc) => doc.id);
+      const BATCH_SIZE = 500;
+      if (options.forceFull) {
+        // Paginate with cursor to avoid loading all docs + chunks into memory at once.
+        let cursor: string | undefined;
+        let batchIndex = 0;
+        while (true) {
+          const batch = await this.prisma.document.findMany({
+            where: { id: { in: allDocIds } },
+            include: {
+              kb: { select: { name: true, type: true } },
+              chunks: {
+                orderBy: { ord: "asc" },
+                select: {
+                  content: true,
+                  charStart: true,
+                  charEnd: true,
+                  metadata: true,
+                },
+              },
+            },
+            take: BATCH_SIZE,
+            ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+          });
+          if (!batch.length) break;
+          const evidences = await Promise.all(
+            batch.map(async (document) => ({
+              text: await readCanonicalDocument(
+                this.uploadRoot,
+                document.id,
+                document.chunks,
+                document.mdPath,
+              ),
+              sourceFile: document.title,
+              kbId: document.kbId,
+              kbName: document.kb.name,
+              kbType: document.kb.type,
+              topic: document.title.replace(/\.[^.]+$/, ""),
+              slug: `docs/${document.id}`,
+            })),
+          );
+          await this.gbrain.rebuild(sourceRef, evidences);
+          for (const document of batch) {
+            await db.brainSourceDocument.upsert({
+              where: {
+                sourceId_documentId: {
+                  sourceId: source.id,
+                  documentId: document.id,
+                },
+              },
+              create: {
+                sourceId: source.id,
+                documentId: document.id,
+                syncedVersion: document.version,
+                syncedAt: new Date(),
+              },
+              update: { syncedVersion: document.version, syncedAt: new Date() },
+            });
+          }
+          batchIndex++;
+          if (batch.length < BATCH_SIZE) break;
+          cursor = batch[batch.length - 1].id;
+        }
+      } else {
+        const documents = await this.prisma.document.findMany({
+          where: { id: { in: allDocIds } },
+          include: {
+            kb: { select: { name: true, type: true } },
+            chunks: {
+              orderBy: { ord: "asc" },
+              select: {
+                content: true,
+                charStart: true,
+                charEnd: true,
+                metadata: true,
+              },
             },
           },
-        },
-      });
-      const evidences = await Promise.all(
-        documents.map(async (document) => ({
-          text: await readCanonicalDocument(
-            this.uploadRoot,
-            document.id,
-            document.chunks,
-            document.mdPath,
-          ),
-          sourceFile: document.title,
-          kbId: document.kbId,
-          kbName: document.kb.name,
-          kbType: document.kb.type,
-          topic: document.title.replace(/\.[^.]+$/, ""),
-          slug: `docs/${document.id}`,
-        })),
-      );
-      const sourceRef = `gbrain://source/${definition.sourceKey}`;
-      if (options.forceFull) {
-        await this.gbrain.rebuild(sourceRef, evidences);
-      } else {
+        });
+        const evidences = await Promise.all(
+          documents.map(async (document) => ({
+            text: await readCanonicalDocument(
+              this.uploadRoot,
+              document.id,
+              document.chunks,
+              document.mdPath,
+            ),
+            sourceFile: document.title,
+            kbId: document.kbId,
+            kbName: document.kb.name,
+            kbType: document.kb.type,
+            topic: document.title.replace(/\.[^.]+$/, ""),
+            slug: `docs/${document.id}`,
+          })),
+        );
         await this.gbrain.ingest(sourceRef, evidences);
-      }
-      for (const document of documents) {
-        await db.brainSourceDocument.upsert({
-          where: {
-            sourceId_documentId: {
+        for (const document of documents) {
+          await db.brainSourceDocument.upsert({
+            where: {
+              sourceId_documentId: {
+                sourceId: source.id,
+                documentId: document.id,
+              },
+            },
+            create: {
               sourceId: source.id,
               documentId: document.id,
+              syncedVersion: document.version,
+              syncedAt: new Date(),
             },
-          },
-          create: {
-            sourceId: source.id,
-            documentId: document.id,
-            syncedVersion: document.version,
-            syncedAt: new Date(),
-          },
-          update: { syncedVersion: document.version, syncedAt: new Date() },
-        });
+            update: { syncedVersion: document.version, syncedAt: new Date() },
+          });
+        }
       }
     }
     const stale = existing.filter(
@@ -664,18 +725,20 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
     const rebuilt: string[] = [];
     const publishedCounts = new Map<string, number>();
 
-    for (const definition of plan) {
-      const source = await db.brainSource.findUnique({
-        where: { sourceKey: definition.sourceKey },
-        select: { id: true },
-      });
-      // Keep the query path O(1) in application memory. The old code loaded
-      // every published document and every source mapping on every chat query;
-      // at 100k documents that created a large allocation and network transfer
-      // before semantic-cache lookup. Let PostgreSQL perform two index-backed
-      // EXISTS checks and return only a count + one boolean instead.
-      const inventory = source
-        ? await this.prisma.$queryRaw<Array<{ publishedCount: number | bigint; mappingStale: boolean }>>`
+    // Batch per-source queries with Promise.all to avoid sequential round-trips.
+    const inventoryResults = await Promise.all(
+      plan.map(async (definition) => {
+        const source = await db.brainSource.findUnique({
+          where: { sourceKey: definition.sourceKey },
+          select: { id: true },
+        });
+        if (!source) {
+          const publishedCount = await this.prisma.document.count({
+            where: { kbId: { in: definition.kbIds }, status: "published" },
+          });
+          return { publishedCount, mappingStale: true };
+        }
+        const inventory = await this.prisma.$queryRaw<Array<{ publishedCount: number | bigint; mappingStale: boolean }>>`
             SELECT
               (
                 SELECT COUNT(*)
@@ -689,7 +752,7 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
                   FROM "Document" d
                   LEFT JOIN "BrainSourceDocument" m
                     ON m."documentId" = d.id
-                   AND m."sourceId" = ${source.id}::uuid
+                    AND m."sourceId" = ${source.id}::uuid
                   WHERE d."kbId" = ANY(${definition.kbIds}::uuid[])
                     AND d.status = 'published'
                     AND (
@@ -712,16 +775,19 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
                   LIMIT 1
                 )
               ) AS "mappingStale"
-          `
-        : [{
-            publishedCount: await this.prisma.document.count({
-              where: { kbId: { in: definition.kbIds }, status: "published" },
-            }),
-            mappingStale: true,
-          }];
-      const publishedCount = Number(inventory[0]?.publishedCount || 0);
+          `;
+        return {
+          publishedCount: Number(inventory[0]?.publishedCount || 0),
+          mappingStale: inventory[0]?.mappingStale,
+        };
+      }),
+    );
+
+    for (let i = 0; i < plan.length; i++) {
+      const definition = plan[i];
+      const { publishedCount, mappingStale } = inventoryResults[i];
       publishedCounts.set(definition.sourceKey, publishedCount);
-      const mappingFresh = !inventory[0]?.mappingStale;
+      const mappingFresh = !mappingStale;
       const indexedPages = indexedPageCounts.get(definition.sourceKey);
       const readPlaneFresh = indexedPages === publishedCount;
       if (mappingFresh && readPlaneFresh) continue;
@@ -841,30 +907,63 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
       where: { status: "active" },
       select: { id: true },
     });
+
+    // Batch plan resolution: fetch all visible KBs for all users in one query,
+    // group by source, then iterate sources (not users) to avoid O(users × sources).
+    const allVisibleKbIds = new Set<string>();
+    await Promise.all(
+      users.map(async (user) => {
+        const kbIds = await this.permissionService.getVisibleKnowledgeBases(user.id);
+        kbIds.forEach((id) => allVisibleKbIds.add(id));
+      }),
+    );
+    const allKbs = await this.prisma.knowledgeBase.findMany({
+      where: { id: { in: [...allVisibleKbIds] }, status: "active" },
+      select: { id: true, type: true },
+    });
+    const sourceKeyToKbIds = new Map<string, string[]>();
+    const sourceKeyToKind = new Map<string, string>();
+    for (const kb of allKbs) {
+      const key = sourceKeyForKnowledgeBase(kb.id);
+      const existing = sourceKeyToKbIds.get(key) || [];
+      existing.push(kb.id);
+      sourceKeyToKbIds.set(key, existing);
+      sourceKeyToKind.set(key, kb.type);
+    }
+    const allDefinitions = [...sourceKeyToKbIds.entries()].map(([sourceKey, kbIds]) => ({
+      sourceKey,
+      kind: sourceKeyToKind.get(sourceKey) || "unknown",
+      scopeKey: `kb:${kbIds[0]}`,
+      kbIds,
+    }));
+
     const syncedSourceKeys = new Set<string>();
     const reconciledScopeIds = new Set<string>();
 
-    for (const user of users) {
-      const plan = await this.getSourcePlan(user.id);
-      await this.getUserSourceRefs(user.id);
-      for (const definition of plan) {
-        if (syncedSourceKeys.has(definition.sourceKey)) continue;
-        const result = await this.syncSourceDefinition(definition, user.id);
-        if (result.synced || result.removed) {
-          const scopeIds = await this.invalidateScopesForSource(definition.sourceKey);
-          await this.queueScopeSynthesis(scopeIds);
-        }
-        syncedSourceKeys.add(definition.sourceKey);
-      }
-      // 计算并更新该用户的权限 Scope
-      const scopeRes = await this.scopeService.resolveUserScope(user.id);
-      reconciledScopeIds.add(scopeRes.scopeId);
+    // Parallelize per-user work with bounded concurrency (5).
+    const userConcurrency = 5;
+    for (let i = 0; i < users.length; i += userConcurrency) {
+      const batch = users.slice(i, i + userConcurrency);
+      await Promise.all(
+        batch.map(async (user) => {
+          await this.getUserSourceRefs(user.id);
+          const scopeRes = await this.scopeService.resolveUserScope(user.id);
+          reconciledScopeIds.add(scopeRes.scopeId);
+          if (scopeRes.strategy === "eager" && scopeRes.status === "dirty") {
+            await this.queueScopeSynthesis([scopeRes.scopeId]);
+          }
+        }),
+      );
+    }
 
-      // Scope derivation is scheduled only when its knowledge/ACL epoch is
-      // dirty. This avoids rebuilding summaries for every unaffected user.
-      if (scopeRes.strategy === "eager" && scopeRes.status === "dirty") {
-        await this.queueScopeSynthesis([scopeRes.scopeId]);
+    for (const definition of allDefinitions) {
+      if (syncedSourceKeys.has(definition.sourceKey)) continue;
+      const result = await this.syncSourceDefinition(definition, undefined);
+      if (result.synced || result.removed) {
+        const scopeIds = await this.invalidateScopesForSource(definition.sourceKey);
+        await this.queueScopeSynthesis(scopeIds);
       }
+      syncedSourceKeys.add(definition.sourceKey);
     }
 
     const db: any = this.prisma as any;
@@ -1055,8 +1154,6 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onKnowledgeDeleted(kbId: string, docId: string) {
-    const visibleUsers =
-      await this.permissionService.getUsersVisibleToKnowledgeBase(kbId);
     const db: any = this.prisma as any;
     const mappedSources = db.brainSourceDocument?.findMany
       ? await db.brainSourceDocument.findMany({
@@ -1067,15 +1164,14 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
     const sourceKeys = new Set<string>(
       mappedSources.map((item: any) => item.source?.sourceKey).filter(Boolean),
     );
-    await Promise.all(
-      visibleUsers.map(async (userId) => {
-        const sourceKey =
-          (await this.getSourcePlan(userId).catch(() => [] as any[])).find((item: any) =>
-            (item?.kbIds || []).includes(kbId),
-          )?.sourceKey;
-        if (sourceKey) sourceKeys.add(sourceKey);
-      }),
-    );
+    // Source key = hash(kbId), so the deleted doc's KB has exactly one source.
+    // Fetch it directly instead of resolving per-user plans (N+1 query storm).
+    const kbSourceKey = sourceKeyForKnowledgeBase(kbId);
+    const sourceExists = await db.brainSource.findUnique({
+      where: { sourceKey: kbSourceKey },
+      select: { id: true },
+    });
+    if (sourceExists) sourceKeys.add(kbSourceKey);
     for (const sourceKey of sourceKeys) {
       await this.gbrain.delete(`gbrain://source/${sourceKey}`, `docs/${docId}`);
       const source = await db.brainSource.findUnique?.({

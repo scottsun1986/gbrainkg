@@ -56,6 +56,9 @@ LOCAL_DOCLING_ENABLED = os.environ.get("LOCAL_DOCLING_ENABLED", "1").lower() not
 }
 tasks: dict[str, dict[str, Any]] = {}
 MAX_TASKS = max(1, int(os.environ.get("PARSER_MAX_TASKS", "5000")))
+MAX_RETAINED_BYTES = max(
+    1, int(os.environ.get("PARSER_MAX_RETAINED_BYTES", str(200 * 1024 * 1024)))
+)
 # Two independent limits:
 #  - MAX_TASKS bounds retained entries (finished results keep their markdown until
 #    the polling TTL expires), protecting worker memory;
@@ -139,12 +142,19 @@ async def periodic_cleanup():
     while True:
         await asyncio.sleep(300)
         current_time = time.time()
+        total_bytes = sum(
+            len(t.get("markdown", "").encode("utf-8"))
+            for t in tasks.values()
+            if t.get("status") in ("completed", "failed")
+        )
         for tid in list(tasks.keys()):
             t_info = tasks[tid]
             status = t_info.get("status")
             age = current_time - t_info.get("created_at", current_time)
             if status in ("completed", "failed"):
-                if age > 1800:
+                if age > 1800 or total_bytes > MAX_RETAINED_BYTES:
+                    md = t_info.get("markdown", "")
+                    total_bytes -= len(md.encode("utf-8")) if md else 0
                     del tasks[tid]
                 continue
             # Stale in-flight task: mark it failed instead of deleting it, so
@@ -697,13 +707,9 @@ def merge_mixed_pdf_markdown(
     if not ocr_pages:
         raise RuntimeError("OCR returned no page content for mixed PDF")
     if len(ocr_pages) != len(scan_page_indexes):
-        logger.warning(
-            "OCR page count mismatch for mixed PDF: expected=%s actual=%s; "
-            "assigning provider output to the first scan page",
-            len(scan_page_indexes),
-            len(ocr_pages),
+        raise RuntimeError(
+            f"OCR page count mismatch for mixed PDF: expected={len(scan_page_indexes)} actual={len(ocr_pages)}"
         )
-        ocr_pages = ["\n\n".join(ocr_pages)]
 
     ocr_by_page = {
         page_index: ocr_pages[position]
@@ -966,8 +972,14 @@ async def convert_with_docling(path: Path) -> str:
         converter = DocumentConverter()
         result = converter.convert(str(path))
         return result.document.export_to_markdown()
-    async with _docling_semaphore:
+    try:
+        await asyncio.wait_for(_docling_semaphore.acquire(), timeout=DOCLING_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        raise TimeoutError(f"Docling semaphore acquisition timed out after {DOCLING_TIMEOUT_SECONDS}s")
+    try:
         return await asyncio.to_thread(_run)
+    finally:
+        _docling_semaphore.release()
 
 
 async def _baidu_token(client: Any, api_key: str, secret_key: str, endpoint: str) -> str:
@@ -1704,13 +1716,13 @@ async def process_file(
                         raise RuntimeError(
                             "DOCX extraction returned no indexable content and local Docling is disabled"
                         )
-                    md = await convert_with_docling(path)
+                    md = await asyncio.wait_for(convert_with_docling(path), timeout=DOCLING_TIMEOUT_SECONDS)
                     task["markdown"] = md
                     task["engine"] = "docling"
             else:
                 if not LOCAL_DOCLING_ENABLED:
                     raise RuntimeError("DOCX native extraction returned no text and local Docling is disabled")
-                md = await convert_with_docling(path)
+                md = await asyncio.wait_for(convert_with_docling(path), timeout=DOCLING_TIMEOUT_SECONDS)
                 task["markdown"] = md
                 task["engine"] = "docling"
         elif suffix in {".xlsx", ".xls"}:
@@ -1721,7 +1733,7 @@ async def process_file(
             else:
                 if not LOCAL_DOCLING_ENABLED:
                     raise RuntimeError("Excel native extraction returned no cells and local Docling is disabled")
-                md = await convert_with_docling(path)
+                md = await asyncio.wait_for(convert_with_docling(path), timeout=DOCLING_TIMEOUT_SECONDS)
                 task["markdown"] = md
                 task["engine"] = "docling"
         elif suffix == ".pptx":
@@ -1734,7 +1746,7 @@ async def process_file(
                     task["engine"] = engine
                     task.update(parser_metadata)
                 elif LOCAL_DOCLING_ENABLED:
-                    md = await convert_with_docling(path)
+                    md = await asyncio.wait_for(convert_with_docling(path), timeout=DOCLING_TIMEOUT_SECONDS)
                     task["markdown"] = md
                     task["engine"] = "docling-local"
                 else:
@@ -1744,7 +1756,7 @@ async def process_file(
             except Exception as pptx_err:
                 if LOCAL_DOCLING_ENABLED:
                     logger.warning("Native PPTX conversion failed for %s: %s, falling back to Docling", path.name, pptx_err)
-                    md = await convert_with_docling(path)
+                    md = await asyncio.wait_for(convert_with_docling(path), timeout=DOCLING_TIMEOUT_SECONDS)
                     task["markdown"] = md
                     task["engine"] = "docling-local"
                 else:
@@ -1783,7 +1795,7 @@ async def process_file(
             # without text extraction.
             if LOCAL_DOCLING_ENABLED:
                 try:
-                    md = await convert_with_docling(path)
+                    md = await asyncio.wait_for(convert_with_docling(path), timeout=DOCLING_TIMEOUT_SECONDS)
                     if re.search(r"<!--\s*(?:image|picture|figure)\s*-->", md, flags=re.IGNORECASE):
                         raise RuntimeError("Docling returned an image placeholder; OCR is required for complete image ingestion")
                     task["markdown"] = md
@@ -1990,12 +2002,23 @@ async def ocr_embedded_images_endpoint(
     """
     filename = Path(file.filename or "upload.bin").name
     suffix = Path(filename).suffix.lower() or ".bin"
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="Empty upload")
     path = UPLOAD_ROOT / f"ocr-embed-{uuid.uuid4()}{suffix}"
-    path.write_bytes(content)
     try:
+        size = 0
+        with path.open("wb") as fh:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > OCR_MAX_FILE_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Embedded-image OCR upload exceeds {OCR_MAX_FILE_BYTES // (1024 * 1024)}MB limit",
+                    )
+                fh.write(chunk)
+        if size == 0:
+            raise HTTPException(status_code=400, detail="Empty upload")
         ocr_config = {
             "provider": (ocr_provider or OCR_PROVIDER).strip().lower(),
             "endpoint": (ocr_endpoint or BAIDU_OCR_ENDPOINT).strip(),

@@ -183,6 +183,9 @@ export class BrainScopeService {
     });
     if (!scope) throw new Error(`Scope ${scopeId} not found`);
 
+    // Reset stale 'compiling' scopes left behind by crashed workers or exhausted retries.
+    await this.sweepStaleCompilingScopes();
+
     // Debounce / throttle: if compiled within the last 5 minutes and not dirty, skip to prevent synthesis storms
     if (scope.lastCompileAt && Date.now() - new Date(scope.lastCompileAt).getTime() < 5 * 60 * 1000 && scope.status === 'active') {
       this.logger.log(`Scope ${scope.fingerprint} was compiled recently (${scope.lastCompileAt.toISOString()}); skipping throttled synthesis.`);
@@ -227,7 +230,7 @@ export class BrainScopeService {
       return { derivedPagesCount: 0, status: 'empty', synthesizedSources: 0, synthesisFallbacks: 0 };
     }
 
-    await db.brainScope.update({ where: { id: scope.id }, data: { status: 'compiling' } });
+    await db.brainScope.update({ where: { id: scope.id }, data: { status: 'compiling', compileStartedAt: new Date() } });
 
     const inputFingerprint = createHash('sha256')
       .update(docs.map((d) => `${d.id}:${d.version}`).sort().join(';'))
@@ -400,6 +403,30 @@ export class BrainScopeService {
       synthesizedSources: synthesisBySource.filter((item) => Boolean(item.answer)).length,
       synthesisFallbacks,
     };
+  }
+
+  /**
+   * Reset 'compiling' scopes that have been stuck for more than 10 minutes
+   * (e.g., due to a worker crash or exhausted retries) back to 'dirty' so they
+   * can be re-queued for compilation.
+   */
+  async sweepStaleCompilingScopes(): Promise<void> {
+    const db: any = this.prisma;
+    const staleThreshold = new Date(Date.now() - 10 * 60 * 1000);
+    try {
+      const result = await db.brainScope.updateMany({
+        where: {
+          status: 'compiling',
+          compileStartedAt: { lt: staleThreshold },
+        },
+        data: { status: 'dirty' },
+      });
+      if (result.count > 0) {
+        this.logger.warn(`Reset ${result.count} stale 'compiling' scope(s) to 'dirty'.`);
+      }
+    } catch (err) {
+      this.logger.warn(`Failed to sweep stale compiling scopes: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   /**

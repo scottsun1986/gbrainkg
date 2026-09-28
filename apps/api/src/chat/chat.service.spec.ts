@@ -54,6 +54,8 @@ const mockGbrainQuery = jest.fn().mockResolvedValue({
 
 const mockPrisma = {
   $queryRaw: jest.fn(),
+  $executeRaw: jest.fn().mockResolvedValue(1),
+  $executeRawUnsafe: jest.fn().mockResolvedValue(1),
   brainRepo: {
     findUnique: jest.fn(),
   },
@@ -69,6 +71,8 @@ const mockPrisma = {
   brainDerivedPage: {
     findMany: jest.fn().mockResolvedValue([]),
   },
+
+  $transaction: jest.fn(async (fn: any) => fn(mockPrisma)),
 };
 
 jest.mock("@prisma/client", () => ({

@@ -59,12 +59,43 @@ const PII_PATTERNS: Array<{ kind: PiiFinding['kind']; re: RegExp }> = [
   { kind: 'bank_card', re: /(?<!\d)\d{16,19}(?!\d)/g },
 ];
 
+/** Luhn checksum: filters random 16-19 digit runs (order IDs, timestamps)
+ *  that are not actually payment card numbers. */
+function luhnValid(digits: string): boolean {
+  let sum = 0;
+  let double = false;
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let d = digits.charCodeAt(i) - 48;
+    if (double) {
+      d *= 2;
+      if (d > 9) d -= 9;
+    }
+    sum += d;
+    double = !double;
+  }
+  return sum % 10 === 0;
+}
+
+/** GB 11643-1999 checksum for 18-digit Chinese resident ID numbers. */
+function idCnValid(id: string): boolean {
+  if (!/^\d{17}[\dXx]$/.test(id)) return false;
+  const weights = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2];
+  const checkCodes = '10X98765432';
+  let sum = 0;
+  for (let i = 0; i < 17; i++) sum += (id.charCodeAt(i) - 48) * weights[i];
+  return checkCodes[sum % 11] === id[17].toUpperCase();
+}
+
 export function scanPii(text: string): PiiFinding[] {
   const findings: PiiFinding[] = [];
   for (const { kind, re } of PII_PATTERNS) {
     re.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = re.exec(text))) {
+      // Numeric-identifier regexes over-match: apply checksum validation so
+      // only plausible card/ID numbers are reported.
+      if (kind === 'bank_card' && !luhnValid(m[0])) continue;
+      if (kind === 'id_cn' && !idCnValid(m[0])) continue;
       findings.push({ kind, match: m[0], index: m.index });
     }
   }

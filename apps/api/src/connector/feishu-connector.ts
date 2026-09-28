@@ -12,6 +12,28 @@ export interface FeishuCredentials {
   domain: string;
 }
 
+const FEISHU_DOMAIN_ALLOWLIST = new Set([
+  'open.feishu.cn',
+  'open.larksuite.com',
+  'open.feishu.cn.',
+  'open.larksuite.com.',
+]);
+
+function validateFeishuDomain(raw: string): string {
+  const domain = raw.trim().replace(/\/$/, '');
+  if (!/^https:\/\//i.test(domain)) {
+    throw new Error('feishu domain must use HTTPS');
+  }
+  const hostname = domain.replace(/^https:\/\//i, '').split('/')[0].toLowerCase();
+  const bareHostname = hostname.replace(/\.$/, '');
+  if (!FEISHU_DOMAIN_ALLOWLIST.has(bareHostname)) {
+    throw new Error(
+      `feishu domain "${bareHostname}" is not in the allowlist (open.feishu.cn, open.larksuite.com)`,
+    );
+  }
+  return domain;
+}
+
 export function readFeishuCredentials(
   config: Record<string, unknown>,
 ): FeishuCredentials {
@@ -20,11 +42,9 @@ export function readFeishuCredentials(
   if (!appId || !appSecret) {
     throw new Error('feishu credentials required: appId/appSecret');
   }
-  const domain = String(
-    config.domain ?? config.baseUrl ?? 'https://open.feishu.cn',
-  )
-    .trim()
-    .replace(/\/$/, '');
+  const domain = validateFeishuDomain(
+    String(config.domain ?? config.baseUrl ?? 'https://open.feishu.cn'),
+  );
   return { appId, appSecret, domain };
 }
 

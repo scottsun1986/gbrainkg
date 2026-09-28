@@ -1,7 +1,12 @@
 /** Application-owned publication gate, independent of conversion engine success. */
-import { detectLanguage, scanPii, simhash64 } from './content-dedupe';
+import { detectLanguage, scanPii, simhash64, tokenizeForSimhash } from './content-dedupe';
 
 export const QUALITY_RULE_VERSION = 'content-v2';
+
+/** SimHash over fewer tokens is high-variance: unrelated short documents can
+ *  collide within the Hamming<=3 near-duplicate threshold by chance. Documents
+ *  below this token count are excluded from the near-duplicate gate. */
+const MIN_SIMHASH_TOKENS = 200;
 
 function parseChineseNumber(str: string): number {
   if (/^\d+$/.test(str)) return parseInt(str, 10);
@@ -48,8 +53,8 @@ export function assessContentQuality(markdown: string, suffix: string, facts: Re
   const count = chars.length || 1;
   const visible = markdown.replace(/<!--[\s\S]*?-->/g, '').replace(/!\[[^\]]*\]\([^)]*\)/g, '');
   const meaningful = (visible.match(/[\p{L}\p{N}]/gu) || []).length;
-  const replacementRatio = chars.filter(c => c === '\ufffd').length / count;
-  const controlRatio = chars.filter(c => c.charCodeAt(0) < 32 && !'\n\r\t'.includes(c)).length / count;
+  const replacementRatio = (markdown.match(/\ufffd/g) || []).length / count;
+  const controlRatio = (markdown.match(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g) || []).length / count;
   const placeholders = (markdown.match(/<!--\s*(?:image|picture|figure)(?:[^\n>]*)\s*-->/gi) || []).length;
 
   // Informational notes only — these no longer gate publication.
@@ -66,7 +71,10 @@ export function assessContentQuality(markdown: string, suffix: string, facts: Re
   }
 
   // Only empty extraction rejects. Everything else publishes.
-  const status: QualityStatus = !meaningful || facts.quality_status === 'rejected' ? 'rejected' : 'passed';
+  const status: QualityStatus =
+    !meaningful || facts.quality_status === 'rejected'
+      ? 'rejected'
+      : 'passed';
   return {
     quality_status: status,
     quality_score: Number(Math.max(0, Math.min(1, score)).toFixed(4)),
@@ -99,7 +107,13 @@ export interface ExtendedQualityResult {
 export function assessExtendedQuality(markdown: string): ExtendedQualityResult {
   const language = detectLanguage(markdown);
   const piiFindings = scanPii(markdown);
-  const simhash = '0x' + simhash64(markdown).toString(16);
+  // A 64-bit SimHash over a handful of tokens is high-variance: unrelated
+  // short documents can collide within Hamming<=3 by chance. Skip the
+  // near-duplicate signal entirely below the minimum token count — the
+  // ingestion gate treats an empty simhash as "no comparison available".
+  const simhash = tokenizeForSimhash(markdown).length >= MIN_SIMHASH_TOKENS
+    ? '0x' + simhash64(markdown).toString(16)
+    : '';
   return { language, piiFindings, simhash, issues: [], status: 'passed' };
 }
 

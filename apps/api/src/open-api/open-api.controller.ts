@@ -23,6 +23,7 @@ import { promises as fs } from 'node:fs';
 import { OpenApiGuard } from './open-api.guard';
 import { ChatService } from '../chat/chat.service';
 import { PermissionService } from '../permission/permission.service';
+import { SUPPORTED_UPLOAD_EXTENSIONS } from '../ingestion/parser-capabilities';
 import { BrainCompilerService } from '../brain-compiler/brain-compiler.service';
 import { IngestionService } from '../ingestion/ingestion.service';
 import { isArchiveFilename } from '../ingestion/parser-capabilities';
@@ -53,7 +54,7 @@ export class OpenApiController {
    */
   @Get('spec.json')
   getOpenApiSpec(@Req() req: any) {
-    const host = req.get('host') || '119.45.22.137:20080';
+    const host = req.get('host') || process.env.PUBLIC_BASE_URL || '';
     const protocol = req.protocol || 'http';
     return {
       openapi: '3.0.3',
@@ -319,6 +320,9 @@ export class OpenApiController {
     if (!prompt) {
       return res.status(400).json(R(400, 'prompt 不能为空'));
     }
+    if (prompt.length > 10000) {
+      return res.status(400).json(R(400, 'prompt 长度不能超过 10000 字符'));
+    }
 
     const rawKbIds = Array.isArray(body.kb_ids)
       ? body.kb_ids.map((id: any) => String(id).trim()).filter(Boolean)
@@ -338,7 +342,11 @@ export class OpenApiController {
         return res.status(404).json(R(404, '指定的 conversation_id 不存在或无权访问'));
       }
       if (rawKbIds.length > 0) {
-        effectiveKbIds = rawKbIds.filter((id: string) => visibleKbs.includes(id));
+        const unauthorized = rawKbIds.filter((id: string) => !visibleKbs.includes(id));
+        if (unauthorized.length > 0) {
+          return res.status(403).json(R(403, `无权访问知识库: ${unauthorized.join(', ')}`));
+        }
+        effectiveKbIds = rawKbIds;
       } else if (Array.isArray(conversation.kbScope) && (conversation.kbScope as string[]).length > 0) {
         effectiveKbIds = (conversation.kbScope as string[]).filter((id: string) => visibleKbs.includes(id));
       } else {
@@ -457,7 +465,7 @@ export class OpenApiController {
           }
         },
         error: (err: any) => {
-          res.status(500).json(R(500, err?.message || '生成回答失败'));
+          res.status(500).json(R(500, '生成回答失败'));
           resolve();
         },
         complete: async () => {
@@ -502,6 +510,7 @@ export class OpenApiController {
     @Req() req: any,
     @UploadedFile() file: any,
     @Body() body: { kb_id?: string; kbId?: string },
+    @Res() res: Response,
   ) {
     const userId = req.user.id;
     const kbId = body.kb_id || body.kbId;
@@ -521,7 +530,10 @@ export class OpenApiController {
       throw new ForbiddenException('当前凭证无权向该知识库上传文档');
     }
 
-    const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
+    const rawName = Buffer.from(file.originalname, 'latin1');
+    const utf8Name = rawName.toString('utf8');
+    const latin1Name = rawName.toString('latin1');
+    const originalName = /[\uFFFD]/.test(utf8Name) ? latin1Name : utf8Name;
 
     if (isArchiveFilename(originalName)) {
       const extractedFiles = await extractArchiveDocuments(file.buffer, originalName);
@@ -567,6 +579,9 @@ export class OpenApiController {
 
     const documentId = randomUUID();
     const safeExt = extname(originalName).toLowerCase();
+    if (!SUPPORTED_UPLOAD_EXTENSIONS.has(safeExt)) {
+      return res.status(400).json(R(400, `不支持的文件类型: ${safeExt}`));
+    }
     const destDir = join(this.uploadRoot, documentId);
     await fs.mkdir(destDir, { recursive: true });
     const localFilePath = join(destDir, `raw${safeExt}`);

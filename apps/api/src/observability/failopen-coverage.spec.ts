@@ -7,7 +7,9 @@ import { metricsRegistry } from './metrics.service';
 import { HybridRetrievalService } from '../retrieval/hybrid-retrieval.service';
 import { recordFailopen, setIngestionQueueDepth } from './failopen';
 
-const mockPrisma: any = { $queryRaw: jest.fn() };
+const mockPrisma: any = { $queryRaw: jest.fn(),
+  $executeRaw: jest.fn().mockResolvedValue(1),
+  $executeRawUnsafe: jest.fn().mockResolvedValue(1) };
 jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => mockPrisma) }));
 
 describe('failopen call-site coverage', () => {

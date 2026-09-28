@@ -60,9 +60,13 @@ export function buildParentBundle(
   };
 }
 
-/** 若 child 内容几乎包含于 parent，返回 parent；否则 parent+child 拼接去掉重复后缀/前缀。 */
+/**
+ * 若 child 内容几乎包含于 parent，返回 parent；否则 parent+child 拼接去掉重复后缀/前缀。
+ * 重叠窗口上限 4096 字符：100KB 级 parent/child 下朴素循环每 bundle 约 10^8 次字符拷贝，
+ * 超过 4096 的重叠本质是整段包含，由调用方的父块优先分支处理。
+ */
 export function dedupeOverlap(parent: string, child: string): string {
-  const max = Math.min(parent.length, child.length);
+  const max = Math.min(parent.length, child.length, 4096);
   for (let i = max; i > 12; i--) {
     if (parent.endsWith(child.slice(0, i))) {
       return parent + child.slice(i);
@@ -80,7 +84,11 @@ export type SiblingFetcher = (
   ordTo: number,
 ) => Promise<ChildHit[]>;
 
-/** 按 ord ±window 拉取兄弟块（缺失的邻块从库中补齐）。 */
+/**
+ * 按 ord ±window 拉取兄弟块（缺失的邻块从库中补齐）。
+ * 同 documentId 的命中合并为一个区间查询（每文档一次，而非每命中一次），
+ * 避免 N+1；各文档的查询并发执行。
+ */
 export async function expandSiblings(
   hits: ChildHit[],
   fetchRange: SiblingFetcher,
@@ -88,9 +96,21 @@ export async function expandSiblings(
 ): Promise<ChildHit[]> {
   const out = new Map<string, ChildHit>();
   for (const h of hits) out.set(h.id, h);
+  const rangesByDoc = new Map<string, { from: number; to: number }>();
   for (const h of hits) {
-    const extras = await fetchRange(h.documentId, h.ord - window, h.ord + window);
-    for (const e of extras) out.set(e.id, e);
+    const range = rangesByDoc.get(h.documentId);
+    if (!range) {
+      rangesByDoc.set(h.documentId, { from: h.ord - window, to: h.ord + window });
+    } else {
+      range.from = Math.min(range.from, h.ord - window);
+      range.to = Math.max(range.to, h.ord + window);
+    }
   }
+  await Promise.all(
+    [...rangesByDoc.entries()].map(async ([documentId, range]) => {
+      const extras = await fetchRange(documentId, range.from, range.to);
+      for (const e of extras) out.set(e.id, e);
+    }),
+  );
   return [...out.values()];
 }
