@@ -34,7 +34,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
-import { Inject, Optional } from "@nestjs/common";
+import { Inject, Logger, Optional } from "@nestjs/common";
 import { SystemReprocessService } from "./system-reprocess.service";
 
 function normalizeServiceBaseUrl(value: unknown): string {
@@ -163,6 +163,7 @@ function assertGbrainRecipe(params: unknown, kind: string): void {
 @Controller("api/v1/admin")
 export class AdminController {
   private readonly prisma = getPrismaClient();
+  private readonly telemetryLogger = new Logger("AdminController.systemStatusTelemetry");
   constructor(
     private readonly permissionService: PermissionService,
     private readonly authService: AuthService,
@@ -916,9 +917,20 @@ export class AdminController {
     const pageFor = (name: string) => section === name ? page : 1;
     const offsetFor = (name: string) => (pageFor(name) - 1) * limit;
     const nonPersonalKb = { type: { not: "personal" } };
+    const sectionTimings: Array<[string, number]> = [];
+    const timed = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
+      const startedAt = Date.now();
+      try {
+        return await fn();
+      } finally {
+        sectionTimings.push([name, Date.now() - startedAt]);
+      }
+    };
+    const describeTimings = () =>
+      sectionTimings.map(([name, ms]) => `${name}=${ms}ms`).join(" ") || "none";
 
     // 1. Ingestion & Document Quality
-    const [totalDocs, publishedDocs, failedDocs, parsingDocs, totalChunks, sampleChunks, failedDocList, failedDocsTotal, kbs, kbTotal] = await Promise.all([
+    const [totalDocs, publishedDocs, failedDocs, parsingDocs, totalChunks, sampleChunks, failedDocList, kbs, kbTotal] = await timed("ingestion-doc-quality", () => Promise.all([
       this.prisma.document.count({ where: { kb: nonPersonalKb } }),
       this.prisma.document.count({ where: { status: "published", kb: nonPersonalKb } }),
       this.prisma.document.count({ where: { status: "failed", kb: nonPersonalKb } }),
@@ -932,21 +944,32 @@ export class AdminController {
         take: limit,
         orderBy: { createdAt: "desc" }
       }),
-      this.prisma.document.count({ where: { status: "failed", kb: nonPersonalKb } }),
       this.prisma.knowledgeBase.findMany({
         where: { status: "active", ...nonPersonalKb },
-        include: {
-          _count: { select: { documents: true } },
-          documents: {
-            select: { id: true, status: true, _count: { select: { chunks: true } } }
-          }
-        },
+        select: { id: true, name: true, type: true, _count: { select: { documents: true } } },
         skip: offsetFor("kbs"),
         take: limit,
         orderBy: { createdAt: "asc" }
       }),
       this.prisma.knowledgeBase.count({ where: { status: "active", ...nonPersonalKb } })
-    ]);
+    ]));
+    // kbBreakdown 的 chunksCount/failedDocsCount 原通过 include 全量 documents +
+    // 每文档 _count.chunks 拉取（万级文档时一次请求多耗数秒并占满连接池）；
+    // 收敛为对当页 KB 的一次聚合下推。
+    const pageKbIds = kbs.map((kb: any) => kb.id);
+    const kbAggregates = pageKbIds.length
+      ? await timed("kb-breakdown-aggregate", () => this.prisma.$queryRawUnsafe<Array<{ kbId: string; chunks: number; failedDocs: number }>>(
+          `SELECT d."kbId" AS "kbId",
+                  count(c.id)::int AS chunks,
+                  count(*) FILTER (WHERE d.status = 'failed')::int AS "failedDocs"
+           FROM "Document" d
+           LEFT JOIN "Chunk" c ON c."documentId" = d.id
+           WHERE d."kbId" = ANY($1::uuid[])
+           GROUP BY d."kbId"`,
+          pageKbIds,
+        ))
+      : [];
+    const kbAggregateByKb = new Map(kbAggregates.map((row: any) => [row.kbId, row]));
 
     const avgChunkLength = sampleChunks.length
       ? Math.round(sampleChunks.reduce((acc, c) => acc + c.content.length, 0) / sampleChunks.length)
@@ -957,33 +980,36 @@ export class AdminController {
     let doclingOnline = false;
     let doclingLatencyMs = 0;
     const doclingUrl = process.env.PARSER_WORKER_URL || "http://127.0.0.1:8100";
-    try {
-      const t0 = Date.now();
-      const doclingRes = await fetch(`${doclingUrl.replace(/\/$/, "")}/health`, { signal: AbortSignal.timeout(2000) });
-      doclingLatencyMs = Date.now() - t0;
-      doclingOnline = doclingRes.ok;
-    } catch {
-      doclingOnline = false;
-    }
+    await timed("parser-health-probe", async () => {
+      try {
+        const t0 = Date.now();
+        const doclingRes = await fetch(`${doclingUrl.replace(/\/$/, "")}/health`, { signal: AbortSignal.timeout(2000) });
+        doclingLatencyMs = Date.now() - t0;
+        doclingOnline = doclingRes.ok;
+      } catch {
+        doclingOnline = false;
+      }
+    });
 
     // 2. GBrain Sources & Disk Materialization
     const repoBasePath = process.env.BRAIN_REPO_BASE_PATH || "/home/scottsun/.local/share/llmwiki/brain_repos";
     const uploadRoot = process.env.UPLOAD_ROOT || "/home/scottsun/.local/share/llmwiki/uploads";
     // 异步执行 du：execSync 会阻塞事件循环，且原实现按输出内容判断 -sb/-sk
     // 永远不会命中（输出里不含 "-sb"），导致单位换算错误。
-    const [repoBytes, uploadBytes] = await Promise.all([
+    const [repoBytes, uploadBytes] = await timed("disk-usage-du", () => Promise.all([
       dirBytes(repoBasePath),
       dirBytes(uploadRoot),
-    ]);
+    ]));
 
-    const personalSources = await db.brainSource.findMany({
-      where: { status: "active" },
-      // This endpoint runs with the requesting admin's RLS context. Traversing
-      // the required Document relation of another user's personal source makes
-      // Prisma throw when that document is hidden. The source's durable kind is
-      // enough to exclude personal and legacy private sources from telemetry.
-      select: { sourceKey: true, kind: true },
-    });
+    const personalSources: any[] = await timed("brain-source-scan", () =>
+      db.brainSource.findMany({
+        where: { status: "active" },
+        // This endpoint runs with the requesting admin's RLS context. Traversing
+        // the required Document relation of another user's personal source makes
+        // Prisma throw when that document is hidden. The source's durable kind is
+        // enough to exclude personal and legacy private sources from telemetry.
+        select: { sourceKey: true, kind: true },
+      }) as Promise<any[]>);
     const privateSourceKeys = new Set(
       personalSources
         .filter((source: any) => source.kind === "personal" || source.kind === "private")
@@ -993,7 +1019,7 @@ export class AdminController {
       status: "active",
       kind: { notIn: ["personal", "private"] },
     };
-    const [sources, sourcesTotal, sharedSourcesTotal, privateSourcesTotal] = await Promise.all([
+    const [sources, sourcesTotal, sharedSourcesTotal, privateSourcesTotal] = await timed("gbrain-sources", () => Promise.all([
       db.brainSource.findMany({
       where: safeSourceWhere,
       include: {
@@ -1006,7 +1032,7 @@ export class AdminController {
       db.brainSource.count({ where: safeSourceWhere }),
       db.brainSource.count({ where: { ...safeSourceWhere, kind: "shared" } }),
       db.brainSource.count({ where: { ...safeSourceWhere, kind: "private" } }),
-    ]);
+    ]));
     // Outbox privacy filter. The previous implementation loaded every personal
     // document id and passed them as an `IN (...)` list; with a 10万-document
     // personal knowledge base that exceeds PostgreSQL's bind-parameter limit
@@ -1053,16 +1079,17 @@ export class AdminController {
     };
 
     // 3. Scope Brain Quality & Derived Intelligence
-    const allScopeKeys = await db.brainScope.findMany({
-      where: { status: "active" },
-      select: { id: true, sourceKeys: true, strategy: true },
-    });
+    const allScopeKeys: any[] = await timed("brain-scope-scan", () =>
+      db.brainScope.findMany({
+        where: { status: "active" },
+        select: { id: true, sourceKeys: true, strategy: true },
+      }) as Promise<any[]>);
     const safeScopeIds = allScopeKeys
       .filter((scope: any) =>
         !(Array.isArray(scope.sourceKeys) ? scope.sourceKeys : []).some((key: string) => privateSourceKeys.has(key)),
       )
       .map((scope: any) => scope.id);
-    const [totalUsers, scopes, scopesTotal, derivedPages] = await Promise.all([
+    const [totalUsers, scopes, scopesTotal, derivedPages] = await timed("scope-brain-quality", () => Promise.all([
       this.prisma.user.count({ where: { status: "active" } }),
       db.brainScope.findMany({
         where: { status: "active", id: { in: safeScopeIds } },
@@ -1081,7 +1108,7 @@ export class AdminController {
         select: { id: true, slug: true, title: true, kind: true, scopeId: true, derivedFrom: true, updatedAt: true },
         take: 1000,
       })
-    ]);
+    ]));
 
     const safeScopeDescriptors = allScopeKeys.filter((scope: any) => safeScopeIds.includes(scope.id));
     const eagerScopesCount = safeScopeDescriptors.filter((s: any) => s.strategy === "eager").length;
@@ -1089,34 +1116,35 @@ export class AdminController {
     const scopeCompressionRatio = totalUsers ? Math.max(0, Math.round((1 - scopesTotal / totalUsers) * 100)) : 0;
 
     // 4. Two-tier Dream Maintenance
-    const dreamTelemetry = await this.brainCompilerService.getDreamTelemetry({
+    const dreamTelemetry = await timed("dream-telemetry", () => this.brainCompilerService.getDreamTelemetry({
       excludePrivate: true,
       runsPage: pageFor("dream"),
       runsLimit: limit,
-    });
+    }));
 
     // 5. Outbox & Queues
-    const [outboxTotal, outboxPending, outboxCompleted, outboxFailed, recentOutboxEvents, recentOutboxTotal] = await Promise.all([
+    const [outboxTotal, outboxPending, outboxCompleted, outboxFailed, recentOutboxEvents] = await timed("outbox-queues", () => Promise.all([
       countOutboxEvents(),
       countOutboxEvents("pending"),
       countOutboxEvents("completed"),
       countOutboxEvents("failed"),
       listOutboxEvents(offsetFor("outbox"), limit),
-      countOutboxEvents(),
-    ]);
+    ]));
 
     // 6. RAG & QA Stats
-    const [totalConversations, totalMessages, totalCitations] = await Promise.all([
+    const [totalConversations, totalMessages, totalCitations] = await timed("rag-qa-stats", () => Promise.all([
       this.prisma.conversation.count(),
       this.prisma.message.count(),
       this.prisma.citation.count()
-    ]);
+    ]));
 
-    const activeModelConfigs = await this.prisma.modelConfig.findMany({
+    const activeModelConfigs = await timed("model-configs", () => this.prisma.modelConfig.findMany({
       include: { provider: true },
       where: { provider: { enabled: true } }
-    });
-    const runtimeModelStatus = await this.modelConfigService.getRuntimeStatus();
+    }));
+    const runtimeModelStatus = await timed("model-runtime-status", () => this.modelConfigService.getRuntimeStatus());
+
+    this.telemetryLogger.debug(`section timings: ${describeTimings()}`);
 
     const formatBytes = (bytes: number) => {
       if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -1153,14 +1181,17 @@ export class AdminController {
         avgChunkLength,
         embeddingModel: process.env.GBRAIN_EMBEDDING_MODEL || "openai:BAAI/bge-m3",
         embeddingDimensions: 1024,
-        kbBreakdown: kbs.map((kb: any) => ({
-          id: kb.id,
-          name: kb.name,
-          type: kb.type,
-          docsCount: kb._count.documents,
-          chunksCount: kb.documents.reduce((sum: number, d: any) => sum + (d._count?.chunks || 0), 0),
-          failedDocsCount: kb.documents.filter((d: any) => d.status === "failed").length
-        })),
+        kbBreakdown: kbs.map((kb: any) => {
+          const agg = kbAggregateByKb.get(kb.id) || { chunks: 0, failedDocs: 0 };
+          return {
+            id: kb.id,
+            name: kb.name,
+            type: kb.type,
+            docsCount: kb._count.documents,
+            chunksCount: Number(agg.chunks) || 0,
+            failedDocsCount: Number(agg.failedDocs) || 0,
+          };
+        }),
         failedDocsList: failedDocList.map((d: any) => ({
           id: d.id,
           kbId: d.kbId,
@@ -1171,7 +1202,7 @@ export class AdminController {
         })),
         pagination: {
           kbBreakdown: { page: pageFor("kbs"), limit, total: kbTotal, totalPages: Math.max(1, Math.ceil(kbTotal / limit)) },
-          failedDocs: { page: pageFor("failedDocs"), limit, total: failedDocsTotal, totalPages: Math.max(1, Math.ceil(failedDocsTotal / limit)) },
+          failedDocs: { page: pageFor("failedDocs"), limit, total: failedDocs, totalPages: Math.max(1, Math.ceil(failedDocs / limit)) },
         }
       },
       gbrainSources: {
@@ -1245,7 +1276,7 @@ export class AdminController {
           processedAt: e.processedAt,
           payload: e.payload
         })),
-        pagination: { page: pageFor("outbox"), limit, total: recentOutboxTotal, totalPages: Math.max(1, Math.ceil(recentOutboxTotal / limit)) },
+        pagination: { page: pageFor("outbox"), limit, total: outboxTotal, totalPages: Math.max(1, Math.ceil(outboxTotal / limit)) },
         queueJobCounts: dreamTelemetry.queueCounts || { waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0 },
         maintenanceFailures: dreamTelemetry.maintenanceFailures || []
       },

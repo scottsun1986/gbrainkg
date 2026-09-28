@@ -125,19 +125,35 @@ export function SystemStatusPanel({ capabilities = [] }: { capabilities?: string
         gap: 16
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{
-            width: 36, height: 36, borderRadius: '50%',
-            background: s.healthStatus === 'healthy' ? 'var(--green)' : s.healthStatus === 'warning' ? 'var(--red)' : 'var(--amber)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 16
-          }}>
-            {s.healthStatus === 'healthy' ? '✓' : '!'}
-          </div>
+          {/* telemetry 未返回前不得用兜底值伪装成"降级/离线"告警 */}
+          {!data ? (
+            <div style={{
+              width: 36, height: 36, borderRadius: '50%',
+              background: 'var(--surface-3, var(--surface))',
+              border: '1px solid var(--line)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 16, color: 'var(--ink-3)'
+            }}>
+              …
+            </div>
+          ) : (
+            <div style={{
+              width: 36, height: 36, borderRadius: '50%',
+              background: s.healthStatus === 'healthy' ? 'var(--green)' : s.healthStatus === 'warning' ? 'var(--red)' : 'var(--amber)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 16
+            }}>
+              {s.healthStatus === 'healthy' ? '✓' : '!'}
+            </div>
+          )}
           <div>
             <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--ink)' }}>
-              全流程系统健康度：{s.healthStatus === 'healthy' ? '运行健康 (Healthy)' : s.healthStatus === 'warning' ? '存在告警 (Warning)' : '部分降级 (Degraded)'}
+              全流程系统健康度：{!data
+                ? (loading ? '遥测采集中…' : '遥测未加载（点击"刷新数据"重试）')
+                : s.healthStatus === 'healthy' ? '运行健康 (Healthy)' : s.healthStatus === 'warning' ? '存在告警 (Warning)' : '部分降级 (Degraded)'}
             </div>
             <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>
-              文档解析率 <b>{inq.parseSuccessRate ?? 100}%</b> · Docling Worker <b>{s.doclingStatus?.online ? `在线 (${s.doclingStatus?.latencyMs}ms)` : '离线'}</b> · 物理仓库 <b>{s.storageUsage?.repoFormatted || '—'}</b> · Outbox <b>{s.outboxStatus?.pending || 0} 积压</b>
+              {!data
+                ? '文档解析率 — · Docling Worker — · 物理仓库 — · Outbox —'
+                : <>文档解析率 <b>{inq.parseSuccessRate ?? 100}%</b> · Docling Worker <b>{s.doclingStatus?.online ? `在线 (${s.doclingStatus?.latencyMs}ms)` : '离线'}</b> · 物理仓库 <b>{s.storageUsage?.repoFormatted || '—'}</b> · Outbox <b>{s.outboxStatus?.pending || 0} 积压</b></>}
             </div>
           </div>
         </div>
@@ -207,7 +223,9 @@ export function SystemStatusPanel({ capabilities = [] }: { capabilities?: string
           <div style={{ padding: '10px 12px', background: 'var(--surface-2)', borderRadius: 6, border: '1px solid var(--line-2)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--ink-3)', marginBottom: 4 }}>
               <span>1. 文档摄入解析</span>
-              <span className="badge ok" style={{ fontSize: 9.5 }}>Docling {s.doclingStatus?.latencyMs || 0}ms</span>
+              <span className={`badge ${s.doclingStatus?.online ? 'ok' : ''}`} style={{ fontSize: 9.5, ...(s.doclingStatus?.online ? {} : { background: 'var(--surface-3, var(--surface))', color: 'var(--ink-3)' }) }}>
+                {!data ? 'Docling —' : s.doclingStatus?.online ? `Docling ${s.doclingStatus?.latencyMs}ms` : 'Docling 离线'}
+              </span>
             </div>
             <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)' }}>{inq.totalDocuments || 0} 份文档已解析</div>
             <div style={{ fontSize: 10.5, color: 'var(--ink-4)', marginTop: 2 }}>Docx / PPT / PDF 多格式支持</div>

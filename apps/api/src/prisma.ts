@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { withRlsContext } from './db/rls-prisma';
 
@@ -56,6 +57,18 @@ if (process.env.DATABASE_URL_APP && !process.env.LLMWIKI_FORCE_MIGRATOR_URL) {
 // time" under load (the API shares PostgreSQL with GBrain, the parser worker and
 // every BullMQ consumer). ENABLE the bound by setting PRISMA_CONNECTION_LIMIT;
 // an explicit value already present in DATABASE_URL always wins.
+//
+// RLS enforcement makes every standalone query an interactive transaction, and
+// background BullMQ consumers legitimately hold a connection while a job runs.
+// On small boxes the num_cpus-based default (5-9) is starved by those workers,
+// so interactive admin/reader requests queue for tens of seconds. Floor the
+// default at 16 unless an operator explicitly configures something else.
+const DEFAULT_POOL_FLOOR = 16;
+if (!process.env.PRISMA_CONNECTION_LIMIT) {
+  process.env.PRISMA_CONNECTION_LIMIT = String(
+    Math.max(DEFAULT_POOL_FLOOR, (os.cpus().length || 2) * 2 + 1),
+  );
+}
 function withConnectionPoolParams(url: string | undefined): string | undefined {
   if (!url || !/^postgres(ql)?:\/\//i.test(url)) return url;
   if (/[?&]connection_limit=/.test(url)) return url;
