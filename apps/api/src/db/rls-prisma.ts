@@ -42,9 +42,10 @@ export function withRlsContext(base: PrismaClient): PrismaClient {
       if (typeof tx?.$executeRaw !== 'function') return fn(tx);
       await tx.$executeRaw`SELECT set_config('app.user_id', ${userId}, true), set_config('app.service', ${service}, true)`;
       return fn(tx);
-    }, options ?? {
+    }, {
       maxWait: Number(process.env.RLS_TX_MAX_WAIT_MS || 20_000),
       timeout: Number(process.env.RLS_TX_TIMEOUT_MS || 30_000),
+      ...(options ?? {}),
     });
   };
 

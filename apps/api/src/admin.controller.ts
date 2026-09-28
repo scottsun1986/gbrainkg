@@ -707,7 +707,7 @@ export class AdminController {
                    FROM jsonb_array_elements_text(cj."inputEvidenceIds"::jsonb) AS e(id)
                    JOIN "Document" d ON d.id::text = e.id
                    JOIN "KnowledgeBase" kb ON d."kbId" = kb.id
-                   WHERE kb.type = 'personal' AND d."ownerUserId" <> $1
+                   WHERE kb.type = 'personal' AND kb."ownerUserId" <> $1::uuid
                  )`,
               adminId,
             ).then((rows: any[]) => Number(rows?.[0]?.count ?? 0))
