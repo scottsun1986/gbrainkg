@@ -449,15 +449,30 @@ export class BrainRepoAdapter {
         : {}),
       PATH: `${dirname(this.gbrainBin)}:/usr/local/bin:/usr/bin:${process.env.PATH || ''}`,
     };
-    // Prisma accepts the `schema` query parameter, but the GBrain CLI treats
-    // it as a PostgreSQL runtime setting and fails with “unrecognized
-    // configuration parameter schema”. Keep the application URL untouched;
-    // only normalize the child-process environment used by GBrain.
+    // Prisma accepts connection-pool query parameters (`schema`,
+    // `connection_limit`, `pool_timeout`, `connect_timeout`, …) that the GBrain
+    // CLI rejects as unknown PostgreSQL runtime settings (“unrecognized
+    // configuration parameter …”), which fails EVERY child command with exit
+    // code 1 once apps/api's pool bound has been folded into DATABASE_URL.
+    // Keep the application URL untouched; strip the Prisma-only parameters from
+    // the child-process environment used by GBrain.
     const databaseUrl = process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL;
     if (databaseUrl) {
-      const normalizedDatabaseUrl = databaseUrl
-        .replace(/([?&])schema=[^&]*&?/i, "$1")
-        .replace(/[?&]$/, "");
+      const prismaOnlyParams = [
+        'schema',
+        'connection_limit',
+        'pool_timeout',
+        'connect_timeout',
+        'statement_cache_size',
+        'pool_timeout_error_max_age',
+      ];
+      let normalizedDatabaseUrl = databaseUrl;
+      for (const param of prismaOnlyParams) {
+        normalizedDatabaseUrl = normalizedDatabaseUrl
+          .replace(new RegExp(`([?&])${param}=[^&]*&?`, 'i'), '$1')
+          .replace(new RegExp(`([?&])${param}=[^&]*`, 'i'), '');
+      }
+      normalizedDatabaseUrl = normalizedDatabaseUrl.replace(/[?&]+$/, '').replace(/\?&/, '?');
       // GBrain prefers GBRAIN_DATABASE_URL over DATABASE_URL. Normalize both
       // planes so a Prisma-only `schema=public` parameter cannot make the CLI
       // use a different connection string from the one we just validated.
