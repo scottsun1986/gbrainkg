@@ -113,6 +113,38 @@ async function dirBytes(path: string): Promise<number> {
   }
 }
 
+// du 是全树扫描：生产 uploads 目录含数万小文件，IO 压力下单次 30~90 秒，
+// 曾把每次 status-telemetry 请求阻塞到分钟级。改为后台周期采样（默认
+// 10 分钟，DISK_USAGE_SAMPLE_MS 可调），请求只读最近一次采样值——面板
+// 展示磁盘占用不需要秒级新鲜度。
+const diskUsageSamples = new Map<string, { bytes: number; sampledAt: number }>();
+const diskUsageRefreshMs = Math.max(
+  60_000,
+  Number(process.env.DISK_USAGE_SAMPLE_MS || 10 * 60_000),
+);
+let diskUsageInflight: Promise<void> | null = null;
+async function refreshDiskUsageSamples(paths: string[]): Promise<void> {
+  const now = Date.now();
+  const stale = paths.filter(
+    (p) => !diskUsageSamples.get(p) || now - (diskUsageSamples.get(p) as { sampledAt: number }).sampledAt >= diskUsageRefreshMs,
+  );
+  if (!stale.length) return;
+  diskUsageInflight ??= (async () => {
+    try {
+      for (const p of stale) {
+        const bytes = await dirBytes(p);
+        diskUsageSamples.set(p, { bytes, sampledAt: Date.now() });
+      }
+    } finally {
+      diskUsageInflight = null;
+    }
+  })();
+  return diskUsageInflight;
+}
+function cachedDirBytes(path: string): number {
+  return diskUsageSamples.get(path)?.bytes ?? 0;
+}
+
 // Keep the admin directory's public shape explicit. A User model may gain new
 // authentication fields over time; spreading a Prisma User into an HTTP reply
 // would expose them by default.
@@ -1065,12 +1097,10 @@ export class AdminController {
     // 2. GBrain Sources & Disk Materialization
     const repoBasePath = process.env.BRAIN_REPO_BASE_PATH || "/home/scottsun/.local/share/llmwiki/brain_repos";
     const uploadRoot = process.env.UPLOAD_ROOT || "/home/scottsun/.local/share/llmwiki/uploads";
-    // 异步执行 du：execSync 会阻塞事件循环，且原实现按输出内容判断 -sb/-sk
-    // 永远不会命中（输出里不含 "-sb"），导致单位换算错误。
-    const [repoBytes, uploadBytes] = await timed("disk-usage-du", () => Promise.all([
-      dirBytes(repoBasePath),
-      dirBytes(uploadRoot),
-    ]));
+    // 磁盘占用读后台采样缓存（首次请求会异步预热，返回 0 直到采样完成）。
+    void refreshDiskUsageSamples([repoBasePath, uploadRoot]);
+    const repoBytes = cachedDirBytes(repoBasePath);
+    const uploadBytes = cachedDirBytes(uploadRoot);
 
     const personalSources: any[] = await timed("brain-source-scan", () =>
       db.brainSource.findMany({
