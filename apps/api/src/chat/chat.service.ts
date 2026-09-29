@@ -66,7 +66,7 @@ import { RetrievalArmsService } from "./retrieval-arms";
 import { FusionRerankService } from "./fusion-rerank";
 import { selectDiverseSearchCitations } from "./search-result-diversity";
 import { answerStyleRule } from "./answer-style";
-import { CitationAssemblyService } from "./citation-assembly";
+import { CitationAssemblyService, mergeCitationsByDocument } from "./citation-assembly";
 import { QueryRewriterService, type RetrievalRequest } from "./query-rewriter";
 
 // Re-export shared pure helpers (moved to retrieval-arms) so the public API is unchanged.
@@ -4127,6 +4127,24 @@ export class ChatService {
         `Answer context bounded to ${contextHardCap} tokens: truncated ${hardCapTruncated} and dropped ${hardCapDropped} citation(s), keeping ${orderedCitations.length}.`,
       );
     }
+    // Document-level merge: evidence selection keeps multiple chunks of one
+    // document on purpose (multi-section / multi-hop coverage), but numbering
+    // each chunk as its own source made the same document appear repeatedly in
+    // the prompt sources and the client citation list, with the model citing
+    // one document under several markers. One document = one source number
+    // from here on; chunk texts are concatenated under section anchors.
+    const citationsBeforeMerge = orderedCitations.length;
+    if (process.env.CHAT_MERGE_SAME_DOC_CITATIONS !== 'false') {
+      orderedCitations = mergeCitationsByDocument(orderedCitations);
+    }
+    if (orderedCitations.length < citationsBeforeMerge) {
+      trace.warn(
+        'citation_merge',
+        '同文档来源合并',
+        `已将 ${citationsBeforeMerge} 条分块引用合并为 ${orderedCitations.length} 个文档级来源`,
+        { before: citationsBeforeMerge, after: orderedCitations.length },
+      );
+    }
     queryResult.citations = orderedCitations;
     // Diagnostic only: the selected-source list repeats on every turn, so it
     // must not pollute warn-level logs (operators triage warns as incidents).
@@ -4148,7 +4166,12 @@ export class ChatService {
             const section = cit.section ? (isEnglishQuery ? `\nSection: ${cit.section}` : `\n定位：${cit.section}`) : "";
             const rawText = extractRawChunkText((cit.context || cit.snippet || "").trim());
             const maxChunkLen = Number(process.env.CHAT_CHUNK_MAX_CHARS || 6000);
-            const content = smartTruncateChunkText(rawText, maxChunkLen);
+            // Multi-chunk merged sources were individually bounded by the
+            // token budget before the merge; re-truncating the concatenation
+            // to one chunk's cap would silently drop the later sections.
+            const content = Number(cit.mergedChunkCount) > 1
+              ? rawText
+              : smartTruncateChunkText(rawText, maxChunkLen);
             const truthTag = cit.isCompiledTruth
               ? (isEnglishQuery ? " [Compiled Truth / 编译真理]" : " 【编译真理·高优先】")
               : (cit.isCompiledDerived

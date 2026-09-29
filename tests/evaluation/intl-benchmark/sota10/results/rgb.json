@@ -18,18 +18,16 @@
      "21 Sept."
     ]
    ],
-   "answer": "The Amazing Race Season 34 premiered on September 21, 2022 [1][3][16].\nThe premiere occurred on a Wednesday at 10/9c on CBS [16]. The season concluded on December 7, 2022 [1][2][3].",
+   "answer": "The Amazing Race Season 34 premiered on September 21, 2022 [1][2].",
    "citations": [
     "rgb-doc 106 #1",
-    "rgb-doc 106 #1",
-    "rgb-doc 106 #1",
-    "rgb-doc 106 #0"
+    "rgb-doc 106 #4"
    ],
-   "ttft": 11.09,
-   "latency": 12.13,
+   "ttft": 10.53,
+   "latency": 10.74,
    "error": null,
    "containment": 0.0,
-   "f1": 0.09302325581395349,
+   "f1": 0.13793103448275865,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0,
@@ -49,16 +47,14 @@
      "10 Mar."
     ]
    ],
-   "answer": "Scream VI was released in theaters on March 10, 2023 [3][4][17], and became available for digital purchase and streaming on Paramount+ on April 25, 2023 [1][2][3].",
+   "answer": "Scream VI was released in theaters on March 10, 2023 [3]. It became available for digital purchase and streaming on Paramount+ on April 25, 2023 [1][2].",
    "citations": [
     "rgb-doc 239 #2",
     "rgb-doc 239 #3",
-    "rgb-doc 239 #0",
-    "rgb-doc 239 #0",
-    "rgb-doc 239 #1"
+    "rgb-doc 239 #0"
    ],
-   "ttft": 14.05,
-   "latency": 14.26,
+   "ttft": 13.22,
+   "latency": 13.48,
    "error": null,
    "containment": 0.0,
    "f1": 0.1111111111111111,
@@ -74,16 +70,16 @@
    "gold": [
     "Shad Gaspard"
    ],
-   "answer": "Shad Gaspard is posthumously honored with the 2022 Warrior Award [1][3]. The award recognizes his heroic act of selflessness, where he instructed lifeguards to save his son before himself during a drowning incident [1][3].",
+   "answer": "Shad Gaspard is being honored posthumously with the 2022 Warrior Award [1][2]. The award will be presented as part of the WWE Hall of Fame Induction Ceremony on April 1 at the American Airlines Center in Dallas [1].",
    "citations": [
     "rgb-doc 37 #0",
     "rgb-doc 37 #1"
    ],
-   "ttft": 12.34,
-   "latency": 12.6,
+   "ttft": 12.93,
+   "latency": 13.14,
    "error": null,
    "containment": 1.0,
-   "f1": 0.12903225806451613,
+   "f1": 0.11764705882352941,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0,
@@ -105,13 +101,13 @@
      "22 July, 2022"
     ]
    ],
-   "answer": "Neal Lemlein passed away on July 22, 2022 [1][3].",
+   "answer": "Neal Lemlein passed away on July 22, 2022 [1][2].",
    "citations": [
     "rgb-doc 89 #0",
     "rgb-doc 89 #1"
    ],
-   "ttft": 10.8,
-   "latency": 11.0,
+   "ttft": 8.43,
+   "latency": 8.63,
    "error": null,
    "containment": 0.0,
    "f1": 0.1875,
@@ -127,17 +123,15 @@
    "gold": [
     "Virginia Tech"
    ],
-   "answer": "The Virginia Tech Hokies won the 2022 ACC men's basketball tournament [1][2][4].",
+   "answer": "Virginia Tech won the 2022 ACC men's basketball tournament [1].",
    "citations": [
-    "rgb-doc 32 #0",
-    "rgb-doc 32 #0",
-    "rgb-doc 32 #1"
+    "rgb-doc 32 #0"
    ],
-   "ttft": 10.55,
-   "latency": 10.77,
+   "ttft": 9.09,
+   "latency": 9.29,
    "error": null,
    "containment": 1.0,
-   "f1": 0.3636363636363636,
+   "f1": 0.4,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0,
@@ -150,17 +144,17 @@
    "gold": [
     "ChatGPT"
    ],
-   "answer": "Microsoft has incorporated ChatGPT-like technology from OpenAI, specifically a chatbot feature based on OpenAI's GPT-4, into the new Bing [1][4]. This AI uses technology that is faster and more advanced than publicly available ChatGPT and has been fine-tuned by Microsoft to be optimized for search queries [11].",
+   "answer": "Microsoft has incorporated ChatGPT-like artificial intelligence technology based on OpenAI's GPT-4 into the new Bing [1][3]. This AI was fine-tuned by Microsoft to be optimized for search queries [10].",
    "citations": [
     "rgb-doc 250 #0",
     "rgb-doc 250 #3",
     "rgb-doc 250 #1"
    ],
-   "ttft": 14.15,
-   "latency": 14.35,
+   "ttft": 9.62,
+   "latency": 9.82,
    "error": null,
    "containment": 1.0,
-   "f1": 0.04545454545454545,
+   "f1": 0.0,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0,
@@ -173,14 +167,14 @@
    "gold": [
     "22.99 per month"
    ],
-   "answer": "The YouTube Premium Family plan now costs $22.99 per month in the U.S. [1][2][3]. This represents an increase from the previous price of $17.99 per month [1][3].",
+   "answer": "The YouTube Premium Family plan now costs $22.99 per month in the U.S. [1][2][3]. This represents an increase from the previous price of $17.99, a 28% rise [1][3].\n",
    "citations": [
     "rgb-doc 192 #1",
     "rgb-doc 192 #0",
     "rgb-doc 192 #2"
    ],
-   "ttft": 10.53,
-   "latency": 10.71,
+   "ttft": 11.08,
+   "latency": 19.71,
    "error": null,
    "containment": 1.0,
    "f1": 0.25,
@@ -196,15 +190,16 @@
    "gold": [
     "Brent Pry"
    ],
-   "answer": "Brent Pry is the head coach of Virginia Tech football [1].",
+   "answer": "Brent Pry is the head coach of Virginia Tech football [1][4]. He was named the new head coach, replacing former coach Justin Fuente [1][4]. Pry signed a six-year contract with the program in December [4].",
    "citations": [
-    "rgb-doc 120 #0"
+    "rgb-doc 120 #0",
+    "rgb-doc 120 #1"
    ],
-   "ttft": 66.26,
-   "latency": 66.45,
+   "ttft": 95.18,
+   "latency": 101.39,
    "error": null,
    "containment": 1.0,
-   "f1": 0.3636363636363636,
+   "f1": 0.13333333333333333,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0,
@@ -227,16 +222,16 @@
    "answer": "Based on the provided reference materials, the relevant information is not available.",
    "citations": [
     "rgb-rej 19 #0",
-    "rgb-rej 19 #0",
-    "rgb-rej 19 #0",
     "rgb-rej 19 #3",
     "rgb-rej 19 #4",
     "rgb-rej 24 #2",
     "rgb-rej 297 #1",
-    "rgb-rej 24 #4"
+    "rgb-rej 24 #4",
+    "rgb-rej 295 #4",
+    "rgb-rej 220 #0"
    ],
-   "ttft": 18.73,
-   "latency": 30.94,
+   "ttft": 22.53,
+   "latency": 34.76,
    "error": null,
    "containment": 0.0,
    "f1": 0.0,
@@ -258,18 +253,18 @@
      "7 May."
     ]
    ],
-   "answer": "Based on the provided reference materials, the relevant information is not available.The championship game of the 2023 Patriot League Men’s Lacrosse Championship was scheduled for May 7, 2023, at 12:00 PM [2].The championship game of the Patriot League Men’s Lacrosse Championship 2023 was on May 7, 2023, at 12:00 PM [2].",
+   "answer": "The championship game was on 5/7/2023 at 12:00 PM [2]. It was played against Loyola University Maryland and broadcast on CBS Sports Network [2].",
    "citations": [
     "rgb-rej 225 #0"
    ],
-   "ttft": 56.42,
-   "latency": 62.63,
+   "ttft": 79.48,
+   "latency": 79.73,
    "error": null,
    "containment": 0.0,
-   "f1": 0.14035087719298245,
+   "f1": 0.0,
    "em": 0.0,
-   "refusal": true,
-   "reject_correct": 1.0
+   "refusal": false,
+   "reject_correct": 0.0
   },
   {
    "qid": "reject-24",
@@ -290,16 +285,16 @@
    "answer": "Based on the provided reference materials, the relevant information is not available.",
    "citations": [
     "rgb-rej 24 #2",
-    "rgb-rej 24 #2",
-    "rgb-rej 24 #2",
     "rgb-rej 24 #0",
     "rgb-rej 24 #4",
     "rgb-rej 220 #0",
     "rgb-rej 220 #1",
-    "rgb-rej 297 #4"
+    "rgb-rej 297 #4",
+    "rgb-rej 220 #4",
+    "rgb-rej 103 #2"
    ],
-   "ttft": 37.88,
-   "latency": 50.1,
+   "ttft": 47.87,
+   "latency": 60.09,
    "error": null,
    "containment": 0.0,
    "f1": 0.0,
@@ -314,16 +309,16 @@
    "gold": [
     "Vision Pro"
    ],
-   "answer": "Apple's first headset is likely named \"Apple Reality Pro\" [1]. The name aligns with trademark filings for \"Reality Pro,\" \"Reality One,\" and \"Reality Processor\" [2][1]. The first device, under the internal code \"N301,\" is this high-end model, which is a rival to Meta's Quest Pro [1].",
+   "answer": "The name of Apple's first headset is likely \"Apple Reality Pro\" [1]. Additionally, Apple has trademarked related names including \"Reality One\" and \"Reality Processor\" for its upcoming headset devices [2].",
    "citations": [
     "rgb-rej 295 #0",
     "rgb-rej 295 #4"
    ],
-   "ttft": 46.38,
-   "latency": 46.57,
+   "ttft": 47.34,
+   "latency": 47.56,
    "error": null,
    "containment": 0.0,
-   "f1": 0.048780487804878044,
+   "f1": 0.06896551724137931,
    "em": 0.0,
    "refusal": false,
    "reject_correct": 0.0
@@ -335,14 +330,14 @@
    "gold": [
     "TMRW Sports"
    ],
-   "answer": "The new venture is a technology-forward golf league called TGL, featuring six teams competing in indoor stadium events from January to April [1][5].\nIt is a player-led digital project designed as a complement to the PGA Tour schedule, launching in 2024 [1][2]. The matches will use simulators for longer shots and a real green for chipping and putting, with private funding and high-profile investors like Arthur Blank and John Henry [5].",
+   "answer": "The new venture is TGL, a technology-forward golf league featuring stadium-style events designed to complement the PGA Tour schedule [1][5].\nIt will launch in 2024 as a series of one-day events with a live audience, held in partnership with the PGA Tour [1][2]. The matches will feature simulators for long shots and authentic greens for chipping and put [5]. The league will consist of six teams competing five times over a 15-week schedule, likely from January to April [5]. The project is a player-led initiative backed by private funding, corporate partners, and investors including Tiger Woods and Rory McIlroy [1][2][5].",
    "citations": [
     "rgb-rej 103 #0",
     "rgb-rej 103 #1",
     "rgb-rej 103 #2"
    ],
-   "ttft": 47.23,
-   "latency": 48.69,
+   "ttft": 46.2,
+   "latency": 48.7,
    "error": null,
    "containment": 0.0,
    "f1": 0.0,
@@ -357,19 +352,14 @@
    "gold": [
     "Costco"
    ],
-   "answer": "Based on the provided reference materials, the specific company that won Yahoo Finance's 2022 \"Company of the Year\" Award is not recorded.Based on the provided reference materials, the relevant information is not available.",
+   "answer": "Based on the provided reference materials, the relevant information is not available. The materials document Yahoo Finance's \"Company of the Year\" awards for 2014 [1], 2015 [1], 2016 [2], 2017 [2], 2018 [1], 2019 [2], 2020 [2][13], and 2021 [2], but they do not record the winner for the year 2022.Based on the provided reference materials, the relevant information is not available.",
    "citations": [
     "rgb-rej 220 #1",
     "rgb-rej 220 #0",
-    "rgb-rej 220 #1",
-    "rgb-rej 220 #0",
-    "rgb-rej 220 #2",
-    "rgb-rej 295 #0",
-    "rgb-rej 24 #0",
-    "rgb-rej 19 #2"
+    "rgb-rej 220 #3"
    ],
-   "ttft": 30.24,
-   "latency": 36.44,
+   "ttft": 31.99,
+   "latency": 32.2,
    "error": null,
    "containment": 0.0,
    "f1": 0.0,
@@ -384,19 +374,19 @@
    "gold": [
     "Ralph Lauren"
    ],
-   "answer": "The designer of Naomi Biden's wedding ceremony dress is not recorded in the provided reference materials. However, the designer of her reception dress was Alexandra O'Neill of the brand Markarian [1][15].Based on the provided reference materials, the designer of Naomi Biden's ceremony wedding dress is not recorded. The materials confirm that her reception dress was a custom white beaded fringe design by Alexandra O'Neill of the brand Markarian [1][15].",
+   "answer": "Based on the provided reference materials, Naomi Biden's wedding reception dress was designed by Alexandra O'Neill of Markarian [1][13]. The materials do not explicitly state who designed the dress she wore for the wedding ceremony itself.",
    "citations": [
     "rgb-rej 205 #0",
     "rgb-rej 205 #2"
    ],
-   "ttft": 33.77,
-   "latency": 33.95,
+   "ttft": 20.77,
+   "latency": 20.99,
    "error": null,
    "containment": 0.0,
    "f1": 0.0,
    "em": 0.0,
-   "refusal": true,
-   "reject_correct": 1.0
+   "refusal": false,
+   "reject_correct": 0.0
   },
   {
    "qid": "reject-297",
@@ -405,35 +395,31 @@
    "gold": [
     "Wyndham Clark"
    ],
-   "answer": "Based on the provided reference materials, the winner of the 2023 U.S. Open golf tournament is not explicitly stated. The sources discuss tournament details, players, and odds, but do not record the final outcome or champion [1][2][3][4]. One source mentions that \"World No. 1 Scottie Scheffler finished third, three shots behind Clark,\" which implies Clark was the leader at that point, but it does not confirm the final victory [13].",
+   "answer": "Based on the provided reference materials, the relevant information is not available.Wyndham Clark won the 2023 U.S. Open golf tournament [13]. He finished three shots ahead of second-place Scottie Scheffler [13].",
    "citations": [
-    "rgb-rej 297 #1",
-    "rgb-rej 297 #2",
-    "rgb-rej 297 #4",
-    "rgb-rej 297 #0",
     "rgb-rej 297 #3"
    ],
-   "ttft": 31.1,
-   "latency": 37.3,
+   "ttft": 21.59,
+   "latency": 33.81,
    "error": null,
-   "containment": 0.0,
-   "f1": 0.031746031746031744,
+   "containment": 1.0,
+   "f1": 0.07142857142857144,
    "em": 0.0,
-   "refusal": false,
-   "reject_correct": 0.0
+   "refusal": true,
+   "reject_correct": 1.0
   },
   {
    "qid": "int-90",
    "type": "rgb/integration",
    "question": "What is the datesof the 2023 and 2022 NBA Draft?",
    "gold": "June 22",
-   "answer": "The 2023 NBA draft was held on June 22, 2023 [1], and the 2022 NBA draft was held on Thursday, June 23 [3].",
+   "answer": "The 2023 NBA Draft was held on June 22, 2023 [1], and the 2022 NBA Draft was held on June 23, 2022 [3].",
    "citations": [
     "rgb-int 90 #0",
     "rgb-int 90 #1"
    ],
-   "ttft": 47.41,
-   "latency": 47.59,
+   "ttft": 47.34,
+   "latency": 47.56,
    "error": null,
    "containment": 1.0,
    "f1": 0.1904761904761905,
@@ -447,16 +433,16 @@
    "type": "rgb/integration",
    "question": "What chips do the iPhone 14 and iPhone 14 pro have?",
    "gold": "A15",
-   "answer": "The iPhone 14 is equipped with the A15 chip, while the iPhone 14 Pro features the new A16 chip [1][2].",
+   "answer": "The iPhone 14 and iPhone 14 Plus have the A15 chip, while the iPhone 14 Pro and iPhone 14 Pro Max have the A16 chip [1][2].",
    "citations": [
     "rgb-int 12 #0",
     "rgb-int 12 #1"
    ],
-   "ttft": 50.62,
-   "latency": 50.82,
+   "ttft": 30.85,
+   "latency": 31.05,
    "error": null,
    "containment": 1.0,
-   "f1": 0.125,
+   "f1": 0.0909090909090909,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0,
@@ -467,17 +453,18 @@
    "type": "rgb/integration",
    "question": "Who trained LLaMA and Alpaca? ",
    "gold": "Meta",
-   "answer": "Based on the provided reference materials, the relevant information is not available.LLaMA was trained by Meta AI [7], and Alpaca was trained by Stanford University [7].",
+   "answer": "The Stanford Alpaca project trained the Alpaca models, and LLaMA can be fine-tuned on the Alpaca dataset using LoRA [7][3].",
    "citations": [
+    "rgb-int 77 #0",
     "rgb-int 77 #1"
    ],
-   "ttft": 20.51,
-   "latency": 26.72,
+   "ttft": 17.77,
+   "latency": 17.97,
    "error": null,
    "containment": 1.0,
-   "f1": 0.08695652173913045,
+   "f1": 0.11764705882352941,
    "em": 0.0,
-   "refusal": true,
+   "refusal": false,
    "citation_hit": 1.0,
    "rgb_follow_evidence": 1.0
   },
@@ -486,18 +473,18 @@
    "type": "rgb/integration",
    "question": "Who killed Shinzo Abe and when it happened?",
    "gold": "Tetsuya Yamagami",
-   "answer": "Tetsuya Yamagami killed Shinzo Abe on Friday, July 8, 2022 [1][3]. \nPolice arrested Tetsuya Yamagami, a 41-year-old unemployed former sailor, at the scene after he shot Abe from behind using a handmade firearm while Abe was speaking at a campaign event in the western city of Nara [1][5]. Abe was pronounced dead at the hospital at 5:03 pm on that day [2].",
+   "answer": "Tetsuya Yamagami killed Shinzo Abe on Friday, July 8, 2022 [1][3]. Yamagami was a 41-year-old unemployed former sailor who assassinated Abe with a handmade firearm while Abe was speaking at a campaign event in Nara [1][5]. Abe was pronounced dead later that day at 5:03 pm, around five and a half hours after being shot [2][3].",
    "citations": [
     "rgb-int 43 #0",
     "rgb-int 43 #3",
     "rgb-int 43 #1",
     "rgb-int 43 #4"
    ],
-   "ttft": 43.86,
-   "latency": 45.59,
+   "ttft": 70.58,
+   "latency": 70.8,
    "error": null,
    "containment": 1.0,
-   "f1": 0.07272727272727272,
+   "f1": 0.07843137254901959,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0,
@@ -508,19 +495,21 @@
    "type": "rgb/counterfactual",
    "question": "When was Pixel 6 announced?",
    "gold": "October 19, 2011",
-   "answer": "Based on the provided reference materials, the relevant information is not available.The Google Pixel 6 was officially announced on October 19, 2021 [1][18].",
+   "answer": "The Google Pixel 6 was announced on **October 19, 2021**, at the Pixel Fall Launch event [1][4][6][16].",
    "citations": [
     "rgb-fact 88 #3",
-    "rgb-fact 88 #3"
+    "rgb-fact 88 #0",
+    "rgb-fact 88 #4",
+    "rgb-fact 88 #2"
    ],
-   "ttft": 36.82,
-   "latency": 49.02,
+   "ttft": 12.82,
+   "latency": 13.02,
    "error": null,
    "containment": 0.0,
-   "f1": 0.1739130434782609,
+   "f1": 0.23529411764705882,
    "em": 0.0,
-   "refusal": true,
-   "citation_hit": 0.0,
+   "refusal": false,
+   "citation_hit": 1.0,
    "rgb_follow_evidence": 0.0
   },
   {
@@ -531,16 +520,16 @@
    "answer": "Based on the provided reference materials, the relevant information is not available.",
    "citations": [
     "rgb-fact 28 #1",
-    "rgb-fact 28 #1",
     "rgb-fact 28 #3",
     "rgb-fact 28 #0",
     "rgb-fact 28 #4",
     "rgb-doc 120 #0",
     "rgb-doc 37 #2",
-    "rgb-doc 37 #0"
+    "rgb-doc 37 #0",
+    "rgb-doc 37 #1"
    ],
-   "ttft": 29.91,
-   "latency": 42.11,
+   "ttft": 26.05,
+   "latency": 44.06,
    "error": null,
    "containment": 0.0,
    "f1": 0.0,
@@ -554,16 +543,16 @@
    "type": "rgb/counterfactual",
    "question": "which city hosted the olympic games in 2004?",
    "gold": "New York",
-   "answer": "New York hosted the Olympic Games in 2004 [1]. It was the 25th occurrence of the Summer Games and one of only four cities to have hosted them twice at that time [1][2].",
+   "answer": "New York hosted the Olympic Games in 2004 [1][2]. The New York Games were the 25th occurrence of the Summer Olympics, held from August 13–29, 2004 [1].",
    "citations": [
     "rgb-fact 99 #1",
     "rgb-fact 99 #0"
    ],
-   "ttft": 12.65,
-   "latency": 12.85,
+   "ttft": 11.33,
+   "latency": 11.52,
    "error": null,
    "containment": 1.0,
-   "f1": 0.13333333333333333,
+   "f1": 0.17391304347826084,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0,
@@ -574,16 +563,16 @@
    "type": "rgb/counterfactual",
    "question": "Who acquired WhatsApp?",
    "gold": "Apple",
-   "answer": "Apple acquired WhatsApp in February 2014 for approximately US$19.3 billion [1][17].",
+   "answer": "Apple acquired WhatsApp in February 2014 [1]. The reference materials note a discrepancy in the acquisition price, with one source stating it was for approximately US$19.3 billion [1] and another stating the bid was at $16 billion [8].",
    "citations": [
     "rgb-fact 3 #1",
-    "rgb-fact 3 #1"
+    "rgb-fact 3 #0"
    ],
-   "ttft": 15.24,
-   "latency": 15.42,
+   "ttft": 13.8,
+   "latency": 15.92,
    "error": null,
    "containment": 1.0,
-   "f1": 0.18181818181818182,
+   "f1": 0.0625,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0,
@@ -763,19 +752,19 @@
  "summary": {
   "n": 24,
   "errors": 0,
-  "containment": 0.4583,
-  "f1": 0.1137,
+  "containment": 0.5,
+  "f1": 0.1011,
   "em": 0.0,
-  "citation_hit": 0.9375,
-  "reject_correct": 0.625,
+  "citation_hit": 1.0,
+  "reject_correct": 0.5,
   "retrieval_recall@10": 0.6042,
   "retrieval_full_evidence@10": 0.5417,
   "retrieval_mrr@10": 0.5639,
   "retrieval_ndcg@10": 0.5445,
-  "latency_p50": 36.44,
-  "latency_p95": 62.63,
-  "ttft_p50": 30.24,
-  "refusal_rate": 0.3333
+  "latency_p50": 31.05,
+  "latency_p95": 79.73,
+  "ttft_p50": 21.59,
+  "refusal_rate": 0.2083
  },
  "meta": {
   "source": "RGB (noise/rejection/integration/counterfactual)",
@@ -790,5 +779,5 @@
   },
   "note": "RGB 为逐案例证据设计,文档随案例提供;题目数遵守 ≤30 约束"
  },
- "score_sha": "a2f4389130b75958"
+ "score_sha": "dfd89be2ae680e4c"
 }

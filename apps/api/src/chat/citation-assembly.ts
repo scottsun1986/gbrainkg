@@ -1071,3 +1071,54 @@ export class CitationAssemblyService {
   }
 
 }
+
+/**
+ * Merge per-chunk citations of the same document into one source entry.
+ *
+ * Evidence selection deliberately keeps several chunks of one document
+ * (different sections, multi-hop coverage), but the source list numbered each
+ * CHUNK as its own 【来源 N】: the same document appeared several times in the
+ * prompt sources and in the client citation list, and the model cited the same
+ * knowledge with different markers ([1] and [3] below pointing at one doc).
+ *
+ * The merge keeps every chunk's text (sections separated by an anchor line so
+ * the model can still point at them), preserves first-occurrence order, keeps
+ * the best score, and ORs compiled-truth flags. Documents are keyed by
+ * (kbId, docId), falling back to (kbId, docTitle) for sources without ids.
+ * `mergedChunkCount > 1` marks entries assembled from multiple chunks so the
+ * prompt renderer does not re-truncate text that the token budget already
+ * approved per chunk.
+ */
+export function mergeCitationsByDocument(citations: any[]): any[] {
+  if (!Array.isArray(citations) || citations.length <= 1) return citations || [];
+  const out: any[] = [];
+  const indexByKey = new Map<string, number>();
+  for (const c of citations) {
+    if (!c) continue;
+    const kb = String(c.kbId || '');
+    const docKey = c.docId ? `id:${c.docId}` : `title:${String(c.docTitle || c.topic || '')}`;
+    const key = `${kb}|${docKey}`;
+    const existingIndex = indexByKey.get(key);
+    if (existingIndex === undefined) {
+      indexByKey.set(key, out.length);
+      out.push({ ...c, mergedChunkCount: 1 });
+      continue;
+    }
+    const merged = out[existingIndex];
+    const prev = String(merged.context || merged.snippet || '');
+    const next = String(c.context || c.snippet || '');
+    if (next && !prev.includes(next)) {
+      const anchor = c.section ? `\n【${c.section}】\n` : '\n\n';
+      merged.context = prev ? `${prev}${anchor}${next}` : next;
+      merged.snippet = String(merged.context).slice(0, 500);
+    }
+    merged.mergedChunkCount = (Number(merged.mergedChunkCount) || 1) + 1;
+    merged.score = Math.max(Number(merged.score || 0), Number(c.score || 0));
+    if (!merged.section && c.section) merged.section = c.section;
+    if (merged.pageNo == null && c.pageNo != null) merged.pageNo = c.pageNo;
+    merged.isCompiledTruth = merged.isCompiledTruth || c.isCompiledTruth;
+    merged.isCompiledDerived = merged.isCompiledDerived || c.isCompiledDerived;
+    if (merged.version == null && c.version != null) merged.version = c.version;
+  }
+  return out;
+}

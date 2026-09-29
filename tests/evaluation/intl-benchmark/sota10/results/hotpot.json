@@ -5,20 +5,17 @@
    "type": "bridge/hard",
    "question": "What class of yamaha class sport bike motorcycle did Ryuji Yokoa use when he finished as champion in the MFJ All Japan Road Race GP250 Championship in 2006?",
    "gold": "Yamaha 600 class",
-   "answer": "The specific class of Yamaha motorcycle Ryuji Yokoe used for his 2006 MFJ All Japan Road Race GP250 Championship victory is not recorded in the provided materials [2][3][4]. The documents confirm he finished as champion in the 2006 GP250 Championship [2][3][4] and that he currently competes aboard a Yamaha YZF-R6, which is a 600-class sport bike [1][2][3][4].Based on the provided reference materials, the class of Yamaha sport bike motorcycle Ryuji Yokoe used when he finished as champion in the 2006 MFJ All Japan Road Race GP250 Championship is not recorded [1][2][3]. The sources confirm he competed in and won that championship in 2006, but do not specify the motorcycle class for that event [2][3].",
+   "answer": "Ryuji Yokoe finished as champion in the MFJ All Japan Road Race GP250 Championship in 2006 [2]. The provided reference materials do not record the specific class of Yamaha sport bike motorcycle he used for that championship.Ryuji Yokoe won the MFJ All Japan Road Race GP250 Championship in 2006, but the provided reference materials do not specify the class of Yamaha sport bike motorcycle he used for that particular championship victory [2]. The materials only note his use of a Yamaha YZF-R6 for his later ST600 class competitions and championship win [2].",
    "citations": [
-    "Yamaha YZF-R6",
-    "Ryuji Yokoe",
-    "Ryuji Yokoe",
     "Ryuji Yokoe"
    ],
-   "ttft": 85.0,
-   "latency": 85.2,
+   "ttft": 61.83,
+   "latency": 68.04,
    "error": null,
    "containment": 0.0,
-   "f1": 0.03921568627450981,
+   "f1": 0.047619047619047616,
    "em": 0.0,
-   "refusal": true,
+   "refusal": false,
    "citation_hit": 1.0
   },
   {
@@ -26,15 +23,13 @@
    "type": "bridge/hard",
    "question": "What film adaptation do both Jerome Bernard and Ira Lewis have in common?",
    "gold": "Chinese Coffee",
-   "answer": "The film adaptation that both Jerome Bernard Orbach and Ira Lewis have in common is \"Chinese Coffee\" [1][2][3][4].",
+   "answer": "Both Jerome Bernard (Jerry) Orbach and Ira Lewis were involved in the film adaptation of **\"Chinese Coffee\"** [1][2].",
    "citations": [
-    "Ira Lewis",
-    "Ira Lewis",
     "Ira Lewis",
     "Jerry Orbach"
    ],
-   "ttft": 43.5,
-   "latency": 43.71,
+   "ttft": 39.36,
+   "latency": 45.57,
    "error": null,
    "containment": 1.0,
    "f1": 0.2222222222222222,
@@ -47,18 +42,16 @@
    "type": "bridge/hard",
    "question": "What items are used to play both Lapta and Rounders?",
    "gold": "bat and ball",
-   "answer": "Both Lapta and Rounders are played using bats and balls [1][2][3][4].",
+   "answer": "A bat and a ball are used to play both Lapta and Rounders [1][2].",
    "citations": [
     "Lapta (game)",
-    "Rounders",
-    "Lapta (game)",
-    "Lapta (game)"
+    "Rounders"
    ],
-   "ttft": 43.43,
-   "latency": 43.65,
+   "ttft": 29.84,
+   "latency": 30.03,
    "error": null,
-   "containment": 0.0,
-   "f1": 0.15384615384615383,
+   "containment": 1.0,
+   "f1": 0.42857142857142855,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -68,13 +61,13 @@
    "type": "bridge/hard",
    "question": "Chien-Shiung Wu's expertise in experimental physics evoked comparisons to a scientist who passed away in which year ?",
    "gold": "1934",
-   "answer": "Marie Curie, the scientist Chien-Shiung Wu was compared to, passed away in **1934** [1][2].",
+   "answer": "Marie Curie, to whom Chien-Shiung Wu is compared, passed away in 1934 [1][2].",
    "citations": [
     "Chien-Shiung Wu",
     "Marie Curie"
    ],
-   "ttft": 22.35,
-   "latency": 25.85,
+   "ttft": 18.27,
+   "latency": 18.47,
    "error": null,
    "containment": 1.0,
    "f1": 0.15384615384615385,
@@ -87,18 +80,16 @@
    "type": "bridge/hard",
    "question": "Were was the Mexican state after which there is Villa Unión, Sinaloa located? ",
    "gold": "tip of the Baja California",
-   "answer": "Villa Unión is located in the Mexican state of Sinaloa [1][2][4][5]. The reference materials do not specify the geographical location of Sinaloa within Mexico.",
+   "answer": "Villa Unión, Sinaloa is located in the Mexican state of **Sinaloa** [2]. Villa Unión itself is a town in the Mazatlán municipality, situated twenty kilometers south of the city of Mazatlán [1].",
    "citations": [
     "Villa Unión, Sinaloa",
-    "Mazatlán",
-    "Villa Unión, Sinaloa",
-    "Villa Unión, Sinaloa"
+    "Mazatlán"
    ],
-   "ttft": 67.85,
-   "latency": 68.48,
+   "ttft": 47.32,
+   "latency": 53.53,
    "error": null,
    "containment": 0.0,
-   "f1": 0.08333333333333334,
+   "f1": 0.06666666666666668,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -108,18 +99,16 @@
    "type": "bridge/hard",
    "question": "How many of the 12 million immigrants to the United States through Ellis Island were Italian immigrants?",
    "gold": "5.3 million",
-   "answer": "The materials state that Ellis Island processed over 12 million immigrants to the United States [2][3][12], and that 5.3 million Italians immigrated to the U.S. between 1820 and 1978, but not all entered through Ellis Island [1]. However, no source provides a breakdown of the 12 million by nationality.Based on the provided reference materials, the specific number of Italian immigrants among the 12 million who passed through Ellis Island is not recorded.\n",
+   "answer": "Based on the provided reference materials, the exact number of Italian immigrants among the 12 million who entered the United States through Ellis Island is not recorded [1][2]. The materials state that 5.3 million Italians immigrated to the U.S. between 1820 and 1978, but they came through various ports, not solely Ellis Island [1]. The reference does not break down the 12 million Ellis Island arrivals by nationality.Based on the provided reference materials, the number of Italian immigrants specifically among the over 12 million immigrants who entered the United States through Ellis Island is not recorded [2]. The materials do state that between 1820 and 1978, a total of 5.3 million Italians immigrated to the United States, but they do not specify how many of those individuals used Ellis Island as their port of entry [1].",
    "citations": [
     "History of Italian Americans in Boston",
-    "Ellis Island",
-    "Ellis Island",
     "Ellis Island"
    ],
-   "ttft": 11.0,
-   "latency": 11.21,
+   "ttft": 25.45,
+   "latency": 25.68,
    "error": null,
    "containment": 1.0,
-   "f1": 0.0625,
+   "f1": 0.033613445378151266,
    "em": 0.0,
    "refusal": true,
    "citation_hit": 1.0
@@ -129,17 +118,15 @@
    "type": "bridge/hard",
    "question": "When was the father of the professional ice hockey player with the middle name \"Fosgaard\" born?",
    "gold": "June 13, 1960",
-   "answer": "Olaf Eller was born on June 13, 1960 [9]. He is the father of professional ice hockey player Lars Fosgaard Eller [1][4].",
+   "answer": "Olaf Eller, father of Lars Fosgaard Eller, was born on June 13, 1960 [7].",
    "citations": [
-    "Lars Eller",
-    "Lars Eller",
     "Olaf Eller"
    ],
-   "ttft": 88.16,
-   "latency": 88.35,
+   "ttft": 67.44,
+   "latency": 67.66,
    "error": null,
    "containment": 1.0,
-   "f1": 0.2727272727272727,
+   "f1": 0.375,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -149,18 +136,16 @@
    "type": "bridge/hard",
    "question": "Arthur Saint-Léon was the \"Maître de Ballet\" of the ballet company now known as?",
    "gold": "The Mariinsky Ballet",
-   "answer": "The ballet company is now known as the Mariinsky Ballet [14]. Arthur Saint-Léon served as its \"Maître de Ballet\" from 1859 to 1869 when it was called the St. Petersburg Imperial Ballet [1][2][3].",
+   "answer": "Arthur Saint-Léon was the \"Maître de Ballet\" of the company now known as the Mariinsky Ballet [1][12]. The reference materials identify this company as the Mariinsky Ballet, which is the resident classical ballet company of the Mariinsky Theatre in Saint Petersburg, Russia [12].",
    "citations": [
-    "Arthur Saint-Léon",
-    "Arthur Saint-Léon",
     "Arthur Saint-Léon",
     "Mariinsky Ballet"
    ],
-   "ttft": 10.09,
-   "latency": 10.3,
+   "ttft": 12.32,
+   "latency": 12.53,
    "error": null,
    "containment": 1.0,
-   "f1": 0.13333333333333333,
+   "f1": 0.1111111111111111,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -170,15 +155,15 @@
    "type": "bridge/hard",
    "question": "What film did the sound editor for a 2013 Hong Kong-Chinese martial arts drama film based on the life story of the Wing Chun grandmaster Ip Man win two Academy Awards for?",
    "gold": "\"Hacksaw Ridge\"",
-   "answer": "Robert Mackenzie, the supervising sound editor for *The Grandmaster* (2013), received two Academy Award nominations at the 89th Academy Awards for the film *Hacksaw Ridge* [3].",
+   "answer": "Robert Mackenzie, the sound editor for *The Grandmaster* (2013), received two Academy Award nominations for *Hacksaw Ridge* [2].",
    "citations": [
     "Robert Mackenzie (sound engineer)"
    ],
-   "ttft": 7.9,
-   "latency": 8.09,
+   "ttft": 19.35,
+   "latency": 19.59,
    "error": null,
    "containment": 1.0,
-   "f1": 0.17391304347826084,
+   "f1": 0.23529411764705882,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -188,17 +173,16 @@
    "type": "bridge/hard",
    "question": "How many albums had been recorded by Talking Heads by November, 1980?",
    "gold": "four",
-   "answer": "By November 1980, Talking Heads had recorded four studio albums [1][2]. These were their self-titled debut, \"More Songs About Buildings and Food,\" \"Fear of Music,\" and \"Remain in Light,\" which was released on October 8, 1980 [5].",
+   "answer": "By November 1980, Talking Heads had recorded four albums [1]. The fourth studio album, *Remain in Light*, was released on October 8, 1980 [3].",
    "citations": [
-    "The Name of This Band Is Talking Heads",
     "The Name of This Band Is Talking Heads",
     "Remain in Light"
    ],
-   "ttft": 30.37,
-   "latency": 30.56,
+   "ttft": 33.07,
+   "latency": 33.32,
    "error": null,
    "containment": 1.0,
-   "f1": 0.05555555555555556,
+   "f1": 0.0909090909090909,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -208,15 +192,12 @@
    "type": "bridge/hard",
    "question": "What 1876 battle featured the Other Magpie?",
    "gold": "Battle of the Rosebud",
-   "answer": "The Other Magpie fought in the **Battle of the Rosebud** in 1876 [1][2][3][13].",
+   "answer": "The Other Magpie fought in the Battle of the Rosebud in 1876 [11].",
    "citations": [
-    "The Other Magpie",
-    "The Other Magpie",
-    "The Other Magpie",
     "Battle of the Rosebud"
    ],
-   "ttft": 12.42,
-   "latency": 12.63,
+   "ttft": 8.75,
+   "latency": 8.95,
    "error": null,
    "containment": 1.0,
    "f1": 0.5,
@@ -229,16 +210,16 @@
    "type": "bridge/hard",
    "question": "The 2017–18 Wigan Athletic F.C. season will be a year in which the team competes in the league cup known as what for sponsorship reasons?",
    "gold": "Carabao Cup",
-   "answer": "The league cup is known as the Carabao Cup for sponsorship reasons [1][4].",
+   "answer": "The league cup is known as the **Carabao Cup** for sponsorship reasons [1]. Wigan Athletic competed in the EFL Cup during their 2017–18 season [2].",
    "citations": [
     "EFL Cup",
-    "EFL Cup"
+    "2017–18 Wigan Athletic F.C. season"
    ],
-   "ttft": 50.0,
-   "latency": 50.19,
+   "ttft": 47.75,
+   "latency": 47.94,
    "error": null,
    "containment": 1.0,
-   "f1": 0.33333333333333337,
+   "f1": 0.18181818181818182,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -248,18 +229,16 @@
    "type": "bridge/hard",
    "question": "Howard Van Doren Shaw was the designer of which 1917 Progressive Era community? ",
    "gold": "Marktown",
-   "answer": "Howard Van Doren Shaw designed Marktown, a 1917 Progressive Era planned worker community in East Chicago, Indiana [13].The reference materials do not record Howard Van Doren Shaw designing a 1917 Progressive Era community. Shaw's documented work includes the 1900 remodel of Second Presbyterian Church in Chicago [1][2][3], and he designed Marktown, which is described as a worker community in Northwest Indiana [1][2][3], but no specific design date for Marktown is provided in the Shaw sources. A separate source documents Marktown as an urban planned worker community built in 1917 during the Progressive Era in East Chicago, Indiana [13]. However, the provided materials do not contain a statement linking Howard Van Doren Shaw as the designer of the 1917 Marktown community.",
+   "answer": "Howard Van Doren Shaw designed **Marktown** [1][11]. It is an urban planned worker community built in 1917 during the Progressive Era [11].",
    "citations": [
-    "Howard Van Doren Shaw",
-    "Howard Van Doren Shaw",
     "Howard Van Doren Shaw",
     "Marktown"
    ],
-   "ttft": 28.64,
-   "latency": 28.84,
+   "ttft": 13.25,
+   "latency": 13.49,
    "error": null,
    "containment": 1.0,
-   "f1": 0.01904761904761905,
+   "f1": 0.10526315789473684,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -269,17 +248,16 @@
    "type": "bridge/hard",
    "question": "What medieval fortress is believed to refer to a chapel at the bottom of a hill?",
    "gold": "Bonkyll Castle",
-   "answer": "Bonkyll Castle is the medieval fortress believed to refer to a chapel at the bottom of a hill [1][2][3].",
+   "answer": "Bonkyll Castle is the medieval fortress whose name is believed to refer to a chapel at the bottom of a hill [1][2].",
    "citations": [
-    "Buncle",
     "Buncle",
     "Bonkyll Castle"
    ],
-   "ttft": 8.6,
-   "latency": 8.79,
+   "ttft": 9.46,
+   "latency": 9.69,
    "error": null,
    "containment": 1.0,
-   "f1": 0.25,
+   "f1": 0.21052631578947367,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -388,8 +366,8 @@
  "summary": {
   "n": 14,
   "errors": 0,
-  "containment": 0.7857,
-  "f1": 0.1752,
+  "containment": 0.8571,
+  "f1": 0.1973,
   "em": 0.0,
   "citation_hit": 1.0,
   "reject_correct": null,
@@ -397,10 +375,10 @@
   "retrieval_full_evidence@10": 1.0,
   "retrieval_mrr@10": 1.0,
   "retrieval_ndcg@10": 0.9278,
-  "latency_p50": 28.84,
-  "latency_p95": 85.2,
-  "ttft_p50": 28.64,
-  "refusal_rate": 0.1429
+  "latency_p50": 25.68,
+  "latency_p95": 67.66,
+  "ttft_p50": 25.45,
+  "refusal_rate": 0.0714
  },
  "meta": {
   "source": "HotpotQA dev (distractor setting)",
@@ -411,5 +389,5 @@
   "question_budget": 30,
   "skipped_for_budget": 0
  },
- "score_sha": "c6051eb448ba75dc"
+ "score_sha": "344028b24c943663"
 }
