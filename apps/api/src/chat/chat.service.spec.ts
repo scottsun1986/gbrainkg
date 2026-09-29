@@ -14,7 +14,7 @@ import { lastValueFrom, toArray } from "rxjs";
 import { GraphRagService } from "../graph-rag/graph-rag.service";
 import { ModelConfigService } from "../model-config.service";
 import { estimateTokens } from "./context-budget";
-import { isStructuralHeadingLine } from './chat.service';
+import { isStructuralHeadingLine, isTableSyntaxLine } from './chat.service';
 
 const mockGraphRag = {
   searchLocalGraph: jest.fn().mockResolvedValue({
@@ -1339,5 +1339,27 @@ describe('isStructuralHeadingLine', () => {
     expect(isStructuralHeadingLine('技能可根据任务需求自动匹配调用。')).toBe(false);
     // 长行
     expect(isStructuralHeadingLine('**一、技能生态的三类技能来源、四类接入路径与五步实施方**'.repeat(2))).toBe(false);
+  });
+});
+
+describe('isStructuralHeadingLine / isTableSyntaxLine (production follow-up shapes)', () => {
+
+  it('recognises headings that carry citation markers', () => {
+    expect(isStructuralHeadingLine('**一、现行版 V2.0 的上下班要求[2]**')).toBe(true);
+    expect(isStructuralHeadingLine('**二、旧版《企业考勤管理制度详细手册》的规定[1]**')).toBe(true);
+  });
+
+  it('recognises short colon lead-ins but not digit-bearing labeled claims', () => {
+    expect(isStructuralHeadingLine('两版规定存在差异，分别陈述如下:')).toBe(true);
+    expect(isStructuralHeadingLine('打卡时间为08:30:')).toBe(false);
+    expect(isStructuralHeadingLine('**打卡要求**：员工上下班均需打卡，作为考勤记录的唯一依据')).toBe(false);
+  });
+
+  it('classifies table lines as table syntax, not headings', () => {
+    expect(isTableSyntaxLine('| 事项 | 旧版（详细手册） | 现行版 V2.0 |')).toBe(true);
+    expect(isTableSyntaxLine('|---|---|---|')).toBe(true);
+    expect(isTableSyntaxLine('| 上班时间 | 08:30 起（分夏/冬令时）[1] | 09:00[2] |')).toBe(true);
+    expect(isTableSyntaxLine('普通句子')).toBe(false);
+    expect(isStructuralHeadingLine('| 事项 | 旧版 | 现行版 |')).toBe(false);
   });
 });

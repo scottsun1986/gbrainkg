@@ -314,15 +314,47 @@ export function evidenceConfidenceScores(citations: any[]): {
  * list/label fragment).
  */
 export function isStructuralHeadingLine(sentence: string): boolean {
-  const t = String(sentence || '').trim();
+  let t = String(sentence || '').trim();
+  if (!t) return false;
+  // Markdown table syntax (rows / separators) is table STRUCTURE, not a
+  // heading: the gate holds marker-less header rows and drops |---|
+  // separators (production: held=7/dropped=3 left a table body headless and
+  // its header appended at the answer tail). Table lines are handled by the
+  // dedicated isTableSyntaxLine branch in gateSentence.
+  if (/^\|/.test(t) || (/^[-:|\s]+$/.test(t) && t.includes('-'))) return false;
+  // A heading may carry citation markers ("**一、现行版 V2.0 的上下班要求[2]**"):
+  // the marker binds the section to its source, it does not turn navigation
+  // into a claim. Excluding marked headings re-introduced the
+  // held-then-appended-at-tail disorder for them (production follow-up).
+  t = t.replace(/\[\d+\]/g, '').trim();
   if (!t || t.length > 40) return false;
-  if (/\[\d+\]/.test(t)) return false;
-  if (/[：:]/.test(t)) return false; // “标签：事实” 行携带断言，交回证据门禁
+  if (/[：:]/.test(t)) {
+    // Colon lines split two ways: a SHORT label before the colon ("打卡要求：…")
+    // introduces a claim and belongs to the evidence gate; a long sentence-like
+    // phrase ("两版规定存在差异，分别陈述如下:") is a discourse lead-in for the
+    // block right after it and must stay in place.
+    const head = t.slice(0, t.search(/[：:]/));
+    return t.length <= 40 && head.length >= 10 && !/\d/.test(t);
+  }
   if (/[。．.!！?？;；]$/.test(t)) return false;
   return /^\*\*?\s*[一二三四五六七八九十\d]+\s*[、.．]/.test(t)
     || /^#{1,6}\s+\S/.test(t)
     || /^\*\*[^*]{2,40}\*\*$/.test(t)
     || /^[（(【\[]?\s*[一二三四五六七八九十\d]+\s*[)）】\]]?\s*[\u4e00-\u9fffA-Za-z]{0,28}$/.test(t);
+}
+
+/**
+ * Markdown table line (a row or a separator). Separate from heading
+ * recognition: table lines stream through in order to preserve the table
+ * (splitting a header/separator from its body wrecks rendering), but numeric
+ * grounding still applies per row in gateSentence — a fabricated number must
+ * not ride the table's structure through.
+ */
+export function isTableSyntaxLine(sentence: string): boolean {
+  const t = String(sentence || '').trim();
+  if (!t) return false;
+  if (/^[-:|\s]+$/.test(t) && t.includes('-')) return true;
+  return t.startsWith('|') && t.length <= 600;
 }
 
 export interface EvidenceSufficiency {
@@ -4611,6 +4643,21 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
         if (isStructuralHeadingLine(sentence)) {
           emitVerified(sentence);
           return;
+        }
+        // Table lines stream through in order — a held header row or a dropped
+        // |---| separator splits the table apart (production: header recovered
+        // at the answer tail, body left headless). Numeric claims inside the
+        // row still face grounding; only the lexical-overlap hold is bypassed,
+        // because per-row overlap on piped fragments is meaningless.
+        if (isTableSyntaxLine(sentence)) {
+          const rowEvidence = allEvidenceTexts().join('\n');
+          if (numericClaimsSupportedBy(sentence, rowEvidence)) {
+            emitVerified(sentence);
+            return;
+          }
+          this.logger.warn(
+            `Table row held for unsupported numeric claims: ${sentence.slice(0, 80)}`,
+          );
         }
         if (isRefusalSentence(sentence)) {
           heldRefusals.push(sentence);
