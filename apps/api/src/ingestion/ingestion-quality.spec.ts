@@ -16,6 +16,13 @@ const mockPrisma = {
 // Interactive-transaction client delegating to the shared mocks so specs keep
 // asserting against mockPrisma.
 const tx = {
+  // The L2 dedup lookup runs a raw query INSIDE the RLS-scoped transaction;
+  // without the raw accessors on the delegate the cache probe throws and the
+  // service silently falls through to a real parse.
+  $queryRaw: (...args: unknown[]) => mockPrisma.$queryRaw(...(args as [])),
+  $queryRawUnsafe: (...args: unknown[]) => mockPrisma.$queryRaw(...(args as [])),
+  $executeRaw: (...args: unknown[]) => mockPrisma.$executeRaw(...(args as [])),
+  $executeRawUnsafe: (...args: unknown[]) => mockPrisma.$executeRawUnsafe(...(args as [])),
   document: {
     findUnique: (...args: unknown[]) => mockPrisma.document.findUnique(...(args as [])),
     update: (...args: unknown[]) => mockPrisma.document.update(...(args as [])),

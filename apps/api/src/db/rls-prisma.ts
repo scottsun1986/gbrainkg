@@ -38,6 +38,10 @@ export function withRlsContext(base: PrismaClient): PrismaClient {
     const context = getRequestContext();
     const userId = context?.userId || '';
     const service = context ? 'off' : 'on';
+    // Unit-test prisma doubles (a bare object with model methods, no
+    // $transaction) pass through unwrapped — same degradation contract as the
+    // missing-$executeRaw guard below: a real client always has both.
+    if (typeof (client as any)?.$transaction !== 'function') return fn(client as any);
     return client.$transaction(async (tx: any) => {
       if (typeof tx?.$executeRaw !== 'function') return fn(tx);
       await tx.$executeRaw`SELECT set_config('app.user_id', ${userId}, true), set_config('app.service', ${service}, true)`;
