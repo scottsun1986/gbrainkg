@@ -295,10 +295,39 @@ export function evidenceConfidenceScores(citations: any[]): {
   return { maxCalibrated, maxSynthetic };
 }
 
+/**
+ * Structural heading lines (章节标题 / markdown 标题 / 加粗小标题).
+ *
+ * The per-sentence grounding gate verifies every sentence against evidence and
+ * HOLDS anything unsupported for the flush-time NLI review — which re-emits
+ * recovered sentences at the END of the answer. A heading ("**三、技能接入与
+ * 创建**") carries no facts of its own, so it routinely fails the lexical
+ * overlap bar, gets held, and lands after the last content bullet: sections
+ * end up headless and headings dangle at the tail (observed in production:
+ * held=6/recovered=6 headings appended after the closing paragraph, one
+ * heading glued onto the previous line's citation marker).
+ *
+ * Headings are navigation, not claims: stream them through immediately, in
+ * order. Constraints keep this narrow — short, no citation markers, no
+ * terminal punctuation (a real sentence ends with 。.!?), and shaped like a
+ * heading (Chinese section ordinal, markdown #, bold-phrase title, or a bare
+ * list/label fragment).
+ */
+export function isStructuralHeadingLine(sentence: string): boolean {
+  const t = String(sentence || '').trim();
+  if (!t || t.length > 40) return false;
+  if (/\[\d+\]/.test(t)) return false;
+  if (/[：:]/.test(t)) return false; // “标签：事实” 行携带断言，交回证据门禁
+  if (/[。．.!！?？;；]$/.test(t)) return false;
+  return /^\*\*?\s*[一二三四五六七八九十\d]+\s*[、.．]/.test(t)
+    || /^#{1,6}\s+\S/.test(t)
+    || /^\*\*[^*]{2,40}\*\*$/.test(t)
+    || /^[（(【\[]?\s*[一二三四五六七八九十\d]+\s*[)）】\]]?\s*[\u4e00-\u9fffA-Za-z]{0,28}$/.test(t);
+}
+
 export interface EvidenceSufficiency {
   hasSufficientEvidence: boolean;
-  maxCalibrated: number | null;
-  maxSynthetic: number | null;
+  maxCalibrated: number | null;  maxSynthetic: number | null;
   maxEvidenceScore: number;
   evidenceFloor: number;
   scoreCalibrated: boolean;
@@ -4575,6 +4604,14 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
           providerErrorSeen = true;
           return;
         }
+        // Structural headings stream through immediately and in order: they are
+        // navigation, not claims. Holding them for the flush-time NLI review
+        // re-emitted them AFTER the content (production: held=6/recovered=6
+        // section ordinals dangled at the tail of the answer).
+        if (isStructuralHeadingLine(sentence)) {
+          emitVerified(sentence);
+          return;
+        }
         if (isRefusalSentence(sentence)) {
           heldRefusals.push(sentence);
           return;
@@ -4993,6 +5030,15 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
           // attribution before it reaches the client, exactly as the inline
           // gate does for directly verified sentences.
           const repaired = rebindMarkers(toJudge[i]) || toJudge[i];
+          // Flush-time recoveries append after already-streamed text; without a
+          // separator a recovered line glues onto the previous sentence's
+          // citation marker (observed: "…备份[2]**三、技能接入与创建**").
+          const emitRecovered = (text: string) => {
+            if (fullAnswer && !/[\s\n]$/.test(fullAnswer) && !/^[，。、；)）\]】.!?？!]/.test(text)) {
+              emitVerified('\n');
+            }
+            emitVerified(text);
+          };
           // Decisive-value veto: an LLM entailment judge tends to verify its
           // own parametric memory (measured: RGB negative-rejection — the
           // judge endorsed "4 March 2022" against evidence that never states
@@ -5009,7 +5055,7 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
             continue;
           }
           if (entailed.has(i)) {
-            emitVerified(repaired);
+            emitRecovered(repaired);
             recoveredCount++;
           } else {
             // Balanced safety net: if judgeEntailment timed out/skipped or was uncertain,
@@ -5041,7 +5087,7 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
             const decisiveOk = !hasMarker
               || decisiveValueSupportedBy(toJudge[i], [evidenceText], question);
             if (!hasConflict && numsOk && decisiveOk && ratio >= requiredRatio) {
-              emitVerified(repaired);
+              emitRecovered(repaired);
               recoveredCount++;
             }
           }

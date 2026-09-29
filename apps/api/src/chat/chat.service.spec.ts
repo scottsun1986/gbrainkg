@@ -14,6 +14,7 @@ import { lastValueFrom, toArray } from "rxjs";
 import { GraphRagService } from "../graph-rag/graph-rag.service";
 import { ModelConfigService } from "../model-config.service";
 import { estimateTokens } from "./context-budget";
+import { isStructuralHeadingLine } from './chat.service';
 
 const mockGraphRag = {
   searchLocalGraph: jest.fn().mockResolvedValue({
@@ -1318,5 +1319,25 @@ describe("isStrongNameEntity", () => {
     ]) {
       expect(isStrongNameEntity(value)).toBe(false);
     }
+  });
+});
+
+describe('isStructuralHeadingLine', () => {
+  it('recognises the production heading shapes that were held and re-appended', () => {
+    expect(isStructuralHeadingLine('**一、技能生态的三类技能来源**')).toBe(true);
+    expect(isStructuralHeadingLine('**三、技能接入与创建**\n')).toBe(true);
+    expect(isStructuralHeadingLine('## 二、页面整体功能')).toBe(true);
+    expect(isStructuralHeadingLine('**五、政务产业落地的生态化路径（多源印证）**')).toBe(true);
+    expect(isStructuralHeadingLine('（一）总体要求')).toBe(true);
+  });
+
+  it('does not fast-path factual content lines', () => {
+    // labeled claim: 标签+冒号+事实 → 交回证据门禁
+    expect(isStructuralHeadingLine('**1. 预置高频通用技能**：桌面版预置Word、Excel、PDF等办公场景的高频技能 [1]')).toBe(false);
+    expect(isStructuralHeadingLine('- 虚拟机和沙盒：隔离、权限控制与备份（支持快速回滚）[2]')).toBe(false);
+    // 完整陈述句
+    expect(isStructuralHeadingLine('技能可根据任务需求自动匹配调用。')).toBe(false);
+    // 长行
+    expect(isStructuralHeadingLine('**一、技能生态的三类技能来源、四类接入路径与五步实施方**'.repeat(2))).toBe(false);
   });
 });
