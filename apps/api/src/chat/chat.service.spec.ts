@@ -15,6 +15,7 @@ import { GraphRagService } from "../graph-rag/graph-rag.service";
 import { ModelConfigService } from "../model-config.service";
 import { estimateTokens } from "./context-budget";
 import { isStructuralHeadingLine, isTableSyntaxLine } from './chat.service';
+import { isBlockLevelStart } from './chat.service';
 
 const mockGraphRag = {
   searchLocalGraph: jest.fn().mockResolvedValue({
@@ -1361,5 +1362,24 @@ describe('isStructuralHeadingLine / isTableSyntaxLine (production follow-up shap
     expect(isTableSyntaxLine('| 上班时间 | 08:30 起（分夏/冬令时）[1] | 09:00[2] |')).toBe(true);
     expect(isTableSyntaxLine('普通句子')).toBe(false);
     expect(isStructuralHeadingLine('| 事项 | 旧版 | 现行版 |')).toBe(false);
+  });
+});
+
+
+describe('isBlockLevelStart (layout normalisation)', () => {
+  it('flags headings, table lines and list items', () => {
+    expect(isBlockLevelStart('**二、旧版《企业考勤管理制度详细手册》的规定[1]**')).toBe(true);
+    expect(isBlockLevelStart('| 事项 | 旧版 | 现行版 |')).toBe(true);
+    expect(isBlockLevelStart('|---|---|')).toBe(true);
+    expect(isBlockLevelStart('1. **工作时间**：周一至周五，每天8小时[2]。')).toBe(true);
+    expect(isBlockLevelStart('- 预置Word、Excel、PDF等办公场景的高频技能 [2]')).toBe(true);
+    expect(isBlockLevelStart('3. **混合办公模式（"3+2"）**：每周至少到办公室工作3天[2]。')).toBe(true);
+  });
+
+  it('does not break ordinary prose sentences', () => {
+    expect(isBlockLevelStart('现行有效版本为《企业考勤制度手册V2》（版本号 V2.0）[2]。')).toBe(false);
+    expect(isBlockLevelStart('标准工时制适用于行政、后勤岗位。')).toBe(false);
+    // 句中数字非列表起始
+    expect(isBlockLevelStart('每周工作5天、每天8小时[2]。')).toBe(false);
   });
 });

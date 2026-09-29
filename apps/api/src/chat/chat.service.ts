@@ -357,6 +357,18 @@ export function isTableSyntaxLine(sentence: string): boolean {
   return t.startsWith('|') && t.length <= 600;
 }
 
+/**
+ * Block-level answer element that deserves its own line: heading, table line,
+ * or list item. Used by the streaming gate to normalise layout — insert a
+ * newline before it when the streamed answer does not end with one — because
+ * models routinely run them together with the preceding prose
+ * ("…另行规定[2]。**二、旧版…**", "1. …[2]。2. …[2]。").
+ */
+export function isBlockLevelStart(sentence: string): boolean {
+  if (isStructuralHeadingLine(sentence) || isTableSyntaxLine(sentence)) return true;
+  return /^\s*(?:\d{1,2}\s*[.、)]\s|\*\*\s*\d{1,2}\s*[.、)]|[-*•]\s)/.test(String(sentence || ''));
+}
+
 export interface EvidenceSufficiency {
   hasSufficientEvidence: boolean;
   maxCalibrated: number | null;  maxSynthetic: number | null;
@@ -4620,6 +4632,13 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
       let gateVerifiedCount = 0;
       let providerErrorSeen = false;
       let synthesizedRefusal = false;
+      // Block-level layout normalisation: models frequently omit the newline
+      // before a heading / list item / table row ("…另行规定[2]。**二、旧版…**"
+      // on one line, numbered clauses run together "1. …[2]。2. …[2]。"). A
+      // block element gets a leading newline when the streamed answer does not
+      // end with one; a heading also gets a trailing newline so the content it
+      // introduces starts on its own line. Pure typography — no gating change.
+      const isBlockStart = isBlockLevelStart;
       const emitVerified = (sentence: string) => {
         gateVerifiedCount++;
         totalTokens += estimateTokens(sentence);
@@ -4641,7 +4660,9 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
         // re-emitted them AFTER the content (production: held=6/recovered=6
         // section ordinals dangled at the tail of the answer).
         if (isStructuralHeadingLine(sentence)) {
+          if (fullAnswer && !/\n$/.test(fullAnswer)) emitVerified('\n');
           emitVerified(sentence);
+          if (!/\n$/.test(sentence)) emitVerified('\n');
           return;
         }
         // Table lines stream through in order — a held header row or a dropped
@@ -4652,6 +4673,7 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
         if (isTableSyntaxLine(sentence)) {
           const rowEvidence = allEvidenceTexts().join('\n');
           if (numericClaimsSupportedBy(sentence, rowEvidence)) {
+            if (fullAnswer && !/\n$/.test(fullAnswer)) emitVerified('\n');
             emitVerified(sentence);
             return;
           }
@@ -4677,6 +4699,7 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
         }
         const body = sentence.replace(/\[\d+\]/g, ' ');
         if (body.replace(/\s+/g, '').length < 5) {
+          if (isBlockStart(sentence) && fullAnswer && !/\n$/.test(fullAnswer)) emitVerified('\n');
           emitVerified(sentence);
           return;
         }
@@ -4716,6 +4739,7 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
               this.logger.warn(
                 `Rebound citation markers for an unsupported statement: ${sentence.slice(0, 60)}… -> ${rebound.match(/\[\d+\]/g)?.join('') || ''}`,
               );
+              if (isBlockStart(rebound) && fullAnswer && !/\n$/.test(fullAnswer)) emitVerified('\n');
               emitVerified(rebound);
               return;
             }
@@ -4727,6 +4751,7 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
         if ((supported && decisiveSupported) || !strictGrounding) {
           // Non-strict mode keeps legacy behaviour (emit immediately; the
           // post-hoc coverage accounting at completion still reports gaps).
+          if (isBlockStart(sentence) && fullAnswer && !/\n$/.test(fullAnswer)) emitVerified('\n');
           emitVerified(sentence);
         } else {
           heldSentences.push(sentence);
