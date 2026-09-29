@@ -237,7 +237,11 @@ def run_ir_bench(bench, task, token):
                 or id_by_title.get(str(r_.get("title") or "").casefold())
             if cid:
                 ranked_ids.append(cid)
-        return {"qid": q["qid"], **ranking_metrics_ids(ranked_ids, q.get("gold_doc_ids") or [])}
+        beir_ranked = [beir_docid_from_title(
+            next(d["title"] for d in task["kbs"][kb_name] if d["id"] == cid)) for cid in ranked_ids]
+        return {"qid": q["qid"], "ranked_doc_ids": ranked_ids[:100],
+                "beir_doc_ids": beir_ranked[:100],
+                **ranking_metrics_ids(ranked_ids, q.get("gold_doc_ids") or [])}
 
     rows = []
     t0 = time.time()

@@ -82,7 +82,7 @@ async function login(): Promise<string> {
 }
 
 async function ask(token: string, question: string): Promise<{ answer: string; evidence: string }> {
-  const response = await fetch(`${API_BASE}/api/v1/chat/stream`, {
+  const response = await fetch(`${API_BASE}/api/v1/chat/completions`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
     body: JSON.stringify({ message: question, kbScope: 'all' }),
