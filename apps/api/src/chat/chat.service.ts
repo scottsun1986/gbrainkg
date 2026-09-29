@@ -314,7 +314,8 @@ export function evidenceConfidenceScores(citations: any[]): {
  * list/label fragment).
  */
 export function isStructuralHeadingLine(sentence: string): boolean {
-  let t = String(sentence || '').trim();
+  const raw = String(sentence || '').trim();
+  let t = raw;
   if (!t) return false;
   // Markdown table syntax (rows / separators) is table STRUCTURE, not a
   // heading: the gate holds marker-less header rows and drops |---|
@@ -327,15 +328,37 @@ export function isStructuralHeadingLine(sentence: string): boolean {
   // into a claim. Excluding marked headings re-introduced the
   // held-then-appended-at-tail disorder for them (production follow-up).
   t = t.replace(/\[\d+\]/g, '').trim();
-  if (!t || t.length > 40) return false;
+  if (!t) return false;
   if (/[：:]/.test(t)) {
-    // Colon lines split two ways: a SHORT label before the colon ("打卡要求：…")
-    // introduces a claim and belongs to the evidence gate; a long sentence-like
-    // phrase ("两版规定存在差异，分别陈述如下:") is a discourse lead-in for the
-    // block right after it and must stay in place.
-    const head = t.slice(0, t.search(/[：:]/));
-    return t.length <= 40 && head.length >= 10 && !/\d/.test(t);
+    const idx = t.search(/[：:]/);
+    const head = t.slice(0, idx);
+    const rest = t.slice(idx + 1);
+    const rawRest = raw.slice(raw.search(/[：:]/) + 1);
+    // Arm A — section-ordinal heading with a nominal colon payload:
+    //   "**一、现行有效版本：V2《企业考勤制度手册V2.docx》（现行有效）**",
+    //   "**三、生态开放：第三方产品接入路径**".
+    // The payload names the section's subject — a document title (《》) or a
+    // short digit-free path phrase. A payload carrying a citation marker or
+    // ending as a sentence is a claim and stays gated.
+    if (
+      /^\*\*?\s*[一二三四五六七八九十\d]+\s*[、.．]/.test(head)
+      && t.length <= 64
+      && !/\[\d+\]/.test(rawRest)
+      && !/[。．.!！?？;；]$/.test(rest)
+      && (rest.includes('《') || (rest.length <= 20 && !/\d/.test(rest)))
+    ) {
+      return true;
+    }
+    // Arm B — discourse lead-in ending at the colon ("两版规定存在差异，
+    // 分别陈述如下:", a bullet label introducing nested items "- **作息安排
+    // 分令时执行**:"): the payload after the colon is empty, so the line
+    // navigates the block that follows and must stay in place.
+    return rest.replace(/\s/g, '').length <= 4
+      && t.length <= 40
+      && head.length >= 6
+      && !/\d/.test(t);
   }
+  if (t.length > 40) return false;
   if (/[。．.!！?？;；]$/.test(t)) return false;
   return /^\*\*?\s*[一二三四五六七八九十\d]+\s*[、.．]/.test(t)
     || /^#{1,6}\s+\S/.test(t)

@@ -1383,3 +1383,22 @@ describe('isBlockLevelStart (layout normalisation)', () => {
     expect(isBlockLevelStart('每周工作5天、每天8小时[2]。')).toBe(false);
   });
 });
+
+describe('isStructuralHeadingLine (ordinal heading with nominal colon payload)', () => {
+  it('recognises the three production shapes missed before', () => {
+    expect(isStructuralHeadingLine('**一、现行有效版本：V2《企业考勤制度手册V2.docx》（现行有效）**')).toBe(true);
+    expect(isStructuralHeadingLine('**二、另一份制度：《企业考勤管理制度详细手册.doc》（库中对应 v1 版本，非现行有效版）**')).toBe(true);
+    expect(isStructuralHeadingLine('**三、生态开放：第三方产品接入路径**')).toBe(true);
+  });
+
+  it('still gates ordinal labels whose payload is a factual claim', () => {
+    // 载荷带角标 → 事实句
+    expect(isStructuralHeadingLine('**1. 预置高频通用技能**：桌面版预置Word、Excel、PDF等办公场景的高频技能 [1]')).toBe(false);
+    // 载荷以句号收尾 → 完整陈述
+    expect(isStructuralHeadingLine('**二、打卡要求**：员工上下班均需打卡。')).toBe(false);
+    // 冒号后为空的列表标签:引导其嵌套子项,须保位(非声明)
+    expect(isStructuralHeadingLine('- **作息安排分令时执行**：')).toBe(true);
+    // 冒号后是取值区间 → 声明,交回门禁
+    expect(isStructuralHeadingLine('**一、上班时间**：09:00-18:00')).toBe(false);
+  });
+});
