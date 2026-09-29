@@ -445,7 +445,8 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
             <button className="btn" onClick={()=>exportAllDocuments()}>导出</button>
             {current.type==='industry' && current.canGrant && <button className="btn" onClick={()=>onManageGrant?.(current)}>管理授权</button>}
             {current.type==='personal' && <button className="btn" onClick={()=>window.dispatchEvent(new CustomEvent('app-toast',{detail:'个人库不可共享，权限仅随账号生效'}))}>查看权限</button>}
-            {current.type==='personal' && current.canDelete && <button className="btn danger" onClick={()=>setConfirmKb(current)}>删除知识库</button>}
+            {/* 危险操作与常规操作拉开距离（左外边距隔开），并降为描边样式，避免误触 */}
+            {current.type==='personal' && current.canDelete && <button className="btn danger btn-danger-gap" onClick={()=>setConfirmKb(current)}>删除知识库</button>}
           </div>
         </div>
         <div className="detail-tabs">
