@@ -48,6 +48,12 @@ async function bootstrap() {
   }
   app.enableShutdownHooks();
 
+  // Route params without a UUID format check used to surface Prisma's
+  // "Error creating UUID" / pool-timeout errors as naked 500s. Map them to
+  // 400/404/409/503 at one central place (see prisma-exception.filter.ts).
+  const { PrismaExceptionFilter } = await import('./prisma-exception.filter');
+  app.useGlobalFilters(new PrismaExceptionFilter());
+
   // 为每个请求生成/透传 x-request-id，并挂到 AsyncLocalStorage 供日志关联。
   app.use(requestIdMiddleware);
   app.use(metricsMiddleware);
