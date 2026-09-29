@@ -30,6 +30,7 @@ REFUSALS = (
     "无法回答", "无法根据", "未包含", "没有找到", "无法从", "知识库中未", "不足以回答",
     "don't know", "cannot answer", "not enough information", "no relevant", "unable to answer",
     "无法确定", "抱歉", "not mentioned", "not provided", "does not contain", "cannot find",
+    "not available", "not recorded", "no record",
 )
 
 

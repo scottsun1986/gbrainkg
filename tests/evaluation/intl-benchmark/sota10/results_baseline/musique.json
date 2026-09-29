@@ -5,21 +5,16 @@
    "type": "2hop",
    "question": "Who is the child of the person who sponsored the resolution to reopen trade with Vietnam, along with Kerry?",
    "gold": "Meghan McCain",
-   "answer": "Meghan McCain is the child of John McCain, who co-sponsored the resolution with Kerry [1][2][4][5].",
-   "citations": [
-    "John Kerry",
-    "John Kerry",
-    "Dirty Sexy Politics",
-    "Dirty Sexy Politics"
-   ],
-   "ttft": 73.47,
-   "latency": 73.68,
+   "answer": "Based on the provided reference materials, the relevant information is not available in the knowledge base.",
+   "citations": [],
+   "ttft": 60.56,
+   "latency": 60.65,
    "error": null,
-   "containment": 1.0,
-   "f1": 0.2857142857142857,
+   "containment": 0.0,
+   "f1": 0.0,
    "em": 0.0,
    "refusal": false,
-   "citation_hit": 1.0
+   "citation_hit": 0.0
   },
   {
    "qid": "3hop2__103871_20335_9331",
@@ -31,19 +26,19 @@
     "Thuringia",
     "Szlachta",
     "Charles Frederick II, Duke of Württemberg-Oels",
-    "Thuringia",
+    "Szlachta",
+    "USB",
     "Tamar Abakelia",
     "Queen Victoria",
-    "Reformation",
-    "Jenna Coleman"
+    "Grown Ups (film)"
    ],
-   "ttft": 74.23,
-   "latency": 86.45,
+   "ttft": 47.81,
+   "latency": 60.01,
    "error": null,
    "containment": 0.0,
    "f1": 0.0,
    "em": 0.0,
-   "refusal": true,
+   "refusal": false,
    "citation_hit": 1.0
   },
   {
@@ -51,16 +46,16 @@
    "type": "2hop",
    "question": "Along with the Closer performer, what notable pop artist started out his career on adult contemporary radio?",
    "gold": "Michael Bublé",
-   "answer": "Michael Bublé is the notable pop artist who, along with Josh Groban, started out his career as an adult contemporary (AC) artist [1][5].",
+   "answer": "Michael Bublé is the notable pop artist who started his career on adult contemporary radio alongside Josh Groban [1][4].",
    "citations": [
     "Adult contemporary music",
     "Adult contemporary music"
    ],
-   "ttft": 79.39,
-   "latency": 79.61,
+   "ttft": 38.89,
+   "latency": 39.09,
    "error": null,
    "containment": 1.0,
-   "f1": 0.18181818181818182,
+   "f1": 0.21052631578947367,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -70,18 +65,16 @@
    "type": "2hop",
    "question": "In Grown Ups, who plays the wife of the actor who produced The Chosen One?",
    "gold": "Joyce Van Patten",
-   "answer": "Joyce Van Patten plays the wife of the character played by Rob Schneider in *Grown Ups*, but the reference materials do not confirm that Rob Schneider produced *The Chosen One* [2][3][4][5].",
+   "answer": "Joyce Van Patten plays the wife of Rob Schneider's character in *Grown Ups* [6]. Rob Schneider is the actor who directed and starred in *The Chosen One* [2].",
    "citations": [
-    "The Chosen One (2010 film)",
-    "The Chosen One (2010 film)",
     "The Chosen One (2010 film)",
     "Grown Ups (film)"
    ],
-   "ttft": 42.24,
-   "latency": 42.46,
+   "ttft": 40.71,
+   "latency": 40.9,
    "error": null,
    "containment": 1.0,
-   "f1": 0.20689655172413793,
+   "f1": 0.23076923076923078,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -91,16 +84,16 @@
    "type": "2hop",
    "question": "When did Charles Frederick II's birthplace fall?",
    "gold": "1738",
-   "answer": "Charles Frederick II's birthplace, Merseburg, fell to the Electorate of Saxony after 1738 [6]. He was born in Merseburg on 7 February 1690 [1], and Merseburg later became part of the Prussian Province of Saxony in 1815 [6].",
+   "answer": "Merseburg fell to the Electorate of Saxony in 1738 [6]. This city was the birthplace of Charles Frederick II [2].",
    "citations": [
     "Charles Frederick II, Duke of Württemberg-Oels",
     "Merseburg"
    ],
-   "ttft": 102.32,
-   "latency": 102.53,
+   "ttft": 65.32,
+   "latency": 79.0,
    "error": null,
    "containment": 1.0,
-   "f1": 0.05882352941176471,
+   "f1": 0.11764705882352941,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -110,34 +103,30 @@
    "type": "3hop",
    "question": "What body of water was dry land during the last ice age, besides the Irish Channel and the sea near the former Atlantic Hotel?",
    "gold": "English Channel",
-   "answer": "The English Channel was dry land during the last ice age [1][2][4].The English Channel and most of the North Sea were dry land during the last ice age [2][4]. The reference materials do not contain information confirming that the sea near the former Atlantic Hotel was dry land during that period.",
-   "citations": [
-    "Rhine",
-    "Rhine",
-    "Rhine"
-   ],
-   "ttft": 43.96,
-   "latency": 44.18,
+   "answer": "Based on the provided reference materials, the relevant information is not available in the knowledge base.",
+   "citations": [],
+   "ttft": 35.96,
+   "latency": 36.07,
    "error": null,
-   "containment": 1.0,
-   "f1": 0.0909090909090909,
+   "containment": 0.0,
+   "f1": 0.0,
    "em": 0.0,
    "refusal": false,
-   "citation_hit": 1.0
+   "citation_hit": 0.0
   },
   {
    "qid": "2hop__56851_343058",
    "type": "2hop",
    "question": "Who is the spouse of the actress who played the fairy god mother in Shrek 2?",
    "gold": "Adrian Edmondson",
-   "answer": "The Fairy Godmother in *Shrek 2* was voiced by Jennifer Saunders [1][4][5], but the provided reference materials do not record who her spouse is.",
+   "answer": "The fairy godmother in *Shrek 2* was voiced by Jennifer Saunders [1][4]. However, the provided reference materials do not contain any information about the spouse of Jennifer Saunders.The actress who played the Fairy Godmother in Shrek 2 is Jennifer Saunders [1][4][5]. The provided reference materials do not record any information about Jennifer Saunders' spouse.",
    "citations": [
     "Shrek 2",
     "Shrek 2",
     "Shrek 2"
    ],
-   "ttft": 98.63,
-   "latency": 98.83,
+   "ttft": 101.66,
+   "latency": 107.85,
    "error": null,
    "containment": 0.0,
    "f1": 0.0,
@@ -150,18 +139,17 @@
    "type": "3hop",
    "question": "Who is the actress who plays the role of the Queen of England in 1890, on the network that aired The Dinosaurs!?",
    "gold": "Jenna - Louise Coleman",
-   "answer": "* [1][5]. The materials state Jenna Coleman portrayed Queen Victoria in the ITV series *Victoria* [2][3], but this show is on a different network than the one that aired *The Dinosaurs!*.The reference materials do not record an actress playing the Queen of England in 1890 on PBS, the network that aired *The Dinosaurs!",
+   "answer": "Jenna Coleman is the actress who played Queen Victoria [2], and The Dinosaurs!aired on PBS [1][5]. However, the reference materials do not confirm that her portrayal of Queen Victoria was broadcast on PBS.",
    "citations": [
     "The Dinosaurs!",
     "Jenna Coleman",
-    "Jenna Coleman",
     "The Dinosaurs!"
    ],
-   "ttft": 77.89,
-   "latency": 84.39,
+   "ttft": 76.11,
+   "latency": 83.54,
    "error": null,
    "containment": 1.0,
-   "f1": 0.09302325581395349,
+   "f1": 0.13333333333333333,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -171,18 +159,22 @@
    "type": "4hop",
    "question": "Where is the district that the person who wanted to reform and address Vincentas Sladkevičius' religion preached a sermon on Marian devotion before his death located?",
    "gold": "Saxony-Anhalt",
-   "answer": "The district is Wittenberg, located in Saxony-Anhalt, Germany [7]. Martin Luther, who sought to reform the Roman Catholic Church, preached this final sermon on Marian devotion at Wittenberg one month before his death [2][3][8].",
+   "answer": "Based on the provided reference materials, the information about the district where that specific sermon was preached is not available.Based on the provided reference materials, the relevant information is not available.",
    "citations": [
-    "Mary, mother of Jesus",
-    "Mary, mother of Jesus",
+    "Vincentas Sladkevičius",
+    "Vincentas Sladkevičius",
+    "Hamburg",
+    "Islamic Centre Hamburg",
+    "Vincentas Sladkevičius",
     "Wittenberg (district)",
-    "Reformation"
+    "Reformation",
+    "Mary, mother of Jesus"
    ],
-   "ttft": 79.63,
-   "latency": 79.84,
+   "ttft": 88.81,
+   "latency": 95.0,
    "error": null,
-   "containment": 1.0,
-   "f1": 0.06451612903225806,
+   "containment": 0.0,
+   "f1": 0.0,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -192,17 +184,18 @@
    "type": "3hop",
    "question": "What were the Genesis's advantages over the platform that plays Drac's Night Out?",
    "gold": "built on 16-bit architectures and offered improved graphics and sound",
-   "answer": "The Genesis offered improved graphics and sound over the 8-bit NES [1][3][12]. Both the Genesis and its competitors were built on 16-bit architectures, which provided these enhancements compared to the NES's 8-bit system [1][3][12].",
+   "answer": "The Genesis's advantages were its 16-bit architecture, which offered improved graphics and sound over the 8-bit NES, the platform for *Drac's Night Out* [2][1][3][12].",
    "citations": [
     "Super Nintendo Entertainment System",
+    "Drac's Night Out",
     "Super Nintendo Entertainment System",
     "Super Nintendo Entertainment System"
    ],
-   "ttft": 12.67,
-   "latency": 12.88,
+   "ttft": 13.02,
+   "latency": 13.21,
    "error": null,
    "containment": 1.0,
-   "f1": 0.5263157894736842,
+   "f1": 0.4,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -212,25 +205,16 @@
    "type": "2hop",
    "question": "What is the maximum load drawn by the device that was designed to standardize connection of computer peripherals?",
    "gold": "five unit loads",
-   "answer": "Based on the provided reference materials, the relevant information is not available.",
-   "citations": [
-    "USB",
-    "USB",
-    "USB",
-    "Nintendo Entertainment System",
-    "Super Nintendo Entertainment System",
-    "Shrek 2",
-    "Grown Ups (film)",
-    "Xexyz"
-   ],
-   "ttft": 59.4,
-   "latency": 71.65,
+   "answer": "Based on the provided reference materials, the relevant information is not available in the knowledge base.",
+   "citations": [],
+   "ttft": 35.86,
+   "latency": 35.94,
    "error": null,
    "containment": 0.0,
    "f1": 0.0,
    "em": 0.0,
-   "refusal": true,
-   "citation_hit": 1.0
+   "refusal": false,
+   "citation_hit": 0.0
   },
   {
    "qid": "3hop1__239036_15840_36002",
@@ -239,13 +223,13 @@
    "gold": "built on 16-bit architectures and offered improved graphics and sound",
    "answer": "Based on the provided reference materials, the relevant information is not available in the knowledge base.",
    "citations": [],
-   "ttft": 1.44,
-   "latency": 1.53,
+   "ttft": 1.11,
+   "latency": 1.19,
    "error": null,
    "containment": 0.0,
    "f1": 0.08695652173913043,
    "em": 0.0,
-   "refusal": true,
+   "refusal": false,
    "citation_hit": 0.0
   }
  ],
@@ -255,14 +239,14 @@
    "recall@10": 1.0,
    "full_evidence@10": 1.0,
    "mrr@10": 1.0,
-   "ndcg@10": 0.8772153153380493
+   "ndcg@10": 0.8503449055347546
   },
   {
    "qid": "3hop2__103871_20335_9331",
    "recall@10": 1.0,
    "full_evidence@10": 1.0,
    "mrr@10": 1.0,
-   "ndcg@10": 0.9469024295259745
+   "ndcg@10": 0.9325210919548239
   },
   {
    "qid": "2hop__835710_7298",
@@ -283,14 +267,14 @@
    "recall@10": 1.0,
    "full_evidence@10": 1.0,
    "mrr@10": 1.0,
-   "ndcg@10": 0.8315546295836225
+   "ndcg@10": 0.8772153153380493
   },
   {
    "qid": "3hop1__160324_131905_41948",
    "recall@10": 1.0,
    "full_evidence@10": 1.0,
    "mrr@10": 1.0,
-   "ndcg@10": 0.8385465274895063
+   "ndcg@10": 0.86034433104172
   },
   {
    "qid": "2hop__56851_343058",
@@ -311,7 +295,7 @@
    "recall@10": 1.0,
    "full_evidence@10": 1.0,
    "mrr@10": 1.0,
-   "ndcg@10": 0.9267582364714126
+   "ndcg@10": 0.8485833840018
   },
   {
    "qid": "3hop1__346812_15840_36002",
@@ -338,19 +322,19 @@
  "summary": {
   "n": 12,
   "errors": 0,
-  "containment": 0.6667,
-  "f1": 0.1329,
+  "containment": 0.4167,
+  "f1": 0.0983,
   "em": 0.0,
-  "citation_hit": 0.9167,
+  "citation_hit": 0.6667,
   "reject_correct": null,
   "retrieval_recall@10": 0.9583,
   "retrieval_full_evidence@10": 0.9167,
   "retrieval_mrr@10": 1.0,
-  "retrieval_ndcg@10": 0.8772,
-  "latency_p50": 79.61,
-  "latency_p95": 98.83,
-  "ttft_p50": 74.23,
-  "refusal_rate": 0.25
+  "retrieval_ndcg@10": 0.8729,
+  "latency_p50": 60.01,
+  "latency_p95": 95.0,
+  "ttft_p50": 47.81,
+  "refusal_rate": 0.0
  },
  "meta": {
   "source": "MuSiQue dev (answerable)",
@@ -361,5 +345,5 @@
   "question_budget": 30,
   "skipped_for_budget": 6
  },
- "score_sha": "fa83aeca4cdea7e1"
+ "score_sha": "04c797a658684a3c"
 }

@@ -5,14 +5,12 @@
    "type": "kbqa/generic",
    "question": "Which blues performer recorded The Healer?",
    "gold": "John Lee Hooker",
-   "answer": "John Lee Hooker recorded \"The Healer\" [1][2][3].",
+   "answer": "John Lee Hooker recorded The Healer [1].",
    "citations": [
-    "The Healer",
-    "The Healer",
     "The Healer"
    ],
-   "ttft": 77.64,
-   "latency": 77.83,
+   "ttft": 44.03,
+   "latency": 44.24,
    "error": null,
    "containment": 1.0,
    "f1": 0.7499999999999999,
@@ -27,13 +25,13 @@
    "gold": "False",
    "answer": "Based on the provided reference materials, the relevant information is not available in the knowledge base.",
    "citations": [],
-   "ttft": 6.47,
-   "latency": 6.57,
+   "ttft": 3.55,
+   "latency": 3.64,
    "error": null,
    "containment": 1.0,
    "f1": 0.0,
    "em": 0.0,
-   "refusal": true,
+   "refusal": false,
    "citation_hit": 0.0
   },
   {
@@ -41,19 +39,17 @@
    "type": "kbqa/multihop",
    "question": "What year did the biggest hit of the band Kajagoogoo come out?",
    "gold": "1983",
-   "answer": "Based on the provided reference materials, the information about the release year of Kajagoogoo's biggest hit is not available. The materials confirm that Kajagoogoo is a British new wave band that was formed in 1982 [1][2][3], but they do not contain any details about their discography, songs, or specific hit records.Based on the provided reference materials, the relevant information is not available.",
+   "answer": "Based on the provided reference materials, the relevant information is not available. The entry for the band Kajagoogoo [1] lists general facts like its inception year (1982) and genres, but does not include details about specific songs, their release years, or chart performance.Based on the provided reference materials, the relevant information is not available.",
    "citations": [
-    "Kajagoogoo",
-    "Kajagoogoo",
     "Kajagoogoo"
    ],
-   "ttft": 28.71,
-   "latency": 34.91,
+   "ttft": 25.37,
+   "latency": 31.57,
    "error": null,
    "containment": 0.0,
    "f1": 0.0,
    "em": 0.0,
-   "refusal": true,
+   "refusal": false,
    "citation_hit": 1.0
   },
   {
@@ -63,13 +59,13 @@
    "gold": "True",
    "answer": "Based on the provided reference materials, the relevant information is not available in the knowledge base.",
    "citations": [],
-   "ttft": 0.93,
-   "latency": 1.02,
+   "ttft": 2.84,
+   "latency": 2.93,
    "error": null,
    "containment": 0.0,
    "f1": 0.0,
    "em": 0.0,
-   "refusal": true,
+   "refusal": false,
    "citation_hit": 0.0
   },
   {
@@ -79,13 +75,13 @@
    "gold": "1959",
    "answer": "Based on the provided reference materials, the relevant information is not available in the knowledge base.",
    "citations": [],
-   "ttft": 0.97,
-   "latency": 1.06,
+   "ttft": 2.77,
+   "latency": 2.85,
    "error": null,
    "containment": 0.0,
    "f1": 0.0,
    "em": 0.0,
-   "refusal": true,
+   "refusal": false,
    "citation_hit": 0.0
   },
   {
@@ -93,14 +89,12 @@
    "type": "kbqa/generic",
    "question": "When was Daniel Day Lewis born?",
    "gold": "1957",
-   "answer": "Daniel Day-Lewis was born on April 29, 1957 [1][2][3].",
+   "answer": "Daniel Day-Lewis was born on April 29, 1957 [1].",
    "citations": [
-    "Daniel Day-Lewis",
-    "Daniel Day-Lewis",
     "Daniel Day-Lewis"
    ],
-   "ttft": 47.18,
-   "latency": 47.37,
+   "ttft": 49.91,
+   "latency": 50.09,
    "error": null,
    "containment": 1.0,
    "f1": 0.2222222222222222,
@@ -122,7 +116,7 @@
    "recall@10": 1.0,
    "full_evidence@10": 1.0,
    "mrr@10": 1.0,
-   "ndcg@10": 0.9197207891481876
+   "ndcg@10": 1.0
   },
   {
    "qid": "1e81dfc8",
@@ -136,14 +130,14 @@
    "recall@10": 1.0,
    "full_evidence@10": 1.0,
    "mrr@10": 1.0,
-   "ndcg@10": 0.8772153153380493
+   "ndcg@10": 1.0
   },
   {
    "qid": "9e25a7d3",
    "recall@10": 1.0,
    "full_evidence@10": 1.0,
-   "mrr@10": 0.14285714285714285,
-   "ndcg@10": 0.3333333333333333
+   "mrr@10": 0.25,
+   "ndcg@10": 0.43067655807339306
   },
   {
    "qid": "88045d48",
@@ -163,12 +157,12 @@
   "reject_correct": null,
   "retrieval_recall@10": 1.0,
   "retrieval_full_evidence@10": 1.0,
-  "retrieval_mrr@10": 0.8571,
-  "retrieval_ndcg@10": 0.855,
-  "latency_p50": 6.57,
-  "latency_p95": 77.83,
-  "ttft_p50": 6.47,
-  "refusal_rate": 0.6667
+  "retrieval_mrr@10": 0.875,
+  "retrieval_ndcg@10": 0.9051,
+  "latency_p50": 3.64,
+  "latency_p95": 50.09,
+  "ttft_p50": 3.55,
+  "refusal_rate": 0.0
  },
  "meta": {
   "source": "Mintaka dev (KBQA) + Wikidata evidence; types: generic/yesno/ordinal/intersection/multihop",
@@ -179,5 +173,5 @@
   "question_budget": 30,
   "note": "comparative/difference/superlative/count 类需要跨实体聚合证据,不在闭库协议内"
  },
- "score_sha": "00b48e5ac746c82c"
+ "score_sha": "efd632c34bdaee36"
 }

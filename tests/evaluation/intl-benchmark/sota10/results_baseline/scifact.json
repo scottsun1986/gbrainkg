@@ -39,8 +39,8 @@
    "qid": "1199",
    "recall@10": 1.0,
    "full_evidence@10": 1.0,
-   "mrr@10": 0.25,
-   "ndcg@10": 0.43067655807339306
+   "mrr@10": 0.2,
+   "ndcg@10": 0.38685280723454163
   },
   {
    "qid": "879",
@@ -96,7 +96,7 @@
    "recall@10": 1.0,
    "full_evidence@10": 1.0,
    "mrr@10": 1.0,
-   "ndcg@10": 0.8854598815714874
+   "ndcg@10": 1.0
   },
   {
    "qid": "956",
@@ -124,7 +124,7 @@
    "recall@10": 1.0,
    "full_evidence@10": 1.0,
    "mrr@10": 1.0,
-   "ndcg@10": 0.9178287402913377
+   "ndcg@10": 0.9828920819566879
   },
   {
    "qid": "729",
@@ -188,9 +188,9 @@
   "errors": 0,
   "retrieval_recall@10": 1.0,
   "retrieval_full_evidence@10": 1.0,
-  "retrieval_mrr@10": 0.9712,
-  "retrieval_ndcg@10": 0.9705,
-  "search_wall_secs": 10.0
+  "retrieval_mrr@10": 0.9692,
+  "retrieval_ndcg@10": 0.9758,
+  "search_wall_secs": 5.5
  },
  "meta": {
   "source": "BEIR scifact (test qrels, gold-guaranteed subset)",
@@ -200,5 +200,5 @@
   "doc_budget": 30,
   "question_budget": 30
  },
- "score_sha": "7f75269f173e1d6e"
+ "score_sha": "d29b42edf798bce8"
 }

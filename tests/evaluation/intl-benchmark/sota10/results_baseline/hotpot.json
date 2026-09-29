@@ -5,20 +5,20 @@
    "type": "bridge/hard",
    "question": "What class of yamaha class sport bike motorcycle did Ryuji Yokoa use when he finished as champion in the MFJ All Japan Road Race GP250 Championship in 2006?",
    "gold": "Yamaha 600 class",
-   "answer": "The specific class of Yamaha motorcycle Ryuji Yokoe used for his 2006 MFJ All Japan Road Race GP250 Championship victory is not recorded in the provided materials [2][3][4]. The documents confirm he finished as champion in the 2006 GP250 Championship [2][3][4] and that he currently competes aboard a Yamaha YZF-R6, which is a 600-class sport bike [1][2][3][4].Based on the provided reference materials, the class of Yamaha sport bike motorcycle Ryuji Yokoe used when he finished as champion in the 2006 MFJ All Japan Road Race GP250 Championship is not recorded [1][2][3]. The sources confirm he competed in and won that championship in 2006, but do not specify the motorcycle class for that event [2][3].",
+   "answer": "Based on the provided reference materials, the specific class of Yamaha sport bike motorcycle Ryuji Yokoe used to win the MFJ All Japan Road Race GP250 Championship in 2006 is not documented [2][3][4]. The materials confirm he was the champion in the GP250 Championship in 2006 [2][3][4], and that he currently competes (and has previously competed) aboard a Yamaha YZF-R6, which is a 600-class sport bike [1][2][3][4].The reference materials do not specify the class of Yamaha sport bike motorcycle Ryuji Yokoe used for his 2006 championship victory in the MFJ All Japan Road Race GP250 Championship. They confirm he was the champion in the GP250 category that year, but the associated vehicle is not detailed [2][3][4].",
    "citations": [
     "Yamaha YZF-R6",
     "Ryuji Yokoe",
     "Ryuji Yokoe",
     "Ryuji Yokoe"
    ],
-   "ttft": 85.0,
-   "latency": 85.2,
+   "ttft": 65.96,
+   "latency": 66.16,
    "error": null,
    "containment": 0.0,
    "f1": 0.03921568627450981,
    "em": 0.0,
-   "refusal": true,
+   "refusal": false,
    "citation_hit": 1.0
   },
   {
@@ -26,15 +26,13 @@
    "type": "bridge/hard",
    "question": "What film adaptation do both Jerome Bernard and Ira Lewis have in common?",
    "gold": "Chinese Coffee",
-   "answer": "The film adaptation that both Jerome Bernard Orbach and Ira Lewis have in common is \"Chinese Coffee\" [1][2][3][4].",
+   "answer": "Both Jerome Bernard (Jerry Orbach) and Ira Lewis are connected through the film adaptation of \"Chinese Coffee\" [1][4].",
    "citations": [
-    "Ira Lewis",
-    "Ira Lewis",
     "Ira Lewis",
     "Jerry Orbach"
    ],
-   "ttft": 43.5,
-   "latency": 43.71,
+   "ttft": 31.38,
+   "latency": 31.61,
    "error": null,
    "containment": 1.0,
    "f1": 0.2222222222222222,
@@ -47,18 +45,16 @@
    "type": "bridge/hard",
    "question": "What items are used to play both Lapta and Rounders?",
    "gold": "bat and ball",
-   "answer": "Both Lapta and Rounders are played using bats and balls [1][2][3][4].",
+   "answer": "Both games use a bat and a ball [1][2].",
    "citations": [
     "Lapta (game)",
-    "Rounders",
-    "Lapta (game)",
-    "Lapta (game)"
+    "Rounders"
    ],
-   "ttft": 43.43,
-   "latency": 43.65,
+   "ttft": 31.49,
+   "latency": 31.71,
    "error": null,
-   "containment": 0.0,
-   "f1": 0.15384615384615383,
+   "containment": 1.0,
+   "f1": 0.6666666666666666,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -68,16 +64,17 @@
    "type": "bridge/hard",
    "question": "Chien-Shiung Wu's expertise in experimental physics evoked comparisons to a scientist who passed away in which year ?",
    "gold": "1934",
-   "answer": "Marie Curie, the scientist Chien-Shiung Wu was compared to, passed away in **1934** [1][2].",
+   "answer": "The scientist Chien-Shiung Wu was compared to, Marie Curie, passed away in 1934 [12]. Her expertise in experimental physics evoked these comparisons [1][3].",
    "citations": [
+    "Chien-Shiung Wu",
     "Chien-Shiung Wu",
     "Marie Curie"
    ],
-   "ttft": 22.35,
-   "latency": 25.85,
+   "ttft": 15.72,
+   "latency": 15.92,
    "error": null,
    "containment": 1.0,
-   "f1": 0.15384615384615385,
+   "f1": 0.09523809523809523,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -87,18 +84,18 @@
    "type": "bridge/hard",
    "question": "Were was the Mexican state after which there is Villa Unión, Sinaloa located? ",
    "gold": "tip of the Baja California",
-   "answer": "Villa Unión is located in the Mexican state of Sinaloa [1][2][4][5]. The reference materials do not specify the geographical location of Sinaloa within Mexico.",
+   "answer": "Villa Unión, Sinaloa is located in the Mexican state of Sinaloa [1][4][5]. Mazatlán, where Villa Unión is situated within its municipality, is explicitly stated to be a city in the Mexican state of Sinaloa [2].",
    "citations": [
     "Villa Unión, Sinaloa",
     "Mazatlán",
     "Villa Unión, Sinaloa",
     "Villa Unión, Sinaloa"
    ],
-   "ttft": 67.85,
-   "latency": 68.48,
+   "ttft": 39.18,
+   "latency": 39.37,
    "error": null,
    "containment": 0.0,
-   "f1": 0.08333333333333334,
+   "f1": 0.058823529411764705,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -108,20 +105,20 @@
    "type": "bridge/hard",
    "question": "How many of the 12 million immigrants to the United States through Ellis Island were Italian immigrants?",
    "gold": "5.3 million",
-   "answer": "The materials state that Ellis Island processed over 12 million immigrants to the United States [2][3][12], and that 5.3 million Italians immigrated to the U.S. between 1820 and 1978, but not all entered through Ellis Island [1]. However, no source provides a breakdown of the 12 million by nationality.Based on the provided reference materials, the specific number of Italian immigrants among the 12 million who passed through Ellis Island is not recorded.\n",
+   "answer": "The specific number of Italian immigrants who entered the United States through Ellis Island is not recorded in the provided reference materials [1][2][3][12].Based on the provided reference materials, the specific number of Italian immigrants among the over 12 million who passed through Ellis Island is not recorded.",
    "citations": [
     "History of Italian Americans in Boston",
     "Ellis Island",
     "Ellis Island",
     "Ellis Island"
    ],
-   "ttft": 11.0,
-   "latency": 11.21,
+   "ttft": 20.23,
+   "latency": 20.41,
    "error": null,
-   "containment": 1.0,
-   "f1": 0.0625,
+   "containment": 0.0,
+   "f1": 0.046511627906976744,
    "em": 0.0,
-   "refusal": true,
+   "refusal": false,
    "citation_hit": 1.0
   },
   {
@@ -129,17 +126,15 @@
    "type": "bridge/hard",
    "question": "When was the father of the professional ice hockey player with the middle name \"Fosgaard\" born?",
    "gold": "June 13, 1960",
-   "answer": "Olaf Eller was born on June 13, 1960 [9]. He is the father of professional ice hockey player Lars Fosgaard Eller [1][4].",
+   "answer": "Olaf Eller, the father of Lars Fosgaard Eller, was born on June 13, 1960 [8].",
    "citations": [
-    "Lars Eller",
-    "Lars Eller",
     "Olaf Eller"
    ],
-   "ttft": 88.16,
-   "latency": 88.35,
+   "ttft": 69.44,
+   "latency": 69.63,
    "error": null,
    "containment": 1.0,
-   "f1": 0.2727272727272727,
+   "f1": 0.375,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -149,18 +144,16 @@
    "type": "bridge/hard",
    "question": "Arthur Saint-Léon was the \"Maître de Ballet\" of the ballet company now known as?",
    "gold": "The Mariinsky Ballet",
-   "answer": "The ballet company is now known as the Mariinsky Ballet [14]. Arthur Saint-Léon served as its \"Maître de Ballet\" from 1859 to 1869 when it was called the St. Petersburg Imperial Ballet [1][2][3].",
+   "answer": "Arthur Saint-Léon was the \"Maître de Ballet\" of the St. Petersburg Imperial Ballet, which is now known as the Mariinsky Ballet [1][3].",
    "citations": [
-    "Arthur Saint-Léon",
-    "Arthur Saint-Léon",
     "Arthur Saint-Léon",
     "Mariinsky Ballet"
    ],
-   "ttft": 10.09,
-   "latency": 10.3,
+   "ttft": 5.91,
+   "latency": 6.09,
    "error": null,
    "containment": 1.0,
-   "f1": 0.13333333333333333,
+   "f1": 0.19999999999999998,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -170,15 +163,15 @@
    "type": "bridge/hard",
    "question": "What film did the sound editor for a 2013 Hong Kong-Chinese martial arts drama film based on the life story of the Wing Chun grandmaster Ip Man win two Academy Awards for?",
    "gold": "\"Hacksaw Ridge\"",
-   "answer": "Robert Mackenzie, the supervising sound editor for *The Grandmaster* (2013), received two Academy Award nominations at the 89th Academy Awards for the film *Hacksaw Ridge* [3].",
+   "answer": "The sound editor for *The Grandmaster* (2013) received two Academy Award nominations for the film *Hacksaw Ridge* [3].Robert Mackenzie, the supervising sound editor for *The Grandmaster*, received two Academy Award nominations for *Hacksaw Ridge*, but the provided reference materials do not record him winning any Academy Awards [3].",
    "citations": [
     "Robert Mackenzie (sound engineer)"
    ],
-   "ttft": 7.9,
-   "latency": 8.09,
+   "ttft": 26.39,
+   "latency": 26.57,
    "error": null,
    "containment": 1.0,
-   "f1": 0.17391304347826084,
+   "f1": 0.09302325581395349,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -188,17 +181,16 @@
    "type": "bridge/hard",
    "question": "How many albums had been recorded by Talking Heads by November, 1980?",
    "gold": "four",
-   "answer": "By November 1980, Talking Heads had recorded four studio albums [1][2]. These were their self-titled debut, \"More Songs About Buildings and Food,\" \"Fear of Music,\" and \"Remain in Light,\" which was released on October 8, 1980 [5].",
+   "answer": "Talking Heads had recorded four studio albums by November 1980 [1][2]. This includes \"Remain in Light\", which was recorded in July-August 1980 and released in October 1980, identified as their fourth studio album [1], and the sources confirm it as part of their first four studio albums [2].",
    "citations": [
-    "The Name of This Band Is Talking Heads",
-    "The Name of This Band Is Talking Heads",
-    "Remain in Light"
+    "Remain in Light",
+    "The Name of This Band Is Talking Heads"
    ],
-   "ttft": 30.37,
-   "latency": 30.56,
+   "ttft": 78.55,
+   "latency": 78.73,
    "error": null,
    "containment": 1.0,
-   "f1": 0.05555555555555556,
+   "f1": 0.044444444444444446,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -208,18 +200,22 @@
    "type": "bridge/hard",
    "question": "What 1876 battle featured the Other Magpie?",
    "gold": "Battle of the Rosebud",
-   "answer": "The Other Magpie fought in the **Battle of the Rosebud** in 1876 [1][2][3][13].",
+   "answer": "Based on the provided reference materials, the relevant information is not available.",
    "citations": [
     "The Other Magpie",
     "The Other Magpie",
     "The Other Magpie",
-    "Battle of the Rosebud"
+    "Jerry Orbach",
+    "The Name of This Band Is Talking Heads",
+    "Rounders",
+    "Lapta (game)",
+    "History of Italian Americans in Boston"
    ],
-   "ttft": 12.42,
-   "latency": 12.63,
+   "ttft": 26.55,
+   "latency": 38.79,
    "error": null,
-   "containment": 1.0,
-   "f1": 0.5,
+   "containment": 0.0,
+   "f1": 0.0,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -229,16 +225,19 @@
    "type": "bridge/hard",
    "question": "The 2017–18 Wigan Athletic F.C. season will be a year in which the team competes in the league cup known as what for sponsorship reasons?",
    "gold": "Carabao Cup",
-   "answer": "The league cup is known as the Carabao Cup for sponsorship reasons [1][4].",
+   "answer": "The league cup is known as the Carabao Cup for sponsorship reasons [1][4]. Wigan Athletic participated in the EFL Cup during the 2017–18 season [2][3][17].",
    "citations": [
     "EFL Cup",
-    "EFL Cup"
+    "2017–18 Wigan Athletic F.C. season",
+    "2017–18 Wigan Athletic F.C. season",
+    "EFL Cup",
+    "2017–18 Wigan Athletic F.C. season"
    ],
-   "ttft": 50.0,
-   "latency": 50.19,
+   "ttft": 47.13,
+   "latency": 47.33,
    "error": null,
    "containment": 1.0,
-   "f1": 0.33333333333333337,
+   "f1": 0.1904761904761905,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -248,18 +247,18 @@
    "type": "bridge/hard",
    "question": "Howard Van Doren Shaw was the designer of which 1917 Progressive Era community? ",
    "gold": "Marktown",
-   "answer": "Howard Van Doren Shaw designed Marktown, a 1917 Progressive Era planned worker community in East Chicago, Indiana [13].The reference materials do not record Howard Van Doren Shaw designing a 1917 Progressive Era community. Shaw's documented work includes the 1900 remodel of Second Presbyterian Church in Chicago [1][2][3], and he designed Marktown, which is described as a worker community in Northwest Indiana [1][2][3], but no specific design date for Marktown is provided in the Shaw sources. A separate source documents Marktown as an urban planned worker community built in 1917 during the Progressive Era in East Chicago, Indiana [13]. However, the provided materials do not contain a statement linking Howard Van Doren Shaw as the designer of the 1917 Marktown community.",
+   "answer": "Howard Van Doren Shaw designed Marktown, a planned worker community in East Chicago, Indiana, built in 1917 [1][2][3][13].",
    "citations": [
     "Howard Van Doren Shaw",
     "Howard Van Doren Shaw",
     "Howard Van Doren Shaw",
     "Marktown"
    ],
-   "ttft": 28.64,
-   "latency": 28.84,
+   "ttft": 10.1,
+   "latency": 10.28,
    "error": null,
    "containment": 1.0,
-   "f1": 0.01904761904761905,
+   "f1": 0.11764705882352941,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -275,8 +274,8 @@
     "Buncle",
     "Bonkyll Castle"
    ],
-   "ttft": 8.6,
-   "latency": 8.79,
+   "ttft": 14.0,
+   "latency": 14.18,
    "error": null,
    "containment": 1.0,
    "f1": 0.25,
@@ -312,7 +311,7 @@
    "recall@10": 1.0,
    "full_evidence@10": 1.0,
    "mrr@10": 1.0,
-   "ndcg@10": 1.0
+   "ndcg@10": 0.8772153153380493
   },
   {
    "qid": "5ae762835542997b22f6a711",
@@ -354,7 +353,7 @@
    "recall@10": 1.0,
    "full_evidence@10": 1.0,
    "mrr@10": 1.0,
-   "ndcg@10": 0.8772153153380493
+   "ndcg@10": 0.9197207891481876
   },
   {
    "qid": "5ae8167b55429952e35eaa06",
@@ -388,19 +387,19 @@
  "summary": {
   "n": 14,
   "errors": 0,
-  "containment": 0.7857,
-  "f1": 0.1752,
+  "containment": 0.7143,
+  "f1": 0.1714,
   "em": 0.0,
   "citation_hit": 1.0,
   "reject_correct": null,
   "retrieval_recall@10": 1.0,
   "retrieval_full_evidence@10": 1.0,
   "retrieval_mrr@10": 1.0,
-  "retrieval_ndcg@10": 0.9278,
-  "latency_p50": 28.84,
-  "latency_p95": 85.2,
-  "ttft_p50": 28.64,
-  "refusal_rate": 0.1429
+  "retrieval_ndcg@10": 0.9221,
+  "latency_p50": 31.61,
+  "latency_p95": 69.63,
+  "ttft_p50": 26.55,
+  "refusal_rate": 0.0
  },
  "meta": {
   "source": "HotpotQA dev (distractor setting)",
@@ -411,5 +410,5 @@
   "question_budget": 30,
   "skipped_for_budget": 0
  },
- "score_sha": "c6051eb448ba75dc"
+ "score_sha": "57fc37fe59553f25"
 }

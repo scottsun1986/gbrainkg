@@ -52,5 +52,32 @@
   "doc_budget": 30,
   "question_budget": 30,
   "note": "comparative/difference/superlative/count 类需要跨实体聚合证据,不在闭库协议内"
+ },
+ "musique": {
+  "source": "MuSiQue dev (answerable)",
+  "n_docs": 28,
+  "n_questions": 12,
+  "seed": 42,
+  "doc_budget": 30,
+  "question_budget": 30,
+  "skipped_for_budget": 6
+ },
+ "hotpot": {
+  "source": "HotpotQA dev (distractor setting)",
+  "n_docs": 28,
+  "n_questions": 14,
+  "seed": 42,
+  "doc_budget": 30,
+  "question_budget": 30,
+  "skipped_for_budget": 0
+ },
+ "2wiki": {
+  "source": "2WikiMultiHopQA dev",
+  "n_docs": 28,
+  "n_questions": 11,
+  "seed": 42,
+  "doc_budget": 30,
+  "question_budget": 30,
+  "skipped_for_budget": 0
  }
 }

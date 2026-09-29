@@ -119,3 +119,114 @@ export function numericClaimsSupportedBy(statement: string, evidence: string): b
     });
   });
 }
+
+const MONTH_NAMES = [
+  'january', 'february', 'march', 'april', 'may', 'june', 'july',
+  'august', 'september', 'october', 'november', 'december',
+];
+
+/**
+ * Decisive-value attribution for cited factual claims.
+ *
+ * Character/token overlap grounding passes a parametric-memory answer whose
+ * topical words all occur in same-topic documents while the decisive value
+ * appears nowhere in the evidence: measured on the RGB negative-rejection
+ * probes, every content word of "The 2022 Winter Paralympic Games started on
+ * March 4, 2022" except the date itself occurred in the retrieved noise, so the
+ * overlap bar cleared and the memory-based answer shipped with a citation.
+ *
+ * This gate checks only the *decisive* tokens of a cited claim:
+ *   - full dates (EN "March 4, 2022" / "4 March 2022"; CN "3月4日") — the
+ *     month-day combination must occur in the evidence in either order;
+ *   - proper-noun tokens that the question itself does not contain — for short
+ *     headline-style factoid sentences every one of them must occur in the
+ *     evidence (a synthesis names its entities; a memory guess invents one).
+ *
+ * Deliberately narrow: unit conversions and paraphrase keep flowing through
+ * numericClaimsSupportedBy / the NLI judge; sentences without citation markers
+ * are not this gate's business.
+ */
+export function decisiveValueSupportedBy(
+  sentence: string,
+  evidenceTexts: string[],
+  question: string,
+): boolean {
+  const body = String(sentence || '').replace(/\[\d+\]/g, ' ');
+  const evidence = (evidenceTexts || []).join('\n');
+  if (!evidence.trim()) return false;
+  const normEvidence = evidence.replace(/\s+/g, '').toLowerCase();
+  const normEvidenceSpaced = evidence.toLowerCase();
+
+  // ---- full dates: month-day combo in either order ----
+  const dateFail = (() => {
+    for (const match of body.matchAll(
+      new RegExp(`\\b(${MONTH_NAMES.join('|')})\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s*\\d{4})?\\b`, 'gi'),
+    )) {
+      const month = match[1].toLowerCase();
+      const day = String(Number(match[2]));
+      if (!dateComboInEvidence(normEvidence, month, day)) return true;
+    }
+    for (const match of body.matchAll(
+      new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(${MONTH_NAMES.join('|')})(?:,?\\s*\\d{4})?\\b`, 'gi'),
+    )) {
+      const day = String(Number(match[1]));
+      const month = match[2].toLowerCase();
+      if (!dateComboInEvidence(normEvidence, month, day)) return true;
+    }
+    for (const match of body.matchAll(/(\d{1,2})月(\d{1,2})日/g)) {
+      const month = String(Number(match[1]));
+      const day = String(Number(match[2]));
+      if (!normEvidence.includes(`${month}月${day}日`)) return true;
+    }
+    return false;
+  })();
+  if (dateFail) return false;
+
+  // ---- decisive proper nouns on short factoid sentences ----
+  const isEnglish = !/[\u4e00-\u9fff]/.test(body);
+  if (!isEnglish) return true;
+  const compact = body.replace(/\s+/g, ' ').trim();
+  if (compact.length > 90) return true; // synthesis paragraphs: NLI's job
+  const questionTokens = new Set(
+    (question || '').toLowerCase().match(/[a-z0-9'-]+/g) || [],
+  );
+  const words = compact.split(/\s+/);
+  const decisive: string[] = [];
+  words.forEach((word, index) => {
+    const clean = word.replace(/[^A-Za-z'-]/g, '');
+    if (clean.length < 3) return;
+    if (!/^[A-Z]/.test(word)) return;
+    if (index === 0 && words.length > 1) return; // sentence-initial capitalisation
+    if (MONTH_NAMES.includes(clean.toLowerCase())) return;
+    if (questionTokens.has(clean.toLowerCase())) return;
+    decisive.push(clean.toLowerCase());
+  });
+  if (decisive.length < 1) return true;
+  const allPresent = decisive.every((token) => normEvidenceSpaced.includes(token));
+  return allPresent;
+}
+
+const MONTH_NUMBERS: Record<string, string> = {
+  january: '01', february: '02', march: '03', april: '04', may: '05', june: '06',
+  july: '07', august: '08', september: '09', october: '10', november: '11', december: '12',
+};
+
+function dateComboInEvidence(normEvidence: string, month: string, day: string): boolean {
+  if (normEvidence.includes(`${month}${day}`)) return true;
+  if (normEvidence.includes(`${day}${month}`)) return true;
+  // tolerate an ordinal suffix or comma between day and month in the source
+  if (new RegExp(`${month}.{0,3}${day}`).test(normEvidence)) return true;
+  if (new RegExp(`${day}.{0,3}${month}`).test(normEvidence)) return true;
+  // ISO / numeric dates in the evidence (Wikidata emits 1957-04-29): match the
+  // month-day pair in zero-padded numeric form so a correct "April 29" is not
+  // mis-flagged against an ISO source. Both month-day and day-month orders.
+  const mnum = MONTH_NUMBERS[month];
+  if (mnum) {
+    const dd = day.padStart(2, '0');
+    if (dd === day && normEvidence.includes(`${mnum}-${dd}`)) return true;
+    if (normEvidence.includes(`${dd}-${mnum}`)) return true;
+    if (normEvidence.includes(`${dd}.${mnum}`)) return true;
+    if (normEvidence.includes(`${dd}/${mnum}`)) return true;
+  }
+  return false;
+}

@@ -5,16 +5,18 @@
    "type": "bridge_comparison",
    "question": "Which film has the director who died first, Pusthakamlo Konni Pageelu Missing or The Hunchback Of Rome?",
    "gold": "Pusthakamlo Konni Pageelu Missing",
-   "answer": "\"Pusthakamlo Konni Pageelu Missing\" has the director who died first, as its director Sajid Qureshi died on June 21, 2013 [15], which is earlier than Carlo Lizzani, director of \"The Hunchback of Rome,\" who died on October 5, 2013 [6].",
+   "answer": "\"Pusthakamlo Konni Pageelu Missing\" has the director who died first [1][6][11][15]. Its director, Sajid Qureshi, died on June 21, 2013 [15], while Carlo Lizzani, director of \"The Hunchback Of Rome,\" died on October 5, 2013 [6][11].",
    "citations": [
+    "Pusthakamlo Konni Pageelu Missing",
     "Carlo Lizzani",
+    "The Hunchback of Rome",
     "Sajid Qureshi"
    ],
-   "ttft": 41.66,
-   "latency": 41.89,
+   "ttft": 43.65,
+   "latency": 43.85,
    "error": null,
    "containment": 1.0,
-   "f1": 0.19999999999999998,
+   "f1": 0.2285714285714286,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -24,18 +26,16 @@
    "type": "bridge_comparison",
    "question": "Which film has the director who was born first, Swayamkrushi or Reign Over Me?",
    "gold": "Swayamkrushi",
-   "answer": "The film with the director who was born first is **Swayamkrushi** [5][9].\nIts director, K. Viswanath, was born on 19 February 1930 [9], while the director of Reign Over Me, Mike Binder, was born on 2 June 1958 [7][8].",
+   "answer": "Swayamkrushi has the director who was born first, as K. Viswanath was born on 19 February 1930 [9], while Mike Binder, director of Reign Over Me, was born on June 2, 1958 [7].",
    "citations": [
-    "Swayamkrushi",
     "Mike Binder",
-    "Reign Over Me",
     "K. Viswanath"
    ],
-   "ttft": 39.93,
-   "latency": 41.08,
+   "ttft": 52.46,
+   "latency": 52.65,
    "error": null,
    "containment": 1.0,
-   "f1": 0.05882352941176471,
+   "f1": 0.06451612903225806,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -45,15 +45,15 @@
    "type": "compositional",
    "question": "Where did Carl Von Fersen's wife die?",
    "gold": "Stockholm",
-   "answer": "Carl von Fersen's wife, Charlotta Sparre, died in Stockholm on 20 December 1795. [1]",
+   "answer": "Carl von Fersen's wife, Charlotta Sparre, died in Stockholm [2].",
    "citations": [
-    "Charlotta Sparre"
+    "Carl von Fersen"
    ],
-   "ttft": 86.01,
-   "latency": 86.21,
+   "ttft": 68.65,
+   "latency": 68.85,
    "error": null,
    "containment": 1.0,
-   "f1": 0.14285714285714288,
+   "f1": 0.19999999999999998,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -63,17 +63,17 @@
    "type": "inference",
    "question": "Who is the mother of William Vii Of Jülich, 1St Duke Of Berg?",
    "gold": "Margaret of Ravensberg",
-   "answer": "The mother of William VII of Jülich, 1st Duke of Berg, is Margaret of Ravensberg, daughter and heiress of Otto IV, Count of Ravensberg, and Margaret of Berg [3][5][6].",
+   "answer": "The mother of William VII of Jülich, 1st Duke of Berg, is Margaret, daughter and heiress of Otto IV, Count of Ravensberg, and Margaret of Berg [3][5][6].",
    "citations": [
     "William VII of Jülich, 1st Duke of Berg",
     "William VII of Jülich, 1st Duke of Berg",
     "William VII of Jülich, 1st Duke of Berg"
    ],
-   "ttft": 45.97,
-   "latency": 46.19,
+   "ttft": 37.02,
+   "latency": 37.21,
    "error": null,
-   "containment": 1.0,
-   "f1": 0.19999999999999998,
+   "containment": 0.0,
+   "f1": 0.21428571428571425,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -83,7 +83,7 @@
    "type": "comparison",
    "question": "Who was born first out of Eric Tanenblatt and Craig L. Fuller?",
    "gold": "Craig L. Fuller",
-   "answer": "Craig L. Fuller was born first, on February 16, 1951 [1][2][3], while Eric Tanenblatt was born on August 15, 1966 [5][6][7].",
+   "answer": "Craig L. Fuller was born first. He was born on February 16, 1951 [1][2][3], while Eric Tanenblatt was born on August 15, 1966 [5][6][7].",
    "citations": [
     "Craig L. Fuller",
     "Craig L. Fuller",
@@ -92,11 +92,11 @@
     "Eric Tanenblatt",
     "Eric Tanenblatt"
    ],
-   "ttft": 69.76,
-   "latency": 69.96,
+   "ttft": 65.74,
+   "latency": 65.93,
    "error": null,
    "containment": 1.0,
-   "f1": 0.2727272727272727,
+   "f1": 0.24000000000000002,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -106,18 +106,17 @@
    "type": "bridge_comparison",
    "question": "Which film has the director died later, The Yellow Mask or The Return Of The Tall Blond Man With One Black Shoe?",
    "gold": "The Return Of The Tall Blond Man With One Black Shoe",
-   "answer": "The director of The Return Of The Tall Blond Man With One Black Shoe died later [3].\nThe director of The Yellow Mask, Harry Lachman, died on March 19, 1975 [2][4]. The director of The Return Of The Tall Blond Man With One Black Shoe, Yves Robert, died on May 10, 2002 [8]. May 10, 2002 is later than March 19, 1975.",
+   "answer": "*The Return Of The Tall Blond Man With One Black Shoe* has the director who died later. Its director, Yves Robert, died on May 10, 2002 [9], while *The Yellow Mask*'s director, Harry Lachman, died on March 19, 1975 [2][4].",
    "citations": [
     "Harry Lachman",
-    "The Return of the Tall Blond Man with One Black Shoe",
     "Harry Lachman",
     "Yves Robert"
    ],
-   "ttft": 68.2,
-   "latency": 69.44,
+   "ttft": 65.92,
+   "latency": 66.11,
    "error": null,
    "containment": 1.0,
-   "f1": 0.3,
+   "f1": 0.4186046511627907,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -127,15 +126,15 @@
    "type": "compositional",
    "question": "Where did Rune Ottosen's father graduate from?",
    "gold": "University of Bergen",
-   "answer": "Rune Ottosen's father, Kristian Ottosen, finished his studies at the University of Bergen [7].",
+   "answer": "Kristian Ottosen, the father of Rune Ottosen, finished his studies at the University of Bergen after the war [6]. He subsequently became the leader of Det Norske Studentersamfund in Bergen and then a full-time employee at the University of Oslo [6].",
    "citations": [
     "Kristian Ottosen"
    ],
-   "ttft": 67.24,
-   "latency": 67.44,
+   "ttft": 74.25,
+   "latency": 74.47,
    "error": null,
    "containment": 1.0,
-   "f1": 0.4,
+   "f1": 0.16666666666666669,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -145,21 +144,20 @@
    "type": "compositional",
    "question": "What is the place of birth of Vsevolod Gantmakher's father?",
    "gold": "Odessa",
-   "answer": "The place of birth of Vsevolod Gantmakher's father, Felix Gantmacher, is not recorded in the provided reference materials [1][5]. \nVsevolod Gantmakher was born in Moscow as the son of Felix Gantmacher [1][3][4], and Felix Gantmacher is noted as a Soviet mathematician with his birth and death dates, but his birthplace is not specified in any of the sources [2][5].",
+   "answer": "The place of birth of Vsevolod Gantmakher's father, Felix Gantmacher, is not recorded in the provided reference materials [1][3][5].\nThe documents confirm that Vsevolod Gantmakher was born in Moscow as the son of the mathematician Felix Gantmacher [1][3][4], and they provide biographical details about Felix, such as his participation in a seminar in Odessa in 1925–1926 [5], but they do not specify his own birthplace.",
    "citations": [
     "Vsevolod Gantmakher",
-    "Felix Gantmacher",
     "Vsevolod Gantmakher",
     "Vsevolod Gantmakher",
     "Felix Gantmacher"
    ],
-   "ttft": 134.8,
-   "latency": 134.99,
+   "ttft": 84.47,
+   "latency": 84.67,
    "error": null,
-   "containment": 0.0,
-   "f1": 0.0,
+   "containment": 1.0,
+   "f1": 0.03508771929824561,
    "em": 0.0,
-   "refusal": true,
+   "refusal": false,
    "citation_hit": 1.0
   },
   {
@@ -167,19 +165,18 @@
    "type": "comparison",
    "question": "Are North East Institute Of Management Science and Sambalpur University both located in the same country?",
    "gold": "yes",
-   "answer": "Yes, both North East Institute of Management Science and Sambalpur University are located in India [1][3][4][5]. Sambalpur University is in Burla, Sambalpur district, Odisha, India [1][2], and North East Institute of Management Science is in Jorhat, India [3][4][5].",
+   "answer": "Yes, both institutions are located in India [3][4][1][2].Yes, both institutions are located in the same country, India [1][3].",
    "citations": [
     "Sambalpur University",
     "Sambalpur University",
     "North East Institute of Management Science",
-    "North East Institute of Management Science",
     "North East Institute of Management Science"
    ],
-   "ttft": 132.88,
-   "latency": 133.07,
+   "ttft": 72.6,
+   "latency": 84.79,
    "error": null,
    "containment": 1.0,
-   "f1": 0.05555555555555556,
+   "f1": 0.11764705882352941,
    "em": 0.0,
    "refusal": false,
    "citation_hit": 1.0
@@ -189,13 +186,14 @@
    "type": "comparison",
    "question": "Who was born later, Emil Fackenheim or Jay'Ed?",
    "gold": "Jay'Ed",
-   "answer": "Jay'ed was born later than Emil Fackenheim. Emil Fackenheim was born on 22 June 1916 [3], while Jay'ed was born on 16 September 1981 [7].",
+   "answer": "Jay'ed was born later than Emil Fackenheim [7]. Emil Fackenheim was born on 22 June 1916 [3][5], and Jay'ed was born on 16 September 1981 [7].",
    "citations": [
+    "Emil Fackenheim",
     "Emil Fackenheim",
     "Jay'ed"
    ],
-   "ttft": 67.52,
-   "latency": 67.72,
+   "ttft": 43.11,
+   "latency": 43.32,
    "error": null,
    "containment": 1.0,
    "f1": 0.08333333333333333,
@@ -208,17 +206,17 @@
    "type": "inference",
    "question": "Who is Somerset Butler, 1St Earl Of Carrick's paternal grandmother?",
    "gold": "Eleanor Redman",
-   "answer": "Based on the provided reference materials, the relevant information is not available.Eleanor Redman is the paternal grandmother of Somerset Butler, 1st Earl of Carrick [1].",
+   "answer": "Somerset Butler, 1st Earl of Carrick's paternal grandmother was Eleanor Redman [1].",
    "citations": [
     "Somerset Butler, 1st Earl of Carrick"
    ],
-   "ttft": 157.57,
-   "latency": 169.78,
+   "ttft": 66.82,
+   "latency": 67.0,
    "error": null,
    "containment": 1.0,
-   "f1": 0.08695652173913042,
+   "f1": 0.3076923076923077,
    "em": 0.0,
-   "refusal": true,
+   "refusal": false,
    "citation_hit": 1.0
   }
  ],
@@ -263,7 +261,7 @@
    "recall@10": 1.0,
    "full_evidence@10": 1.0,
    "mrr@10": 1.0,
-   "ndcg@10": 0.8477774488692931
+   "ndcg@10": 0.8843252268199594
   },
   {
    "qid": "17a489a40bdc11eba7f7acde48001122",
@@ -305,18 +303,18 @@
   "n": 11,
   "errors": 0,
   "containment": 0.9091,
-  "f1": 0.1637,
+  "f1": 0.1888,
   "em": 0.0,
   "citation_hit": 1.0,
   "reject_correct": null,
   "retrieval_recall@10": 0.9318,
   "retrieval_full_evidence@10": 0.8182,
   "retrieval_mrr@10": 1.0,
-  "retrieval_ndcg@10": 0.8711,
-  "latency_p50": 69.44,
-  "latency_p95": 169.78,
-  "ttft_p50": 68.2,
-  "refusal_rate": 0.1818
+  "retrieval_ndcg@10": 0.8744,
+  "latency_p50": 66.11,
+  "latency_p95": 84.79,
+  "ttft_p50": 65.92,
+  "refusal_rate": 0.0
  },
  "meta": {
   "source": "2WikiMultiHopQA dev",
@@ -327,5 +325,5 @@
   "question_budget": 30,
   "skipped_for_budget": 0
  },
- "score_sha": "d3e16104951618f3"
+ "score_sha": "f4c7546ab45bad8b"
 }

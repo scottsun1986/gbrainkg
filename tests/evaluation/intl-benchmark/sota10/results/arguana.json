@@ -32,8 +32,8 @@
    "qid": "test-culture-cgeeghwmeo-con01a",
    "recall@10": 1.0,
    "full_evidence@10": 1.0,
-   "mrr@10": 0.5,
-   "ndcg@10": 0.6309297535714575
+   "mrr@10": 0.3333333333333333,
+   "ndcg@10": 0.5
   },
   {
    "qid": "test-international-gmehwasr-con05a",
@@ -216,9 +216,9 @@
   "errors": 0,
   "retrieval_recall@10": 1.0,
   "retrieval_full_evidence@10": 1.0,
-  "retrieval_mrr@10": 0.9583,
-  "retrieval_ndcg@10": 0.9687,
-  "search_wall_secs": 42.5
+  "retrieval_mrr@10": 0.9528,
+  "retrieval_ndcg@10": 0.9644,
+  "search_wall_secs": 35.9
  },
  "meta": {
   "source": "BEIR arguana (test qrels, gold-guaranteed subset)",
@@ -228,5 +228,5 @@
   "doc_budget": 30,
   "question_budget": 30
  },
- "score_sha": "ccb8314dd0c9325a"
+ "score_sha": "4331237ccce17cec"
 }

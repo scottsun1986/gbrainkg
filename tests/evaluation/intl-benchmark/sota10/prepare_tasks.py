@@ -71,8 +71,12 @@ def build_multihop(bench):
             titles = [norm_title(t) for t in ctx["title"]]
             sents = ["".join(list(s)).strip() for s in ctx["sentences"]]
             gold_titles = sorted({norm_title(t) for t in r["supporting_facts"]["title"]})
+            paras = {}
+            for t, tx in zip(titles, sents):
+                if t not in paras or t in gold_titles:
+                    paras[t] = tx
             rows.append({"qid": str(r["id"]), "question": str(r["question"]), "answer": str(r["answer"]),
-                         "gold_titles": gold_titles, "paras": dict(zip(titles, sents)),
+                         "gold_titles": gold_titles, "paras": paras,
                          "type": f'{r["type"]}/{r["level"]}'})
     elif bench == "2wiki":
         df = pd.read_parquet(LOCAL_DATA / "2wiki_dev.parquet").sample(n=400, random_state=SEED).reset_index(drop=True)
@@ -90,13 +94,23 @@ def build_multihop(bench):
             titles = [norm_title(t) for t in raw_titles]
             sents = [" ".join(list(s)).strip() for s in raw_sents]
             gold_titles = sorted({norm_title(t) for t, _ in sf})
+            paras = {}
+            for t, tx in zip(titles, sents):
+                if t not in paras or t in gold_titles:
+                    paras[t] = tx
             rows.append({"qid": str(r["_id"]), "question": str(r["question"]), "answer": str(r["answer"]),
-                         "gold_titles": gold_titles, "paras": dict(zip(titles, sents)), "type": str(r["type"])})
+                         "gold_titles": gold_titles, "paras": paras, "type": str(r["type"])})
     else:  # musique
         all_rows = [json.loads(l) for l in open(LOCAL_DATA / "musique_dev.jsonl") if l.strip()]
         rng.shuffle(all_rows)
         for r in all_rows[:400]:
-            paras = {norm_title(p["title"]): p["paragraph_text"] for p in r["paragraphs"]}
+            # 同一题的 20 段里同名段落可能有多个(逐题定制上下文),gold 支撑段优先
+            support = {d["paragraph_support_idx"] for d in r["question_decomposition"]}
+            paras = {}
+            for i, p in enumerate(r["paragraphs"]):
+                t = norm_title(p["title"])
+                if t not in paras or i in support:
+                    paras[t] = p["paragraph_text"]
             ordered = [norm_title(p["title"]) for p in sorted(r["paragraphs"], key=lambda x: x["idx"])]
             gold_titles = sorted({ordered[d["paragraph_support_idx"]] for d in r["question_decomposition"]})
             rows.append({"qid": str(r["id"]), "question": str(r["question"]), "answer": str(r["answer"]),
@@ -107,6 +121,20 @@ def build_multihop(bench):
     rng.shuffle(rows)
     corpus = Corpus(DOC_BUDGET - 2)   # 预留 2 篇干扰位
     questions, skipped = [], 0
+
+    def gold_in_doc(title, text):
+        """同名段落在不同题目里可能是不同版本(MuSiQue 逐题定制 20 段上下文,
+        同名 gold 段内容不同;实测 418/7274 个共享标题存在版本冲突)。
+        已存在同标题文档时合并变体,保证本题 gold 文本确实入库、题目在库内可答。"""
+        t = norm_title(title)
+        if t in corpus.by_title:
+            doc = corpus.by_title[t]
+            stripped = str(text or "").strip()
+            if stripped and stripped not in doc["text"]:
+                doc["text"] = doc["text"].rstrip() + "\n\n" + stripped
+            return doc["id"]
+        return corpus.add(t, text, "gold")
+
     for r in rows:
         if len(questions) >= QUESTION_BUDGET or corpus.full():
             break
@@ -118,7 +146,7 @@ def build_multihop(bench):
         if corpus.budget - len(corpus.docs) < len(need):
             skipped += 1
             continue
-        ids = [corpus.add(t, gold_texts[t], "gold") or corpus.by_title[t]["id"] for t in r["gold_titles"]]
+        ids = [gold_in_doc(t, gold_texts[t]) or corpus.by_title[t]["id"] for t in r["gold_titles"]]
         q = {"qid": r["qid"], "question": r["question"], "gold_answer": r["answer"],
              "gold_doc_ids": ids, "gold_titles": r["gold_titles"], "type": r["type"]}
         if r.get("aliases"):

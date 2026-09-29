@@ -16,7 +16,7 @@ import { getSharedBrainRepoAdapter } from "../brain-compiler/brain-adapter.provi
 import { WeKnoraClient, WeKnoraBinding, RetrievedEvidence } from "../retrieval/weknora-client";
 import { estimateTokens, resolveContextTokenBudget } from "./context-budget";
 import { parseTermMappings, expandQueryWithTermMappings, type TermMapping } from "./term-mapping";
-import { numericClaimsSupportedBy, numberNearBound } from "./grounding-numeric";
+import { numericClaimsSupportedBy, numberNearBound, decisiveValueSupportedBy } from "./grounding-numeric";
 import { compressConversationHistory } from "./history-compress";
 import { GraphRagService } from "../graph-rag/graph-rag.service";
 import { SemanticCacheService } from "./semantic-cache.service";
@@ -4258,6 +4258,28 @@ export class ChatService {
     }
 
     if (!hasSufficientEvidence) {
+      // Multi-hop bypass: the fast-refusal floor is calibrated against
+      // single-passage similarity to the WHOLE question. A compositional
+      // question (MuSiQue-style "the spouse of the actress who played…") has
+      // no single passage that resembles it, so its best cross-encoder score
+      // sits far below the single-hop floor (measured 0.018 vs 0.4) while the
+      // hop documents are all retrieved. Refusing there is a systematic false
+      // negative: generation must run and the grounding/refusal machinery at
+      // stream time decides honestly. Only the pre-LLM gate is skipped.
+      const multiHopRouted =
+        agenticComplexity === 'multi_hop' || agenticComplexity === 'comparative';
+      if (multiHopRouted && process.env.CHAT_FAST_REFUSAL_MULTIHOP !== 'false') {
+        trace.warn(
+          'retrieval_confidence',
+          '置信度门禁多跳放行',
+          '复合多跳问题的单段相似度天然低于单跳红线，已放行至生成阶段，由逐句证据门禁兜底',
+          {
+            maxScore: maxEvidenceScore,
+            threshold: evidenceFloor,
+            complexity: agenticComplexity,
+          },
+        );
+      } else {
       const refusalMessage = isEnglishQuery
         ? "Based on the provided reference materials, the relevant information is not available in the knowledge base."
         : "已知知识库资料中未包含与该问题直接相关的信息，无法依据现有文档回答。";
@@ -4287,6 +4309,7 @@ export class ChatService {
         trace,
       );
       return;
+      }
     }
 
     // 7. 流式调用 LLM 并进行事实角标校验
@@ -4370,6 +4393,8 @@ export class ChatService {
 - In your very first sentence, directly and concisely state the core answer, conclusion, entity, or numerical value (under 30 words) with citation tags.
 - Do NOT begin with generic fillers or preamble phrases (e.g. "According to the provided documents...", "Based on the text..."). Answer the user's question directly upfront.
 - Subsequent sentences should provide the necessary supporting context, calculations, or contractual clauses.
+6. [Decisive Values Must Be Copied Verbatim]: The decisive value of an answer — full dates, numbers, identifiers, and proper names — MUST be copied character-for-character from a cited sentence in the reference materials. Never produce a date, quantity, or named entity from your own memory when the cited sentence offers a different value; if the materials do not state the value, say it is not recorded. Adjacent or topically similar sentences are not substitutes for the sentence that carries the asked value.
+7. [Material-vs-Knowledge Conflict Note]: If a cited statement in the reference materials clearly contradicts well-established common knowledge, answer according to the materials (they are the authority of this knowledge base) and append one brief note that this differs from common knowledge. Never silently substitute the material's value with the widely known one.
 ${answerStyleRule(true)}`
         : `你是一个专业的企业级知识库智能助手。请严格基于下方给出的【参考知识库资料】回答用户的问题。
 
@@ -4389,6 +4414,8 @@ ${answerStyleRule(true)}`
 - 回答第一句必须开门见山，用简明直接的语言（10~30字以内）直接给出最核心的结论、明确答案、实体或具体数值，并紧随其标注引用角标（示例格式：“根据规定，该项标准为……[1]。”，具体内容以参考资料为准）。
 - 严禁在开头堆砌“根据您提供的参考资料，我为您查询到以下信息……”等无意义的客套废话或免责套话。
 - 首句给出明确结论后，后续段落仅在问题需要时展开支撑依据、计算过程或细分条款说明。
+11. 【决定性取值必须逐字照抄】：回答中的决定性取值——完整日期、数值、编号、专有名词——必须逐字来自参考资料中被引证的句子。当被引句给出的取值与你记忆中的不同时，严禁用记忆中的取值替代；参考资料未陈述该取值时，应说明资料未记载。主题相近的邻近句子不能替代承载该取值的句子。
+12. 【资料与常识冲突加注】：若参考资料中被引证的陈述与公认的常识明显矛盾，仍以资料为准作答（资料是本知识库的权威），但须在回答末尾用一句话注明“该记载与常识存在差异”。严禁默不作声地用常识值替换资料值。
 ${answerStyleRule(false)}`;
 
       const dynamicDirectives = [
@@ -4559,19 +4586,38 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
           tagged ? texts : allEvidenceTexts(),
           tagged,
         );
-        if (!supported && tagged) {
+        // Decisive-value attribution: overlap grounding clears a parametric
+        // memory answer when every topical word also occurs in same-topic
+        // evidence and only the decisive value (a full date, an invented
+        // proper noun) is missing. Cited claims must source those tokens from
+        // the evidence they cite; failure routes through the same rebind/NLI
+        // hold path as any other unsupported statement.
+        const decisiveSupported = !tagged
+          ? true
+          : decisiveValueSupportedBy(sentence, texts, question);
+        if (!supported || !decisiveSupported) {
           // Wrong marker, right source: repair the attribution instead of
-          // shipping a citation that does not contain the fact.
+          // shipping a citation that does not contain the fact. The rebound
+          // must itself clear the decisive-value bar — rebind's 0.5 overlap
+          // matched a topically-related source that still lacked the asked
+          // date (measured: "February 11, 2022" rebounded onto a doc whose
+          // latest date was "February 2022").
           const rebound = rebindMarkers(sentence);
           if (rebound) {
+            const reboundTexts = citedEvidenceTexts(rebound).texts;
+            if (decisiveValueSupportedBy(rebound, reboundTexts, question)) {
+              this.logger.warn(
+                `Rebound citation markers for an unsupported statement: ${sentence.slice(0, 60)}… -> ${rebound.match(/\[\d+\]/g)?.join('') || ''}`,
+              );
+              emitVerified(rebound);
+              return;
+            }
             this.logger.warn(
-              `Rebound citation markers for an unsupported statement: ${sentence.slice(0, 60)}… -> ${rebound.match(/\[\d+\]/g)?.join('') || ''}`,
+              `Rebound rejected: decisive value still absent from the rebound source: ${rebound.slice(0, 60)}…`,
             );
-            emitVerified(rebound);
-            return;
           }
         }
-        if (supported || !strictGrounding) {
+        if ((supported && decisiveSupported) || !strictGrounding) {
           // Non-strict mode keeps legacy behaviour (emit immediately; the
           // post-hoc coverage accounting at completion still reports gaps).
           emitVerified(sentence);
@@ -4924,6 +4970,21 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
           // attribution before it reaches the client, exactly as the inline
           // gate does for directly verified sentences.
           const repaired = rebindMarkers(toJudge[i]) || toJudge[i];
+          // Decisive-value veto: an LLM entailment judge tends to verify its
+          // own parametric memory (measured: RGB negative-rejection — the
+          // judge endorsed "4 March 2022" against evidence that never states
+          // it). A decisive token (full date, short-factoid proper noun) that
+          // occurs nowhere in the evidence pool is unrecoverable, whatever
+          // the judge says.
+          if (
+            /\[\d+\]/.test(toJudge[i]) &&
+            !decisiveValueSupportedBy(toJudge[i], [evidenceText], question)
+          ) {
+            this.logger.warn(
+              `Held sentence dropped by decisive-value veto (value absent from evidence pool): ${toJudge[i].slice(0, 60)}…`,
+            );
+            continue;
+          }
           if (entailed.has(i)) {
             emitVerified(repaired);
             recoveredCount++;
@@ -4951,7 +5012,12 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
             // demand substantially more overlap before releasing it.
             const hasMarker = /\[\d+\]/.test(toJudge[i]);
             const requiredRatio = hasMarker ? 0.35 : 0.6;
-            if (!hasConflict && numsOk && ratio >= requiredRatio) {
+            // Same decisive-value bar as the inline gate: the overlap safety
+            // net must not release a sentence whose full date or invented
+            // proper noun never occurs in the evidence pool.
+            const decisiveOk = !hasMarker
+              || decisiveValueSupportedBy(toJudge[i], [evidenceText], question);
+            if (!hasConflict && numsOk && decisiveOk && ratio >= requiredRatio) {
               emitVerified(repaired);
               recoveredCount++;
             }

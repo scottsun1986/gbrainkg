@@ -61,6 +61,31 @@ export class IngestionService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
+    await this.recoverStaleIngestions();
+    // A stuck document must not wait for the next API restart to be noticed:
+    // the startup-only recovery left docs hanging in `indexing` indefinitely
+    // when the worker died while the API stayed up (observed: one eval-ingested
+    // document sat in `indexing` for 10+ minutes with no retry path, because
+    // the retry endpoint refuses non-failed states). The same recovery now
+    // runs periodically; the 5-minute staleness floor makes it idempotent and
+    // keeps it away from in-flight jobs.
+    const intervalMs = Math.max(
+      300_000,
+      Number(process.env.INGESTION_RECOVERY_INTERVAL_MS || 10 * 60 * 1000),
+    );
+    if (process.env.INGESTION_RECOVERY_WATCHDOG !== "false") {
+      this.recoveryTimer = setInterval(() => {
+        this.recoverStaleIngestions().catch((err) => {
+          this.logger.warn(`Stale-ingestion watchdog failed: ${err.message}`);
+        });
+      }, intervalMs);
+      this.recoveryTimer.unref?.();
+    }
+  }
+
+  private recoveryTimer?: ReturnType<typeof setInterval>;
+
+  private async recoverStaleIngestions(): Promise<void> {
     const recoveryAfterMs = Math.max(
       60_000,
       Number(process.env.INGESTION_RECOVERY_AFTER_MS || 5 * 60 * 1000),
@@ -129,6 +154,10 @@ export class IngestionService implements OnModuleInit {
     }
     if (stale.length)
       this.logger.warn(`Recovered ${stale.length} stale ingestion job(s).`);
+  }
+
+  onModuleDestroy() {
+    if (this.recoveryTimer) clearInterval(this.recoveryTimer);
   }
 
   async enqueue(

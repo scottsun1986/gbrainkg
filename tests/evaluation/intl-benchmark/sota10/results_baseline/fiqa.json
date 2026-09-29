@@ -26,7 +26,7 @@
    "recall@10": 1.0,
    "full_evidence@10": 1.0,
    "mrr@10": 1.0,
-   "ndcg@10": 0.9197207891481876
+   "ndcg@10": 1.0
   },
   {
    "qid": "3859",
@@ -74,8 +74,8 @@
    "qid": "7344",
    "recall@10": 0.5,
    "full_evidence@10": 0.0,
-   "mrr@10": 1.0,
-   "ndcg@10": 0.6131471927654584
+   "mrr@10": 0.25,
+   "ndcg@10": 0.2640681225725909
   },
   {
    "qid": "6468",
@@ -95,8 +95,8 @@
    "qid": "7326",
    "recall@10": 1.0,
    "full_evidence@10": 1.0,
-   "mrr@10": 0.3333333333333333,
-   "ndcg@10": 0.5
+   "mrr@10": 0.5,
+   "ndcg@10": 0.6309297535714575
   },
   {
    "qid": "6807",
@@ -111,9 +111,9 @@
   "errors": 0,
   "retrieval_recall@10": 0.9667,
   "retrieval_full_evidence@10": 0.9333,
-  "retrieval_mrr@10": 0.9222,
-  "retrieval_ndcg@10": 0.8772,
-  "search_wall_secs": 8.6
+  "retrieval_mrr@10": 0.8833,
+  "retrieval_ndcg@10": 0.868,
+  "search_wall_secs": 11.4
  },
  "meta": {
   "source": "BEIR fiqa (test qrels, gold-guaranteed subset)",
@@ -123,5 +123,5 @@
   "doc_budget": 30,
   "question_budget": 30
  },
- "score_sha": "ce3e21666b90668a"
+ "score_sha": "41eed3bf21b8cb0f"
 }
