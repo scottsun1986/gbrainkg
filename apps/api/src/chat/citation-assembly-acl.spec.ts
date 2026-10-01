@@ -1,3 +1,4 @@
+import { runWithRequestContext } from '../observability/request-context';
 import { CitationAssemblyService } from './citation-assembly';
 
 describe('CitationAssemblyService ACL revalidation', () => {
@@ -18,6 +19,17 @@ describe('CitationAssemblyService ACL revalidation', () => {
     });
     return { service, prisma, acl };
   }
+
+  it('does not repeat broad retrieval solely because a completed reranker lacks calibration', () => {
+    const { service } = createService([]);
+    runWithRequestContext({requestId:'uncalibrated', execution:{adaptive:true,qualityFirst:true} as any}, () => {
+      const result = service.assessWeakEvidence({reranked:true,citations:[{docId:'doc',evidence:'original',rerankScore:0.95}]});
+      expect(result.shouldEscalate).toBe(false);
+      expect(result.topScore).toBeNull();
+      expect(service.assessWeakEvidence({reranked:true,citations:[]}).shouldEscalate).toBe(true);
+      expect(service.assessWeakEvidence({reranked:true,citations:[{calibratedProbability:0.1}]}).shouldEscalate).toBe(true);
+    });
+  });
 
   it('drops obsolete evidence instead of stamping it with the current version', async () => {
     const { service, prisma } = createService(['doc']);

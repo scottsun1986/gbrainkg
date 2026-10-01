@@ -9,6 +9,13 @@ import os
 import re
 import secrets
 import subprocess
+import sys
+if __package__:
+    from .controlled_jobs import FairLimiter, run_process
+    from . import artifact_cache
+else:
+    from controlled_jobs import FairLimiter, run_process
+    import artifact_cache
 import tempfile
 import time
 import uuid
@@ -118,6 +125,7 @@ _baidu_access_tokens: dict[tuple[str, str], tuple[str, float]] = {}
 # requests cannot pile up threads and model memory without limit.
 DOCLING_MAX_CONCURRENCY = max(1, int(os.environ.get("DOCLING_MAX_CONCURRENCY", "2")))
 _docling_semaphore = asyncio.Semaphore(DOCLING_MAX_CONCURRENCY)
+_parse_limiter = FairLimiter(int(os.environ.get("PARSER_CONCURRENCY", "4")), int(os.environ.get("PARSER_QUEUE_LIMIT", "64")), int(os.environ.get("PARSER_PER_INSTANCE_CONCURRENCY", "2")))
 
 
 try:
@@ -942,43 +950,16 @@ def extract_pptx_native(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
     return slide_blocks, image_parts
 
 async def convert_with_docling(path: Path) -> str:
-    """Docling deep layout extraction with compatibility guard.
-
-    Cancellation caveat: the conversion body runs via asyncio.to_thread().
-    asyncio.wait_for() at the call sites can abandon the await on timeout but
-    cannot kill the underlying thread, which keeps running until Docling
-    finishes. _docling_semaphore therefore caps the number of concurrent
-    conversions so timed-out requests cannot accumulate unbounded threads.
-    """
-    def _run():
-        for k in ["ALL_PROXY", "all_proxy"]:
-            if os.environ.get(k, "").startswith("socks://"):
-                os.environ.pop(k, None)
-        global _torchvision_compat_lib
-        import torch
-        if _torchvision_compat_lib is None:
-            try:
-                _torchvision_compat_lib = torch.library.Library("torchvision", "DEF")
-            except RuntimeError:
-                _torchvision_compat_lib = torch.library.Library("torchvision", "FRAGMENT")
-        for operator in ("nms", "qnms"):
-            try:
-                _torchvision_compat_lib.define(
-                    f"{operator}(Tensor boxes, Tensor scores, float iou_threshold) -> Tensor"
-                )
-            except Exception:
-                pass
-        from docling.document_converter import DocumentConverter
-        converter = DocumentConverter()
-        result = converter.convert(str(path))
-        return result.document.export_to_markdown()
+    """Cancellation reaps the isolated job before returning its shared slot."""
+    await asyncio.wait_for(_docling_semaphore.acquire(), timeout=DOCLING_TIMEOUT_SECONDS)
+    output = path.with_name(path.name + ".docling.md")
     try:
-        await asyncio.wait_for(_docling_semaphore.acquire(), timeout=DOCLING_TIMEOUT_SECONDS)
-    except asyncio.TimeoutError:
-        raise TimeoutError(f"Docling semaphore acquisition timed out after {DOCLING_TIMEOUT_SECONDS}s")
-    try:
-        return await asyncio.to_thread(_run)
+        await run_process([sys.executable, str(Path(__file__).with_name("docling_job.py")), str(path), str(output)], DOCLING_TIMEOUT_SECONDS)
+        if output.stat().st_size > MAX_RETAINED_BYTES:
+            raise RuntimeError("Docling result exceeds artifact budget")
+        return await asyncio.to_thread(output.read_text, encoding="utf-8")
     finally:
+        output.unlink(missing_ok=True)
         _docling_semaphore.release()
 
 
@@ -1098,6 +1079,23 @@ async def convert_with_baidu_ocr(
 
 
 async def convert_image_with_baidu_ocr(
+    path: Path, ocr_config: dict[str, str]
+) -> tuple[str, dict[str, Any]]:
+    revision = os.environ.get("OCR_DEPLOYMENT_REVISION", "")
+    cache_key = None
+    if revision and artifact_cache.instance_identity.get() != "legacy":
+        blob = await asyncio.to_thread(path.read_bytes)
+        cache_key = artifact_cache.key(blob, {"provider": ocr_config.get("provider"), "endpoint": ocr_config.get("endpoint"), "revision": revision, "projection": "accurate-image-bbox-v1"})
+        cached = await asyncio.to_thread(artifact_cache.read, cache_key)
+        if cached:
+            return cached[0], {**cached[1], "page_artifact_cache_hit": True}
+    result = await _convert_image_with_baidu_ocr(path, ocr_config)
+    if cache_key and result[0].strip():
+        await asyncio.to_thread(artifact_cache.write, cache_key, result)
+    return result
+
+
+async def _convert_image_with_baidu_ocr(
     path: Path, ocr_config: dict[str, str]
 ) -> tuple[str, dict[str, Any]]:
     """OCR a standalone image or an embedded PPTX image with Baidu.
@@ -1677,7 +1675,23 @@ async def convert_pdf_with_fallback(
     )
 
 
-async def process_file(
+async def process_file(task_id: str, path: Path, parser_type: str, ocr_config: dict[str, str]) -> None:
+    identity = str(tasks.get(task_id, {}).get("instanceId", "legacy"))
+    identity_token = artifact_cache.instance_identity.set(identity)
+    try:
+        async with _parse_limiter.slot(identity):
+            await _process_file(task_id, path, parser_type, ocr_config)
+    except (Exception, asyncio.CancelledError) as error:
+        if task_id in tasks:
+            tasks[task_id].update(status="failed", error=str(error) or "Parse cancelled", finished_at=time.time())
+        path.unlink(missing_ok=True)
+        if isinstance(error, asyncio.CancelledError):
+            raise
+    finally:
+        artifact_cache.instance_identity.reset(identity_token)
+
+
+async def _process_file(
     task_id: str,
     path: Path,
     parser_type: str,
@@ -1890,6 +1904,7 @@ async def parse_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     parser_type: str = "docling",
+    instance_id: str | None = Form(None),
     ocr_provider: str | None = Form(None),
     ocr_endpoint: str | None = Form(None),
     ocr_api_key: str | None = Form(None),
@@ -1918,6 +1933,11 @@ async def parse_document(
     task_id = str(uuid.uuid4())
     path = UPLOAD_ROOT / f"{task_id}{suffix}"
     reserve_task(task_id, filename, parser_type)
+    identity = instance_id if isinstance(instance_id, str) else "legacy"
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", identity):
+        tasks.pop(task_id, None)
+        raise HTTPException(status_code=400, detail="Invalid instance identity")
+    tasks[task_id]["instanceId"] = identity
     # Stream the upload straight to disk in bounded chunks. Reading the whole
     # body into memory first would let a few concurrent 200 MiB uploads
     # exhaust worker RAM, and the size limit is now enforced while
@@ -2036,3 +2056,51 @@ async def ocr_embedded_images_endpoint(
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8100)
+
+_maxsim_limiter = FairLimiter(int(os.environ.get('MAXSIM_GLOBAL_CONCURRENCY', '2')), queue_limit=16, per_instance=1)
+
+@app.post('/maxsim')
+async def shared_maxsim(request: Request, _auth: None = Depends(verify_auth)):
+    import json
+    payload = bytearray()
+    async for chunk in request.stream():
+        payload.extend(chunk)
+        if len(payload) > 20 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail='MaxSim payload budget exceeded')
+    try:
+        data = json.loads(payload)
+        identity = data['instanceId']
+        if not isinstance(identity, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,80}', identity):
+            raise ValueError('Instance identity required')
+        if data.get('contract') != 'cosine-maxsim-mean-v1':
+            raise ValueError('MaxSim contract mismatch')
+        async with _maxsim_limiter.slot(identity):
+            with tempfile.TemporaryDirectory(prefix='maxsim-') as directory:
+                source, target = Path(directory)/'input.json', Path(directory)/'output.json'
+                source.write_bytes(payload)
+                work = asyncio.create_task(run_process([sys.executable, str(Path(__file__).with_name('maxsim_job.py')), str(source), str(target)], float(os.environ.get('MAXSIM_TIMEOUT_SECONDS', '5'))))
+                try:
+                    while not work.done():
+                        await asyncio.wait({work}, timeout=.1)
+                        if await request.is_disconnected():
+                            work.cancel()
+                            raise HTTPException(status_code=499, detail='MaxSim caller disconnected')
+                    await work
+                    return json.loads(target.read_text(encoding='utf-8'))
+                finally:
+                    if not work.done():
+                        work.cancel()
+                        try:
+                            await work
+                        except asyncio.CancelledError:
+                            pass
+    except HTTPException:
+        raise
+    except (ValueError, KeyError, TypeError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except (RuntimeError, asyncio.TimeoutError) as error:
+        raise HTTPException(status_code=503, detail='MaxSim capacity or timeout; retain authorized core ranking') from error
+
+@app.get('/resource-metrics')
+def resource_metrics(_auth: None = Depends(verify_auth)):
+    return {'parser': {'active': _parse_limiter.active, 'queued': sum(len(q) for q in _parse_limiter.queues.values()), 'runningByInstance': _parse_limiter.running}, 'maxsim': {'active': _maxsim_limiter.active, 'queued': sum(len(q) for q in _maxsim_limiter.queues.values()), 'runningByInstance': _maxsim_limiter.running}}

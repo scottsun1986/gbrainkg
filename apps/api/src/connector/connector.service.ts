@@ -6,6 +6,8 @@ import {
   Optional,
 } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
+import { immutableVersionsEnabled } from '../ingestion/document-version-store';
+import { syncExternalAcl } from './external-acl';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { getPrismaClient } from '../prisma';
@@ -13,7 +15,7 @@ import { withServiceContext } from '../db/tenant-context.service';
 import { IngestionService } from '../ingestion/ingestion.service';
 import { GitConnector } from './git-connector';
 import { FeishuConnector } from './feishu-connector';
-import { WebhookConnector, webhookConnector } from './webhook-connector';
+import { WebhookConnector, webhookConnector, WebhookPayload } from './webhook-connector';
 import {
   ConnectorChange,
   EnterpriseConnector,
@@ -125,7 +127,7 @@ export class ConnectorService {
   }
 
   /** Webhook 入队：{externalId,title,content} 待下次 sync 消化。 */
-  enqueueWebhook(sourceId: string, payload: { externalId: string; title: string; content: string }) {
+  enqueueWebhook(sourceId: string, payload: WebhookPayload) {
     return this.webhook.enqueue(sourceId, payload);
   }
 
@@ -178,6 +180,9 @@ export class ConnectorService {
         source.cursor ?? null,
       );
       fetched = result.changes.length;
+      if (result.snapshotIds && (process.env.CORE_EXTERNAL_ACL_REQUIRED==='1' || process.env.CORE_AUTH_ENFORCE==='1')) {
+        await this.prisma.document.updateMany({ where:{ sourceConnectorId:sourceId, lifecycleStatus:'current',sourceExternalId:{ notIn:result.snapshotIds } },data:{ lifecycleStatus:'repealed',effectiveTo:new Date() } });
+      }
 
       for (const change of result.changes) {
         try {
@@ -248,6 +253,12 @@ export class ConnectorService {
           where: { id: sourceId },
           data: { lastError: message, lastSyncAt: new Date() },
         });
+        if ((source.config as any)?.syncAcl === true || process.env.CORE_EXTERNAL_ACL_REQUIRED === '1' || process.env.CORE_AUTH_ENFORCE === '1') {
+          const docs = await tx.document.findMany({ where:{ sourceConnectorId:sourceId }, select:{ id:true } });
+          await tx.document.updateMany({ where:{ sourceConnectorId:sourceId }, data:{ aclMode:'restricted',sourceAclSyncStatus:'source_unavailable' } });
+          await tx.documentAcl.deleteMany({ where:{ documentId:{ in:docs.map((d: { id:string }) => d.id) } } });
+          if (docs.length) await tx.brainChangeEvent.createMany({ data:docs.map((d: { id:string }) => ({ eventType:'doc_acl_change',resourceType:'document',resourceId:d.id,status:'pending',payload:{ reason:'source_unavailable' } })) });
+        }
       });
       return {
         runId: run.id,
@@ -267,14 +278,14 @@ export class ConnectorService {
    * 文档创建后走 IngestionService.enqueue 进入既有管线。
    */
   private async ingestChange(
-    source: { id: string; kbId: string; kind: string },
+    source: { id: string; kbId: string; kind: string; config?: any },
     change: ConnectorChange,
   ): Promise<'ingested' | 'skipped' | 'failed'> {
     if (change.deleted) {
       await this.prisma.document.updateMany({
         where: {
           kbId: source.kbId,
-          sourceExternalId: change.externalId,
+          sourceExternalId: change.externalId, sourceConnectorId: source.id,
           lifecycleStatus: 'current',
         },
         data: { lifecycleStatus: 'repealed', effectiveTo: new Date() },
@@ -290,11 +301,16 @@ export class ConnectorService {
     const existing = await this.prisma.document.findFirst({
       where: {
         kbId: source.kbId,
-        sourceExternalId: change.externalId,
+        sourceExternalId: change.externalId, sourceConnectorId: source.id,
         lifecycleStatus: 'current',
       },
-      select: { id: true, contentHash: true, rawFileOid: true, version: true, status: true },
+      select: { id: true, contentHash: true, rawFileOid: true, version: true, status: true,
+        ...(immutableVersionsEnabled() ? { ingestVersion: true, pendingContentHash: true } : {}) },
     });
+    const enforceSourceAcl = (source.config as any)?.syncAcl === true || !!change.externalAcl || process.env.CORE_EXTERNAL_ACL_REQUIRED === '1' || process.env.CORE_AUTH_ENFORCE === '1';
+    if (existing && enforceSourceAcl) await withServiceContext(this.prisma, tx => syncExternalAcl(tx, existing.id, source.config, change));
+
+    if (change.aclOnly) return 'skipped';
 
     if (existing && existing.contentHash === contentHash) {
       // A previous enqueue may have failed after the document was persisted.
@@ -309,6 +325,17 @@ export class ConnectorService {
     const title = String(change.title || change.externalId).slice(0, 200);
 
     const existingRawPath = this.resolveRawPath(existing?.rawFileOid);
+    if (immutableVersionsEnabled() && existing && existingRawPath) {
+      if (existing.pendingContentHash === contentHash) return 'skipped';
+      const rawAbs = join(this.uploadRoot, existing.id, `input.${contentHash}.txt`);
+      await mkdir(join(this.uploadRoot, existing.id), { recursive: true });
+      await writeFile(rawAbs, content, 'utf8');
+      const updated = await this.prisma.document.update({ where: { id: existing.id }, data: {
+        ingestVersion: { increment: 1 }, pendingRawFileOid: rawAbs, pendingTitle: title, pendingContentHash: contentHash,
+      } });
+      await this.ingestionService.enqueue(existing.id, 'connector-sync', updated.ingestVersion || updated.version, 3);
+      return 'ingested';
+    }
     if (existing && existingRawPath) {
       await writeFile(existingRawPath, content, 'utf8');
       const nextVersion = (existing.version || 1) + 1;
@@ -349,11 +376,13 @@ export class ConnectorService {
         sourceType,
         rawFileOid: rawAbs,
         contentHash,
-        sourceExternalId: change.externalId,
+        sourceExternalId: change.externalId, sourceConnectorId: source.id,
         sourceCursor: null,
         status: 'parsing',
+        ...(enforceSourceAcl ? { aclMode: 'restricted' } : {}),
       },
     });
+    if (enforceSourceAcl) await withServiceContext(this.prisma, tx => syncExternalAcl(tx, documentId, source.config, change));
     await this.ingestionService.enqueue(documentId, 'connector-sync', 1, 3);
     return 'ingested';
   }

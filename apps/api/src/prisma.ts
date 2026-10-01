@@ -60,14 +60,16 @@ if (process.env.DATABASE_URL_APP && !process.env.LLMWIKI_FORCE_MIGRATOR_URL) {
 //
 // RLS enforcement makes every standalone query an interactive transaction, and
 // background BullMQ consumers legitimately hold a connection while a job runs.
-// On small boxes the num_cpus-based default (5-9) is starved by those workers,
-// so interactive admin/reader requests queue for tens of seconds. Floor the
-// default at 16 unless an operator explicitly configures something else.
-const DEFAULT_POOL_FLOOR = 16;
+// Divide the host connection budget between instances and processes. Never
+// multiply an independent per-process floor across all instances.
 if (!process.env.PRISMA_CONNECTION_LIMIT) {
-  process.env.PRISMA_CONNECTION_LIMIT = String(
-    Math.max(DEFAULT_POOL_FLOOR, (os.cpus().length || 2) * 2 + 1),
-  );
+  const instances = Number(process.env.SHARED_INSTANCE_COUNT || process.env.HOST_INSTANCE_COUNT || 1);
+  const processes = Number(process.env.DB_PROCESSES_PER_INSTANCE || 2);
+  const available = Number(process.env.DB_CONNECTION_BUDGET || 80);
+  if (![instances,processes,available].every(n=>Number.isInteger(n) && n>0) || available<instances*processes) throw new Error('Invalid shared database connection allocation');
+  process.env.PRISMA_CONNECTION_LIMIT = String(Math.min(
+    16, (os.cpus().length || 2) * 2 + 1, Math.floor(available / (instances * processes)),
+  ));
 }
 function withConnectionPoolParams(url: string | undefined): string | undefined {
   if (!url || !/^postgres(ql)?:\/\//i.test(url)) return url;
@@ -94,6 +96,7 @@ const prismaGlobal = globalThis as typeof globalThis & {
 };
 
 export function getPrismaClient(): PrismaClient {
+  if (process.env.CORE_AUTH_ENFORCE === '1' && process.env.RLS_ENFORCE !== '1') throw new Error('CORE_AUTH_ENFORCE requires RLS_ENFORCE=1');
   if (!prismaGlobal.__llmwikiPrisma) {
     if (process.env.RLS_ENFORCE === '1' && !process.env.LLMWIKI_FORCE_MIGRATOR_URL) {
       if (!process.env.DATABASE_URL_APP) {

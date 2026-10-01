@@ -1,9 +1,14 @@
+import { rethrowAuthorizationFailure } from '../permission/authorization-revision';
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { getPrismaClient } from '../prisma';
 import { ModelConfigService } from '../model-config.service';
 import { EmbeddingService } from '../embedding/embedding.service';
 import { withServiceContext } from '../db/tenant-context.service';
 import { recordFailopen } from '../observability/failopen';
+import { getRequestContext } from '../observability/request-context';
+import { authorizationEnforced } from '../permission/authorization-revision';
+import { validateEvidenceDependencies } from '../permission/evidence-dependencies';
+import { runAsService } from '../db/service-principal';
 
 @Injectable()
 export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
@@ -40,50 +45,13 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
     // without periodic cleanup they accumulate forever. Sweep hourly.
     const intervalMs = Number(process.env.SEMANTIC_CACHE_CLEANUP_INTERVAL_MS || 3_600_000);
     this.cleanupTimer = setInterval(() => {
-      this.cleanup().catch(() => undefined);
+      runAsService('cache-maintenance', () => this.cleanup()).catch(() => undefined);
     }, intervalMs);
     this.cleanupTimer.unref?.();
   }
 
   onModuleDestroy(): void {
     if (this.cleanupTimer) clearInterval(this.cleanupTimer);
-  }
-
-  private async getEmbedding(text: string): Promise<number[] | null> {
-    // Route through the shared EmbeddingService first: its in-memory cache
-    // makes the cache-lookup embedding and the retrieval-arms embedding of
-    // the same query a single upstream call instead of two.
-    if (this.embeddingService?.isEnabled()) {
-      try {
-        const shared = await this.embeddingService.embedOne(text);
-        if (shared && shared.length > 0) return shared;
-      } catch {
-        // fall through to the direct provider call below
-      }
-    }
-    try {
-      const config = await this.modelConfigService.getDefault('embedding');
-      if (!config) return null;
-      const baseUrl = (config.provider.baseUrl || '').replace(/\/$/, '');
-      const response = await fetch(`${baseUrl}/embeddings`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${config.provider.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: config.modelName,
-          input: text,
-        }),
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!response.ok) return null;
-      const data: any = await response.json();
-      return data?.data?.[0]?.embedding || null;
-    } catch (err) {
-      this.logger.error(`Error generating embedding: ${err instanceof Error ? err.message : String(err)}`);
-      return null;
-    }
   }
 
   async lookup(
@@ -98,6 +66,9 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
     const l1Key = `${scopeFingerprint}:${knowledgeEpoch}:${normalized}`;
     const l1Hit = this.l1ExactCache.get(l1Key);
     if (l1Hit && l1Hit.expiresAt > Date.now()) {
+      if (authorizationEnforced() && !await validateEvidenceDependencies(getRequestContext()?.userId || '', l1Hit.hit.dependencyManifest)) {
+        this.l1ExactCache.delete(l1Key); return null;
+      }
       this.logger.log(`Semantic cache L1 FAST HIT (normalized match, 0ms) for: ${queryText.substring(0, 50)}...`);
       // Refresh Map insertion order for LRU eviction
       this.l1ExactCache.delete(l1Key);
@@ -106,24 +77,21 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
     }
 
     try {
-      const embedding = await this.getEmbedding(queryText);
-      if (!embedding) return null;
-
       const results = await withServiceContext(this.prisma, (tx) =>
         tx.$queryRaw<any[]>`
-        SELECT id, "queryText", "responseContent", citations, "processingTrace", "modelName", "expiresAt",
-               1 - ("queryEmbedding" <=> ${embedding}::vector) as similarity
+        SELECT id, "queryText", "responseContent", citations, "dependencyManifest", "processingTrace", "modelName", "expiresAt", 1.0 AS similarity
         FROM "SemanticCache"
         WHERE "scopeFingerprint" = ${scopeFingerprint}
           AND "knowledgeEpoch" = ${knowledgeEpoch}
+          AND "queryText" = ${normalized}
           AND ("expiresAt" IS NULL OR "expiresAt" > NOW())
-          AND 1 - ("queryEmbedding" <=> ${embedding}::vector) > ${this.similarityThreshold}
         ORDER BY similarity DESC, "createdAt" DESC
         LIMIT 1
       `);
 
       if (Array.isArray(results) && results.length > 0) {
         const hit = (results as any[])[0];
+        if (authorizationEnforced() && !await validateEvidenceDependencies(getRequestContext()?.userId || '', hit.dependencyManifest)) return null;
         
         // Cache to L1 for subsequent instant zero-millisecond hits
         const localExpiry = Date.now() + this.ttlHours * 3600000;
@@ -145,7 +113,7 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
 
       this.logger.debug(`Semantic cache MISS for query: ${queryText.substring(0, 50)}...`);
       return null;
-    } catch (err) {
+    } catch (err) { rethrowAuthorizationFailure(err);
       this.logger.error(`Lookup error: ${err instanceof Error ? err.message : String(err)}`);
       recordFailopen('semantic_cache');
       return null;
@@ -163,13 +131,17 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
     processingTrace: any | null = null,
   ): Promise<void> {
     if (!this.enabled || !responseContent?.trim()) return;
+    const dependencies = getRequestContext()?.evidenceDependencies;
+    if (authorizationEnforced() && (!dependencies?.length || !await validateEvidenceDependencies(getRequestContext()?.userId || '', dependencies))) return;
 
     try {
-      const embedding = queryEmbedding || (await this.getEmbedding(queryText));
-      if (!embedding) return;
+      // Exact matching needs no extra model call. The nullable vector is only
+      // retained when retrieval has already produced it.
+      const embedding = queryEmbedding || null;
 
-      const expiresAt = new Date();
-      expiresAt.setHours(expiresAt.getHours() + this.ttlHours);
+      const expiresAt = new Date(Math.min(Date.now() + this.ttlHours * 3600000,
+        getRequestContext()?.authorization?.expiresAt ?? Infinity,
+        ...(dependencies || []).flatMap(d => d.effectiveTo ? [Date.parse(d.effectiveTo)] : [])));
 
       // Save to L1 cache immediately
       const normalized = SemanticCacheService.normalizeQuery(queryText);
@@ -179,6 +151,7 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
         queryText,
         responseContent,
         citations,
+        dependencyManifest: dependencies || null,
         processingTrace,
         modelName,
         similarity: 1.0,
@@ -194,18 +167,19 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
         INSERT INTO "SemanticCache" (
           "queryText", "queryEmbedding", "scopeFingerprint", "knowledgeEpoch",
           "responseContent", "citations", "processingTrace", "modelName", "expiresAt",
-          "cacheFingerprint"
+          "cacheFingerprint", "dependencyManifest"
         ) VALUES (
-          ${queryText}, ${embedding}::vector, ${scopeFingerprint}, ${knowledgeEpoch},
+          ${normalized}, ${embedding}::vector, ${scopeFingerprint}, ${knowledgeEpoch},
           ${responseContent}, ${citations ? JSON.stringify(citations) : null}::jsonb,
           ${processingTrace ? JSON.stringify(processingTrace) : null}::jsonb,
-          ${modelName}, ${expiresAt}, ${scopeFingerprint}
+          ${modelName}, ${expiresAt}, ${scopeFingerprint}, ${dependencies ? JSON.stringify(dependencies) : null}::jsonb
         )
         ON CONFLICT ("scopeFingerprint", "queryText") DO UPDATE SET
           "queryEmbedding" = EXCLUDED."queryEmbedding",
           "knowledgeEpoch" = EXCLUDED."knowledgeEpoch",
           "responseContent" = EXCLUDED."responseContent",
           "citations" = EXCLUDED."citations",
+          "dependencyManifest" = EXCLUDED."dependencyManifest",
           "processingTrace" = EXCLUDED."processingTrace",
           "modelName" = EXCLUDED."modelName",
           "expiresAt" = EXCLUDED."expiresAt",
@@ -215,7 +189,7 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
           "lastHitAt" = NULL
       `);
       this.logger.debug(`Stored semantic cache for query: ${queryText.substring(0, 50)}...`);
-    } catch (err) {
+    } catch (err) { rethrowAuthorizationFailure(err);
       this.logger.error(`Store error: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
@@ -243,7 +217,7 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
       if (result.count > 0) {
         this.logger.log(`Cleaned up ${result.count} expired semantic cache entries`);
       }
-    } catch (err) {
+    } catch (err) { rethrowAuthorizationFailure(err);
       this.logger.error(`Cleanup error: ${err instanceof Error ? err.message : String(err)}`);
     }
   }

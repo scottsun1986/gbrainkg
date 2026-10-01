@@ -1,6 +1,10 @@
+import { calibrateRerankScore } from '../retrieval/evidence-calibration';
+import { getRequestContext } from '../observability/request-context';
+import { rerankPairs } from '../retrieval/pair-reranker';
 import { recordFailopen } from '../observability/failopen';
 import { Logger } from "@nestjs/common";
 import { createHash } from "node:crypto";
+import { assertRequestAuthorization } from '../permission/authorization-revision';
 import type { RetrievedEvidence } from "../retrieval/weknora-client";
 import type { ModelConfigService } from "../model-config.service";
 import { extractRawChunkText } from "./retrieval-arms";
@@ -303,32 +307,17 @@ export class FusionRerankService {
           .filter(Boolean);
         if (documents.length < 2 || documents.length !== pool.length) return;
         try {
-          const response = await fetch(`${config.provider.baseUrl.replace(/\/$/, '')}/rerank`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(config.provider.apiKey ? { Authorization: `Bearer ${config.provider.apiKey}` } : {}),
-            },
-            body: JSON.stringify({
-              model: config.modelName,
-              query: rerankQuery,
-              documents,
-              top_n: documents.length,
-              return_documents: false,
-            }),
-            signal: AbortSignal.timeout(timeoutMs),
-          });
-          if (!response.ok) return;
-          const payload: any = await response.json();
-          const ranked: any[] = Array.isArray(payload?.results) ? payload.results : [];
+          await assertRequestAuthorization();
+          const ranked = await rerankPairs(config, rerankQuery, documents, timeoutMs);
           const weight = key === '__primary__' ? primaryWeight : probeWeight;
           for (const item of ranked) {
             const index = Number(item?.index);
             const target = pool[index];
             if (!target) continue;
-            const raw = Number(item?.relevance_score ?? item?.score);
+            const raw = Number(item.relevance_score);
             if (!Number.isFinite(raw)) continue;
             target.relevanceScore = raw;
+            target.calibratedProbability = calibrateRerankScore(raw,config.provider.baseUrl,config.modelName);
             target.rerankScore = raw;
             target.score = Number((raw * weight).toFixed(4));
             target.scoreSource = 'rerank';
@@ -422,14 +411,16 @@ export class FusionRerankService {
       .update(`${question}||${citations.map((c: any) => c.evidence || c.snippet || c.docId || c.topic || "").join("\u0001")}`)
       .digest("hex")
       .slice(0, 24);
-    const cacheKey = `${config.modelName}:${candidateHash}`;
-    const cached = this.rerankCache.get(cacheKey);
+    const cacheKey = JSON.stringify([config.provider.baseUrl, config.modelName, process.env.RERANK_DEPLOYMENT_REVISION,
+      getRequestContext()?.userId, getRequestContext()?.authorization?.revision, candidateHash]);
+    const cached = process.env.RERANK_DEPLOYMENT_REVISION ? this.rerankCache.get(cacheKey) : undefined;
     if (cached && cached.expiresAt > Date.now() && cached.order.length === citations.length) {
       const reranked = cached.order.map((idx, rank) => ({
         ...citations[idx],
         score: cached.scores[rank],
         rerankScore: cached.scores[rank],
         relevanceScore: cached.scores[rank],
+        calibratedProbability: calibrateRerankScore(cached.scores[rank],config.provider.baseUrl,config.modelName),
         scoreSource: "rerank",
         // The rerank cache stores only order+scores, so re-derive the multi-hop
         // floor exemption here too; otherwise a bridge candidate recalled by a
@@ -469,21 +460,8 @@ export class FusionRerankService {
       })
       .filter((i: any): i is number => i !== null);
     try {
-      const response = await fetch(`${config.provider.baseUrl.replace(/\/$/, "")}/rerank`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(config.provider.apiKey ? { Authorization: `Bearer ${config.provider.apiKey}` } : {}),
-        },
-        body: JSON.stringify({ model: config.modelName, query: question, documents, top_n: documents.length, return_documents: false }),
-        // 15s was too tight for a batched cross-encoder call on a small
-        // instance; the request also carries up to RERANK_MAX_DOCS documents.
-        signal: AbortSignal.timeout(Number(process.env.RERANK_TIMEOUT_MS || 60000)),
-      });
-      if (!response.ok) throw new Error(`Rerank API ${response.status}`);
-      const payload: any = await response.json();
-      const ranked: Array<{ index: number; relevance_score?: number; score?: number }> =
-        Array.isArray(payload?.results) ? payload.results : [];
+      await assertRequestAuthorization();
+      const ranked = await rerankPairs(config, question, documents, Number(process.env.RERANK_TIMEOUT_MS || 60000));
       if (!ranked.length) return result;
 
       const scoredItems = ranked
@@ -493,8 +471,7 @@ export class FusionRerankService {
           const citIdx = docIndexToCitationIdx[docIdx];
           if (citIdx === undefined) return null; // Should not happen if logic is correct
           const cit = citations[citIdx];
-          const rawCrossScore = typeof item.relevance_score === "number" ? item.relevance_score
-            : typeof item.score === "number" ? item.score : 0;
+          const rawCrossScore = item.relevance_score;
           // Multi-hop / bridge candidates recalled by a specific subquery probe should not be
           // destroyed by cross-encoder comparing them against the original (hop-1) question.
           // However, single-hop queries or sub-queries that are simply reformulations/substrings of the
@@ -526,7 +503,7 @@ export class FusionRerankService {
 
       const order = scoredItems.map((item) => item.idx);
       const scores = scoredItems.map((item) => item.score);
-      this.rerankCache.set(cacheKey, { expiresAt: Date.now() + Number(process.env.RERANK_CACHE_TTL_MS || 300000), order, scores });
+      if (process.env.RERANK_DEPLOYMENT_REVISION) this.rerankCache.set(cacheKey, { expiresAt: Date.now() + Number(process.env.RERANK_CACHE_TTL_MS || 300000), order, scores });
       if (this.rerankCache.size > 200) {
         const oldest = this.rerankCache.keys().next().value;
         if (oldest) this.rerankCache.delete(oldest);
@@ -546,6 +523,7 @@ export class FusionRerankService {
         score: item.score,
         rerankScore: item.score,
         relevanceScore: item.score,
+        calibratedProbability: calibrateRerankScore(item.score,config.provider.baseUrl,config.modelName),
         // Measured cross-encoder output: the only score kind an absolute
         // threshold (refusal floor, relevance floor) may be compared against.
         scoreSource: "rerank",

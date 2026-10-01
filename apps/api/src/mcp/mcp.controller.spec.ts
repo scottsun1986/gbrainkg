@@ -2,6 +2,7 @@ import { McpController } from './mcp.controller';
 import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 
 jest.mock('../observability/request-context', () => ({
+  ...jest.requireActual('../observability/request-context'),
   setRequestContextUser: jest.fn(),
 }));
 

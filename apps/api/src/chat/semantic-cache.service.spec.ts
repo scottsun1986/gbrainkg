@@ -42,3 +42,13 @@ describe('SemanticCacheService exact cache', () => {
     expect(await service.lookup('q2000', 'scope', 1)).not.toBeNull();
   });
 });
+
+describe('exact cache storage cost', () => {
+  it('stores an exact entry without asking a model for an unused vector', async () => {
+    const embeddings = { isEnabled: () => true,embedOne:jest.fn() };
+    const service = new SemanticCacheService({} as any,embeddings as any);
+    await service.store('q',null,'scope',1,'answer',[],null);
+    expect(embeddings.embedOne).not.toHaveBeenCalled();
+    expect(await service.lookup('q','scope',1)).toMatchObject({ responseContent:'answer' });
+  });
+});

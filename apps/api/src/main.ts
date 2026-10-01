@@ -1,3 +1,4 @@
+import { compiledApiIdentity } from './release-identity';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { AppModule } from './app.module';
@@ -28,6 +29,7 @@ function loadLocalEnv() {
 
 async function bootstrap() {
   loadLocalEnv();
+  process.env.API_RELEASE_FINGERPRINT = compiledApiIdentity(__dirname);
   if (process.env.RLS_ENFORCE === '1') {
     if (process.env.LLMWIKI_FORCE_MIGRATOR_URL) {
       throw new Error('API cannot start with RLS_ENFORCE=1 and LLMWIKI_FORCE_MIGRATOR_URL');

@@ -1,3 +1,4 @@
+import { runAsService } from '../db/service-principal';
 import { Injectable, Logger, OnModuleInit, Optional, Inject } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
@@ -20,6 +21,8 @@ import { ChunkEmbeddingService } from "../embedding/chunk-embedding.service";
 import { LexicalIndexService } from "../retrieval/lexical-index.service";
 import { buildCanonicalBlock } from './canonical-block';
 import { withServiceContext } from '../db/tenant-context.service';
+import { DocumentVersionStore, immutableVersionsEnabled } from './document-version-store';
+import { instanceIdentity } from '../observability/instance-identity';
 
 // Thrown inside the save transaction when the document was re-ingested while
 // this run was parsing, so the caller can return instead of marking failed.
@@ -85,12 +88,41 @@ export class IngestionService implements OnModuleInit {
 
   private recoveryTimer?: ReturnType<typeof setInterval>;
 
-  private async recoverStaleIngestions(): Promise<void> {
+  private async recoverStaleIngestions(): Promise<void> { return runAsService('ingestion-recovery', () => this.recoverStaleInternal()); }
+
+  private async recoverStaleInternal(): Promise<void> {
     const recoveryAfterMs = Math.max(
       60_000,
       Number(process.env.INGESTION_RECOVERY_AFTER_MS || 5 * 60 * 1000),
     );
     const staleBefore = new Date(Date.now() - recoveryAfterMs);
+    if (process.env.CORE_VERSIONING_ENABLED === '1') {
+      await this.prisma.$executeRaw`DELETE FROM "ModelArtifactCache" WHERE key IN (SELECT key FROM "ModelArtifactCache" WHERE "expiresAt"<now() LIMIT 1000)`;
+      await this.prisma.$executeRaw`DELETE FROM "ModelQuotaBucket" WHERE period<floor(extract(epoch FROM now())/60)-120`;
+    }
+    if (immutableVersionsEnabled()) {
+      const unparsed = await this.prisma.document.findMany({ where: {
+        status: 'published', activeVersionId: { not: null }, buildingVersionId: null,
+        pendingRawFileOid: { not: null }, updatedAt: { lt: staleBefore }, kb: { status: 'active' },
+      }, select: { id: true, ingestVersion: true }, take: 100 });
+      for (const doc of unparsed) await this.enqueue(doc.id, 'upload', doc.ingestVersion ?? undefined);
+      const pending = await this.prisma.documentVersion.findMany({
+        where: { state: 'indexing', createdAt: { lt: staleBefore }, document: { kb: { status: 'active' } } },
+        include: { document: { select: { buildingVersionId: true, ingestVersion: true, kbId: true } } }, take: 100,
+      });
+      for (const version of pending) {
+        if (version.document.buildingVersionId !== version.id || version.document.ingestVersion !== version.number) {
+          await this.prisma.documentVersion.update({ where: { id: version.id }, data: { state: 'superseded' } }); continue;
+        }
+        const intent = await this.prisma.brainChangeEvent.findFirst({ where: {
+          resourceId: version.documentId, eventType: 'enrichment_request', payload: { path: ['versionId'], equals: version.id },
+        } });
+        if (!intent) await this.prisma.brainChangeEvent.create({ data: {
+          eventType: 'enrichment_request', resourceType: 'document', resourceId: version.documentId, status: 'pending',
+          payload: { kbId: version.document.kbId, version: version.number, versionId: version.id },
+        } });
+      }
+    }
     const stale = await this.prisma.document.findMany({
       where: {
         status: { in: ["parsing", "indexing"] },
@@ -168,10 +200,11 @@ export class IngestionService implements OnModuleInit {
   ) {
     let version = expectedVersion;
     try {
-      version = version ?? (await this.prisma.document.findUnique({
+      const current = version === undefined ? await this.prisma.document.findUnique({
         where: { id: documentId },
-        select: { version: true },
-      }))?.version;
+        select: { version: true, ...(immutableVersionsEnabled() ? { ingestVersion: true } : {}) },
+      }) : null;
+      version = version ?? current?.ingestVersion ?? current?.version;
       if (!version) throw new Error(`Document ${documentId} no longer exists.`);
       const jobId = `ingest-${documentId}-v${version}`;
       if (typeof this.ingestionQueue?.getJob === "function") {
@@ -213,7 +246,7 @@ export class IngestionService implements OnModuleInit {
   }
 
   async processDocument(documentId: string, expectedVersion?: number) {
-    const document = await this.prisma.document.findUnique({
+    const storedDocument = await this.prisma.document.findUnique({
       where: { id: documentId },
       select: {
         id: true,
@@ -223,16 +256,20 @@ export class IngestionService implements OnModuleInit {
         sourceType: true,
         status: true,
         version: true,
+        ...(immutableVersionsEnabled() ? { ingestVersion: true, activeVersionId: true, pendingRawFileOid: true, pendingTitle: true } : {}),
         kb: { select: { status: true } },
       },
     });
+    const document = storedDocument && { ...storedDocument,
+      version: immutableVersionsEnabled() ? storedDocument.ingestVersion ?? storedDocument.version : storedDocument.version,
+      ...(immutableVersionsEnabled() ? { rawFileOid: storedDocument.pendingRawFileOid || storedDocument.rawFileOid, title: storedDocument.pendingTitle || storedDocument.title } : {}) };
     if (!document) throw new Error(`Document ${documentId} no longer exists.`);
     if (document.kb?.status && document.kb.status !== 'active')
       return { documentId, status: document.status, skipped: true, reason: 'knowledge-base-archived' };
     if (expectedVersion !== undefined && document.version !== expectedVersion) {
       return { documentId, status: document.status, skipped: true, reason: "superseded-version" };
     }
-    if (document.status === "published")
+    if (document.status === "published" && (!immutableVersionsEnabled() || storedDocument?.version === document.version))
       return { documentId, status: "published", skipped: true };
     if (!document.rawFileOid)
       throw new Error("Original upload is no longer available.");
@@ -240,8 +277,8 @@ export class IngestionService implements OnModuleInit {
     const content = await readFile(document.rawFileOid);
     const contentHash = createHash("sha256").update(content).digest("hex");
     const parsingClaim = await this.prisma.document.updateMany({
-      where: { id: documentId, version: targetVersion },
-      data: { status: "parsing" },
+      where: { id: documentId, ...(immutableVersionsEnabled() ? { ingestVersion: targetVersion } : { version: targetVersion }) },
+      data: { ...(immutableVersionsEnabled() && document.activeVersionId ? { ingestVersion: targetVersion } : { status: 'parsing' }) },
     });
     if (parsingClaim.count === 0) {
       return { documentId, status: document.status, skipped: true, reason: "superseded-version" };
@@ -251,8 +288,18 @@ export class IngestionService implements OnModuleInit {
       let parsed: any = null;
     let conversionMetadata: Record<string, unknown> = {};
     const ext = extname(document.rawFileOid).toLowerCase();
+    const pinnedOcrConfig = await this.modelConfigService.getOcrConfig?.();
+    const parserFingerprint = createHash('sha256').update(JSON.stringify({
+      instance: instanceIdentity(), format: ext, native: process.env.NATIVE_PARSER_REVISION || 'anydoc-v1',
+      worker: this.parserUrl, revision: process.env.PARSER_DEPLOYMENT_REVISION || 'unversioned',
+      ocr: [pinnedOcrConfig?.provider, pinnedOcrConfig?.baseUrl, process.env.OCR_DEPLOYMENT_REVISION || 'unversioned'],
+      vlm: process.env.VLM_DEPLOYMENT_REVISION || 'unversioned', rules: 'canonical-quality-v1',
+    })).digest('hex');
+    const parseCacheKey = `${parserFingerprint}:${contentHash}`;
 
-    let cachedParse = IngestionService.parseCache.get(contentHash);
+    const cacheReusable = Boolean(process.env.PARSER_DEPLOYMENT_REVISION &&
+      (!pinnedOcrConfig || process.env.OCR_DEPLOYMENT_REVISION) && process.env.VLM_DEPLOYMENT_REVISION);
+    let cachedParse = cacheReusable ? IngestionService.parseCache.get(parseCacheKey) : undefined;
     if (cachedParse && cachedParse.parsed) {
       this.logger.log(`Document ${documentId} hit parse cache (hash ${contentHash.slice(0, 10)}); reusing parsed Markdown.`);
       parsed = { ...cachedParse.parsed };
@@ -266,7 +313,7 @@ export class IngestionService implements OnModuleInit {
         // `parserMetadata: { path: [...], equals: ... }`. Measured with
         // EXPLAIN, that form degraded to a sequential scan of "Document" even
         // with seq scan disabled, so every cache miss paid a full table scan.
-        const matchingRows = await withServiceContext(this.prisma, (tx) =>
+        const matchingRows = cacheReusable ? await withServiceContext(this.prisma, (tx) =>
           tx.$queryRaw<Array<{
           mdPath: string | null;
           parserEngine: string | null;
@@ -277,9 +324,9 @@ export class IngestionService implements OnModuleInit {
           FROM "Document"
           WHERE "id" <> ${documentId}::uuid
             AND "status" = 'published'
-            AND "parserMetadata" @> ${JSON.stringify({ contentHash })}::jsonb
+            AND "parserMetadata" @> ${JSON.stringify({ contentHash, parserFingerprint })}::jsonb
           LIMIT 1
-        `);
+        `) : [];
         const matchingDoc = Array.isArray(matchingRows) ? matchingRows[0] : undefined;
         if (matchingDoc && matchingDoc.mdPath) {
           const mdText = await readFile(join(this.uploadRoot, matchingDoc.mdPath), "utf8").catch(() => null);
@@ -294,7 +341,7 @@ export class IngestionService implements OnModuleInit {
               ...((matchingDoc.parserMetadata as any) || {}),
               dedupSource: matchingDoc.mdPath,
             };
-            IngestionService.parseCache.set(contentHash, {
+            if (cacheReusable) IngestionService.parseCache.set(parseCacheKey, {
               parsed: { ...parsed },
               conversionMetadata: { ...conversionMetadata },
             });
@@ -359,6 +406,7 @@ export class IngestionService implements OnModuleInit {
 
     if (!parsed) {
       const form = new FormData();
+      form.append("instance_id", instanceIdentity());
       const fileBytes = content.buffer.slice(
         content.byteOffset,
         content.byteOffset + content.byteLength,
@@ -378,7 +426,7 @@ export class IngestionService implements OnModuleInit {
         new Blob([fileBytes]),
         parseFilename,
       );
-      const ocrConfig = await this.modelConfigService.getOcrConfig();
+      const ocrConfig = pinnedOcrConfig;
       if (ocrConfig) {
         form.append("ocr_provider", ocrConfig.provider);
         form.append("ocr_endpoint", ocrConfig.baseUrl);
@@ -498,7 +546,7 @@ export class IngestionService implements OnModuleInit {
       .trim();
     if (!markdown) throw new Error("Parser returned empty Markdown.");
     if (parsed && parsed.markdown && !cachedParse) {
-      IngestionService.parseCache.set(contentHash, {
+      if (cacheReusable) IngestionService.parseCache.set(parseCacheKey, {
         parsed: { ...parsed },
         conversionMetadata: { ...conversionMetadata },
       });
@@ -540,7 +588,9 @@ export class IngestionService implements OnModuleInit {
 
     // --- Contextual Retrieval: enrich chunks with document-level context ---
     let enrichedChunks = chunks;
-    const contextualEnabled = process.env.CONTEXTUAL_RETRIEVAL_ENABLED !== 'false';
+    const contextualEnabled = immutableVersionsEnabled()
+      ? process.env.CONTEXTUAL_RETRIEVAL_ENABLED === 'true'
+      : process.env.CONTEXTUAL_RETRIEVAL_ENABLED !== 'false';
     if (contextualEnabled && chunks.length > 1 && markdown.length >= 500) {
       try {
         const llmConfig = (await this.modelConfigService.getDefault('fast_llm')) ??
@@ -578,7 +628,7 @@ export class IngestionService implements OnModuleInit {
     // Persist parser facts, but never persist request credentials or the full
     // parser response. This lets operators explain a failed/uncertain import
     // and lets the UI distinguish "parsed" from "safe to publish".
-    const parserMetadata: Record<string, unknown> = { ...conversionMetadata, contentHash };
+    const parserMetadata: Record<string, unknown> = { ...conversionMetadata, contentHash, parserFingerprint };
     for (const key of [
       "page_count",
       "text_pages",
@@ -626,6 +676,19 @@ export class IngestionService implements OnModuleInit {
       "utf8",
     );
     await rename(pendingContentPath, contentPath);
+    if (immutableVersionsEnabled()) {
+      const version = await new DocumentVersionStore(this.prisma).stage({
+        documentId, kbId: document.kbId, number: targetVersion, sourceHash: contentHash,
+        title: document.title, mdPath: relativeContentPath, parser: parserFingerprint,
+        publicationData: { parserEngine: parsed.engine || null, parserClassification: parsed.classification || null,
+          parserMetadata, qualityStatus, qualityScore, qualityIssues, contentHash, rawFileOid: document.rawFileOid },
+        blocks: enrichedChunks.map(chunk => ({ ...chunk, rawContent: markdown.slice(chunk.charStart, chunk.charEnd), metadata: { ...(chunk.metadata || {}),
+          canonical_block: buildCanonicalBlock({ document: { id: documentId, kbId: document.kbId, title: document.title,
+            version: targetVersion, sourceType: document.sourceType }, chunk: { ...chunk,content:markdown.slice(chunk.charStart,chunk.charEnd) } }) } })),
+        passed: qualityStatus === 'passed',
+      });
+      return { documentId, status: version.state, versionId: version.id, chunks: enrichedChunks.length, qualityStatus, qualityScore };
+    }
     // The expectedVersion check at the top only fences queue-time. Re-check
     // inside the save transaction: a concurrent re-upload that bumped the
     // version between parse and save must not have its chunks clobbered.
@@ -775,6 +838,21 @@ export class IngestionService implements OnModuleInit {
   }
 
   async markFailed(documentId: string, reason: string, expectedVersion?: number) {
+    if (immutableVersionsEnabled()) {
+      await this.prisma.$transaction(async tx => {
+        const doc = await tx.document.findUnique({ where: { id: documentId } });
+        if (!doc || (expectedVersion !== undefined && (doc.ingestVersion ?? doc.version) !== expectedVersion)) return;
+        if (doc.buildingVersionId) await tx.documentVersion.updateMany({
+          where: { id: doc.buildingVersionId, state: { in: ['parsed', 'indexing'] } }, data: { state: 'failed' },
+        });
+        // A failed replacement cannot unpublish the last coherent projection.
+        await tx.document.update({ where: { id: documentId }, data: doc.activeVersionId
+          ? { parserMetadata: { pendingError: reason } }
+          : { status: 'failed', qualityStatus: 'rejected', qualityIssues: [reason], parserMetadata: { error: reason } } });
+      });
+      this.logger.error(`Document ${documentId} pending ingestion failed: ${reason}`);
+      return;
+    }
     await this.prisma.document
       .updateMany({
         where: {

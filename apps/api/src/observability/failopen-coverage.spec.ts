@@ -35,6 +35,7 @@ describe('failopen call-site coverage', () => {
   });
 
   it('hybrid rerankLateInteraction counts channel=late_interaction on SQL failure', async () => {
+    process.env.BGE_M3_MAXSIM_ENABLED = 'true';
     const embedding = {
       isHybridEnabled: () => true,
       embedHybridOne: jest.fn().mockResolvedValue({
@@ -48,6 +49,7 @@ describe('failopen call-site coverage', () => {
     const before = metricsRegistry.getCounterValue('retrieval_failopen_total', { channel: 'late_interaction' });
     const service = new HybridRetrievalService(embedding);
     const scores = await service.rerankLateInteraction('q', ['c1']);
+    delete process.env.BGE_M3_MAXSIM_ENABLED;
     expect(scores.size).toBe(0);
     expect(metricsRegistry.getCounterValue('retrieval_failopen_total', { channel: 'late_interaction' })).toBe(before + 1);
   });

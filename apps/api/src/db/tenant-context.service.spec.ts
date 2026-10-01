@@ -136,4 +136,13 @@ describe('withServiceContext', () => {
       return 1;
     });
   });
+
+  it('never promotes an unauthenticated HTTP request to service scope', async () => {
+    const { runWithRequestContext } = require('../observability/request-context');
+    await runWithRequestContext({ requestId: 'anonymous' }, () => withServiceContext(mockPrisma, async () => 'ok'));
+    const call = mockTx.$executeRaw.mock.calls[0];
+    expect(call[1]).toBe('');
+    expect(String(call[0])).toContain("'off'");
+    expect(String(call[0])).not.toContain("'on'");
+  });
 });

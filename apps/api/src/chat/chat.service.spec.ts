@@ -109,6 +109,7 @@ describe("ChatService", () => {
     });
     const stream = await isolated.handleChatStream('user', 'question');
     const subscription = stream.subscribe();
+    await new Promise(resolve => setImmediate(resolve));
     expect(captured?.aborted).toBe(false);
     subscription.unsubscribe();
     expect(captured?.aborted).toBe(true);
@@ -151,8 +152,8 @@ describe("ChatService", () => {
 
   it('filters inventory and fallback search results by document ACL before returning them', async () => {
     mockPrisma.document.findMany.mockResolvedValue([
-      { id: 'public-doc', kbId: 'kb-1', lifecycleStatus: 'active' },
-      { id: 'restricted-doc', kbId: 'kb-1', lifecycleStatus: 'active' },
+      { id: 'public-doc', kbId: 'kb-1', aclMode: 'inherit', lifecycleStatus: 'active' },
+      { id: 'restricted-doc', kbId: 'kb-1', aclMode: 'inherit', lifecycleStatus: 'active' },
     ]);
     jest.spyOn((service as any).documentAclService, 'filterReadableDocuments')
       .mockResolvedValue(new Set(['public-doc']));
@@ -164,6 +165,8 @@ describe("ChatService", () => {
   });
 
   it("should stream chat and trigger lazy compile if topic is dirty", async () => {
+    // This tests compilation/evidence streaming, not a live model gateway.
+    jest.spyOn((service as any).modelConfigService, 'getLlmChatConfig').mockResolvedValue(null);
     // 权限校验 mock
     mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(["kb-1"]);
 
@@ -173,7 +176,7 @@ describe("ChatService", () => {
       gitRepoUrl: "/tmp/repo",
     });
     mockPrisma.document.findMany.mockResolvedValue([
-      { id: "doc-1", kbId: "kb-1", title: "规则.md" },
+      { id: "doc-1", kbId: "kb-1", aclMode: "inherit", title: "规则.md" },
     ]);
 
     // 模拟主题是 dirty 的，触发懒编译
@@ -192,6 +195,7 @@ describe("ChatService", () => {
     );
 
     // 验证流式事件输出
+    expect(events.filter((e) => (e.data as any).type === "error")).toEqual([]);
     expect(events.some((e) => (e.data as any).type === "meta")).toBeTruthy();
     expect(events.some((e) => (e.data as any).type === "delta")).toBeTruthy();
     expect(
@@ -251,7 +255,7 @@ describe("ChatService", () => {
       gitRepoUrl: "/tmp/repo",
     });
     mockPrisma.document.findMany.mockResolvedValue([
-      { id: "doc-1", kbId: "kb-1", title: "规则.md" },
+      { id: "doc-1", kbId: "kb-1", aclMode: "inherit", title: "规则.md" },
     ]);
     mockPrisma.message.findMany.mockResolvedValue([
       { role: "user", content: "当前问题" },
@@ -311,7 +315,7 @@ describe("ChatService", () => {
       gitRepoUrl: "gbrain://source/test",
     });
     mockPrisma.document.findMany.mockResolvedValue([
-      { id: "doc-1", kbId: "kb-1", title: "规则.md" },
+      { id: "doc-1", kbId: "kb-1", aclMode: "inherit", title: "规则.md" },
     ]);
     mockPrisma.message.findMany.mockResolvedValue([]);
     mockPrisma.brainTopic.findUnique.mockResolvedValue(null);
@@ -564,7 +568,7 @@ describe("ChatService", () => {
     // 2. Initial layer doc check passes
     mockPrisma.document.findMany
       .mockResolvedValueOnce([
-        { id: "doc-1", kbId: "kb-1", title: "规则.md", kb: { name: "知识库", type: "platform" } },
+        { id: "doc-1", kbId: "kb-1", aclMode: "inherit", title: "规则.md", kb: { name: "知识库", type: "platform" } },
       ])
       // middle version check (base family docs)
       .mockResolvedValueOnce([
@@ -626,7 +630,7 @@ describe("ChatService", () => {
 
     mockPrisma.document.findMany
       .mockResolvedValueOnce([
-        { id: "doc-1", kbId: "kb-1", title: "规则.md", version: 2, kb: { name: "知识库", type: "platform" } },
+        { id: "doc-1", kbId: "kb-1", aclMode: "inherit", title: "规则.md", version: 2, kb: { name: "知识库", type: "platform" } },
       ])
       .mockResolvedValueOnce([
         { id: "doc-1", title: "规则.md", version: 2 },
@@ -683,7 +687,7 @@ describe("ChatService", () => {
     });
 
     mockPrisma.document.findMany.mockResolvedValue([
-      { id: "doc-1", kbId: "kb-1", title: "规则.md", version: 1, kb: { name: "知识库", type: "platform" } },
+      { id: "doc-1", kbId: "kb-1", aclMode: "inherit", title: "规则.md", version: 1, kb: { name: "知识库", type: "platform" } },
     ]);
 
     process.env.DEEPSEEK_API_KEY = "test-key";
@@ -732,7 +736,7 @@ describe("ChatService", () => {
       gitRepoUrl: "/tmp/repo",
     });
     mockPrisma.document.findMany.mockResolvedValue([
-      { id: "doc-1", kbId: "kb-1", title: "规则.md", version: 1, kb: { name: "知识库", type: "platform" } },
+      { id: "doc-1", kbId: "kb-1", aclMode: "inherit", title: "规则.md", version: 1, kb: { name: "知识库", type: "platform" } },
     ]);
 
     process.env.DEEPSEEK_API_KEY = "test-key";
@@ -766,7 +770,7 @@ describe("ChatService", () => {
     mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(["kb-1"]);
     mockCompilerService.ensureUserBrainRepo.mockResolvedValue({ gitRepoUrl: "/tmp/repo" });
     mockPrisma.document.findMany.mockResolvedValue([
-      { id: "doc-1", kbId: "kb-1", title: "规则.md", version: 1, qualityStatus: "passed" },
+      { id: "doc-1", kbId: "kb-1", aclMode: "inherit", title: "规则.md", version: 1, qualityStatus: "passed" },
     ]);
 
     const result = await service.searchKnowledgeForAgent("user-1", "数据合规", ["kb-1"], 5);
@@ -784,7 +788,7 @@ describe("ChatService", () => {
           provider: "weknora",
           externalChunkId: "ext-1",
           documentId: "doc-1",
-          kbId: "kb-1",
+          kbId: "kb-1", aclMode: "inherit",
           documentVersion: 1,
           content: "外部WeKnora证据片段",
           score: 0.95,
@@ -809,7 +813,7 @@ describe("ChatService", () => {
     mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(["kb-1"]);
     mockCompilerService.ensureUserBrainRepo.mockResolvedValue({ gitRepoUrl: "/tmp/repo" });
     mockPrisma.document.findMany.mockResolvedValue([
-      { id: "doc-1", kbId: "kb-1", title: "规则.md", version: 1, qualityStatus: "passed", kb: { name: "知识库", type: "platform" } },
+      { id: "doc-1", kbId: "kb-1", aclMode: "inherit", title: "规则.md", version: 1, qualityStatus: "passed", kb: { name: "知识库", type: "platform" } },
     ]);
 
     process.env.DEEPSEEK_API_KEY = "test-key";
@@ -904,7 +908,7 @@ describe("ChatService", () => {
       searchGlobal: jest.fn().mockResolvedValue([
         {
           documentId: null,
-          kbId: 'kb-1',
+          kbId: 'kb-1', aclMode: 'inherit',
           title: '全库业务架构与制度演进全景',
           evidence: '【宏观摘要 · 全库演进全景】涵盖人事与合规整体演进架构',
           score: 0.96,
@@ -942,7 +946,7 @@ describe("ChatService", () => {
     jest.spyOn((service as any).retrievalArms, 'searchChunksFallback').mockResolvedValue([
       {
         documentId: 'doc-hop',
-        kbId: 'kb-1',
+        kbId: 'kb-1', aclMode: 'inherit',
         title: '量产公差规范',
         evidence: '量产公差不得大于0.02mm',
         previewUrl: null,

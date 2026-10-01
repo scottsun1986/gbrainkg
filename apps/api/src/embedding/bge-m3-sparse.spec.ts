@@ -33,9 +33,9 @@ describe('BGE-M3 hybrid enablement', () => {
   });
 
   describe('sparse toggle', () => {
-    it('is ON by default (flag unset)', () => {
+    it('is opt-in until capability and quality gates pass', () => {
       delete process.env.BGE_M3_HYBRID_ENABLED;
-      expect(new EmbeddingService().isHybridEnabled()).toBe(true);
+      expect(new EmbeddingService().isHybridEnabled()).toBe(false);
     });
 
     it('stays ON when explicitly set to true', () => {
@@ -59,7 +59,7 @@ describe('BGE-M3 hybrid enablement', () => {
 
   describe('fail-open when no hybrid endpoint is configured', () => {
     it('embedHybrid fails open and records the degradation', async () => {
-      delete process.env.BGE_M3_HYBRID_ENABLED;
+      process.env.BGE_M3_HYBRID_ENABLED = 'true';
       delete process.env.BGE_M3_HYBRID_ENDPOINT;
       delete process.env.EMBEDDING_BASE_URL;
       const isolated = new EmbeddingService({ getDefault: jest.fn().mockResolvedValue(null) } as any);
@@ -81,6 +81,7 @@ describe('BGE-M3 hybrid enablement', () => {
     });
 
     it('rerankLateInteraction fails open + recordFailopen without multi-vector', async () => {
+      process.env.BGE_M3_MAXSIM_ENABLED = 'true';
       const embedding = {
         isHybridEnabled: () => true,
         embedHybridOne: jest.fn().mockResolvedValue({ dense: [1], sparse: null, multiVector: null }),
@@ -89,6 +90,7 @@ describe('BGE-M3 hybrid enablement', () => {
       const result = await service.rerankLateInteraction('query', ['c1']);
       expect(result.size).toBe(0);
       expect(recordFailopen).toHaveBeenCalledWith('late_interaction');
+      delete process.env.BGE_M3_MAXSIM_ENABLED;
     });
 
     it('sparse/late paths stay silent when the feature is disabled', async () => {

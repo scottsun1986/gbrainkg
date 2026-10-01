@@ -1,3 +1,4 @@
+import { runAsService } from '../db/service-principal';
 import {
   Injectable,
   Logger,
@@ -52,7 +53,9 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
     this.gbrain = gbrainAdapter ?? getSharedBrainRepoAdapter();
   }
 
-  async onModuleInit() {
+  async onModuleInit() { return runAsService('compiler-initialize', () => this.initializeInternal()); }
+
+  private async initializeInternal() {
     await this.modelConfigService.applyRuntimeConfig();
     this.queueEvents = new QueueEvents("dirty-compiler-queue", {
       connection: this.compilerQueue.opts.connection as any,
@@ -911,12 +914,13 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
     // Batch plan resolution: fetch all visible KBs for all users in one query,
     // group by source, then iterate sources (not users) to avoid O(users × sources).
     const allVisibleKbIds = new Set<string>();
-    await Promise.all(
-      users.map(async (user) => {
+    // Keep background reconciliation from occupying every request connection.
+    for (let start = 0; start < users.length; start += 4) {
+      await Promise.all(users.slice(start, start + 4).map(async (user) => {
         const kbIds = await this.permissionService.getVisibleKnowledgeBases(user.id);
         kbIds.forEach((id) => allVisibleKbIds.add(id));
-      }),
-    );
+      }));
+    }
     const allKbs = await this.prisma.knowledgeBase.findMany({
       where: { id: { in: [...allVisibleKbIds] }, status: "active" },
       select: { id: true, type: true },

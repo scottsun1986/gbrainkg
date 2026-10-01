@@ -43,6 +43,7 @@ export class TenantContextService {
   }
 
   async forService<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
+    if (getRequestContext() && !getRequestContext()?.servicePrincipal) throw new Error('Cannot promote request to service');
     return this.prisma.$transaction(async (tx) => {
       await this.apply(tx, null, true);
       return fn(tx);
@@ -104,13 +105,15 @@ export async function withServiceContext(
     if (!tx || typeof tx.$executeRaw !== 'function') {
       return fn(prisma);
     }
-    const requestUserId = getRequestContext()?.userId;
-    if (requestUserId) {
+    const context = getRequestContext();
+    const requestUserId = context?.userId;
+    if (context && !context.servicePrincipal) {
       // 请求内调用：保留用户上下文，RLS 策略按请求用户判定。
-      await tx.$executeRaw`SELECT set_config('app.user_id', ${requestUserId}, true), set_config('app.service', 'off', true)`;
+      await tx.$executeRaw`SELECT set_config('app.user_id', ${requestUserId || ''}, true), set_config('app.service', 'off', true), set_config('app.as_of', ${new Date(context?.asOf ?? Date.now()).toISOString()}, true)`;
     } else {
-      await tx.$executeRaw`SELECT set_config('app.user_id', '', true), set_config('app.service', 'on', true)`;
+      await tx.$executeRaw`SELECT set_config('app.user_id', '', true), set_config('app.service', 'on', true), set_config('app.as_of', ${new Date(context?.asOf ?? Date.now()).toISOString()}, true)`;
     }
+    if (context?.artifactInputs) await tx.$executeRaw`SELECT set_config('app.artifact_inputs', ${context.artifactInputs}, true)`;
     return fn(tx);
   }, { isolationLevel: 'ReadCommitted' });
 }

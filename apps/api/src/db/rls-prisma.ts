@@ -7,7 +7,7 @@ type Client = PrismaClient & Record<string, any>;
  * Prisma's pool does not pin a connection to an HTTP request. Every standalone
  * operation therefore runs in a short transaction with transaction-local RLS
  * settings. Callback transactions are scoped once and use their tx client.
- * Background work (no request context) is the only implicit service scope.
+ * Background work needs an explicit service principal; missing context denies.
  */
 export function withRlsContext(base: PrismaClient): PrismaClient {
   const client = base as Client;
@@ -37,14 +37,20 @@ export function withRlsContext(base: PrismaClient): PrismaClient {
     await validateRole();
     const context = getRequestContext();
     const userId = context?.userId || '';
-    const service = context ? 'off' : 'on';
+    const service = context?.servicePrincipal ? 'on' : 'off';
     // Unit-test prisma doubles (a bare object with model methods, no
     // $transaction) pass through unwrapped — same degradation contract as the
     // missing-$executeRaw guard below: a real client always has both.
     if (typeof (client as any)?.$transaction !== 'function') return fn(client as any);
     return client.$transaction(async (tx: any) => {
       if (typeof tx?.$executeRaw !== 'function') return fn(tx);
-      await tx.$executeRaw`SELECT set_config('app.user_id', ${userId}, true), set_config('app.service', ${service}, true)`;
+      await tx.$executeRaw`SELECT set_config('app.user_id', ${userId}, true), set_config('app.service', ${service}, true), set_config('app.as_of', ${new Date(context?.asOf ?? Date.now()).toISOString()}, true)`;
+      if (context?.artifactInputs) await tx.$executeRaw`SELECT set_config('app.artifact_inputs', ${context.artifactInputs}, true)`;
+      const deadline = context?.execution?.retrievalComplete ? undefined : context?.execution?.deadline;
+      const remaining = deadline?.remainingMs() ?? Number(process.env.RLS_STATEMENT_TIMEOUT_MS || 25000);
+      if (remaining <= 0 || deadline?.signal.aborted) throw new Error('Query execution deadline exhausted');
+      // Prisma transaction expiry alone does not cancel a running PostgreSQL query.
+      await tx.$executeRaw`SELECT set_config('statement_timeout', ${String(Math.max(1, remaining))}, true), set_config('lock_timeout', ${String(Math.max(1, Math.min(1000, remaining)))}, true)`;
       return fn(tx);
     }, {
       maxWait: Number(process.env.RLS_TX_MAX_WAIT_MS || 20_000),

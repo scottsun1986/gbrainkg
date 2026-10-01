@@ -1,6 +1,14 @@
 import { semanticCacheScopeKey } from './chat.service';
 
 describe('semanticCacheScopeKey', () => {
+  const original = { ...process.env };
+  afterEach(() => { process.env = { ...original }; });
+  it('isolates answers produced before accuracy-first activation', () => {
+    process.env.RETRIEVAL_QUALITY_PROFILE = 'balanced';
+    const before = semanticCacheScopeKey(['source'], 1, 1, 'model', 'user');
+    process.env.RETRIEVAL_QUALITY_PROFILE = 'quality-first';
+    expect(semanticCacheScopeKey(['source'], 1, 1, 'model', 'user')).not.toBe(before);
+  });
   const keys = ['kb-aaa-source', 'kb-bbb-source'];
 
   it('is deterministic and order-independent', () => {

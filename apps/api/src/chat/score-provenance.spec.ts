@@ -77,6 +77,15 @@ describe('decideEvidenceSufficiency', () => {
     expect(decision.hasSufficientEvidence).toBe(true);
   });
 
+  it('verifies original evidence with unknown confidence without treating it as calibrated', () => {
+    const decision = decideEvidenceSufficiency([{docId:'doc', context:'Original evidence', score:0.2, scoreSource:'synthetic'}], {calibratedFloor:0.4, syntheticFloor:0.999, verifyUncalibrated:true});
+    expect(decision.scoreCalibrated).toBe(false);
+    expect(decision.hasSufficientEvidence).toBe(true);
+    expect(decideEvidenceSufficiency([{docId:'doc'}], {...opts, verifyUncalibrated:true}).hasSufficientEvidence).toBe(false);
+    expect(decideEvidenceSufficiency([{context:'Unbound summary',score:0.2,scoreSource:'synthetic'}], {calibratedFloor:0.4,syntheticFloor:0.999,verifyUncalibrated:true}).hasSufficientEvidence).toBe(false);
+    expect(decideEvidenceSufficiency([{docId:'doc',context:'Original evidence',score:0.1,scoreSource:'rerank'}], {...opts,verifyUncalibrated:true}).hasSufficientEvidence).toBe(false);
+  });
+
   it('refuses without citations even when a synthetic threshold is configured', () => {
     expect(decideEvidenceSufficiency([], opts).hasSufficientEvidence).toBe(false);
   });

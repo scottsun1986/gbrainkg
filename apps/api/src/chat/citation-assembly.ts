@@ -1,3 +1,7 @@
+import { hydrateOriginalSnapshots } from '../ingestion/original-block-snapshot';
+import { rethrowAuthorizationFailure } from '../permission/authorization-revision';
+import { requestFetch } from '../retrieval/request-signal';
+import { assertRequestAuthorization } from '../permission/authorization-revision';
 import { Logger, type MessageEvent } from "@nestjs/common";
 import type { Subscriber } from "rxjs";
 import { getPrismaClient } from "../prisma";
@@ -42,6 +46,33 @@ function resolveEffectiveUserId(
   } catch {
     return undefined;
   }
+}
+
+/**
+ * 整篇回答是否为「标准拒答形态」。
+ *
+ * 标准拒答经常附带逐来源的不相关说明（"来源 3 为《…总表》，记录的是 … [3]"、
+ * "其余来源均与该问题无关"）。缺席声明无法引用任何证据原文，按普通语句做语义
+ * 覆盖率核验必然报"覆盖率偏低"的误导性告警。仅靠 80 字符上限识别拒答会把这类
+ * 带说明的长拒答误判为低置信回答。这里按语句形态分类：至少一句命中严格拒答词
+ * 汇，且其余语句全部是拒答句、缺席声明、来源说明行或短引导语，才视为标准拒答。
+ * 含未引用事实陈述的回答不会命中该判定，覆盖率告警照常生效。
+ */
+export function isRefusalShapedAnswer(fullAnswer: string, statements: string[]): boolean {
+  const text = String(fullAnswer || '').trim();
+  if (!text) return true;
+  if (!isRefusalAnswerText(text)) return false;
+  if (text.length <= 80) return true;
+  if (statements.length === 0) return false;
+  const absenceClaim =
+    /(不涉及|未涉及|未包含|未记载|未找到|未检索到|未提供|未提及|没有相关|无相关|无关|均不|不包含)/u;
+  const sourceExplanation = /^(?:[-*•]\s*)?(?:来源\s*\d|其余来源|其余参考|其余证据|其余文档|以上来源)/u;
+  const filler = (s: string) => s.replace(/\s+/g, '').length <= 12 && !/\d/.test(s);
+  const isStrictRefusal = (s: string) => s.trim().length > 0 && isRefusalAnswerText(s);
+  if (!statements.some(isStrictRefusal)) return false;
+  return statements.every(
+    (s) => isStrictRefusal(s) || absenceClaim.test(s) || sourceExplanation.test(s.trim()) || filler(s),
+  );
 }
 
 /**
@@ -101,8 +132,10 @@ export class CitationAssemblyService {
           select: {
             id: true,
             kbId: true,
+            aclMode: true,
             title: true,
             version: true,
+            activeVersionId: true,
             createdAt: true,
             updatedAt: true,
             effectiveFrom: true,
@@ -116,7 +149,7 @@ export class CitationAssemblyService {
     // editions not yet in force must never enter the candidate set, regardless
     // of which retrieval arm produced them. Documents without effective-date
     // metadata stay eligible (unknown is not asserted as invalid).
-    const now = Date.now();
+    const now = getRequestContext()?.asOf ?? Date.now();
     let allowed = new Map<string, any>(
       docs.filter((doc: any) => documentCurrentlyEffective(doc, now)).map((doc: any) => [doc.id, doc]),
     );
@@ -137,7 +170,7 @@ export class CitationAssemblyService {
             if (!readable.has(id)) allowed.delete(id);
           }
         }
-      } catch (err) {
+      } catch (err) { rethrowAuthorizationFailure(err);
         // Fail-open on ACL service errors would leak; fail-closed drops the
         // contested docs but keeps the rest of the answer path alive.
         this.logger.warn(
@@ -170,7 +203,7 @@ export class CitationAssemblyService {
       if (!userId) continue;
       const sourceDocs = await this.prisma.document.findMany({
         where: { id: { in: docIds }, kbId: { in: visibleKbIds }, status: "published" },
-        select: { id: true, kbId: true },
+        select: { id: true, kbId: true, aclMode: true },
       });
       if (sourceDocs.length !== new Set(docIds).size) continue;
       const readableSources = await this.documentAclService.filterReadableDocuments(userId, docIds, {
@@ -198,10 +231,16 @@ export class CitationAssemblyService {
             allowedRaptorKbIds.add(kbId);
           }
         }
-      } catch (err) {
+      } catch (err) { rethrowAuthorizationFailure(err);
         this.logger.warn(`RAPTOR ACL check failed, dropping global summaries: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
+    const immutableRefs = citations.filter((c: any) => allowed.get(c.docId)?.activeVersionId && (c.chunkId || Number.isInteger(c.ord)));
+    let blocks: Array<{ id: string; versionId: string; ord: number; rawHash: string; charStart: number; charEnd: number; rawContent: string | null }> = immutableRefs.length && (this.prisma as any).blockArtifact?.findMany
+      ? await this.prisma.blockArtifact.findMany({ where: { OR: immutableRefs.map((c: any) => ({ versionId: allowed.get(c.docId).activeVersionId, ...(c.chunkId ? { id: c.chunkId } : { ord: c.ord }) })) }, select: { id: true, versionId: true, ord: true, rawHash: true, charStart: true, charEnd: true, rawContent: true } }) : [];
+    blocks = await hydrateOriginalSnapshots(this.prisma, blocks);
+    const blockByOrd = new Map(blocks.map(b => [`${b.versionId}:${b.ord}`, b]));
+    const blockById = new Map(blocks.map(b => [b.id,b]));
     const filtered = citations
       .map((citation: any) => {
         if (!citation.docId) {
@@ -227,12 +266,16 @@ export class CitationAssemblyService {
         const doc = allowed.get(citation.docId);
         // Do not relabel old evidence as the current document version.
         if (doc && citation.version != null && Number(citation.version) !== doc.version) return null;
+        const block = citation.chunkId ? blockById.get(citation.chunkId) : blockByOrd.get(`${doc?.activeVersionId}:${citation.ord}`);
+        if (doc?.activeVersionId && (citation.chunkId || Number.isInteger(citation.ord)) && (!block || block.rawContent == null) && process.env.CORE_VERSIONING_ENABLED === '1') return null;
         return doc
           ? {
               ...citation,
               kbId: doc.kbId,
               docTitle: doc.title,
               version: doc.version,
+              documentVersionId: doc.activeVersionId,
+              ...(block ? { ...(block.rawContent != null ? { context: block.rawContent, evidence: block.rawContent, snippet: block.rawContent.slice(0, 1000) } : {}), chunkId: block.id, span: { charStart: block.charStart, charEnd: block.charEnd }, contentHash: block.rawHash } : {}),
               kbName: (doc as any).kb?.name || citation.kbName || "默认知识库",
               kbType: (doc as any).kb?.type,
             }
@@ -642,6 +685,18 @@ export class CitationAssemblyService {
     // semantic hits), while exact/keyword evidence is trusted regardless of
     // score. The score only decides whether a weak hit needs one broad pass.
     const weak = evidence.includes("weak") || Boolean((result as any)?.weak);
+    if (getRequestContext()?.execution?.adaptive) {
+      const probability = citations.length ? calibratedScoreOf(citations[0]) : null;
+      // Missing calibration is a deployment capability, not a per-query signal
+      // that repeated recall will improve. Keep the adaptive candidate/probe
+      // budgets, then verify original evidence instead of endlessly escalating.
+      if (probability === null && getRequestContext()?.execution?.qualityFirst && result?.reranked && citations.length) {
+        return { shouldEscalate: false, weak: true, evidence, topScore: null,
+          reason: '重排已完成，置信度未知；保留候选并交由原文核验' };
+      }
+      return { shouldEscalate: probability === null || probability < .75, weak: probability === null || probability < .75,
+        evidence, topScore: probability, scoreFloor: .75, reason: probability === null ? '无经过验证的置信度，继续预算内检索' : '根据验证集校准置信度判断扩检' };
+    }
     if (breadth) {
       return { shouldEscalate: false, weak, evidence, topScore, scoreFloor, reason: "当前已是广覆盖检索" };
     }
@@ -701,7 +756,8 @@ export class CitationAssemblyService {
       const numbered = params.passages
         .map((passage, index) => `【片段${index + 1}】${passage}`)
         .join('\n');
-      const response = await fetch(`${llmRequest.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+      await assertRequestAuthorization();
+      const response = await requestFetch(`${llmRequest.baseUrl.replace(/\/$/, '')}/chat/completions`, {
         method: 'POST',
         headers: llmRequest.headers,
         body: JSON.stringify({
@@ -730,8 +786,7 @@ export class CitationAssemblyService {
           max_tokens: Number(process.env.CHAT_PASSAGE_VERIFY_MAX_TOKENS || 200),
           response_format: { type: 'json_object' },
         }),
-        signal: AbortSignal.timeout(Number(process.env.CHAT_PASSAGE_VERIFY_TIMEOUT_MS || 15000)),
-      });
+        }, Number(process.env.CHAT_PASSAGE_VERIFY_TIMEOUT_MS || 15000));
       if (!response.ok) return verified;
       const payload: any = await response.json();
       const message = payload?.choices?.[0]?.message || {};
@@ -742,7 +797,7 @@ export class CitationAssemblyService {
         const index = Number(raw) - 1;
         if (Number.isInteger(index) && index >= 0 && index < params.passages.length) verified.add(index);
       }
-    } catch (err) {
+    } catch (err) { rethrowAuthorizationFailure(err);
       this.logger.debug(
         `Passage containment judge skipped: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -764,7 +819,8 @@ export class CitationAssemblyService {
       const userContent = `【证据】\n${evidence}\n\n【陈述】\n${statements
         .map((s, i) => `${i + 1}. ${s}`)
         .join('\n')}`;
-      const response = await fetch(`${baseUrl}/chat/completions`, {
+      await assertRequestAuthorization();
+      const response = await requestFetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: llmRequest.headers,
         body: JSON.stringify({
@@ -781,8 +837,7 @@ export class CitationAssemblyService {
           max_tokens: Number(process.env.SEMANTIC_COVERAGE_MAX_TOKENS || 1200),
           response_format: { type: 'json_object' },
         }),
-        signal: AbortSignal.timeout(Number(process.env.SEMANTIC_COVERAGE_TIMEOUT_MS || 6000)),
-      });
+        }, Number(process.env.SEMANTIC_COVERAGE_TIMEOUT_MS || 6000));
       if (!response.ok) return supported;
       const payload: any = await response.json();
       const message = payload?.choices?.[0]?.message || {};
@@ -797,7 +852,7 @@ export class CitationAssemblyService {
         const index = Number(raw) - 1;
         if (Number.isInteger(index) && index >= 0 && index < statements.length) supported.add(index);
       }
-    } catch (err) {
+    } catch (err) { rethrowAuthorizationFailure(err);
       this.logger.debug(`Entailment judge skipped: ${err instanceof Error ? err.message : String(err)}`);
     }
     return supported;
@@ -830,6 +885,10 @@ export class CitationAssemblyService {
         }) ??
         undefined,
       version: cit.version,
+      document_version_id: cit.document_version_id ?? cit.documentVersionId,
+      block_id: cit.block_id ?? cit.chunkId,
+      span: cit.span,
+      content_hash: cit.content_hash ?? cit.contentHash,
       page_no: cit.page_no ?? cit.pageNo,
       bbox: cit.bbox ?? cit.bboxes?.[0] ?? cit.metadata?.bbox,
       version_conflict: cit.version_conflict ?? cit.versionConflict,
@@ -946,9 +1005,7 @@ export class CitationAssemblyService {
     let coverageRatio = totalStatements > 0 ? Number((groundedStatements / totalStatements).toFixed(2)) : 1.0;
     // A standard refusal makes no factual claims, so the absence of citation
     // markers is expected. Do not report it as low grounding (false alarm).
-    const isRefusalAnswer =
-      /(未包含相关信息|无法(?:根据知识库)?回答|不知道|无法提供(?:该信息)?)/.test(fullAnswer) &&
-      fullAnswer.trim().length <= 80;
+    const isRefusalAnswer = isRefusalShapedAnswer(fullAnswer, statements);
     const semanticCoverage = { totalStatements, groundedStatements, coverageRatio, refusalExempt: isRefusalAnswer };
 
     let traceStatus = finalCitations.length > 0 ? "success" : "warning";
@@ -994,6 +1051,11 @@ export class CitationAssemblyService {
             snippet: cit.snippet || '',
             preview_url: buildDocumentPreviewUrl(cit.kbId, cit.docId, { page: cit.pageNo || cit.page_no || cit.metadata?.page_no }) ?? undefined,
             version: cit.version,
+            document_version_id: cit.documentVersionId,
+            block_id: cit.chunkId || cit.metadata?.blockId,
+            span: cit.span || cit.metadata?.span,
+            content_hash: cit.contentHash || cit.metadata?.contentHash,
+            evidence_refs: cit.evidenceRefs,
             page_no: cit.pageNo || cit.page_no || cit.metadata?.page_no,
             bbox: cit.bbox || cit.bboxes?.[0] || cit.metadata?.bbox,
             version_conflict: cit.versionConflict,
@@ -1002,7 +1064,9 @@ export class CitationAssemblyService {
       });
     });
     subscriber.next({
-      data: { type: "done", total_tokens: totalTokens, latency_ms: 0 },
+      data: { type: "done", total_tokens: totalTokens, latency_ms: 0,
+        dependency_manifest: getRequestContext()?.evidenceDependencies,
+        execution: getRequestContext()?.execution?.report() },
     });
     // Never cache refusals: weak evidence must not poison the cache, or every
     // paraphrase of the question replays the refusal (observed in production).
@@ -1101,7 +1165,7 @@ export function mergeCitationsByDocument(citations: any[]): any[] {
     const existingIndex = indexByKey.get(key);
     if (existingIndex === undefined) {
       indexByKey.set(key, out.length);
-      out.push({ ...c, mergedChunkCount: 1 });
+      out.push({ ...c, evidenceRefs: c.chunkId ? [{ blockId: c.chunkId, span: c.span, contentHash: c.contentHash, versionId: c.documentVersionId }] : [], mergedChunkCount: 1 });
       continue;
     }
     const merged = out[existingIndex];
@@ -1112,6 +1176,7 @@ export function mergeCitationsByDocument(citations: any[]): any[] {
       merged.context = prev ? `${prev}${anchor}${next}` : next;
       merged.snippet = String(merged.context).slice(0, 500);
     }
+    if (c.chunkId && !merged.evidenceRefs.some((r: any) => r.blockId === c.chunkId)) merged.evidenceRefs.push({ blockId: c.chunkId, span: c.span, contentHash: c.contentHash, versionId: c.documentVersionId });
     merged.mergedChunkCount = (Number(merged.mergedChunkCount) || 1) + 1;
     merged.score = Math.max(Number(merged.score || 0), Number(c.score || 0));
     if (!merged.section && c.section) merged.section = c.section;

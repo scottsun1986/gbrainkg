@@ -1,3 +1,5 @@
+import { VerifiedLateChunking } from '../embedding/verified-late-chunking';
+import { runAsService } from '../db/service-principal';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Job, Queue } from 'bullmq';
@@ -11,6 +13,7 @@ import { GraphRagService } from '../graph-rag/graph-rag.service';
 import { ModelConfigService } from '../model-config.service';
 import { BrainCompilerService } from '../brain-compiler/brain-compiler.service';
 import { LexicalIndexService } from '../retrieval/lexical-index.service';
+import { DocumentVersionStore } from './document-version-store';
 
 export interface EnrichmentJobData {
   documentId: string;
@@ -19,6 +22,9 @@ export interface EnrichmentJobData {
   // Version of the document whose chunks this job was queued for. When the
   // document has since been re-ingested the job must not touch readiness.
   expectedVersion?: number;
+  versionId?: string;
+  generationAction?: "build" | "activate";
+  generationId?: string;
 }
 
 /**
@@ -60,6 +66,10 @@ export class EnrichmentProcessor extends WorkerHost {
   }
 
   async process(job: Job<EnrichmentJobData>): Promise<{ readiness: string }> {
+    return runAsService("ingestion", () => this.processInternal(job), job.data.kbId);
+  }
+
+  private async processInternal(job: Job<EnrichmentJobData>): Promise<{ readiness: string }> {
     await this.reportQueueDepth();
     const { documentId, kbId, expectedVersion, outboxEventId } = job.data;
     const finishOutbox = async (status: 'completed' | 'failed', error?: unknown) => {
@@ -76,6 +86,35 @@ export class EnrichmentProcessor extends WorkerHost {
       await (this.prisma as any).brainChangeEvent.update({
         where: { id: outboxEventId }, data: { status: 'processing' },
       });
+    }
+    if (job.data.versionId) {
+      try {
+        const version = await this.prisma.documentVersion.findUnique({ where: { id: job.data.versionId }, include: { document: true } });
+        if (!version || version.documentId !== documentId || version.document.kbId !== kbId || version.number !== expectedVersion) throw new Error('Invalid version job identity');
+        if (job.data.generationAction) {
+          const store = new DocumentVersionStore(this.prisma);
+          if (version.document.activeVersionId !== version.id) { await finishOutbox('completed'); return { readiness: 'superseded' }; }
+          if (job.data.generationAction === 'build') {
+            const result = await this.chunkEmbeddingService.embedVersionArtifacts(version.id);
+            if (result.missing) throw new Error('Generation embedding coverage incomplete');
+            await store.buildDenseGeneration(version.id, result.fingerprint);
+          } else {
+            if (!job.data.generationId) throw new Error('Generation identity required');
+            await store.activateDenseGeneration(version.id, job.data.generationId);
+          }
+          await finishOutbox('completed'); return { readiness: 'ready' };
+        }
+        if (version.state === 'published') { await finishOutbox('completed'); return { readiness: 'ready' }; }
+        if (version.document.buildingVersionId !== version.id) {
+          await finishOutbox('completed'); return { readiness: 'superseded' };
+        }
+        const result = await this.chunkEmbeddingService.embedVersionArtifacts(version.id);
+        if (result.missing) throw new Error(`Version embeddings incomplete: ${result.missing}`);
+        const published = await new DocumentVersionStore(this.prisma).publish(version.id, result.fingerprint);
+        await finishOutbox('completed');
+        return { readiness: published ? 'ready' : 'superseded' };
+      } catch (error) { await finishOutbox('failed', error); throw error; }
+      finally { await this.reportQueueDepth(); }
     }
     if (expectedVersion !== undefined) {
       const current = await this.prisma.document.findUnique({
@@ -256,8 +295,9 @@ export class EnrichmentProcessor extends WorkerHost {
         });
         const completed = new Set(rows.map((row: { stage: string }) => row.stage));
         const stages: Array<[string, () => Promise<unknown>]> = [];
+        if (job.data.versionId && process.env.BGE_M3_LATE_CHUNKING_ENABLED === 'true') stages.push(['late_context', () => new VerifiedLateChunking().buildVersion(job.data.versionId!)]);
         if (this.raptorService.isEnabled()) stages.push(['raptor', () => this.raptorService.indexDocument(kbId, documentId)]);
-        if (process.env.AUTO_GRAPH_EXTRACT_ENABLED === 'true') stages.push(['graph', () => this.extractGraph(kbId, documentId)]);
+        if (process.env.AUTO_GRAPH_EXTRACT_ENABLED === 'true') stages.push(['graph', () => this.extractGraph(kbId,documentId)]);
         for (const [stage, work] of stages) {
           if (completed.has(stage)) continue;
           await work();
@@ -293,6 +333,10 @@ export class EnrichmentProcessor extends WorkerHost {
   }
 
   private async extractGraph(kbId: string, documentId: string): Promise<void> {
+    if (process.env.CORE_VERSIONING_ENABLED === '1' && process.env.CORE_GRAPH_INCREMENTAL_ENABLED === '1') {
+      await this.graphRagService.scheduleCommunityRebuild(kbId);
+      return;
+    }
     const document = await this.prisma.document.findUnique({
       where: { id: documentId },
       select: {

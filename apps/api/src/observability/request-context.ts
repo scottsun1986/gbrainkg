@@ -1,4 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import type { AuthorizationSnapshot } from '../permission/authorization-revision';
+import type { QueryExecution } from '../retrieval/query-execution';
+import type { EvidenceDependency } from '../permission/evidence-dependencies';
 
 /**
  * Per-request correlation context. Populated by the request-id middleware and
@@ -11,6 +14,15 @@ export interface RequestContext {
   method?: string;
   route?: string;
   startedAt?: number;
+  authorization?: AuthorizationSnapshot;
+  asOf?: number;
+  asOfExplicit?: boolean;
+  instanceId?: string;
+  execution?: QueryExecution;
+  cancellation?: AbortSignal;
+  servicePrincipal?: string;
+  artifactInputs?: string;
+  evidenceDependencies?: EvidenceDependency[] | null;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();

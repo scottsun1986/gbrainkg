@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 # Legacy .doc conversion uses the system/userland antiword executable.
 dependencies = [
+    "numpy>=1.26.0,<3",
     "fastapi>=0.111.0",
     "uvicorn>=0.30.0",
     "pydantic>=2.7.0",

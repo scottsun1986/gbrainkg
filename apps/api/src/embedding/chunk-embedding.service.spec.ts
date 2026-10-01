@@ -222,7 +222,7 @@ describe('ChunkEmbeddingService.embedDocumentChunks', () => {
     expect(result.requested).toBe(1);
   });
 
-  it('stores sparse and multi-vector representations with provider-native late chunking', async () => {
+  it('stores sparse and multi-vector representations without overwriting dense space', async () => {
     embedMock.isHybridEnabled.mockReturnValue(true);
     mockPrisma.$queryRaw.mockResolvedValueOnce([
       { id: '11111111-1111-4111-8111-111111111111', ord: 0, content: 'hybrid content' },
@@ -239,9 +239,29 @@ describe('ChunkEmbeddingService.embedDocumentChunks', () => {
     expect(embedMock.embedHybrid).toHaveBeenCalledWith(
       ['hybrid content'],
       'document',
-      { lateChunking: true },
+      { lateChunking: false },
     );
     // withServiceContext wraps the multi-statement write in one transaction.
     expect(mockPrisma.$transaction).toHaveBeenCalled();
   });
+});
+
+describe('hosted-provider version publication policy',()=>{
+ const previous=process.env.ALLOW_UNVERSIONED_EMBEDDING_PUBLICATION;
+ const config={baseUrl:'https://unversioned.invalid/v1',apiKey:'test',modelName:'BAAI/bge-m3',dimensions:1024};
+ beforeEach(()=>{jest.clearAllMocks();mockPrisma.$transaction.mockImplementation(async(callback:any)=>callback(mockPrisma));});
+ afterEach(()=>{if(previous===undefined)delete process.env.ALLOW_UNVERSIONED_EMBEDDING_PUBLICATION;else process.env.ALLOW_UNVERSIONED_EMBEDDING_PUBLICATION=previous;});
+ it('still rejects unversioned publication unless explicitly allowed',async()=>{
+  delete process.env.ALLOW_UNVERSIONED_EMBEDDING_PUBLICATION;
+  const service=new ChunkEmbeddingService({getConfig:jest.fn().mockResolvedValue(config)} as any);
+  await expect(service.embedVersionArtifacts(chunkUuid(999))).rejects.toThrow('Immutable embedding deployment revision required');
+ });
+ it('permits fresh unversioned artifacts without relabelling them as a known model revision',async()=>{
+  process.env.ALLOW_UNVERSIONED_EMBEDDING_PUBLICATION='true';
+  mockPrisma.$queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([{missing:0}]);
+  const service=new ChunkEmbeddingService({getConfig:jest.fn().mockResolvedValue(config)} as any);
+  const result=await service.embedVersionArtifacts(chunkUuid(999));expect(result.missing).toBe(0);
+  const {embeddingFingerprint,reusableEmbeddingIdentity}=await import('./model-fingerprint');
+  expect(result.fingerprint).toBe(embeddingFingerprint(config));expect(reusableEmbeddingIdentity(config)).toBe(false);
+ });
 });

@@ -1,8 +1,13 @@
+import { requestFetch } from './request-signal';
+import { instanceIdentity } from '../observability/instance-identity';
+import { assertRequestAuthorization } from '../permission/authorization-revision';
+import { rethrowAuthorizationFailure } from '../permission/authorization-revision';
 import { recordFailopen } from '../observability/failopen';
 import { Injectable, Logger } from '@nestjs/common';
 import { getPrismaClient } from '../prisma';
 import { EmbeddingService, HybridEmbedding } from '../embedding/embedding.service';
 import { withServiceContext } from '../db/tenant-context.service';
+import { embeddingFingerprint, hybridFingerprint } from '../embedding/model-fingerprint';
 
 export interface HybridChunkHit {
   id: string;
@@ -59,7 +64,8 @@ export class HybridRetrievalService {
   }
 
   private async queryRepresentation(query: string): Promise<HybridEmbedding | null> {
-    const key = query.trim();
+    const config = await this.embeddingService.getConfig?.();
+    const key = `${config ? hybridFingerprint(config) : 'unknown'}:${query.trim()}`;
     const cached = this.queryCache.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
     const value = await this.embeddingService.embedHybridOne(query, 'query');
@@ -71,6 +77,8 @@ export class HybridRetrievalService {
   async searchSparse(kbIds: string[], query: string, limit = 50): Promise<HybridChunkHit[]> {
     if (!this.isEnabled() || !kbIds.length || !query.trim()) return [];
     const representation = await this.queryRepresentation(query);
+    const config = await this.embeddingService.getConfig?.();
+    const fingerprint = config ? hybridFingerprint(config) : null;
     if (!representation?.sparse?.indices.length) {
       // Feature is on but no sparse arm came back (no endpoint, dense-only
       // gateway, or transient provider failure): fail open to dense+BM25 and
@@ -97,6 +105,7 @@ export class HybridRetrievalService {
           JOIN "Chunk" c ON c.id = s."chunkId"
           JOIN "Document" d ON d.id = c."documentId"
           WHERE c."kbId" = ANY(${kbIds}::uuid[]) AND d.status = 'published'
+            AND (${fingerprint}::text IS NULL OR c.hybrid_fingerprint=${fingerprint})
           GROUP BY s."chunkId"
           ORDER BY score DESC
           LIMIT ${Math.max(1, limit)}
@@ -122,7 +131,7 @@ export class HybridRetrievalService {
         document: { title: row.docTitle, version: row.docVersion },
         sparseScore: Number(row.sparseScore),
       }));
-    } catch (err) {
+    } catch (err) { rethrowAuthorizationFailure(err);
       this.logger.debug(`BGE-M3 sparse retrieval unavailable: ${err instanceof Error ? err.message : String(err)}`);
       recordFailopen('sparse');
       return [];
@@ -131,7 +140,7 @@ export class HybridRetrievalService {
 
   async rerankLateInteraction(query: string, candidateIds: string[]): Promise<Map<string, number>> {
     const result = new Map<string, number>();
-    if (!this.isEnabled() || !candidateIds.length) return result;
+    if (!this.isEnabled() || process.env.BGE_M3_MAXSIM_ENABLED !== 'true' || !candidateIds.length) return result;
     const representation = await this.queryRepresentation(query);
     if (!representation?.multiVector?.length) {
       // No ColBERT arm (missing endpoint / dense-only gateway): fail open and
@@ -139,7 +148,7 @@ export class HybridRetrievalService {
       recordFailopen('late_interaction');
       return result;
     }
-    const cappedIds = candidateIds.slice(0, Math.max(1, Number(process.env.BGE_M3_LATE_INTERACTION_CANDIDATES || 60)));
+    const cappedIds = candidateIds.slice(0, Math.max(1, Math.min(40, Number(process.env.BGE_M3_LATE_INTERACTION_CANDIDATES || 20))));
     try {
       const rows = await withServiceContext(this.prisma, (tx) =>
         tx.$queryRaw<Array<{ id: string; multiVector: unknown }>>`
@@ -147,15 +156,22 @@ export class HybridRetrievalService {
         FROM "Chunk"
         WHERE id = ANY(${cappedIds}::uuid[]) AND multi_vector IS NOT NULL
       `);
-      for (const row of rows || []) {
-        const vectors = Array.isArray(row.multiVector)
-          ? (row.multiVector as unknown[]).filter(Array.isArray).map((vector: any) => vector.map(Number))
-          : [];
-        const score = lateInteractionScore(representation.multiVector, vectors);
-        if (Number.isFinite(score) && score > 0) result.set(String(row.id), score);
+      if (!rows.length) return result;
+      const endpoint = (process.env.MAXSIM_ENDPOINT || `${process.env.PARSER_WORKER_URL || 'http://127.0.0.1:8100'}/maxsim`).replace(/\/$/,'');
+      const token = process.env.PARSER_AUTH_TOKEN || process.env.AUTH_TOKEN;
+      await assertRequestAuthorization();
+      const response = await requestFetch(endpoint, { method:'POST', headers:{ 'Content-Type':'application/json', ...(token ? { Authorization:`Bearer ${token}` } : {}) }, body:JSON.stringify({ contract:'cosine-maxsim-mean-v1', instanceId:instanceIdentity(), query:representation.multiVector, documents:rows.map((row: { id: string; multiVector: unknown }) => ({ id:row.id, vectors:row.multiVector })) }) }, 3000);
+      if (!response.ok) throw new Error('Shared MaxSim unavailable');
+      const payload:any = await response.json();
+      if (payload.contract !== 'cosine-maxsim-mean-v1' || !Array.isArray(payload.scores)) throw new Error('MaxSim contract mismatch');
+      const expected = new Set(rows.map((row: { id: string; multiVector: unknown }) => row.id));
+      for (const row of payload.scores) {
+        if (!expected.has(row.id) || result.has(row.id) || typeof row.score !== 'number' || !Number.isFinite(row.score) || row.score < -1.00001 || row.score > 1.00001) throw new Error('Invalid MaxSim result identity/score');
+        result.set(row.id,row.score);
       }
+      if (result.size !== expected.size) throw new Error('Incomplete MaxSim scores');
       return result;
-    } catch (err) {
+    } catch (err) { rethrowAuthorizationFailure(err);
       this.logger.debug(`BGE-M3 late interaction unavailable: ${err instanceof Error ? err.message : String(err)}`);
       recordFailopen('late_interaction');
       return result;

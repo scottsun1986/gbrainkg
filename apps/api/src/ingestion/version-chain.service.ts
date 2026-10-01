@@ -71,6 +71,8 @@ export class VersionChainService {
           sensitivity: input.sensitivity ?? 'internal',
           language: input.language,
           version: nextVersion,
+          ingestVersion: nextVersion,
+          aclMode: previous?.aclMode || 'inherit',
           status: 'parsing',
           effectiveFrom: input.effectiveFrom,
           effectiveTo: input.effectiveTo,
@@ -81,6 +83,10 @@ export class VersionChainService {
       });
 
       if (previous) {
+        const grants = await tx.documentAcl.findMany({ where: { documentId: previous.id } });
+        if (grants.length) await tx.documentAcl.createMany({ data: grants.map((grant: any) => ({
+          id: randomUUID(), documentId: doc.id, subjectType: grant.subjectType, subjectId: grant.subjectId, permission: grant.permission,
+        })) });
         await tx.documentVersionLink.create({
           data: {
             id: randomUUID(),

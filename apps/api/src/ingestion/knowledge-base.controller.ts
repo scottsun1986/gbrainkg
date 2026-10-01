@@ -25,6 +25,7 @@ import { homedir } from "node:os";
 
 const execFileAsync = promisify(execFile);
 import { PermissionService } from "../permission/permission.service";
+import { DocumentAclService } from '../permission/document-acl.service';
 import { AuthService } from "../auth/auth.service";
 import { BrainCompilerService } from "../brain-compiler/brain-compiler.service";
 import { createHmac, timingSafeEqual } from "node:crypto";
@@ -214,7 +215,11 @@ export class KnowledgeBaseController {
   ) {}
 
   private async currentUser(req: any): Promise<string> {
-    return this.authService.userIdFromRequest(req);
+    const userId = await this.authService.userIdFromRequest(req);
+    if (req.params?.docId && !await new DocumentAclService(this.permissionService).isDocumentReadable(userId, req.params.docId)) {
+      throw new NotFoundException('Document not found.');
+    }
+    return userId;
   }
 
   /**

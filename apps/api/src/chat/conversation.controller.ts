@@ -2,6 +2,8 @@ import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, R
 import { getPrismaClient } from '../prisma';
 import { AuthService } from '../auth/auth.service';
 import { AuthGuard } from '../auth/auth.guard';
+import { authorizationEnforced } from '../permission/authorization-revision';
+import { validateEvidenceDependencies } from '../permission/evidence-dependencies';
 
 @UseGuards(AuthGuard)
 @Controller('api/v1/conversations')
@@ -21,6 +23,16 @@ export class ConversationController {
     const userId = await this.authService.userIdFromRequest(req);
     const conversation = await this.prisma.conversation.findFirst({ where: { id, userId }, include: { messages: { orderBy: { createdAt: 'asc' } } } });
     if (!conversation) throw new NotFoundException('Conversation not found.');
+    if (authorizationEnforced()) {
+      const checks = new Map<string, boolean>();
+      for (let index = 0; index < conversation.messages.length; index++) {
+        const message = conversation.messages[index];
+        if (message.role !== 'assistant') continue;
+        const key = JSON.stringify(message.dependencyManifest);
+        if (!checks.has(key)) checks.set(key, await validateEvidenceDependencies(userId, message.dependencyManifest));
+        if (!checks.get(key)) conversation.messages[index] = { ...message, content: '该回答的来源已失效或您已无权访问。', citationsSummary: null, processingTrace: null, dependencyManifest: null };
+      }
+    }
     return conversation;
   }
 
@@ -47,6 +59,9 @@ export class ConversationController {
     const userId = await this.authService.userIdFromRequest(req);
     const message = await this.prisma.message.findFirst({ where: { id: messageId, conversationId, conversation: { userId }, role: 'assistant' } });
     if (!message) throw new NotFoundException('Message not found.');
+    if (authorizationEnforced() && !await validateEvidenceDependencies(userId, message.dependencyManifest)) {
+      throw new NotFoundException('Evidence access is no longer available.');
+    }
     const feedback = ['useful', 'not_useful'].includes(body?.feedback) ? body.feedback : null;
     const updated = await this.prisma.message.update({ where: { id: messageId }, data: { feedback } });
 
@@ -93,9 +108,12 @@ export class ConversationController {
     const userId = await this.authService.userIdFromRequest(req);
     const message = await this.prisma.message.findFirst({
       where: { id: messageId, conversationId, conversation: { userId } },
-      select: { id: true, role: true, latencyMs: true, citationsSummary: true, processingTrace: true, createdAt: true },
+      select: { id: true, role: true, latencyMs: true, citationsSummary: true, processingTrace: true, dependencyManifest: true, createdAt: true },
     });
     if (!message) throw new NotFoundException('Message not found.');
+    if (authorizationEnforced() && message.role === 'assistant' && !await validateEvidenceDependencies(userId, message.dependencyManifest)) {
+      throw new NotFoundException('Evidence access is no longer available.');
+    }
     return {
       messageId: message.id,
       role: message.role,

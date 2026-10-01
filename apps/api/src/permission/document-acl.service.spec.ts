@@ -2,6 +2,7 @@ import { DocumentAclService } from './document-acl.service';
 
 const mockPrisma: any = {
   document: {
+    update: jest.fn().mockResolvedValue({}),
     findUnique: jest.fn(),
     findMany: jest.fn(),
   },
@@ -75,6 +76,16 @@ describe('DocumentAclService.isDocumentReadable', () => {
         where: { documentId: { in: ['doc-1'] } },
       }),
     );
+  });
+
+  it('does not reopen a restricted document after its final grant is removed', async () => {
+    mockPrisma.document.findMany.mockResolvedValue([{ id: 'doc-1', kbId: 'kb-1', aclMode: 'restricted' }]);
+    expect(await service.isDocumentReadable('user-1', 'doc-1')).toBe(false);
+  });
+
+  it('does not infer inheritance from caller rows that omit aclMode', async () => {
+    mockPrisma.document.findMany.mockResolvedValue([{ id: 'doc-1', kbId: 'kb-1', aclMode: 'restricted' }]);
+    expect(await service.filterReadableDocuments('user-1', ['doc-1'], { docs: [{ id: 'doc-1', kbId: 'kb-1' }] })).toEqual(new Set());
   });
 
   it('rejects when KB is not visible and no ACL grants access', async () => {
@@ -170,6 +181,12 @@ describe('DocumentAclService mutation helpers', () => {
     expect(mockPrisma.brainChangeEvent.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ eventType: 'doc_acl_change', resourceId: 'doc-1' }),
     }));
+  });
+
+  it('requires an explicit inherit mode to restore knowledge-base visibility', async () => {
+    mockPrisma.documentAcl.findMany.mockResolvedValue([]);
+    await service.replaceAll('doc-1', [], 'inherit');
+    expect(mockPrisma.document.update).toHaveBeenCalledWith({ where: { id: 'doc-1' }, data: { aclMode: 'inherit' } });
   });
 
   it('cannot remove an ACL entry through a different document', async () => {

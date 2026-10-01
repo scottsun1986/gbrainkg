@@ -1,0 +1,30 @@
+[
+  {
+    "instance": "inst1",
+    "httpsStatus": 200,
+    "tlsValidated": true,
+    "loginForm": true,
+    "freshAnswerHistory": true,
+    "mobileBounds": {
+      "x": 10,
+      "y": 248.59375,
+      "width": 370,
+      "height": 447.078125
+    },
+    "pageErrors": []
+  },
+  {
+    "instance": "inst2",
+    "httpsStatus": 200,
+    "tlsValidated": true,
+    "loginForm": true,
+    "freshAnswerHistory": true,
+    "mobileBounds": {
+      "x": 10,
+      "y": 104.59375,
+      "width": 370,
+      "height": 622.5
+    },
+    "pageErrors": []
+  }
+]

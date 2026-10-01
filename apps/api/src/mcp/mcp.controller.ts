@@ -23,8 +23,10 @@ import { McpService } from './mcp.service';
 import { UserCredentialService } from '../auth/user-credential.service';
 import { OpenApiRateLimitService } from '../open-api/open-api-rate-limit.service';
 import { AuthService } from '../auth/auth.service';
-import { setRequestContextUser } from '../observability/request-context';
+import { setRequestContextUser, getRequestContext } from '../observability/request-context';
 import { getPrismaClient } from '../prisma';
+import { withAuthorizedRequest, assertAuthorizationSnapshot, authorizationEnforced, AuthorizationSnapshot } from '../permission/authorization-revision';
+import { withStrictOutputPermit } from '../permission/strict-output-permit';
 
 interface McpSession {
   id: string;
@@ -39,6 +41,42 @@ export class McpController implements OnModuleDestroy {
   private readonly prisma = getPrismaClient();
   private readonly sessions = new Map<string, McpSession>();
   private readonly cleanupTimer: NodeJS.Timeout;
+
+  private async withRpcRequest<T>(userId: string, res: Response, work: (snapshot: AuthorizationSnapshot) => Promise<T>): Promise<T> {
+    if (process.env.KNOWLEDGE_STRICT_OUTPUT === '1' && !authorizationEnforced()) throw new BadRequestException('Strict output requires authorization enforcement');
+    return withAuthorizedRequest(userId,async snapshot => {
+      const cancellation = new AbortController();
+      getRequestContext()!.cancellation = cancellation.signal;
+      const disconnected = () => { if (!res.writableFinished) cancellation.abort(new Error('MCP transport disconnected')); };
+      res.once?.('close',disconnected);
+      try { return await work(snapshot); }
+      finally { res.off?.('close',disconnected); }
+    });
+  }
+
+  private async emitAuthorized(userId: string, snapshot: AuthorizationSnapshot, emit: () => Promise<void>) {
+    if (process.env.KNOWLEDGE_STRICT_OUTPUT === '1') return withStrictOutputPermit(userId,snapshot,emit);
+    await assertAuthorizationSnapshot(userId,snapshot);
+    return emit();
+  }
+
+  /** Hold a strict permit until the transport accepts its complete buffer. */
+  private async drain(res: Response, emit: () => unknown): Promise<void> {
+    if (res.writableEnded) throw new Error('Transport closed');
+    return new Promise((resolve,reject) => {
+      const cleanup = () => { clearTimeout(timer);res.off('finish',done);res.off('drain',done);res.off('error',fail);res.off('close',closed); };
+      const done = () => { cleanup();resolve(); };
+      const fail = (error: Error) => { cleanup();reject(error); };
+      const closed = () => res.writableFinished ? done() : fail(new Error('Transport disconnected'));
+      const timer = setTimeout(() => fail(new Error('Transport drain timeout')),5000);
+      res.once('finish',done);res.once('error',fail);res.once('close',closed);
+      try {
+        const accepted = emit();
+        if (res.writableFinished || accepted === true || res.writableLength === 0) done();
+        else if (!res.writableEnded) res.once('drain',done);
+      } catch (error) { fail(error as Error); }
+    });
+  }
 
   constructor(
     private readonly mcpService: McpService,
@@ -230,22 +268,20 @@ export class McpController implements OnModuleDestroy {
       user = auth.user;
     }
 
-    const result = await this.mcpService.handleJsonRpc(user, body);
-
-    // 若为无需返回的 Notification，直接返回 202 Accepted
-    if (result === null) {
-      return res.status(202).send();
-    }
-
-    // 1. 若对应 SSE 会话依然存活，通过 SSE event: message 推送
-    if (session && !session.res.writableEnded) {
-      try {
-        session.res.write(`event: message\ndata: ${JSON.stringify(result)}\n\n`);
-      } catch {}
-    }
-
-    // 2. 同时在 HTTP POST 响应体中直接返回，兼容所有单向与双向 MCP 客户端
-    return res.status(200).json(result);
+    return this.withRpcRequest(user.id,res, async snapshot => {
+      const result = await this.mcpService.handleJsonRpc(user, body);
+      if (result === null) return res.status(202).send();
+      if (Buffer.byteLength(JSON.stringify(result)) > 8 * 1024 * 1024) throw new BadRequestException('MCP output buffer capacity exceeded');
+      await this.emitAuthorized(user.id,snapshot,async () => {
+        if (session && !session.res.writableEnded) {
+          const event = `event: message\ndata: ${JSON.stringify(result)}\n\n`;
+          if (process.env.KNOWLEDGE_STRICT_OUTPUT === '1') await this.drain(session.res,() => session!.res.write(event));
+          else session.res.write(event);
+        }
+        if (process.env.KNOWLEDGE_STRICT_OUTPUT === '1') await this.drain(res,() => res.status(200).json(result));
+        else res.status(200).json(result);
+      });
+    });
   }
 
   /**
@@ -282,6 +318,9 @@ export class McpController implements OnModuleDestroy {
     forceStream = false,
   ) {
     const { user } = await this.authenticate(req);
+    if (process.env.KNOWLEDGE_STRICT_OUTPUT === '1' && !authorizationEnforced()) throw new BadRequestException('Strict output requires authorization enforcement');
+    return this.withRpcRequest(user.id,res,async snapshot => {
+    const strict = process.env.KNOWLEDGE_STRICT_OUTPUT === '1';
     const acceptHeader = String(req.headers['accept'] || '').toLowerCase();
     const isStreamRequested =
       forceStream ||
@@ -299,7 +338,7 @@ export class McpController implements OnModuleDestroy {
       const reqId = body?.id ?? null;
 
       try {
-        const result = await this.mcpService.handleJsonRpc(user, body, (progressEvent: any) => {
+        const result = await this.mcpService.handleJsonRpc(user, body, strict ? undefined : (progressEvent: any) => {
           if (res.writableEnded) return;
           if (progressEvent?.type === 'token') {
             const payload = {
@@ -332,7 +371,12 @@ export class McpController implements OnModuleDestroy {
         });
 
         if (result !== null && !res.writableEnded) {
-          res.write(`event: message\ndata: ${JSON.stringify(result)}\n\n`);
+          const event = `event: message\ndata: ${JSON.stringify(result)}\n\n`;
+          if (Buffer.byteLength(event) > 8 * 1024 * 1024) throw new BadRequestException('MCP output buffer capacity exceeded');
+          await this.emitAuthorized(user.id,snapshot,async () => {
+            if (strict) await this.drain(res,() => { res.write(event);res.end(); });
+            else res.write(event);
+          });
         }
       } catch (err: any) {
         if (!res.writableEnded) {
@@ -352,12 +396,14 @@ export class McpController implements OnModuleDestroy {
       return;
     }
 
-    // 非流式标准 JSON-RPC 2.0 响应
     const result = await this.mcpService.handleJsonRpc(user, body);
-    if (result === null) {
-      return res.status(202).send();
-    }
-    return res.status(200).json(result);
+    if (result === null) return res.status(202).send();
+    if (Buffer.byteLength(JSON.stringify(result)) > 8 * 1024 * 1024) throw new BadRequestException('MCP output buffer capacity exceeded');
+    await this.emitAuthorized(user.id,snapshot,async () => {
+      if (strict) await this.drain(res,() => res.status(200).json(result));
+      else res.status(200).json(result);
+    });
+    });
   }
 
   /**

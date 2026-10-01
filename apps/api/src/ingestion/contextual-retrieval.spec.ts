@@ -11,6 +11,7 @@ describe('ContextualRetrieval', () => {
     baseUrl: 'https://api.example.com',
     apiKey: 'test-key',
     modelName: 'test-model',
+    deploymentRevision: 'test-revision',
   };
 
   const createChunks = (count: number, content = 'Test content', tokens = 100): IndexedMarkdownChunk[] => {
@@ -62,6 +63,15 @@ describe('ContextualRetrieval', () => {
       expect(global.fetch).not.toHaveBeenCalled();
       expect(second[0].content).toContain('[上下文: Fresh description.]');
       expect(second[0].metadata.contextual_prefix_cached).toBe(true);
+      expect(second[0].charStart).toBe(chunks[0].charStart);
+      expect(second[0].charEnd).toBe(chunks[0].charEnd);
+    });
+
+    it('disables durable prefix reuse without a known model revision', async () => {
+      const cache = { get:jest.fn(),put:jest.fn() };
+      (global.fetch as jest.Mock).mockResolvedValue({ ok:true,json:async () => ({ choices:[{ message:{ content:'description' } }] }) });
+      await enrichChunksWithContext(fullMarkdown,createChunks(1),{ ...config,deploymentRevision:undefined },{ cache });
+      expect(cache.get).not.toHaveBeenCalled();expect(cache.put).not.toHaveBeenCalled();
     });
 
     it('enriches chunks with context prefix when document is long enough', async () => {

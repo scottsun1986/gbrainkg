@@ -316,3 +316,22 @@ describe('ConnectorService.sync', () => {
     await expect(service.sync('src-1')).rejects.toThrow(/unsupported connector kind/);
   });
 });
+
+describe('ConnectorService source identity and unchanged-content permissions', () => {
+  const saved = process.env.CORE_EXTERNAL_ACL_REQUIRED;
+  beforeEach(() => {
+    jest.clearAllMocks();process.env.CORE_EXTERNAL_ACL_REQUIRED='1';
+    mockPrisma.documentAcl = { deleteMany:jest.fn(),createMany:jest.fn() };
+    mockPrisma.brainChangeEvent = { create:jest.fn() };
+    mockPrisma.document.findFirst.mockResolvedValue({ id:'existing-doc',status:'published',contentHash:'same-hash' });
+  });
+  afterEach(() => { if (saved === undefined) delete process.env.CORE_EXTERNAL_ACL_REQUIRED; else process.env.CORE_EXTERNAL_ACL_REQUIRED=saved; });
+  it('updates ACL before skipping unchanged text and confines external identity to its connector', async () => {
+    const service = new ConnectorService(ingestionService as any,new WebhookConnector());
+    await (service as any).ingestChange({ ...SOURCE,config:{ aclMapping:{ mode:'inherit' } } },{ externalId:'shared-external-id',title:'doc',content:'body',contentHash:'same-hash',externalAcl:{ revision:'r2',verified:false,subjects:[] } });
+    expect(mockPrisma.document.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where:expect.objectContaining({ sourceConnectorId:'src-1',sourceExternalId:'shared-external-id' }) }));
+    expect(mockPrisma.document.update).toHaveBeenCalledWith(expect.objectContaining({ data:expect.objectContaining({ aclMode:'restricted' }) }));
+    expect(mockPrisma.documentAcl.deleteMany).toHaveBeenCalled();
+    expect(ingestionService.enqueue).not.toHaveBeenCalled();
+  });
+});

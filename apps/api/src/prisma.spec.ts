@@ -27,16 +27,26 @@ describe('prisma connection pool bounding', () => {
     });
   });
 
-  it('applies the default pool floor when no limit is configured', () => {
+  it('divides the host connection budget across instances and processes', () => {
     jest.isolateModules(() => {
       process.env.DATABASE_URL = 'postgresql://u:p@localhost:5432/db';
       delete process.env.PRISMA_CONNECTION_LIMIT;
+      process.env.SHARED_INSTANCE_COUNT = '10';
+      process.env.DB_PROCESSES_PER_INSTANCE = '2';
+      process.env.DB_CONNECTION_BUDGET = '80';
       require('./prisma');
-      // RLS 把每次独立查询都变成交互式事务，后台 BullMQ 消费者会合法占用
-      // 连接；num_cpus 派生的小池（5~9）会被饿死，因此未配置时应用 16 的下限。
       const match = process.env.DATABASE_URL!.match(/connection_limit=(\d+)/);
       expect(match).not.toBeNull();
-      expect(Number(match![1])).toBeGreaterThanOrEqual(16);
+      expect(Number(match![1])).toBe(4);
+    });
+  });
+
+  it.each(['bad','0','100'])('rejects impossible instance allocation %s instead of opening an unbounded pool', count => {
+    jest.isolateModules(() => {
+      process.env.DATABASE_URL='postgresql://u:p@localhost:5432/db';
+      delete process.env.PRISMA_CONNECTION_LIMIT;
+      process.env.SHARED_INSTANCE_COUNT=count;process.env.DB_CONNECTION_BUDGET='80';process.env.DB_PROCESSES_PER_INSTANCE='2';
+      expect(() => require('./prisma')).toThrow('Invalid shared database');
     });
   });
 });

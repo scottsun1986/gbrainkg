@@ -19,6 +19,11 @@ import { Response } from "express";
 import { AuthService } from "../auth/auth.service";
 import { getPrismaClient } from "../prisma";
 import { AuthGuard } from "../auth/auth.guard";
+import { getRequestContext } from '../observability/request-context';
+import { parseAsOf } from '../retrieval/as-of';
+import { withStrictOutputPermit } from '../permission/strict-output-permit';
+import { authorizationEnforced, AuthorizationSnapshot } from '../permission/authorization-revision';
+import { TableEvidenceService } from '../retrieval/table-evidence.service';
 
 @UseGuards(AuthGuard)
 @Controller("api/v1/chat")
@@ -62,13 +67,21 @@ export class ChatController {
   @Post("search")
   async searchKnowledge(
     @Req() req: any,
-    @Body() body: { query: string; kb_scope?: string[]; limit?: number },
+    @Body() body: { query: string; kb_scope?: string[]; limit?: number; asOf?: string },
   ) {
     const userId = await this.authService.userIdFromRequest(req);
+    if (getRequestContext()) { getRequestContext()!.asOf = parseAsOf(body?.asOf); getRequestContext()!.asOfExplicit = body?.asOf != null; }
     const query = String(body?.query || "").trim();
     if (!query) throw new BadRequestException("query is required.");
     const limit = Math.max(1, Math.min(Number(body?.limit || 10) || 10, 50));
     return this.chatService.searchKnowledgeForAgent(userId, query, body?.kb_scope, limit);
+  }
+
+  @Post('table-aggregate')
+  async aggregateTable(@Req() req: any, @Body() body: { documentId: string; versionId: string; tableId?: string; operation?: 'count'|'sum'|'min'|'max'|'avg'; column?: number }) {
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuid.test(body?.documentId || '') || !uuid.test(body?.versionId || '')) throw new BadRequestException('documentId and versionId are required UUIDs');
+    return new TableEvidenceService().execute(await this.authService.userIdFromRequest(req), body);
   }
 
   @Post("completions")
@@ -77,7 +90,10 @@ export class ChatController {
     @Req() req: any,
     @Res() response: Response,
   ): Promise<void> {
+    const strictOutput = process.env.KNOWLEDGE_STRICT_OUTPUT === '1';
+    if (strictOutput && !authorizationEnforced()) throw new BadRequestException('Strict output requires authorization enforcement');
     const userId = await this.authService.userIdFromRequest(req);
+    if (getRequestContext()) { getRequestContext()!.asOf = parseAsOf(body?.asOf); getRequestContext()!.asOfExplicit = body?.asOf != null; }
     // express.json only populates req.body on a matching content-type, so a
     // request without a JSON body yields undefined — destructuring it threw
     // a TypeError and surfaced as a 500. Treat it as a bad request instead.
@@ -127,24 +143,34 @@ export class ChatController {
       `data: ${JSON.stringify({ type: "conversation", conversation_id: conversation.id })}\n\n`,
     );
 
+    let authorizationSnapshot: AuthorizationSnapshot | undefined;
     const stream$: Observable<MessageEvent> =
       await this.chatService.handleChatStream(
         userId,
         normalizedMessage,
         kb_scope,
         conversation.id,
+        { onAuthorization: snapshot => { authorizationSnapshot = snapshot; } },
       );
     const requestStartedAt = Date.now();
     let answer = "";
     let errorContent = "";
     let traceId = "";
     let totalTokens = 0;
+    let dependencyManifest: any = null;
     const citations: any[] = [];
     const traceNodes = new Map<string, any>();
     let finalizePromise: Promise<void> | null = null;
+    const buffered: string[] = [];
+    let bufferedBytes = 0;
     const writeEvent = (data: any) => {
       if (!response.writableEnded) {
-        response.write(`data: ${JSON.stringify(data)}\n\n`);
+        const event = `data: ${JSON.stringify(data)}\n\n`;
+        if (strictOutput) {
+          bufferedBytes += Buffer.byteLength(event);
+          if (bufferedBytes > 8 * 1024 * 1024) throw new Error('Strict output buffer capacity exceeded');
+          buffered.push(event);
+        } else response.write(event);
       }
     };
     const upsertPersistenceTrace = (status: string, summary: string) => {
@@ -179,6 +205,7 @@ export class ChatController {
               role: "assistant",
               content,
               citationsSummary: citations,
+              dependencyManifest: dependencyManifest || undefined,
               processingTrace: [...traceNodes.values()],
               latencyMs: Date.now() - requestStartedAt,
             },
@@ -213,7 +240,23 @@ export class ChatController {
             latency_ms: Date.now() - requestStartedAt,
             trace_id: traceId,
           });
-          if (!response.writableEnded) response.end();
+          if (strictOutput && !errorContent && authorizationSnapshot) {
+            try {
+              await withStrictOutputPermit(userId, authorizationSnapshot, async () => {
+                await new Promise<void>((resolve, reject) => {
+                  const cleanup = () => { clearTimeout(timer); response.removeListener('error', onError); };
+                  const onError = (error: Error) => { cleanup(); reject(error); };
+                  const timer = setTimeout(() => { cleanup(); response.destroy(); reject(new Error('Strict transport drain timed out')); }, 5000);
+                  response.once('error', onError);
+                  response.end(buffered.join(''), () => { cleanup(); resolve(); });
+                });
+              });
+            } catch (error: any) {
+              if (!response.writableEnded && !response.destroyed) response.end(`data: ${JSON.stringify({ type: 'error', content: error.message })}\n\n`);
+            }
+          } else if (!response.writableEnded) {
+            response.end(strictOutput ? `data: ${JSON.stringify({ type: 'error', content: errorContent || 'Authorization unavailable' })}\n\n` : undefined);
+          }
         }
       })();
       return finalizePromise;
@@ -231,12 +274,16 @@ export class ChatController {
         }
         if (data?.type === "done") {
           totalTokens = Number(data.total_tokens || 0);
+          dependencyManifest = data.dependency_manifest || null;
           return;
         }
         writeEvent(event.data);
       },
       error: (error) => {
         if (response.writableEnded) return;
+        if (error?.getStatus?.() === 403 || error?.getStatus?.() === 503) {
+          answer = ''; citations.length = 0; traceNodes.clear(); dependencyManifest = null;
+        }
         // Translate common internal errors into user-friendly messages.
         const rawMsg = String(error.message || "Chat failed");
         const isAbort = error?.name === "AbortError" || /abort/i.test(rawMsg);

@@ -1,3 +1,6 @@
+import { rethrowAuthorizationFailure } from '../permission/authorization-revision';
+import { requestFetch } from '../retrieval/request-signal';
+import { assertRequestAuthorization } from '../permission/authorization-revision';
 import { Logger } from "@nestjs/common";
 import type { ModelConfigService } from "../model-config.service";
 import type { AgenticRagService } from "./agentic-rag.service";
@@ -59,7 +62,8 @@ export class QueryRewriterService {
       const baseUrl = String(llm.provider?.baseUrl || '').replace(/\/$/, '');
       if (!baseUrl) return [];
       const timeoutMs = Math.max(500, Number(process.env.RETRIEVAL_LLM_ENTITY_PROBES_TIMEOUT_MS || 6000));
-      const response = await fetch(`${baseUrl}/chat/completions`, {
+      await assertRequestAuthorization();
+      const response = await requestFetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -79,8 +83,7 @@ export class QueryRewriterService {
           max_tokens: 200,
           response_format: { type: 'json_object' },
         }),
-        signal: AbortSignal.timeout(timeoutMs),
-      });
+        }, timeoutMs);
       if (!response.ok) return [];
       const payload: any = await response.json();
       const content = String(payload?.choices?.[0]?.message?.content || '');
@@ -101,7 +104,7 @@ export class QueryRewriterService {
         if (result.length >= maxProbes) break;
       }
       return result;
-    } catch (err) {
+    } catch (err) { rethrowAuthorizationFailure(err);
       this.logger.debug(
         `LLM entity probes skipped: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -127,7 +130,7 @@ export class QueryRewriterService {
         .map((q) => String(q || '').trim())
         .filter((q) => q.length >= 4 && q.toLowerCase() !== queryLower && !known.has(q.toLowerCase()))
         .slice(0, maxProbes);
-    } catch (err) {
+    } catch (err) { rethrowAuthorizationFailure(err);
       this.logger.debug(
         `LLM probe planning skipped: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -192,7 +195,9 @@ export class QueryRewriterService {
         headers["x-opencode-session"] = "llmwiki-rewrite";
       }
 
-      const response = await fetch(`${baseUrl}/chat/completions`, {
+      await assertRequestAuthorization();
+
+      const response = await requestFetch(`${baseUrl}/chat/completions`, {
         method: "POST",
         headers,
         body: JSON.stringify({
@@ -201,8 +206,7 @@ export class QueryRewriterService {
           temperature: 0,
           max_tokens: 160,
         }),
-        signal: AbortSignal.timeout(12000),
-      });
+        }, 12000);
       if (!response.ok) {
         return directRequest;
       }
@@ -232,7 +236,7 @@ export class QueryRewriterService {
       } catch {
         return directRequest;
       }
-    } catch (error) {
+    } catch (error) { rethrowAuthorizationFailure(error);
       this.logger.debug(
         `Contextual retrieval rewrite unavailable: ${error?.message || "unknown error"}`,
       );
@@ -265,7 +269,7 @@ export class QueryRewriterService {
         .filter(Boolean)
         .join("\n");
       return { text: text || String(result?.text || "").trim(), count: facts.length };
-    } catch (error) {
+    } catch (error) { rethrowAuthorizationFailure(error);
       // A user without a personal KB, or a temporarily unavailable memory
       // verb, must not make ordinary knowledge retrieval fail.
       this.logger.debug(`Personal memory retrieval unavailable: ${error?.message || "unknown error"}`);
@@ -301,7 +305,8 @@ export class QueryRewriterService {
         ? await this.modelConfigService.getLlmChatConfig('llmwiki-retry-rewrite')
         : null;
       if (!llmRequest?.apiKey) return [];
-      const response = await fetch(`${llmRequest.baseUrl}/chat/completions`, {
+      await assertRequestAuthorization();
+      const response = await requestFetch(`${llmRequest.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: llmRequest.headers,
         body: JSON.stringify({
@@ -317,8 +322,7 @@ export class QueryRewriterService {
           max_tokens: 600,
           response_format: { type: 'json_object' },
         }),
-        signal: AbortSignal.timeout(12000),
-      });
+        }, 12000);
       if (!response.ok) return [];
       const payload: any = await response.json();
       const message = payload?.choices?.[0]?.message || {};
@@ -329,7 +333,7 @@ export class QueryRewriterService {
         .map((q: any) => String(q || '').trim())
         .filter((q: string) => q.length >= 2 && q.length <= 100)
         .slice(0, 2);
-    } catch (err) {
+    } catch (err) { rethrowAuthorizationFailure(err);
       this.logger.debug(`Retry rewrite unavailable: ${err instanceof Error ? err.message : String(err)}`);
       return [];
     }

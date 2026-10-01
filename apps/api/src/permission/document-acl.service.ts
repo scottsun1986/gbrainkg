@@ -5,6 +5,7 @@ import { withServiceContext } from '../db/tenant-context.service';
 import { PermissionService } from './permission.service';
 
 export type AclSubjectType = 'user' | 'role' | 'org';
+export type AclMode = 'inherit' | 'restricted';
 
 export interface AclEntryInput {
   subjectType: AclSubjectType;
@@ -27,7 +28,7 @@ export interface FilterReadableDocsOpts {
   /** 调用方已知的可见 KB 集合（缺省时按 userId 现算）。 */
   visibleKbIds?: string[];
   /** 调用方已取到的文档行（id + kbId），避免重复查 Document。 */
-  docs?: Array<{ id: string; kbId?: string | null }>;
+  docs?: Array<{ id: string; kbId?: string | null; aclMode?: string }>;
 }
 
 /** 解析当前请求用户：显式参数 > 请求上下文（AsyncLocalStorage）。 */
@@ -90,9 +91,13 @@ export class DocumentAclService {
   async replaceAll(
     documentId: string,
     entries: AclEntryInput[],
+    mode: AclMode = 'restricted',
   ): Promise<AclEntry[]> {
+    if (mode !== 'inherit' && mode !== 'restricted') throw new Error('invalid aclMode');
+    if (mode === 'inherit' && entries.length) throw new Error('inherit mode requires empty entries');
     const normalized = entries.map(normalizeAclEntry);
     await withServiceContext(this.prisma, async (tx) => {
+      await tx.document.update({ where: { id: documentId }, data: { aclMode: mode } });
       await tx.documentAcl.deleteMany({ where: { documentId } });
       if (normalized.length > 0) {
         await tx.documentAcl.createMany({
@@ -126,6 +131,7 @@ export class DocumentAclService {
     });
     if (existing) return existing;
     return withServiceContext(this.prisma, async (tx) => {
+      await tx.document.update({ where: { id: documentId }, data: { aclMode: 'restricted' } });
       const created = await tx.documentAcl.create({
         data: {
           id: randomUUID(), documentId,
@@ -199,27 +205,39 @@ export class DocumentAclService {
     // 1) 文档 → kbId 映射。opts.docs 为权威集合（调用方刚查过 Document，
     //    未在其中的 id 直接视为不可读，不再回表，避免打乱调用方的查询序列）；
     //    未提供时批量查一次 Document。
-    const docById = new Map<string, { id: string; kbId: string | null }>();
+    const docById = new Map<string, { id: string; kbId: string | null; aclMode?: string }>();
     if (opts.docs) {
       for (const d of opts.docs) {
         if (d?.id) {
-          docById.set(String(d.id), { id: String(d.id), kbId: d.kbId ? String(d.kbId) : null });
+          docById.set(String(d.id), { id: String(d.id), kbId: d.kbId ? String(d.kbId) : null, aclMode: d.aclMode });
         }
       }
     } else {
       if (!p?.document?.findMany) return readable;
       const rows = await p.document.findMany({
         where: { id: { in: ids } },
-        select: { id: true, kbId: true },
+        select: { id: true, kbId: true, aclMode: true },
       });
       for (const row of rows || []) {
-        docById.set(String(row.id), { id: String(row.id), kbId: String(row.kbId) });
+        docById.set(String(row.id), { id: String(row.id), kbId: String(row.kbId), aclMode: row.aclMode });
       }
     }
     const targets = ids
       .map((id) => docById.get(id))
-      .filter((d): d is { id: string; kbId: string | null } => Boolean(d));
+      .filter((d): d is { id: string; kbId: string | null; aclMode?: string } => Boolean(d));
     if (!targets.length) return readable;
+    // Older callers may omit the mode; never infer inheritance from an empty
+    // ACL in that case. Resolve it from the authoritative document rows.
+    const missingModes = targets.filter(d => d.aclMode === undefined).map(d => d.id);
+    if (opts.docs && missingModes.length) {
+      const modes = await p.document.findMany({
+        where: { id: { in: missingModes } }, select: { id: true, aclMode: true },
+      });
+      const byId = new Map((modes || []).map((d: any) => [d.id, d]));
+      for (const doc of targets) {
+        if (doc.aclMode === undefined) doc.aclMode = (byId.get(doc.id) as any)?.aclMode ?? 'restricted';
+      }
+    }
     const targetIds = targets.map((d) => d.id);
     const kbIds = [...new Set(targets.map((d) => d.kbId).filter((v): v is string => Boolean(v)))];
 
@@ -290,7 +308,7 @@ export class DocumentAclService {
       if (!doc.kbId || !visibleKbIds.has(doc.kbId)) continue;
       const acls = aclsByDoc.get(doc.id) || [];
       // 空 ACL = 继承 KB 可见性。
-      if (!acls.length) {
+      if (!acls.length && doc.aclMode !== 'restricted') {
         readable.add(doc.id);
         continue;
       }
@@ -308,17 +326,17 @@ export class DocumentAclService {
   /** 写 ACL 的管理面：kb 管理员 / 库 owner / 系统管理员。 */
   async canManageAcl(userId: string, documentId: string): Promise<boolean> {
     if (!userId || !documentId) return false;
-    if (await this.permissionService?.isSystemAdmin(userId)) return true;
     const doc = await this.prisma.document.findUnique({
       where: { id: documentId },
       select: {
         id: true,
         kbId: true,
-        kb: { select: { ownerUserId: true, status: true } },
+        kb: { select: { ownerUserId: true, status: true, type: true } },
       },
     });
     if (!doc || doc.kb?.status !== 'active') return false;
     if (doc.kb?.ownerUserId === userId) return true;
+    if (doc.kb?.type !== 'personal' && await this.permissionService?.isSystemAdmin(userId)) return true;
     const admin = await this.prisma.kbAdmin.findFirst({
       where: { kbId: doc.kbId, userId },
       select: { kbId: true },

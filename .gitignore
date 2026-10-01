@@ -7,6 +7,8 @@ dist.stale*/
 **/dist.stale*/
 .next/
 **/.next/
+.next-live/
+**/.next-live/
 .turbo/
 **/.turbo/
 *.tsbuildinfo
@@ -23,8 +25,7 @@ __pycache__/
 *.egg-info/
 
 # Environment and secrets
-.env
-*.env
+.env*
 !.env.example
 .secrets/
 *.key

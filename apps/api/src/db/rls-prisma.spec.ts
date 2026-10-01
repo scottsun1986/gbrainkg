@@ -25,19 +25,31 @@ describe('RLS Prisma context', () => {
     });
     expect(base.document.findMany).not.toHaveBeenCalled();
     expect(tx.document.findMany).toHaveBeenCalled();
-    expect(tx.$executeRaw.mock.calls[0].slice(1)).toEqual(['user-1', 'off']);
+    expect(tx.$executeRaw.mock.calls[0].slice(1,3)).toEqual(['user-1', 'off']);
   });
 
   it('fails closed for a request without an authenticated user', async () => {
     const { prisma, tx } = fixture();
     await runWithRequestContext({ requestId: 'req-2' }, () => prisma.document.findMany());
-    expect(tx.$executeRaw.mock.calls[0].slice(1)).toEqual(['', 'off']);
+    expect(tx.$executeRaw.mock.calls[0].slice(1,3)).toEqual(['', 'off']);
   });
 
-  it('uses service context only outside an HTTP request', async () => {
+  it('propagates the same historical instant into the RLS transaction', async () => {
+    const { prisma, tx } = fixture();
+    const asOf = Date.parse('2025-03-01T02:00:00+08:00');
+    await runWithRequestContext({ requestId: 'historical', userId: 'user-1', asOf }, () => prisma.document.findMany());
+    expect(tx.$executeRaw.mock.calls[0].slice(1)).toEqual(['user-1', 'off', '2025-02-28T18:00:00.000Z']);
+  });
+
+  it('missing context never grants a service identity', async () => {
     const { prisma, tx } = fixture();
     await prisma.document.findMany();
-    expect(tx.$executeRaw.mock.calls[0].slice(1)).toEqual(['', 'on']);
+    expect(tx.$executeRaw.mock.calls[0].slice(1,3)).toEqual(['', 'off']);
+  });
+  it('grants only an explicit worker principal', async () => {
+    const { prisma, tx } = fixture();
+    await runWithRequestContext({ requestId: 'worker', servicePrincipal: 'enrichment' }, () => prisma.document.findMany());
+    expect(tx.$executeRaw.mock.calls[0].slice(1,3)).toEqual(['', 'on']);
   });
 
   it('rejects a BYPASSRLS role before any tenant query', async () => {
@@ -57,7 +69,7 @@ describe('RLS Prisma context', () => {
       prisma.$transaction(async (client) => client.document.findMany()),
     );
     expect(base.$transaction).toHaveBeenCalledTimes(1);
-    expect(tx.$executeRaw.mock.calls[0].slice(1)).toEqual(['user-2', 'off']);
+    expect(tx.$executeRaw.mock.calls[0].slice(1,3)).toEqual(['user-2', 'off']);
     expect(tx.document.findMany).toHaveBeenCalledTimes(1);
   });
 

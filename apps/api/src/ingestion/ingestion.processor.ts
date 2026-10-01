@@ -1,3 +1,4 @@
+import { runAsService } from '../db/service-principal';
 import { InjectQueue, Processor, WorkerHost } from "@nestjs/bullmq";
 import { Optional } from "@nestjs/common";
 import { Job, Queue } from "bullmq";
@@ -32,6 +33,10 @@ export class IngestionProcessor extends WorkerHost {
   }
 
   async process(job: Job<{ documentId: string; expectedVersion: number }>) {
+    return runAsService("ingestion", () => this.processInternal(job), undefined);
+  }
+
+  private async processInternal(job: Job<{ documentId: string; expectedVersion: number }>) {
     await this.reportQueueDepth();
     try {
       return await this.ingestionService.processDocument(

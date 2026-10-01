@@ -1,3 +1,12 @@
+import { OrderedAnswer } from './ordered-answer';
+import { admitModelCall } from '../retrieval/model-admission';
+import { rethrowAuthorizationFailure } from '../permission/authorization-revision';
+import { requestFetch } from '../retrieval/request-signal';
+import { authorizationEnforced } from '../permission/authorization-revision';
+import { validateEvidenceDependencies } from '../permission/evidence-dependencies';
+import { QueryExecution, createQueryExecution } from '../retrieval/query-execution';
+import { captureEvidenceDependencies } from '../permission/evidence-dependencies';
+import { getRequestContext } from '../observability/request-context';
 import { Injectable, Logger, MessageEvent, Optional, Inject, ForbiddenException } from "@nestjs/common";
 import { Observable, Subscriber } from "rxjs";
 import { PermissionService } from "../permission/permission.service";
@@ -64,6 +73,8 @@ import {
 } from "./evidence-pack";
 import { RetrievalArmsService } from "./retrieval-arms";
 import { FusionRerankService } from "./fusion-rerank";
+import { assertAuthorizationSnapshot, assertRequestAuthorization, withAuthorizedRequest } from '../permission/authorization-revision';
+import { authorizationOutput } from './authorization-output';
 import { selectDiverseSearchCitations } from "./search-result-diversity";
 import { answerStyleRule } from "./answer-style";
 import { CitationAssemblyService, mergeCitationsByDocument } from "./citation-assembly";
@@ -252,6 +263,7 @@ export function resolveGbrainRaceMs(): number {
  * (engine evidence kept, banded below the chunk arm).
  */
 export function resolveArmPolicy(): 'chunk_first' | 'engine_first' | 'chunks_only' {
+  if (getRequestContext()?.authorization && getRequestContext()?.authorization?.revision !== 'disabled') return 'chunks_only';
   const raw = String(process.env.RETRIEVAL_ARM_POLICY || '').trim().toLowerCase();
   if (raw === 'engine_first' || raw === 'engine-first') return 'engine_first';
   if (raw === 'chunk_first' || raw === 'chunk-first') return 'chunk_first';
@@ -412,14 +424,16 @@ export interface EvidenceSufficiency {
  */
 export function decideEvidenceSufficiency(
   citations: any[],
-  options: { calibratedFloor: number; syntheticFloor: number },
+  options: { calibratedFloor: number; syntheticFloor: number; verifyUncalibrated?: boolean },
 ): EvidenceSufficiency {
   const { maxCalibrated, maxSynthetic } = evidenceConfidenceScores(citations || []);
   const scoreCalibrated = maxCalibrated !== null;
   const maxEvidenceScore = maxCalibrated ?? maxSynthetic ?? 0;
   const evidenceFloor = scoreCalibrated ? options.calibratedFloor : options.syntheticFloor;
   const hasSufficientEvidence =
-    (citations?.length || 0) > 0 && maxEvidenceScore >= evidenceFloor;
+    (citations?.length || 0) > 0 && (maxEvidenceScore >= evidenceFloor ||
+      (options.verifyUncalibrated === true && !scoreCalibrated && citations.some(citation =>
+        citation.docId && String(citation.context || citation.evidence || '').trim())));
   return {
     hasSufficientEvidence,
     maxCalibrated,
@@ -637,11 +651,13 @@ export class ChatService {
   }
 
   private async rerankByProbeGroups(question: string, citations: any[]): Promise<void> {
+    const secured = await this.authorizeModelEvidence({ citations });
+    citations.splice(0, citations.length, ...secured.citations);
     return this.fusionRerank.rerankByProbeGroups(question, citations);
   }
 
   private async rerankPool(question: string, result: any, breadth = false): Promise<any> {
-    return this.fusionRerank.rerankPool(question, result, breadth);
+    return this.fusionRerank.rerankPool(question, await this.authorizeModelEvidence(result), breadth);
   }
 
   private async applyRerank(
@@ -649,7 +665,17 @@ export class ChatService {
     result: any,
     breadth = false,
   ): Promise<any> {
-    return this.fusionRerank.applyRerank(question, result, breadth);
+    return this.fusionRerank.applyRerank(question, await this.authorizeModelEvidence(result), breadth);
+  }
+
+  private async authorizeModelEvidence(result: any): Promise<any> {
+    const ctx = getRequestContext();
+    if (!ctx?.authorization || ctx.authorization.revision === 'disabled') return result;
+    await assertRequestAuthorization();
+    const scope = await this.permissionService.getVisibleKnowledgeBases(ctx.userId!);
+    return this.citationAssembly.filterQueryResultByCurrentPermission(result, scope, {
+      scopeId: '', sourceKeys: [], aclEpoch: -1, knowledgeEpoch: -1, userId: ctx.userId,
+    });
   }
 
   private reorderLostInTheMiddle<T>(items: T[]): T[] {
@@ -679,9 +705,9 @@ export class ChatService {
     if (!ids.length) return [];
     const docs = await this.prisma.document.findMany({
       where: { id: { in: ids }, kbId: { in: scope }, status: "published" },
-      select: { id: true, kbId: true, effectiveFrom: true, effectiveTo: true, lifecycleStatus: true },
+      select: { id: true, kbId: true, aclMode: true, effectiveFrom: true, effectiveTo: true, lifecycleStatus: true },
     });
-    const current = docs.filter((doc) => documentCurrentlyEffective(doc, Date.now()));
+    const current = docs.filter((doc) => documentCurrentlyEffective(doc, getRequestContext()?.asOf ?? Date.now()));
     const readable = await this.documentAclService.filterReadableDocuments(userId, current.map((doc) => doc.id), {
       docs: current,
       visibleKbIds: scope,
@@ -693,7 +719,9 @@ export class ChatService {
     result: any,
     opts: { breadth: boolean; tokenBudget: number; subQueries?: string[]; question?: string },
   ): any {
-    return this.citationAssembly.selectEvidence(result, opts);
+    const execution = getRequestContext()?.execution;
+    return this.citationAssembly.selectEvidence(result, { ...opts,
+      tokenBudget: execution?.adaptive ? Math.min(opts.tokenBudget, execution.plan.context) : opts.tokenBudget });
   }
 
   private assessWeakEvidence(result: any, breadth = false): {
@@ -704,7 +732,9 @@ export class ChatService {
     scoreFloor?: number;
     reason: string;
   } {
-    return this.citationAssembly.assessWeakEvidence(result, breadth);
+    const assessment = this.citationAssembly.assessWeakEvidence(result, breadth);
+    if (assessment.shouldEscalate && getRequestContext()?.execution?.adaptive) getRequestContext()?.execution?.escalate();
+    return assessment;
   }
 
   private async verifyPassageContainment(params: {
@@ -858,7 +888,7 @@ export class ChatService {
       this.logger.debug(
         `A/B shadow diff recorded for retrieval.fusion (control hits=${controlHits.length})`,
       );
-    } catch (err) {
+    } catch (err) { rethrowAuthorizationFailure(err);
       this.logger.debug(
         `shadow retrieval skipped: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -922,16 +952,40 @@ export class ChatService {
     question: string,
     requestedKbScope?: string[],
     conversationId?: string,
+    options?: { onAuthorization?: (snapshot: import('../permission/authorization-revision').AuthorizationSnapshot) => void },
   ): Promise<Observable<MessageEvent>> {
     return new Observable((subscriber: Subscriber<MessageEvent>) => {
-      const trace = new ChatTraceRecorder(subscriber);
       const cancellation = new AbortController();
-      this.processChat(
+      const inheritedCancellation = getRequestContext()?.cancellation;
+      const cancelFromTransport = () => {
+        cancellation.abort(inheritedCancellation?.reason);
+        subscriber.error(new Error('Knowledge request cancelled'));
+      };
+      if (inheritedCancellation?.aborted) cancelFromTransport();
+      else inheritedCancellation?.addEventListener('abort',cancelFromTransport,{ once:true });
+      let authorizationMonitor: ReturnType<typeof setInterval> | undefined;
+      void withAuthorizedRequest(userId, async snapshot => {
+      options?.onAuthorization?.(snapshot);
+      getRequestContext()!.execution = createQueryExecution(question);
+      getRequestContext()!.cancellation = cancellation.signal;
+      if (cancellation.signal.aborted || subscriber.closed) return;
+      const guarded = authorizationOutput(subscriber, () => assertAuthorizationSnapshot(userId, snapshot), () => cancellation.abort());
+      if (snapshot.revision !== 'disabled') {
+        let checking = false;
+        authorizationMonitor = setInterval(() => {
+          if (checking || subscriber.closed) return;
+          checking = true;
+          void assertAuthorizationSnapshot(userId, snapshot).catch(error => guarded.error(error)).finally(() => { checking = false; });
+        }, 100);
+        authorizationMonitor.unref?.();
+      }
+      const trace = new ChatTraceRecorder(guarded);
+      await this.processChat(
         userId,
         question,
         requestedKbScope,
         conversationId,
-        subscriber,
+        guarded,
         trace,
         cancellation.signal,
       ).catch((err) => {
@@ -950,20 +1004,21 @@ export class ChatService {
             "可能的原因：您没有该知识所属知识库的访问权限，或该知识尚未入库。" +
             "如需帮助，请联系知识库管理员确认权限。";
           trace.failRunning(new Error(friendlyMsg));
-          subscriber.next({
+          guarded.next({
             data: { type: "delta", content: friendlyMsg, delta: friendlyMsg },
           });
-          subscriber.next({
+          guarded.next({
             data: { type: "done", total_tokens: 0, latency_ms: 0 },
           });
-          subscriber.complete();
+          guarded.complete();
           return;
         }
         this.logger.error(`Chat processing error: ${err.message}`, err.stack);
         trace.failRunning(err);
-        subscriber.error(err);
-      });
-      return () => cancellation.abort();
+        guarded.error(err);
+      }).finally(() => { getRequestContext()?.execution?.finishRetrieval(); if (authorizationMonitor) clearInterval(authorizationMonitor); });
+      }).catch(error => subscriber.error(error));
+      return () => { inheritedCancellation?.removeEventListener('abort',cancelFromTransport); cancellation.abort(); if (authorizationMonitor) clearInterval(authorizationMonitor); };
     });
   }
 
@@ -1015,7 +1070,17 @@ export class ChatService {
   }
 
   /** Read-only structured knowledge retrieval for MCP / Agent tools */
-  async searchKnowledgeForAgent(
+  async searchKnowledgeForAgent(userId: string, query: string, requestedKbScope?: string[] | string, limit = 10) {
+    return withAuthorizedRequest(userId, async snapshot => {
+      getRequestContext()!.execution = createQueryExecution(query);
+      const result = await this.searchKnowledgeForAgentInternal(userId, query, requestedKbScope, limit);
+      getRequestContext()?.execution?.finishRetrieval();
+      await assertAuthorizationSnapshot(userId, snapshot);
+      return result;
+    });
+  }
+
+  private async searchKnowledgeForAgentInternal(
     userId: string,
     query: string,
     requestedKbScope?: string[] | string,
@@ -1023,6 +1088,7 @@ export class ChatService {
   ): Promise<{
     success: boolean;
     query: string;
+    execution?: ReturnType<QueryExecution["report"]>;
     total: number;
     results: Array<{
       documentId: string | null;
@@ -1206,7 +1272,7 @@ export class ChatService {
               }
             }
           }
-        } catch (e) {
+        } catch (e) { rethrowAuthorizationFailure(e);
           this.logger.warn(`searchKnowledgeForAgent subquery search error: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
@@ -1228,6 +1294,8 @@ export class ChatService {
           const maxCascadeRounds = 2;
 
           for (let round = 0; round < maxCascadeRounds; round++) {
+            const execution = getRequestContext()?.execution;
+            if (execution?.adaptive && !execution.reserveRound()) break;
             const bridges = this.extractBridgeEntitiesFromEvidence(currentEvidencePool, rel);
             const unseenBridges = bridges.filter((br) => {
               const lower = br.toLowerCase();
@@ -1256,7 +1324,7 @@ export class ChatService {
             if (newlyAddedChunks.length === 0) break;
             currentEvidencePool = newlyAddedChunks.slice(0, 4).map((b) => b.evidence).join('\n');
           }
-        } catch (e) {
+        } catch (e) { rethrowAuthorizationFailure(e);
           this.logger.warn(`searchKnowledgeForAgent cascading bridge error: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
@@ -1423,7 +1491,7 @@ export class ChatService {
       try {
         const citations = Array.isArray(queryResult?.citations) ? queryResult.citations : [];
         await this.rerankByProbeGroups(query, citations);
-      } catch (err) {
+      } catch (err) { rethrowAuthorizationFailure(err);
         this.logger.warn(
           `Search path rerank failed, keeping arm order: ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -1450,6 +1518,7 @@ export class ChatService {
       return {
         documentId: docId,
         chunkId: c.chunkId || c.id || undefined,
+        documentVersionId: c.documentVersionId, span: c.span, contentHash: c.contentHash,
         kbId: c.kbId || null,
         title: String(c.docTitle || c.topic || "未知文档"),
         version: typeof c.version === "number" ? c.version : undefined,
@@ -1483,10 +1552,12 @@ export class ChatService {
 
     const authorizedResults = await this.filterSearchResultsForUser(userId, scope, results);
     const precedence = this.resolveTemporalPrecedence(authorizedResults);
+    getRequestContext()?.execution?.finishRetrieval();
 
     return {
       success: true,
       query,
+      execution: getRequestContext()?.execution?.report(),
       total: authorizedResults.length,
       results: authorizedResults.slice(0, limit),
       ...(precedence.temporalNotice ? { temporalNotice: precedence.temporalNotice } : {}),
@@ -1847,7 +1918,7 @@ export class ChatService {
       userScope.aclEpoch,
       userScope.knowledgeEpoch,
       currentModelName,
-      userId,
+      `${userId}:${getRequestContext()?.authorization?.revision || "legacy"}:answer-policy-v1:${getRequestContext()?.asOfExplicit ? getRequestContext()?.asOf : "now"}`,
     );
     trace.start("conversation_context", "历史会话消歧", "读取同一会话的近期上下文");
     const conversationHistory = await this.loadConversationHistory(
@@ -1906,13 +1977,13 @@ export class ChatService {
               similarity: cachedHit.similarity,
             });
             subscriber.next({
-              data: { type: "done", total_tokens: 0, latency_ms: Date.now() - retrievalStartedAt },
+              data: { type: "done", total_tokens: 0, latency_ms: Date.now() - retrievalStartedAt, dependency_manifest: cachedHit.dependencyManifest },
             });
             subscriber.complete();
             return;
           }
         }
-      } catch (cacheErr) {
+      } catch (cacheErr) { rethrowAuthorizationFailure(cacheErr);
         this.logger.debug(`Semantic cache lookup error: ${cacheErr instanceof Error ? cacheErr.message : String(cacheErr)}`);
       }
     }
@@ -1929,6 +2000,8 @@ export class ChatService {
       conversationHistory,
       signal,
     );
+
+    getRequestContext()?.execution?.registerPrimaryQuery(retrieval.query || question);
 
     // Speculative Parallel Retrieval: Dispatch PostgreSQL chunk retrieval for the rewritten query
     // concurrently with Agentic query planning / decomposition, hiding DB latency behind LLM time.
@@ -1964,7 +2037,7 @@ export class ChatService {
           agenticSubQueries = plan.subQueries.filter((q) => q.trim() && q.trim() !== retrieval.query.trim());
         }
         hydePassage = plan.hyde;
-      } catch (e) {}
+      } catch (e) { rethrowAuthorizationFailure(e);}
     }
     trace.finish("query_rewrite", "success", `使用 ${retrieval.operation} / ${retrieval.breadth ? "广覆盖" : "聚焦"} 模式${agenticComplexity !== 'simple' ? ` (多跳路由: ${agenticComplexity})` : ''}${agenticSubQueries.length ? `，分解 ${agenticSubQueries.length} 个子问题` : ''}${agenticExpansions.length ? `，扩展 ${agenticExpansions.length} 个检索词` : ''}${hydePassage ? '，启用 HyDE' : ''}`, {
       rewrittenQuery: retrieval.query,
@@ -2184,7 +2257,7 @@ export class ChatService {
                 base.push(h);
               }
             }
-          } catch (e) {}
+          } catch (e) { rethrowAuthorizationFailure(e);}
         }
         if (effectiveSubQueries.length > 0) {
           try {
@@ -2214,7 +2287,7 @@ export class ChatService {
                 }
               }
             }
-          } catch (e) {
+          } catch (e) { rethrowAuthorizationFailure(e);
             this.logger.warn(`subquery fallbackChunks error: ${e instanceof Error ? e.message : String(e)}`);
           }
         }
@@ -2228,6 +2301,8 @@ export class ChatService {
             const maxCascadeRounds = agenticComplexity === 'multi_hop' || rel ? 2 : 1;
 
             for (let round = 0; round < maxCascadeRounds; round++) {
+            const execution = getRequestContext()?.execution;
+            if (execution?.adaptive && !execution.reserveRound()) break;
               const bridges = this.extractBridgeEntitiesFromEvidence(currentEvidencePool, rel);
               const unseenBridges = bridges.filter((br) => {
                 const lower = br.toLowerCase();
@@ -2256,7 +2331,7 @@ export class ChatService {
               // Feed newly retrieved bridge evidence to the next round of multi-hop extraction
               currentEvidencePool = newlyAddedChunks.slice(0, 4).map((b) => b.evidence).join('\n');
             }
-          } catch (e) {
+          } catch (e) { rethrowAuthorizationFailure(e);
             this.logger.warn(`dynamic cascading bridge error: ${e instanceof Error ? e.message : String(e)}`);
           }
         }
@@ -3039,7 +3114,7 @@ export class ChatService {
         trace.start("section_align", "结构对齐偏置", "按问题点名的小节/表角色调整候选排序");
         trace.finish("section_align", "success", "已应用 section/table-role 对齐乘子");
       }
-    } catch (alignErr) {
+    } catch (alignErr) { rethrowAuthorizationFailure(alignErr);
       this.logger.debug(
         `section align skipped: ${alignErr instanceof Error ? alignErr.message : String(alignErr)}`,
       );
@@ -3104,7 +3179,7 @@ export class ChatService {
         trace.start("section_rescue", "小节救援", "同文档补拉未覆盖的问题点名小节");
         trace.finish("section_rescue", "success", "候选池已覆盖问题小节，无需救援");
       }
-    } catch (rescueErr) {
+    } catch (rescueErr) { rethrowAuthorizationFailure(rescueErr);
       this.logger.warn(
         `section rescue skipped: ${rescueErr instanceof Error ? rescueErr.message : String(rescueErr)}`,
       );
@@ -3222,7 +3297,7 @@ export class ChatService {
           communityIds: plan.communityIds,
           seedEntities: plan.seedEntities,
         });
-      } catch (err) {
+      } catch (err) { rethrowAuthorizationFailure(err);
         trace.finish('graphrag_drift', 'warning', 'DRIFT 导航检索失败，沿用已有证据', {
           error: err instanceof Error ? err.message : String(err),
         });
@@ -3917,7 +3992,7 @@ export class ChatService {
               });
             }
           }
-        } catch (compileInjectErr) {
+        } catch (compileInjectErr) { rethrowAuthorizationFailure(compileInjectErr);
           this.logger.debug(
             `Compile-and-Inject retrieval error: ${compileInjectErr instanceof Error ? compileInjectErr.message : String(compileInjectErr)}`,
           );
@@ -4045,8 +4120,8 @@ export class ChatService {
               version: detectedVersion,
               updatedAt: Number.isNaN(updatedAt.getTime()) ? new Date(0) : updatedAt,
               effectiveDate,
-              current: lifecycle === "current",
-              repealed: lifecycle === "repealed" || Boolean((pd as any).effectiveTo && new Date((pd as any).effectiveTo) < new Date()),
+              current: documentCurrentlyEffective(pd,getRequestContext()?.asOf ?? Date.now()),
+              repealed: lifecycle === "repealed" || Boolean((pd as any).effectiveTo && new Date((pd as any).effectiveTo).getTime() <= (getRequestContext()?.asOf ?? Date.now())),
             });
           }
           versionsByFamily.set(familyKey, list);
@@ -4122,7 +4197,9 @@ export class ChatService {
           const citDetectedVersion = (citTitleVersion && parseInt(citTitleVersion[1], 10) > 1)
             ? parseInt(citTitleVersion[1], 10)
             : (cit.version ?? 1);
-          cit.version = citDetectedVersion;
+          // A business revision inferred from title/text is not the storage version.
+          // Preserve the physical counter used by immutable evidence/history checks.
+          cit.displayVersion = citDetectedVersion;
           const familyKey = familyKeyOfCitation(cit);
           const allEntries = familyKey ? versionsByFamily.get(familyKey) || [] : [];
           if (allEntries.length <= 1) continue;
@@ -4348,6 +4425,7 @@ export class ChatService {
     // the gate by construction.
     const sufficiency = decideEvidenceSufficiency(orderedCitations, {
       calibratedFloor: fastRefusalFloor,
+      verifyUncalibrated: getRequestContext()?.execution?.qualityFirst,
       syntheticFloor: Number(
         process.env.RETRIEVAL_FAST_REFUSAL_SYNTHETIC_THRESHOLD || 0.999,
       ),
@@ -4376,6 +4454,18 @@ export class ChatService {
       );
     }
 
+    // An uncalibrated hosted reranker supplies ordering, not a probability.
+    // In accuracy-first mode unknown confidence proceeds to sentence grounding;
+    // absence of authorized original evidence still refuses here. Never relabel
+    // a raw provider score or a synthetic placement as calibrated confidence.
+    const verifyUnknownConfidence = getRequestContext()?.execution?.qualityFirst
+      && !scoreCalibrated && orderedCitations.some((citation: any) =>
+        citation.docId && String(citation.context || citation.evidence || '').trim());
+    if (verifyUnknownConfidence) {
+      trace.warn('retrieval_confidence', '置信度未知，核验证据',
+        '当前模型没有匹配的留出集校准参数，进入原文逐句核验，不使用合成分数决定拒答',
+        { scoreCalibrated: false, evidenceCount: orderedCitations.length });
+    }
     if (!hasSufficientEvidence) {
       // Multi-hop bypass: the fast-refusal floor is calibrated against
       // single-passage similarity to the WHOLE question. A compositional
@@ -4556,6 +4646,8 @@ ${answerStyleRule(false)}`;
       // Section 4: Turn-varying prior conversation & personal memory (changes per turn, placed at tail)
       const systemMessageContent = `${staticSystemRules}
 
+${isEnglishQuery ? 'Table aggregation: retrieved rows are partial evidence. Totals, averages, minima, maxima and full row counts require the aggregate_knowledge_table tool or /chat/table-aggregate result with coverage=1. Never infer a full-table aggregate from Top-K rows. If a verified result is absent, request the exact table and column instead of guessing a value.' : '【表格聚合完整性】：检索到的行片段属于局部证据。总和、平均值、最大/最小值和完整行数必须由 aggregate_knowledge_table 或 /chat/table-aggregate 返回 coverage=1 的类型化结果支持，禁止从 Top-K 行推断全表统计。缺少完整运算结果时，明确需要指定完整表格及列，不猜测数值。'}
+
 ${process.env.CHAT_REFUSAL_DISCIPLINE === 'true' ? `【拒答纪律·必须先核对再拒答】：在给出“未包含相关信息/无法回答”这类结论之前，必须先在参考资料中逐条核对：是否存在任何与问题主体相关的句子？只要存在哪怕部分相关的事实，就必须先完整陈述这些已证实的事实（标注角标），再明确指出资料未覆盖的部分；只有在参考资料与问题主体完全无关时才允许整句拒答。` : ''}
 
 ${isEnglishQuery ? "【Reference Knowledge Base Materials】" : "【参考知识库资料】"}：
@@ -4569,10 +4661,18 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
         Authorization: `Bearer ${apiKey}`,
       };
 
+      await assertRequestAuthorization();
+
+      getRequestContext()?.execution?.finishRetrieval();
+      if (getRequestContext()?.authorization && getRequestContext()?.authorization?.revision !== 'disabled') {
+        getRequestContext()!.evidenceDependencies = await captureEvidenceDependencies(orderedCitations);
+      }
+      await admitModelCall(baseUrl,modelName,Math.ceil((systemMessageContent.length+userMessageContent.length)/3));
       const llmResponse = await fetch(
         `${baseUrl}/chat/completions`,
         {
           method: "POST",
+          signal,
           headers,
           body: JSON.stringify({
             model: modelName,
@@ -4648,6 +4748,11 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
       const isRefusalSentence = (sentence: string): boolean =>
         sentence.trim().length > 0 && isRefusalAnswerText(sentence);
       const heldSentences: string[] = [];
+      const heldSentencePositions: number[] = [];
+      const heldRefusalPositions: number[] = [];
+      const orderedAnswer = new OrderedAnswer();
+      let nextSentencePosition = 0;
+      let sentencePosition = 0;
       // Refusals are held (not streamed) so a focused second pass can still
       // replace them: measured on 30 failed multi-hop questions, 15 had the
       // gold sentence inside the assembled context and the model refused anyway.
@@ -4666,9 +4771,10 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
         gateVerifiedCount++;
         totalTokens += estimateTokens(sentence);
         fullAnswer += sentence;
-        subscriber.next({ data: { type: 'delta', content: sentence, delta: sentence } });
+        orderedAnswer.append(sentencePosition, sentence);
       };
       const gateSentence = (sentence: string) => {
+        sentencePosition = nextSentencePosition++;
         // Transport failures are not answers. An upstream gateway once returned
         // "The request was rejected because it was considered high risk" inside
         // the answer stream, and the sentence was displayed to the user as the
@@ -4706,6 +4812,7 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
         }
         if (isRefusalSentence(sentence)) {
           heldRefusals.push(sentence);
+          heldRefusalPositions.push(sentencePosition);
           return;
         }
         // Scratchpad voice and question echoes are not answers. Both reached users
@@ -4778,6 +4885,7 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
           emitVerified(sentence);
         } else {
           heldSentences.push(sentence);
+          heldSentencePositions.push(sentencePosition);
         }
       };
       let gatePending = '';
@@ -4827,6 +4935,7 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
                 if (delta.reasoning_content) reasoningBuf += String(delta.reasoning_content);
                 if (delta.content) emitModelContent(String(delta.content));
                 if (data.usage) {
+                  getRequestContext()?.execution?.recordUsage(data.usage);
                   if (typeof data.usage.prompt_cache_hit_tokens === "number") {
                     promptCacheHitTokens = data.usage.prompt_cache_hit_tokens;
                   }
@@ -4834,7 +4943,7 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
                     promptCacheMissTokens = data.usage.prompt_cache_miss_tokens;
                   }
                 }
-              } catch (e) {}
+              } catch (e) { rethrowAuthorizationFailure(e);}
             }
           }
         }
@@ -4848,6 +4957,7 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
           if (delta.reasoning_content) reasoningBuf += String(delta.reasoning_content);
           if (delta.content) emitModelContent(String(delta.content));
           if (data.usage) {
+            getRequestContext()?.execution?.recordUsage(data.usage);
             if (typeof data.usage.prompt_cache_hit_tokens === "number") {
               promptCacheHitTokens = data.usage.prompt_cache_hit_tokens;
             }
@@ -4855,7 +4965,7 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
               promptCacheMissTokens = data.usage.prompt_cache_miss_tokens;
             }
           }
-        } catch (e) {}
+        } catch (e) { rethrowAuthorizationFailure(e);}
       }
 
       // Reasoning-model fallback: some models stream everything into
@@ -5031,6 +5141,7 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
             // still mentioned the gold string. Clear it so the emitted turn is
             // the focused answer alone.
             heldRefusals.length = 0;
+            heldRefusalPositions.length = 0;
           } else {
             this.logger.log(
               `[REFUSAL_FOCUS] focused retry did not produce a usable answer: ${focused.slice(0, 80) || '(empty)'}`,
@@ -5038,7 +5149,7 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
           }
         }
       }
-      if (!fullAnswer.trim() && reasoningBuf.trim()) {
+      if (!fullAnswer.trim() && heldRefusals.length === 0 && reasoningBuf.trim()) {
         const drafted = extractAnswerFromReasoning(reasoningBuf, question);
         if (drafted) {
           this.logger.warn('LLM returned no content; using the sanitized reasoning draft.');
@@ -5054,7 +5165,10 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
       // explicit answer-only instruction. Reasoning models that stream the
       // whole turn into `reasoning_content` (reproduced on MuSiQue, 2026-09-20)
       // otherwise produce no user-visible answer at all.
-      if (!fullAnswer.trim()) {
+      // A held refusal is already a complete model response. Treating it as
+      // empty forced an answer-only retry, duplicating the refusal and adding
+      // irrelevant background. Only genuinely empty responses need recovery.
+      if (!fullAnswer.trim() && heldRefusals.length === 0) {
         const retried = await this.retryAnswerOnly({
           baseUrl,
           modelName,
@@ -5091,7 +5205,14 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
       // top-rank guarantee — a same-window control with the guarantee disabled
       // reproduced the same 7 failures).
       if (heldRefusals.length) {
-        for (const refusal of heldRefusals) emitVerified(refusal);
+        const seenRefusals = new Set<string>();
+        heldRefusals.forEach((refusal, index) => {
+          const key = refusal.replace(/\s+/g, '').trim();
+          if (seenRefusals.has(key)) return;
+          seenRefusals.add(key);
+          sentencePosition = heldRefusalPositions[index];
+          emitVerified(refusal);
+        });
       }
       // Every recovery path failed (no content, no usable draft, no usable
       // retry). An empty bubble helps nobody: answer with an honest, evidence-free
@@ -5129,6 +5250,7 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
           // separator a recovered line glues onto the previous sentence's
           // citation marker (observed: "…备份[2]**三、技能接入与创建**").
           const emitRecovered = (text: string) => {
+            sentencePosition = heldSentencePositions[i];
             if (fullAnswer && !/[\s\n]$/.test(fullAnswer) && !/^[，。、；)）\]】.!?？!]/.test(text)) {
               emitVerified('\n');
             }
@@ -5181,7 +5303,10 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
             // proper noun never occurs in the evidence pool.
             const decisiveOk = !hasMarker
               || decisiveValueSupportedBy(toJudge[i], [evidenceText], question);
-            if (!hasConflict && numsOk && decisiveOk && ratio >= requiredRatio) {
+            // Accuracy-first activation never promotes a sentence merely
+            // because its characters occur somewhere in a large context. If
+            // the entailment judge did not verify it, keep it withheld.
+            if (!getRequestContext()?.execution?.qualityFirst && !hasConflict && numsOk && decisiveOk && ratio >= requiredRatio) {
               emitRecovered(repaired);
               recoveredCount++;
             }
@@ -5197,6 +5322,19 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
           { verified: gateVerifiedCount, held: heldSentences.length, recovered: recoveredCount, dropped, strict: strictGrounding, providerError: providerErrorSeen },
         );
       }
+      // Commit verified text in model order. A delayed clause must never be
+      // appended underneath a later heading. History and SSE use this same text.
+      fullAnswer = orderedAnswer.render();
+      const substantiveLines = fullAnswer.split(/\n+/).filter(line => line.trim() && !isStructuralHeadingLine(line));
+      if (!substantiveLines.length) {
+        synthesizedRefusal = true;
+        fullAnswer = isEnglishQuery
+          ? 'Based on the provided reference materials, the relevant information is not available.'
+          : '已知知识库资料中未包含相关信息，无法回答该问题。';
+      }
+      await assertRequestAuthorization();
+      subscriber.next({ data: { type: 'delta', content: fullAnswer, delta: fullAnswer } });
+
       // Observability for the marker repair: a warning here means the model
       // stamped at least one wrong source index and the answer was corrected
       // rather than shipped with a citation that does not contain the fact.
@@ -5269,10 +5407,16 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
           where: { conversationId, conversation: { userId } },
           orderBy: { createdAt: "desc" },
           take: 24,
-          select: { role: true, content: true },
+          select: { role: true, content: true, dependencyManifest: true },
         })
       : [];
-    const history = [...messages]
+    const safeMessages = [];
+    for (const message of messages) {
+      if (message.role === 'assistant' && authorizationEnforced() &&
+          !await validateEvidenceDependencies(userId, message.dependencyManifest)) continue;
+      safeMessages.push(message);
+    }
+    const history = [...safeMessages]
       .reverse()
       .filter(
         (message) => message.role === "user" || message.role === "assistant",
@@ -5296,7 +5440,8 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
     sentences: string[];
   }): Promise<string> {
     try {
-      const response = await fetch(`${params.baseUrl}/chat/completions`, {
+      await assertRequestAuthorization();
+      const response = await requestFetch(`${params.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: params.headers,
         body: JSON.stringify({
@@ -5319,15 +5464,14 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
           temperature: 0,
           max_tokens: Number(process.env.CHAT_REFUSAL_FOCUS_MAX_TOKENS || 600),
         }),
-        signal: AbortSignal.timeout(Number(process.env.CHAT_REFUSAL_FOCUS_TIMEOUT_MS || 45000)),
-      });
+        }, Number(process.env.CHAT_REFUSAL_FOCUS_TIMEOUT_MS || 45000));
       if (!response.ok) return '';
       const payload: any = await response.json();
       const message = payload?.choices?.[0]?.message || {};
       const content = String(message.content || '').trim();
       if (content) return content;
       return extractAnswerFromReasoning(String(message.reasoning_content || ''), params.question);
-    } catch (err) {
+    } catch (err) { rethrowAuthorizationFailure(err);
       this.logger.warn(
         `Focused refusal retry unavailable: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -5343,7 +5487,8 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
     userMessage: string;
   }): Promise<string> {
     try {
-      const response = await fetch(`${params.baseUrl}/chat/completions`, {
+      await assertRequestAuthorization();
+      const response = await requestFetch(`${params.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: params.headers,
         body: JSON.stringify({
@@ -5360,15 +5505,14 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
           temperature: 0,
           max_tokens: Number(process.env.LLM_ANSWER_RETRY_MAX_TOKENS || 900),
         }),
-        signal: AbortSignal.timeout(Number(process.env.LLM_ANSWER_RETRY_TIMEOUT_MS || 45000)),
-      });
+        }, Number(process.env.LLM_ANSWER_RETRY_TIMEOUT_MS || 45000));
       if (!response.ok) return '';
       const payload: any = await response.json();
       const message = payload?.choices?.[0]?.message || {};
       const content = String(message.content || '').trim();
       if (content) return content;
       return extractAnswerFromReasoning(String(message.reasoning_content || ''), params.userMessage);
-    } catch (err) {
+    } catch (err) { rethrowAuthorizationFailure(err);
       this.logger.warn(
         `Answer-only retry unavailable: ${err instanceof Error ? err.message : String(err)}`,
       );

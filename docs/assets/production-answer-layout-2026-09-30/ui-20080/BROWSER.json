@@ -1,0 +1,20 @@
+{
+  "desktop": [
+    1440,
+    1100
+  ],
+  "mobile": [
+    390,
+    844
+  ],
+  "legacyHeadingSeparated": true,
+  "historyHeadingSeparated": true,
+  "citationPreview": true,
+  "markdownBlocks": true,
+  "codeTextPreserved": true,
+  "rawHtmlInert": true,
+  "mobileNoPageOverflow": true,
+  "originalProductionAnswerDisplay": true,
+  "orderedListMarkers": "decimal",
+  "pageErrors": []
+}

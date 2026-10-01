@@ -54,6 +54,27 @@ describe("PermissionService", () => {
     mockPrisma.kbAdmin.findMany.mockResolvedValue([]);
   });
 
+  it("keeps visibility helper queries on the supplied transaction", async () => {
+    const tx = {
+      $executeRaw: jest.fn().mockResolvedValue(1),
+      userOrg: { findMany: jest.fn().mockResolvedValue([]) },
+      orgNode: { findMany: jest.fn().mockResolvedValue([]) },
+      userRole: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
+      knowledgeBase: { findMany: jest.fn().mockResolvedValue([]) },
+      industryGrant: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    // The root client cannot lease another connection while this transaction owns it.
+    mockPrisma.$executeRaw = jest.fn();
+    mockPrisma.$transaction.mockImplementationOnce(async (fn: any) => fn(tx));
+    try {
+      expect(await service.getVisibleKnowledgeBases('user-1')).toEqual([]);
+      expect(tx.userOrg.findMany).toHaveBeenCalled();
+      expect(tx.userRole.findFirst).toHaveBeenCalled();
+      expect(mockPrisma.userOrg.findMany).not.toHaveBeenCalled();
+      expect(mockPrisma.userRole.findFirst).not.toHaveBeenCalled();
+    } finally { delete mockPrisma.$executeRaw; }
+  });
+
   it("should calculate visible knowledge bases correctly", async () => {
     // 1. Mock 直接管理的库
     mockPrisma.knowledgeBase.findMany.mockResolvedValueOnce([]);

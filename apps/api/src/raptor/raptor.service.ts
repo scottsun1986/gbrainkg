@@ -1,3 +1,5 @@
+import { requestFetch } from '../retrieval/request-signal';
+import { rethrowAuthorizationFailure as throwAuthorizationFailure } from '../permission/authorization-revision';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { getPrismaClient } from '../prisma';
 import { ModelConfigService } from '../model-config.service';
@@ -93,7 +95,7 @@ export class RaptorService {
         } else {
           await this.buildKbGlobalTree(kbId);
         }
-      } catch (err) {
+      } catch (err) { throwAuthorizationFailure(err);
         this.logger.warn(`Debounced buildKbGlobalTree failed for KB ${kbId}: ${err instanceof Error ? err.message : String(err)}`);
       } finally {
         this.globalTreeRunningKbs.delete(kbId);
@@ -261,7 +263,7 @@ export class RaptorService {
           raptor: true,
           section: 'raptor-level1',
         }));
-    } catch (err) {
+    } catch (err) { throwAuthorizationFailure(err);
       this.logger.warn(`Document summary fetch failed: ${err instanceof Error ? err.message : String(err)}`);
       return [];
     }
@@ -337,7 +339,7 @@ export class RaptorService {
         });
       }
       return hits;
-    } catch (err) {
+    } catch (err) { throwAuthorizationFailure(err);
       this.logger.warn(`Document outline failed: ${err instanceof Error ? err.message : String(err)}`);
       return [];
     }
@@ -384,7 +386,7 @@ export class RaptorService {
         raptor: true,
         section: item.node.level === 2 ? 'raptor-level2-global' : item.node.level === 1 ? 'raptor-level1' : 'raptor-level0',
       }));
-    } catch (err) {
+    } catch (err) { throwAuthorizationFailure(err);
       this.logger.warn(`RAPTOR search failed: ${err instanceof Error ? err.message : String(err)}`);
       return [];
     }
@@ -440,7 +442,7 @@ export class RaptorService {
         raptor: true,
         section: item.node.level === 2 ? 'raptor-level2-global' : 'raptor-level1',
       }));
-    } catch (err) {
+    } catch (err) { throwAuthorizationFailure(err);
       this.logger.warn(`RAPTOR searchGlobal failed: ${err instanceof Error ? err.message : String(err)}`);
       return [];
     }
@@ -517,7 +519,7 @@ export class RaptorService {
         }
       }
       return { nodes: 1 };
-    } catch (err) {
+    } catch (err) { throwAuthorizationFailure(err);
       this.logger.warn(`RAPTOR buildKbGlobalTree failed: ${err instanceof Error ? err.message : String(err)}`);
       return { nodes: 0 };
     }
@@ -595,7 +597,7 @@ export class RaptorService {
       }
 
       return results.length > 0 ? results : this.groupChunks(chunks);
-    } catch (err) {
+    } catch (err) { throwAuthorizationFailure(err);
       this.logger.warn(`RAPTOR vector clustering failed, falling back to heuristic groups: ${err instanceof Error ? err.message : String(err)}`);
       return this.groupChunks(chunks);
     }
@@ -843,7 +845,7 @@ export class RaptorService {
     if (!bounded) return '';
     if (llm) {
       try {
-        const response = await fetch(`${llm.baseUrl}/chat/completions`, {
+        const response = await requestFetch(`${llm.baseUrl}/chat/completions`, {
           method: 'POST',
           headers: llm.headers,
           body: JSON.stringify({
@@ -860,14 +862,13 @@ export class RaptorService {
             temperature: 0.1,
             max_tokens: Number(process.env.RAPTOR_SUMMARY_MAX_TOKENS || 2000),
           }),
-          signal: AbortSignal.timeout(15000),
-        });
+        }, 15000);
         if (response.ok) {
           const payload: any = await response.json();
           const content = this.assistantText(payload);
           if (content) return content;
         }
-      } catch (err) {
+      } catch (err) { throwAuthorizationFailure(err);
         this.logger.warn(`RAPTOR summary LLM call failed, using extractive fallback: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
@@ -1000,7 +1001,7 @@ export class RaptorService {
         void this.backfillNodeEmbeddings(kbIds[0]);
       }
       return hits;
-    } catch (err) {
+    } catch (err) { throwAuthorizationFailure(err);
       this.logger.debug(`RAPTOR vector search unavailable: ${err instanceof Error ? err.message : String(err)}`);
       return [];
     }
@@ -1065,7 +1066,7 @@ export class RaptorService {
         if (written === 0) return;
         await new Promise((resolve) => setTimeout(resolve, 200));
       }
-    } catch (err) {
+    } catch (err) { throwAuthorizationFailure(err);
       this.logger.debug(`RAPTOR embedding backfill stopped for KB ${kbId}: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       this.backfillInFlight.delete(kbId);

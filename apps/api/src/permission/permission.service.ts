@@ -1,3 +1,4 @@
+import { runAsService } from '../db/service-principal';
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { getPrismaClient } from "../prisma";
 import { withServiceContext } from "../db/tenant-context.service";
@@ -12,7 +13,9 @@ export class PermissionService implements OnModuleInit {
   private readonly logger = new Logger(PermissionService.name);
   private prisma = getPrismaClient();
 
-  async onModuleInit() {
+  async onModuleInit() { return runAsService('permission-initialize', () => this.initializeInternal()); }
+
+  private async initializeInternal() {
     await this.ensureDefaultRoles();
     this.logger.log("Permission service initialized.");
   }
@@ -20,15 +23,17 @@ export class PermissionService implements OnModuleInit {
   private async ensureDefaultRoles() {
     for (const role of DEFAULT_ROLES) {
       await this.prisma.role.upsert({
-        where: { name: role.name },
+        where: 'code' in role ? { code: role.code as string } : { name: role.name },
         create: {
           name: role.name,
+          code: 'code' in role ? role.code as string : null,
           description: role.description,
           builtin: role.builtin,
           permissions: role.permissions,
         },
         update: {
           description: role.description,
+          ...('code' in role ? { code: role.code as string } : {}),
           builtin: role.builtin,
           permissions: role.permissions,
         },
@@ -65,7 +70,7 @@ export class PermissionService implements OnModuleInit {
 
     // 旧数据没有记录行业库创建者时，统一归属给系统管理员，避免把删除权误授给普通库管理员。
     const systemOwner = await this.prisma.user.findFirst({
-      where: { status: "active", roles: { some: { role: { builtin: true } } } },
+      where: { status: "active", roles: { some: { role: { code: { in: ['system_admin', 'super_admin'] } } } } },
       select: { id: true },
       orderBy: { createdAt: "asc" },
     });
@@ -77,19 +82,16 @@ export class PermissionService implements OnModuleInit {
     }
   }
 
-  async isSystemAdmin(userId: string): Promise<boolean> {
+  async isSystemAdmin(userId: string, prisma: any = this.prisma): Promise<boolean> {
     // Only the dedicated system-admin role names grant system administration.
     // Matching on `builtin: true` alone would promote any future built-in
     // role (e.g. an internal service role) to system admin.
     return Boolean(
-      await this.prisma.userRole.findFirst({
+      await prisma.userRole.findFirst({
         where: {
           userId,
           role: {
-            OR: [
-              { name: "超级管理员" },
-              { name: "系统管理员" },
-            ],
+            code: { in: ['system_admin', 'super_admin'] },
           },
         },
         select: { userId: true },
@@ -364,18 +366,18 @@ export class PermissionService implements OnModuleInit {
     return [...capabilities];
   }
 
-  private async getUserOrgIds(userId: string): Promise<Set<string>> {
-    const memberships = await this.prisma.userOrg.findMany({
+  private async getUserOrgIds(userId: string, prisma: any = this.prisma): Promise<Set<string>> {
+    const memberships = await prisma.userOrg.findMany({
       where: { userId },
       select: { orgNodeId: true },
     });
-    const nodes = this.prisma.orgNode
-      ? await this.prisma.orgNode.findMany({
+    const nodes = prisma.orgNode
+      ? await prisma.orgNode.findMany({
           where: { status: "active" },
           select: { id: true, parentId: true },
         })
       : [];
-    const byId = new Map<string, any>(nodes.map((node) => [node.id, node]));
+    const byId = new Map<string, any>(nodes.map((node: any) => [node.id, node]));
     const visibleOrgIds = new Set<string>();
     for (const membership of memberships) {
       let nodeId: string | null = membership.orgNodeId;
@@ -415,9 +417,9 @@ export class PermissionService implements OnModuleInit {
     const visibleKbIds = new Set<string>();
     const _prisma = prisma || this.prisma;
 
-    const orgIds = await this.getUserOrgIds(userId);
+    const orgIds = await this.getUserOrgIds(userId, _prisma);
     const [systemAdmin, directManagedKbs] = await Promise.all([
-      this.isSystemAdmin(userId),
+      this.isSystemAdmin(userId, _prisma),
       _prisma.knowledgeBase.findMany({
         where: {
           type: { not: "personal" },
@@ -510,11 +512,7 @@ export class PermissionService implements OnModuleInit {
         roles: {
           some: {
             role: {
-              OR: [
-                { builtin: true },
-                { name: "超级管理员" },
-                { name: "系统管理员" },
-              ],
+              code: { in: ['system_admin', 'super_admin'] },
             },
           },
         },

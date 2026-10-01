@@ -88,6 +88,8 @@ def chat(message, kb_scope=None, token=None, timeout=PERF_BUDGET_S + 60):
         except json.JSONDecodeError:
             continue
         kind = data.get("type")
+        if kind == "conversation":
+            result["conversation_id"] = data.get("conversation_id")
         if kind == "delta":
             result["answer"] += data.get("content") or ""
         elif kind == "citation":
@@ -128,7 +130,7 @@ def ensure_token():
     return bool(TOKEN)
 
 
-def resolve_test_kb():
+def resolve_test_kb(name=TEST_KB_NAME):
     """按名称解析锚点语料库 id（/kbs 为分页接口，遍历页）；找不到返回 None。"""
     page = 1
     while page <= 10:
@@ -142,13 +144,13 @@ def resolve_test_kb():
         items = payload.get("items") if isinstance(payload, dict) else payload
         items = items or []
         for kb in items:
-            if isinstance(kb, dict) and kb.get("name") == TEST_KB_NAME:
+            if isinstance(kb, dict) and kb.get("name") == name:
                 return kb.get("id"), None
         total = int(payload.get("total") or 0) if isinstance(payload, dict) else 0
         if page * 100 >= total or not items:
             break
         page += 1
-    return None, f"未找到知识库「{TEST_KB_NAME}」"
+    return None, f"未找到知识库「{name}」"
 
 
 # ---------------------------------------------------------------- 断言工具
@@ -301,13 +303,28 @@ def c_summer(case):
 
 @case("P3-02", "语义鸿沟与多源", "多源冲突并列：两份考勤制度时间均呈现")
 def c_conflict(case):
-    r = chat("员工考勤的时间是什么")
+    # Conflict gold labels belong to one corpus. Unrelated retained benchmark
+    # libraries may contain different policies with the same question wording.
+    name = os.environ.get("TEST_CONFLICT_KB_NAME")
+    scope = None
+    if name:
+        kb_id, error = resolve_test_kb(name)
+        if not expect(case, bool(kb_id), error or "Conflict corpus missing"):
+            return
+        scope = [kb_id]
+    r = chat("员工考勤的时间是什么", scope)
     LATENCIES.append(r["latency_s"]); case.latency_s = r["latency_s"]
     titles = " ".join(doc_titles(r))
     both_docs = ("手册V2" in titles or "V2" in titles) and ("详细手册" in titles)
     both_times = ("09:00" in r["answer"]) and ("08:30" in r["answer"])
     expect(case, both_docs and both_times,
            f"citations={doc_titles(r)[:3]} answer={r['answer'][:140]}")
+    if case.status == "PASS" and r.get("conversation_id"):
+        status, _, raw = http("GET", f"/api/v1/conversations/{r['conversation_id']}", token=TOKEN)
+        history = json.loads(raw) if status == 200 else {}
+        saved = " ".join(m.get("content", "") for m in history.get("messages", []) if m.get("role") == "assistant")
+        expect(case, status == 200 and "09:00" in saved and "08:30" in saved,
+               "Saved answer failed immutable evidence/permission revalidation")
 
 
 @case("P4-01", "拒答与反幻觉", "知识库外问题 → 标准拒答，不编造")
@@ -322,7 +339,7 @@ def c_refusal(case):
 def c_refusal_trace(case):
     # A per-run nonce keeps this question out of the semantic cache so the
     # fresh citation-validation stage (and its refusal exemption) is exercised.
-    r = chat(f"区块链存证在第三方的部署方案编号是什么？({int(time.time())})")
+    r = chat(f"区块链存证在第三方的部署方案编号是什么？({int(time.time())})", [TEST_KB["id"]] if TEST_KB["id"] else None)
     node = trace_node(r, "citation_validation")
     if not node:
         case.status = "SKIP"; case.detail = "未取到 citation_validation trace"; return
@@ -422,7 +439,7 @@ def c_perf(case):
 
 @case("P8-02", "性能预算", "引用契约：引用含 page_no/version，trace 含 citation_validation")
 def c_citation_contract(case):
-    r = chat("EQ-0077 的巡检周期是多少天？")
+    r = chat("EQ-0077 的巡检周期是多少天？", [TEST_KB["id"]] if TEST_KB["id"] else None)
     LATENCIES.append(r["latency_s"]); case.latency_s = r["latency_s"]
     if not r["citations"]:
         case.status = "SKIP"; case.detail = "无引用返回"; return
@@ -441,6 +458,7 @@ def main():
     print("=" * 72)
     print(" GBrainKG SOTA 全场景知识库测试套件")
     print(f" API: {API_BASE}   语料库: {TEST_KB_NAME}")
+    print(f" Conflict corpus: {os.environ.get('TEST_CONFLICT_KB_NAME', 'all visible')}")
     print("=" * 72)
     if not ensure_token():
         sys.exit(2)
@@ -481,12 +499,12 @@ def main():
     report_path = os.path.join(RESULTS_DIR, f"sota-suite-{stamp}.json")
     with open(report_path, "w", encoding="utf-8") as fh:
         json.dump({
-            "api": API_BASE, "test_kb": TEST_KB_NAME, "started_by": "sota-suite",
+            "api": API_BASE, "test_kb": TEST_KB_NAME, "conflict_kb": os.environ.get("TEST_CONFLICT_KB_NAME"), "started_by": "sota-suite",
             "summary": {"total": total, "passed": passed, "failed": failed, "skipped": skipped},
             "cases": report_cases,
         }, fh, ensure_ascii=False, indent=2)
     print(f" 报告: {report_path}")
-    sys.exit(1 if failed else 0)
+    sys.exit(1 if failed or (skipped and os.environ.get("E2E_REQUIRE_ALL") == "1") else 0)
 
 
 if __name__ == "__main__":

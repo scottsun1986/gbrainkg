@@ -1,3 +1,5 @@
+import { requestFetch } from '../retrieval/request-signal';
+import { rethrowAuthorizationFailure as throwAuthorizationFailure } from '../permission/authorization-revision';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ModelConfigService } from '../model-config.service';
 import { RedisService } from '../redis/redis.service';
@@ -135,7 +137,7 @@ Output valid JSON format:
 输出 json 格式（合法的 JSON，严禁出现省略号）：
 {"subQueries": ["子问题1", "子问题2"], "reasoning": "拆解理由"}`;
 
-      const response = await fetch(`${config.baseUrl}/chat/completions`, {
+      const response = await requestFetch(`${config.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: config.headers,
         body: JSON.stringify({
@@ -148,8 +150,7 @@ Output valid JSON format:
           max_tokens: Number(process.env.AGENTIC_DECOMPOSE_MAX_TOKENS || 450),
           response_format: { type: 'json_object' },
         }),
-        signal: AbortSignal.timeout(15000),
-      });
+      }, 15000);
 
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
@@ -162,7 +163,7 @@ Output valid JSON format:
         const jsonStr = jsonMatch ? jsonMatch[0] : content;
         const cleanedStr = jsonStr.replace(/,\s*\.\.\./g, '').replace(/\.\.\./g, '');
         parsed = JSON.parse(cleanedStr);
-      } catch (e) {
+      } catch (e) { throwAuthorizationFailure(e);
         const arrMatch = content.match(/\[([\s\S]*?)\]/);
         if (arrMatch) {
           const items = (arrMatch[1].match(/"([^"]+)"|'([^']+)'/g) || [])
@@ -185,7 +186,7 @@ Output valid JSON format:
         subQueries: subQueries.length > 0 ? subQueries : [query],
         reasoning: parsed.reasoning || '',
       };
-    } catch (err) {
+    } catch (err) { throwAuthorizationFailure(err);
       this.logger.warn(`Query decomposition failed: ${err instanceof Error ? err.message : String(err)}`);
       return { originalQuery: query, complexity, subQueries: [query], reasoning: 'Decomposition failed, using original query.' };
     }
@@ -219,7 +220,7 @@ Output valid JSON format:
     try {
       const config = await this.getLlmConfig();
       if (!config) return null;
-      const response = await fetch(`${config.baseUrl}/chat/completions`, {
+      const response = await requestFetch(`${config.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: config.headers,
         body: JSON.stringify({
@@ -234,8 +235,7 @@ Output valid JSON format:
           temperature: 0.1,
           max_tokens: Number(process.env.HYDE_MAX_TOKENS || 400),
         }),
-        signal: AbortSignal.timeout(12000),
-      });
+      }, 12000);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const payload: any = await response.json();
       const content = this.assistantText(payload);
@@ -245,7 +245,7 @@ Output valid JSON format:
       }
       this.logger.debug(`Generated HyDE passage (${content.length} chars) for query.`);
       return content.slice(0, 800);
-    } catch (err) {
+    } catch (err) { throwAuthorizationFailure(err);
       this.logger.warn(`HyDE generation failed: ${err instanceof Error ? err.message : String(err)}`);
       return null;
     }
@@ -294,21 +294,19 @@ Output valid JSON format:
         max_tokens: Number(process.env.QUERY_EXPANSION_MAX_TOKENS || 300),
         ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
       });
-      let response = await fetch(`${config.baseUrl}/chat/completions`, {
+      let response = await requestFetch(`${config.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: config.headers,
         body: buildBody(true),
-        signal: AbortSignal.timeout(Number(process.env.QUERY_EXPANSION_TIMEOUT_MS || 10000)),
-      });
+      }, Number(process.env.QUERY_EXPANSION_TIMEOUT_MS || 10000));
       // Some providers reject response_format for certain models (HTTP 400):
       // retry once without JSON mode, extracting the JSON from the text.
       if (response.status === 400) {
-        response = await fetch(`${config.baseUrl}/chat/completions`, {
+        response = await requestFetch(`${config.baseUrl}/chat/completions`, {
           method: 'POST',
           headers: config.headers,
           body: buildBody(false),
-          signal: AbortSignal.timeout(Number(process.env.QUERY_EXPANSION_TIMEOUT_MS || 10000)),
-        });
+        }, Number(process.env.QUERY_EXPANSION_TIMEOUT_MS || 10000));
       }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const payload: any = await response.json();
@@ -318,13 +316,13 @@ Output valid JSON format:
         const jsonMatch = content.match(/\{[\s\S]*\}/);
         if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
         else parsed = JSON.parse(content);
-      } catch (e) {
+      } catch (e) { throwAuthorizationFailure(e);
         const arrMatch = content.match(/\[([\s\S]*?)\]/);
         if (arrMatch) {
           try {
             const arr = JSON.parse(`[${arrMatch[1]}]`);
             parsed = { expansions: arr };
-          } catch (e2) {}
+          } catch (e2) { throwAuthorizationFailure(e2);}
         }
       }
       const rawExpansions = parsed?.expansions || (Array.isArray(parsed) ? parsed : []);
@@ -344,7 +342,7 @@ Output valid JSON format:
       }
       if (terms.length) this.logger.debug(`Expanded query with ${terms.length} retrieval terms: ${terms.join(' | ')}`);
       return terms;
-    } catch (err) {
+    } catch (err) { throwAuthorizationFailure(err);
       this.logger.warn(`Query expansion failed: ${err instanceof Error ? err.message : String(err)}`);
       return [];
     }
@@ -410,7 +408,7 @@ Output valid JSON:
   "reasoning": "简要规划理由"
 }`;
 
-      const response = await fetch(`${config.baseUrl}/chat/completions`, {
+      const response = await requestFetch(`${config.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: config.headers,
         body: JSON.stringify({
@@ -423,8 +421,7 @@ Output valid JSON:
           max_tokens: Number(process.env.AGENTIC_PLAN_MAX_TOKENS || 450),
           response_format: { type: 'json_object' },
         }),
-        signal: AbortSignal.timeout(Number(process.env.AGENTIC_PLAN_TIMEOUT_MS || 20000)),
-      });
+      }, Number(process.env.AGENTIC_PLAN_TIMEOUT_MS || 20000));
 
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
@@ -436,7 +433,7 @@ Output valid JSON:
       try {
         const jsonMatch = content.match(/\{[\s\S]*\}/);
         parsed = JSON.parse(jsonMatch ? jsonMatch[0] : content);
-      } catch (e) {
+      } catch (e) { throwAuthorizationFailure(e);
         parsed = {};
       }
 
@@ -458,7 +455,7 @@ Output valid JSON:
         await this.redisService?.setJson(`agentic:plan:${cacheKey}`, res, 3600);
       }
       return res;
-    } catch (err) {
+    } catch (err) { throwAuthorizationFailure(err);
       this.logger.warn(`Unified query planning failed: ${err instanceof Error ? err.message : String(err)}`);
       return { subQueries: [query], expansions: [], reasoning: '' };
     }
@@ -739,7 +736,7 @@ Output strict JSON:
   "evidenceQuote": "直接回答该问题的原句，若不存在则为空字符串"
 }`;
 
-      const response = await fetch(`${config.baseUrl}/chat/completions`, {
+      const response = await requestFetch(`${config.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: config.headers,
         body: JSON.stringify({
@@ -757,8 +754,7 @@ Output strict JSON:
           max_tokens: Number(process.env.AGENTIC_RAG_JUDGE_MAX_TOKENS || 350),
           response_format: { type: 'json_object' },
         }),
-        signal: AbortSignal.timeout(Number(process.env.AGENTIC_RAG_JUDGE_TIMEOUT_MS || 15000)),
-      });
+      }, Number(process.env.AGENTIC_RAG_JUDGE_TIMEOUT_MS || 15000));
 
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
@@ -769,7 +765,7 @@ Output strict JSON:
         const jsonMatch = content.match(/\{[\s\S]*\}/);
         if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
         else parsed = JSON.parse(content);
-      } catch (e) {
+      } catch (e) { throwAuthorizationFailure(e);
         const statusMatch = content.match(/"status"\s*:\s*"([^"]+)"/);
         const reasoningMatch = content.match(/"reasoning"\s*:\s*"([^"]+)"/);
         parsed = {
@@ -828,7 +824,7 @@ Output strict JSON:
         reasoning: parsed.reasoning || (status === 'sufficient' ? '当前检索证据已充分覆盖问题要点' : '存在未覆盖的关键实体或信息维度'),
         hopNumber: iterationCount,
       };
-    } catch (err) {
+    } catch (err) { throwAuthorizationFailure(err);
       this.logger.warn(`Retrieval judgment failed: ${err instanceof Error ? err.message : String(err)}`);
       // Fail-safe deterministic fallback
       if (heuristicGaps.missingAspects.length > 0) {

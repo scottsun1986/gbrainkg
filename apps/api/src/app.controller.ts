@@ -52,6 +52,19 @@ export class AppController {
     const body = {
       status: ready ? 'ready' : 'error',
       checks,
+      apiReleaseFingerprint: process.env.API_RELEASE_FINGERPRINT || null,
+      knowledgeProfile: {
+        profile: process.env.RETRIEVAL_QUALITY_PROFILE || 'balanced',
+        authorization: process.env.CORE_AUTH_ENFORCE === '1',
+        immutableVersions: process.env.CORE_VERSIONING_ENABLED === '1',
+        incrementalGraph: process.env.CORE_GRAPH_INCREMENTAL_ENABLED === '1',
+        adaptiveRetrieval: process.env.ADAPTIVE_RETRIEVAL_ENABLED === 'true',
+        embeddingRevisionKnown: Boolean(process.env.EMBEDDING_DEPLOYMENT_REVISION),
+        embeddingPublicationPolicy: process.env.ALLOW_UNVERSIONED_EMBEDDING_PUBLICATION === 'true' ? 'fresh-per-version' : 'require-immutable-revision',
+        sparse: process.env.BGE_M3_HYBRID_ENABLED === 'true',
+        maxSim: process.env.BGE_M3_MAXSIM_ENABLED === 'true',
+        lateChunking: process.env.BGE_M3_LATE_CHUNKING_ENABLED === 'true',
+      },
       timestamp: new Date().toISOString(),
     };
     if (!ready) {

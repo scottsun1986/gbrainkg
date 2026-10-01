@@ -1,3 +1,8 @@
+import { VerifiedLateChunking } from '../embedding/verified-late-chunking';
+import { rethrowAuthorizationFailure } from '../permission/authorization-revision';
+import { getRequestContext } from '../observability/request-context';
+import { currentQueryExecution } from '../retrieval/query-execution';
+import { embeddingFingerprint, reusableEmbeddingIdentity } from '../embedding/model-fingerprint';
 import { filterRescueHits, pickRescueTargets, RescueChunk } from './section-rescue';
 import { recordFailopen } from '../observability/failopen';
 import { Logger } from "@nestjs/common";
@@ -229,11 +234,13 @@ export function semanticCacheScopeKey(
   // that value to replace the schema version would replay answers whose source
   // numbering predates structured evidence routing. The environment value is
   // an additional operator-controlled namespace only.
-  const version = `v5:${process.env.SEMANTIC_CACHE_KEY_VERSION || 'default'}`;
+  const version = `v7:${process.env.SEMANTIC_CACHE_KEY_VERSION || 'default'}`;
+  const policy = ['CORE_AUTH_ENFORCE', 'CORE_VERSIONING_ENABLED', 'CORE_GRAPH_INCREMENTAL_ENABLED', 'ADAPTIVE_RETRIEVAL_ENABLED', 'RETRIEVAL_QUALITY_PROFILE']
+    .map(key => `${key}=${process.env[key] || ''}`).join(';');
   const modelSalt = modelName ? `|m:${modelName}` : '';
   const userSalt = userId ? `|u:${userId}` : '';
   return createHash('sha256')
-    .update(`${version}|${[...sourceKeys].sort().join(',')}|acl:${aclEpoch}|kb:${knowledgeEpoch}${modelSalt}${userSalt}`)
+    .update(`${version}|policy:${policy}|${[...sourceKeys].sort().join(',')}|acl:${aclEpoch}|kb:${knowledgeEpoch}${modelSalt}${userSalt}`)
     .digest('hex')
     .slice(0, 32);
 }
@@ -241,6 +248,10 @@ export function semanticCacheScopeKey(
 /** The score a calibrated scorer (cross-encoder or engine rerank) produced, if any. */
 export function calibratedScoreOf(citation: any): number | null {
   if (!citation) return null;
+  if (getRequestContext()?.execution?.adaptive) {
+    const probability = citation.calibratedProbability;
+    return typeof probability === 'number' && Number.isFinite(probability) && probability >= 0 && probability <= 1 ? probability : null;
+  }
   if (String(citation.scoreSource || '') === 'synthetic') return null;
   const value = Number(citation.relevanceScore ?? citation.rerankScore ?? citation.score);
   return Number.isFinite(value) && value > 0 ? value : null;
@@ -268,15 +279,15 @@ export function isRefusalAnswerText(text: string): boolean {
  * enter the candidate set. Missing date metadata is treated as unknown — the
  * edition stays eligible rather than being silently discarded.
  */
-export function documentCurrentlyEffective(doc: any, now = Date.now()): boolean {
-  if (String(doc?.lifecycleStatus || 'current') === 'repealed') return false;
+export function documentCurrentlyEffective(doc: any, now = getRequestContext()?.asOf ?? Date.now()): boolean {
+  if (String(doc?.lifecycleStatus || 'current') === 'repealed' && (!doc?.effectiveTo || now >= new Date(doc.effectiveTo).getTime())) return false;
   if (doc?.effectiveFrom) {
     const from = new Date(doc.effectiveFrom).getTime();
     if (Number.isFinite(from) && from > now) return false;
   }
   if (doc?.effectiveTo) {
     const to = new Date(doc.effectiveTo).getTime();
-    if (Number.isFinite(to) && to < now) return false;
+    if (Number.isFinite(to) && to <= now) return false;
   }
   return true;
 }
@@ -781,7 +792,7 @@ export class RetrievalArmsService {
       );
 
       return { ...queryResult, citations };
-    } catch (err) {
+    } catch (err) { rethrowAuthorizationFailure(err);
       trace?.finish?.(
         "raptor_macro_retrieval",
         "warning",
@@ -867,7 +878,7 @@ export class RetrievalArmsService {
         return { ...queryResult, citations: existingCitations };
       }
       return queryResult;
-    } catch (err) {
+    } catch (err) { rethrowAuthorizationFailure(err);
       trace?.finish?.(
         "brain_derived_intelligence",
         "warning",
@@ -888,6 +899,8 @@ export class RetrievalArmsService {
     hopNumber = 2,
   ): Promise<any[]> {
     const hopCitations: any[] = [];
+    const execution = currentQueryExecution();
+    if (execution?.adaptive) probes = probes.filter(probe => execution.reserveProbeFor(probe));
     const probePromises = probes.map(async (probe) => {
       // 1. Parallel search in fallback chunks (pgvector + BM25 keyword matching)
       const fallbackHits = await this.searchChunksFallback(scope, probe, 10).catch(() => [] as any[]);
@@ -895,6 +908,7 @@ export class RetrievalArmsService {
 
       // 2. Query GBrain CLI if available
       try {
+        if (getRequestContext()?.authorization && getRequestContext()?.authorization?.revision !== 'disabled') throw new Error('Remote engine lacks a synchronous authorization contract; use authorized PostgreSQL evidence');
         const gbrainRes =
           sourceRefs.length > 1
             ? await this.gbrain.queryMany(sourceRefs, probe, { breadth: true, operation: "search", signal })
@@ -1090,6 +1104,9 @@ export class RetrievalArmsService {
     }
     const vector = await this.embeddingService.embedOne(query);
     if (!vector || !vector.length) return [];
+    const config = await this.embeddingService.getConfig?.();
+    const fingerprint = config ? embeddingFingerprint(config) : null;
+    if ((!fingerprint || !config || !reusableEmbeddingIdentity(config)) && process.env.RLS_ENFORCE === '1') return [];
     const literal = `[${vector.join(',')}]`;
     const minScore = Number(process.env.VECTOR_MIN_SCORE || 0.30);
     // Measured on a 100k-chunk corpus with a 1-of-40-KB filter (see
@@ -1116,6 +1133,7 @@ export class RetrievalArmsService {
             JOIN "Document" d ON d.id = c."documentId"
             WHERE c."kbId" = ${scope[0]}::uuid
               AND c.embedding IS NOT NULL
+              AND (${fingerprint}::text IS NULL OR c.embedding_fingerprint = ${fingerprint})
               AND d.status = 'published'
             ORDER BY c.embedding <=> ${literal}::vector
             LIMIT ${limit}
@@ -1128,6 +1146,7 @@ export class RetrievalArmsService {
             JOIN "Document" d ON d.id = c."documentId"
             WHERE c."kbId" = ANY(${scope}::uuid[])
               AND c.embedding IS NOT NULL
+              AND (${fingerprint}::text IS NULL OR c.embedding_fingerprint = ${fingerprint})
               AND d.status = 'published'
             ORDER BY c.embedding <=> ${literal}::vector
             LIMIT ${limit}
@@ -1144,7 +1163,7 @@ export class RetrievalArmsService {
           score: Number(row.similarity),
         }))
         .filter((row: any) => Number.isFinite(row.score) && row.score >= minScore);
-    } catch (err) {
+    } catch (err) { rethrowAuthorizationFailure(err);
       this.logger.debug(`Vector search unavailable: ${err instanceof Error ? err.message : String(err)}`);
       return [];
     }
@@ -1226,7 +1245,7 @@ export class RetrievalArmsService {
       );
     }
     return out;
-    } catch (err) {
+    } catch (err) { rethrowAuthorizationFailure(err);
       // section_rescue fail-open: drop rescue hits and let the candidate pool stand.
       recordFailopen('section_rescue');
       return [];
@@ -1261,8 +1280,10 @@ export class RetrievalArmsService {
       return [];
     }
 
+    const sharedExecution = getRequestContext()?.execution;
+    if (sharedExecution?.adaptive && !sharedExecution.reserveProbeFor(query)) return [];
     const subQueryCacheKey = extraQueries.length === 0 && !variant
-      ? `${scope.slice().sort().join(",")}:${query.trim().toLowerCase()}:${limit}`
+      ? `${getRequestContext()?.userId || "anonymous"}:${getRequestContext()?.authorization?.revision || "uncached"}:${scope.slice().sort().join(",")}:${getRequestContext()?.asOfExplicit ? getRequestContext()?.asOf : "now"}:${query.trim()}:${limit}`
       : null;
     if (subQueryCacheKey) {
       const cached = this.subQueryChunkCache.get(subQueryCacheKey);
@@ -1295,11 +1316,14 @@ export class RetrievalArmsService {
     // arm of this request. Arms that exhaust the budget resolve to "no hits"
     // instead of holding the answer, and a saturated bulkhead sheds the arm
     // rather than queueing behind unbounded database work.
-    const deadline = new RetrievalDeadline(Number(process.env.RETRIEVAL_DEADLINE_MS || 15000));
+    const execution = currentQueryExecution();
+    const deadline = execution?.deadline ?? new RetrievalDeadline(Number(process.env.RETRIEVAL_DEADLINE_MS || 15000));
+    if (deadline.expired()) return [];
 
     // Optimization 6: Prime embedding cache in a single batch for primary query + subqueries
     const subs = [...extraQueries, ...mappedVariants]
       .filter((q) => typeof q === "string" && q.length >= 4 && q.length <= 80)
+      .filter(q => !execution?.adaptive || execution.reserveProbeFor(q))
       .slice(0, 3);
     const embeddingTextsToPrime = [query, ...subs].filter((t) => typeof t === "string" && t.trim().length >= 2);
     if (this.embeddingService?.isEnabled() && embeddingTextsToPrime.length > 0) {
@@ -1308,30 +1332,21 @@ export class RetrievalArmsService {
 
     // Semantic arm: embed the query and retrieve nearest chunks by cosine
     // distance over Chunk.embedding (pgvector/HNSW). Already in memory cache from batch above!
-    const vectorHitsPromise = this.retrievalBulkhead.runOrFallback(
-      () =>
-        deadline.guard(
-          this.searchChunksByVector(scope, query, Math.max(limit * 3, 40)).catch(() => [] as any[]),
-          [],
-          "vector",
-        ),
-      [],
-    );
+    const runArm = <T>(work: () => Promise<T>, fallback: T, label: string) =>
+      deadline.guard(() => this.retrievalBulkhead.runOrFallback(work, fallback), fallback, label);
+    const vectorHitsPromise = runArm(
+      async () => { const take=execution?.adaptive ? execution.plan.dense : Math.max(limit*3,40);
+        const [dense,late] = await Promise.all([this.searchChunksByVector(scope,query,take), new VerifiedLateChunking().search(scope,query,take).catch(error => { rethrowAuthorizationFailure(error); return []; })]);
+        const merged = new Map(dense.map((row:any) => [row.id,row]));
+        for (const row of late) if (!merged.has(row.id)) merged.set(row.id,row);
+        return [...merged.values()];
+      },
+      [] as any[], 'vector');
     // Decomposed sub-queries get their own vector probes (also hitting memory cache!)
     const subQueryVectorPromise = (async () => {
       const perSub = Math.max(8, Number(process.env.RETRIEVAL_SUBQUERY_VECTOR_TAKE || 15));
       const results = await Promise.all(
-        subs.map((sub) =>
-          this.retrievalBulkhead.runOrFallback(
-            () =>
-              deadline.guard(
-                this.searchChunksByVector(scope, sub, perSub).catch(() => [] as any[]),
-                [] as any[],
-                "sub-vector",
-              ),
-            [] as any[],
-          ),
-        ),
+        subs.map(sub => runArm(() => this.searchChunksByVector(scope, sub, perSub), [] as any[], 'sub-vector')),
       );
       const byId = new Map<string, any>();
       results.forEach((hits, i) => {
@@ -1578,7 +1593,7 @@ export class RetrievalArmsService {
               graphArmRank: rankById.get(String(row.id)) || null,
             }))
             .filter((row) => row.graphArmRank !== null);
-        } catch (err) {
+        } catch (err) { rethrowAuthorizationFailure(err);
           this.logger.debug(`Graph retrieval arm unavailable: ${err instanceof Error ? err.message : String(err)}`);
           return [];
         }
@@ -1600,17 +1615,10 @@ export class RetrievalArmsService {
           ]),
         ).slice(0, 128);
         if (!lexicalTerms.length) return [];
-        const hits = await this.retrievalBulkhead.runOrFallback(
-          () =>
-            deadline.guard(
-              this.lexicalIndexService!.search(scope, lexicalTerms, Math.max(limit * 8, 200), {
-                timeoutMs: deadline.slice(Number(process.env.RETRIEVAL_LEXICAL_TIMEOUT_MS || 2000)),
-              }),
-              [],
-              "lexical",
-            ),
-          [],
-        );
+        const hits = await runArm(
+          () => this.lexicalIndexService!.search(scope, lexicalTerms, execution?.adaptive ? execution.plan.lexical : Math.max(limit * 8, 200), {
+            timeoutMs: deadline.slice(Number(process.env.RETRIEVAL_LEXICAL_TIMEOUT_MS || 2000)),
+          }), [], 'lexical');
         return (hits || []).map((hit, rank) => ({ hit, rank: rank + 1 }));
       })().catch(() => [] as Array<{ hit: any; rank: number }>);
 
@@ -1618,14 +1626,7 @@ export class RetrievalArmsService {
       // from the model vocabulary and can bridge lexical variants that neither
       // exact tokens nor the dense vector rank alone places highly.
       const learnedSparsePromise = this.hybridRetrievalService?.isEnabled()
-        ? this.retrievalBulkhead.runOrFallback(
-            () => deadline.guard(
-              this.hybridRetrievalService!.searchSparse(scope, query, Math.max(limit * 4, 80)),
-              [],
-              'bge-m3-sparse',
-            ),
-            [],
-          )
+        ? runArm(() => this.hybridRetrievalService!.searchSparse(scope, query, Math.max(limit * 4, 80)), [], 'bge-m3-sparse')
         : Promise.resolve([]);
 
       // 6. Parallel Burst: Await all retrieval channels simultaneously
@@ -2083,7 +2084,7 @@ export class RetrievalArmsService {
               isSummary: true,
             });
           }
-        } catch (raptorErr) {
+        } catch (raptorErr) { rethrowAuthorizationFailure(raptorErr);
           this.logger.debug(`RAPTOR arm omitted: ${raptorErr instanceof Error ? raptorErr.message : String(raptorErr)}`);
         }
       }
@@ -2098,7 +2099,7 @@ export class RetrievalArmsService {
         }
       }
       return results;
-    } catch (err) {
+    } catch (err) { rethrowAuthorizationFailure(err);
       this.logger.warn(`searchChunksFallback error: ${err}`);
       return [];
     }

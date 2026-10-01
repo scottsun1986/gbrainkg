@@ -141,6 +141,7 @@ export class GitConnector implements EnterpriseConnector {
           externalId: rel,
           title: rel.split('/').pop() || rel,
           content,
+          externalRevision: to,
           metadata: { status: 'A' },
         });
       }
@@ -164,6 +165,7 @@ export class GitConnector implements EnterpriseConnector {
           title: row.path.split('/').pop() || row.path,
           content: '',
           deleted: true,
+          externalRevision: to,
           metadata: { status: 'D' },
         });
         continue;
@@ -179,6 +181,7 @@ export class GitConnector implements EnterpriseConnector {
         externalId: row.path,
         title: row.path.split('/').pop() || row.path,
         content,
+        externalRevision: to,
         metadata: { status: row.status, previousPath: row.previousPath },
       });
     }

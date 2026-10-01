@@ -1,3 +1,6 @@
+import { parseAsOf } from '../retrieval/as-of';
+import { getRequestContext } from '../observability/request-context';
+import { TableEvidenceService } from '../retrieval/table-evidence.service';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ChatService } from '../chat/chat.service';
 import { PermissionService } from '../permission/permission.service';
@@ -48,6 +51,7 @@ export class McpService {
         inputSchema: {
           type: 'object',
           properties: {
+            asOf: { type:'string', description:'带时区的 ISO-8601 历史有效时间；仍使用当前权限' },
             prompt: {
               type: 'string',
               description: '提问内容或需要知识库解答的具体问题',
@@ -64,6 +68,11 @@ export class McpService {
           },
           required: ['prompt'],
         },
+      },
+      {
+        name: 'aggregate_knowledge_table',
+        description: '读取指定已发布文档版本的完整表格清单，或按 tableId 对完整行集合精确计算 count/sum/min/max/avg；禁止以检索片段代替完整表格。',
+        inputSchema: { type: 'object', properties: { documentId: { type: 'string' }, versionId: { type: 'string' }, tableId: { type: 'string' }, operation: { type: 'string', enum: ['count','sum','min','max','avg'] }, column: { type: 'integer', minimum: 0 } }, required: ['documentId','versionId'] },
       },
       {
         name: 'list_knowledge_bases',
@@ -399,6 +408,11 @@ export class McpService {
       // upload_document（Base64/文本上传）已按产品决策移除：
       // 上传能力统一走 POST /mcp/upload 原始文件直传端点。
 
+      case 'aggregate_knowledge_table': {
+        const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!uuid.test(args?.documentId || '') || !uuid.test(args?.versionId || '')) throw new Error('documentId and versionId must be UUIDs');
+        return new TableEvidenceService().execute(user.id, args as any);
+      }
       case 'search_knowledge': {
         // search_knowledge 工具已正式下线，统一收敛至端到端事实裁决工具 chat_knowledge。
         // 为向下兼容已建立连接的旧客户端调用，将 query/prompt 统一转发至 chat_knowledge。
@@ -417,6 +431,7 @@ export class McpService {
       }
 
       case 'chat_knowledge': {
+        if (getRequestContext()) { getRequestContext()!.asOf=parseAsOf(args?.asOf);getRequestContext()!.asOfExplicit=args?.asOf!=null; }
         const prompt = String(args?.prompt || '').trim();
         if (!prompt) throw new Error('prompt 参数为必填项');
         const rawKbIds = Array.isArray(args?.kb_ids)
@@ -477,10 +492,12 @@ export class McpService {
           let answer = '';
           const citations: any[] = [];
           let trace: any = null;
+          let dependencyManifest: any = null;
 
           stream$.subscribe({
             next: (event: any) => {
               const item = event?.data || event;
+              if (item?.type === 'done') dependencyManifest = item.dependency_manifest || null;
               if (item?.type === 'delta' || item?.type === 'token') {
                 const chunk = item.content || item.token || '';
                 answer += chunk;
@@ -513,7 +530,7 @@ export class McpService {
                 }
               }
             },
-            error: (err: any) => reject(new Error(err?.message || 'Chat generation error')),
+            error: (err: any) => reject(err || new Error('Chat generation error')),
             complete: async () => {
               try {
                 const finalContent = answer || '本次问答未生成可保存的回答。';
@@ -523,6 +540,7 @@ export class McpService {
                     role: 'assistant',
                     content: finalContent,
                     citationsSummary: citations,
+                    dependencyManifest: dependencyManifest || undefined,
                     processingTrace: trace ? [trace] : undefined,
                     latencyMs: Date.now() - startedAt,
                   },

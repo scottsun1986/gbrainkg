@@ -25,6 +25,7 @@ import { PermissionService } from "../permission/permission.service";
 import { AuthService } from "../auth/auth.service";
 import { BrainCompilerService } from "../brain-compiler/brain-compiler.service";
 import { AuthGuard } from "../auth/auth.guard";
+import { immutableVersionsEnabled } from './document-version-store';
 import { GraphRagService } from "../graph-rag/graph-rag.service";
 import { IngestionService } from "./ingestion.service";
 import { RaptorService } from "../raptor/raptor.service";
@@ -386,10 +387,12 @@ export class IngestionController {
       where: { id: docId, kbId },
     });
     if (!document) throw new NotFoundException("Document not found.");
+    const pendingVersion = immutableVersionsEnabled() && document.buildingVersionId
+      ? await this.prisma.documentVersion.findUnique({ where: { id: document.buildingVersionId } }) : null;
     const isStaleParsing =
       document.status === "parsing" &&
       Date.now() - new Date(document.updatedAt).getTime() > 3 * 60 * 1000;
-    if (!["failed", "needs_review"].includes(document.status) && !isStaleParsing)
+    if (!["failed", "needs_review"].includes(document.status) && !isStaleParsing && !['failed', 'needs_review'].includes(pendingVersion?.state || ''))
       throw new BadRequestException(
         "Only failed, review-held, or stale parsing documents can be retried.",
       );
@@ -399,14 +402,14 @@ export class IngestionController {
     const retriedDocument = await this.prisma.document.update({
       where: { id: docId },
       data: {
-        version: { increment: 1 },
-        status: "parsing",
+        ...(immutableVersionsEnabled() ? { ingestVersion: { increment: 1 }, ...(!document.activeVersionId ? { status: 'parsing' } : {}) }
+          : { version: { increment: 1 }, status: 'parsing' }),
         qualityStatus: "unknown",
         qualityScore: null,
         qualityIssues: [],
       },
     });
-    await this.ingestionService.enqueue(docId, "manual-retry", retriedDocument.version);
+    await this.ingestionService.enqueue(docId, "manual-retry", immutableVersionsEnabled() ? retriedDocument.ingestVersion || retriedDocument.version : retriedDocument.version);
     return { document: retriedDocument, status: "accepted" };
   }
 

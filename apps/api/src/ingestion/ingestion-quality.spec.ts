@@ -61,6 +61,9 @@ describe('ingestion publication boundary', () => {
   const compiler = { onKnowledgePublished: jest.fn().mockResolvedValue(1) };
   const models = { getOcrConfig: jest.fn() };
   beforeEach(() => {
+    process.env.PARSER_DEPLOYMENT_REVISION = 'test-parser';
+    process.env.OCR_DEPLOYMENT_REVISION = 'test-ocr';
+    process.env.VLM_DEPLOYMENT_REVISION = 'test-vlm';
     jest.clearAllMocks();
     mockPrisma.document.findFirst.mockReset().mockResolvedValue(null);
     mockPrisma.$queryRaw.mockReset().mockResolvedValue([]);
@@ -105,7 +108,10 @@ describe('ingestion publication boundary', () => {
     mockToMarkdown.mockRejectedValue(Object.assign(new Error('sensitive detail'), { code }));
     const service = new IngestionService({} as any, compiler as any, models as any);
     await expect(service.processDocument('doc-1')).rejects.toThrow(/^ANYDOC_/);
-    expect(models.getOcrConfig).not.toHaveBeenCalled();
+    // Configuration may be read to fingerprint the cache; rejection must
+    // never send the input to a fallback parser or persist its artifact.
+    expect(mockWriteFile).not.toHaveBeenCalled();
+    expect(mockRename).not.toHaveBeenCalled();
     expect(compiler.onKnowledgePublished).not.toHaveBeenCalled();
   });
 

@@ -1,3 +1,4 @@
+import { runAsService } from '../db/service-principal';
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -40,7 +41,9 @@ export class BrainOutboxService implements OnModuleInit, OnModuleDestroy {
     if (this.dispatchTimer) clearInterval(this.dispatchTimer);
   }
 
-  async dispatchPending(): Promise<void> {
+  async dispatchPending(): Promise<void> { return runAsService('outbox-dispatch', () => this.dispatchInternal()); }
+
+  private async dispatchInternal(): Promise<void> {
     if (this.dispatching) return;
     this.dispatching = true;
     try {
@@ -106,6 +109,8 @@ export class BrainOutboxService implements OnModuleInit, OnModuleDestroy {
         documentId: resourceId,
         kbId: payload.kbId,
         expectedVersion: payload.version,
+        ...(payload.versionId ? { versionId: payload.versionId } : {}),
+        ...(payload.generationAction ? { generationAction: payload.generationAction, generationId: payload.generationId } : {}),
         outboxEventId: eventId,
       }, {
         jobId: `${auxiliary ? 'aux' : 'enrichment'}-outbox-${eventId}`,

@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Icon } from '@/components/common/Icon';
 import { TypeBadge, TYPE_BADGE } from '@/components/common/TypeBadge';
 import { ScopePicker } from '@/components/common/ScopePicker';
@@ -9,6 +9,7 @@ import { API_BASE_URL, apiHeaders } from '@/lib/api';
 import { appStore } from '@/lib/app-store';
 import { errorMessage, asRecord, str } from '@/lib/errors';
 import { emitToast } from '@/lib/app-events';
+import { AnswerMarkdown } from './AnswerMarkdown';
 import type {
   ChatMessage, Citation, ConversationSummary, CtxMenuItem, KbInfo, PreviewTarget, TraceNode,
 } from '@/types';
@@ -259,7 +260,7 @@ export function ChatScreen(){
     } catch {}
   };
 
-  const previewCitation = (citation: Citation) => {
+  const previewCitation = useCallback((citation: Citation) => {
     if (!citation?.kb || !citation?.documentId) {
       window.dispatchEvent(new CustomEvent('app-toast', {detail:'当前引用没有可预览的原始文档'}));
       return;
@@ -273,7 +274,12 @@ export function ChatScreen(){
       pageNo: (citation.pageNo ?? citation.page_no) as number | string | undefined,
       bbox: citation.bbox,
     });
-  };
+  }, []);
+
+  const handleAnswerCitation = useCallback((source: Citation, index: number) => {
+    setActiveCite(index);
+    previewCitation(source);
+  }, [previewCitation]);
 
   const openConversation = async (id: string) => {
     if (streaming || !id) return;
@@ -338,30 +344,6 @@ export function ChatScreen(){
   const autoGrow = (el: HTMLTextAreaElement)=>{
     el.style.height = 'auto';
     el.style.height = Math.min(el.scrollHeight, 200) + 'px';
-  };
-
-  const renderAnswer = (typed: string, msgSources?: Citation[]) => {
-    // 渲染 typed 文本：处理 **粗体** 与 [n] 引用 chip
-    const out: React.ReactNode[] = [];
-    let key = 0;
-    const segs = typed.split(/(\*\*[^*]+\*\*)/g);
-    segs.forEach((seg: string) => {
-      if(!seg) return;
-      const isBold = /^\*\*[^*]+\*\*$/.test(seg);
-      const text = isBold ? seg.slice(2,-2) : seg;
-      const wrap = (s: string, k: number) => isBold ? <strong key={k}>{s}</strong> : <span key={k}>{s}</span>;
-      const re = /\[(\d+)\]/g; let last = 0; let m;
-      while((m = re.exec(text)) !== null){
-        if(m.index > last) out.push(wrap(text.slice(last, m.index), key++));
-        const n = parseInt(m[1],10);
-        const activeSources = (msgSources && msgSources.length > 0) ? msgSources : citations;
-        const citation = activeSources.find((source: Citation) => Number(source.citationIndex) === n) || activeSources[n-1];
-        out.push(<button key={key++} className={`cite-chip ${activeCite===n?'active':''}`} onClick={()=>{setActiveCite(n); if (citation) void previewCitation(citation);}}>{n}</button>);
-        last = m.index + m[0].length;
-      }
-      if(last < text.length) out.push(wrap(text.slice(last), key++));
-    });
-    return out;
   };
 
   const answerDone = messages.length>0 && messages[messages.length-1].done;
@@ -503,10 +485,7 @@ export function ChatScreen(){
                       <span>百纳 · 大脑综述</span>
                       <span style={{color:'var(--ink-4)'}}>· 你的大脑 · {scopeLabel}{allSel ? `（${selected.length} 库）` : ''}</span>
                     </div>
-                    <div className="answer">
-                      {renderAnswer(msg.text, msg.sources)}
-                      {!msg.done && <span className="cursor"/>}
-                    </div>
+                    <AnswerMarkdown content={msg.text} sources={msg.sources} activeCitation={activeCite} streaming={!msg.done} onCitation={handleAnswerCitation} />
                     {msg.done && (msg.sources?.length ?? 0) > 0 && <div className="answer-sources"><span>来源：</span>{(msg.sources || []).map((source: Citation, index: number) => <button key={source.id || index} onClick={()=>previewCitation(source)} title="打开原始文档预览">[{source.citationIndex || index + 1}] {source.title}</button>)}</div>}
                     {traceNodes.length > 0 && (
                       <details className="retrieval">
@@ -644,4 +623,3 @@ return (
     </div>
   );
 }
-

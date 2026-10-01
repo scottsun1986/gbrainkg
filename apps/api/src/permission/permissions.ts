@@ -64,12 +64,14 @@ export const DEFAULT_ROLES = [
   },
   {
     name: "系统管理员",
+    code: "system_admin",
     description: "系统级用户、组织、角色、知识库、模型和审计管理",
     builtin: true,
     permissions: ["*"],
   },
   {
     name: "超级管理员",
+    code: "super_admin",
     description: "系统最高权限角色",
     builtin: true,
     permissions: ["*"],

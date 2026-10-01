@@ -20,7 +20,7 @@
     "lexical:recall": "npx --yes tsx@4.23.13 scripts/lexical-recall-eval.ts",
     "lexical:window": "npx --yes tsx@4.23.13 scripts/lexical-window-eval.ts",
     "scale:seed": "npx --yes tsx@4.23.13 scripts/scale-seed.ts",
-    "test": "RLS_ENFORCE=0 jest",
+    "test": "RLS_ENFORCE=0 CORE_AUTH_ENFORCE=0 CORE_VERSIONING_ENABLED=0 CORE_GRAPH_INCREMENTAL_ENABLED=0 jest",
     "test:lexical-integration": "LEXICAL_INDEX_INTEGRATION=1 jest src/retrieval/lexical-index.integration.spec.ts --runInBand",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",

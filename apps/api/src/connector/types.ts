@@ -12,12 +12,16 @@ export interface ConnectorChange {
   content: string;
   /** true = 源端删除 */
   deleted?: boolean;
+  aclOnly?: boolean;
   contentHash?: string;
   metadata?: Record<string, unknown>;
+  externalRevision?: string;
+  externalAcl?: { revision: string; verified?: boolean; public?: boolean; subjects: Array<{ type: string; id: string }> };
 }
 
 export interface FetchChangesResult {
   changes: ConnectorChange[];
+  snapshotIds?: string[];
   /** 下次拉取的游标；null 表示源不支持游标 */
   nextCursor: string | null;
 }

@@ -5,6 +5,9 @@ import {
 } from './types';
 
 export interface WebhookPayload {
+  externalRevision?: ConnectorChange["externalRevision"];
+  externalAcl?: ConnectorChange["externalAcl"];
+  deleted?: boolean;
   externalId: string;
   title: string;
   content: string;
@@ -36,7 +39,8 @@ export class WebhookConnector implements EnterpriseConnector {
     if (typeof payload?.content !== 'string') {
       throw new Error('webhook payload requires string content');
     }
-    const item = { externalId, title, content };
+    if (payload.externalAcl && (!payload.externalAcl.revision || !Array.isArray(payload.externalAcl.subjects) || payload.externalAcl.subjects.length > 1000 || payload.externalAcl.subjects.some(subject => !subject?.id || !subject?.type))) throw new Error('Invalid external ACL manifest');
+    const item = { externalId, title, content, ...(payload.externalRevision ? { externalRevision:payload.externalRevision } : {}), ...(payload.externalAcl ? { externalAcl:payload.externalAcl } : {}), ...(payload.deleted ? { deleted:true } : {}) };
     const list = this.pending.get(key) || [];
     if (list.length >= MAX_QUEUE_PER_SOURCE) {
       // Evict oldest: the newest payloads are the ones a stalled sync most
@@ -73,7 +77,7 @@ export class WebhookConnector implements EnterpriseConnector {
     const changes: ConnectorChange[] = items.map((item) => ({
       externalId: item.externalId,
       title: item.title,
-      content: item.content,
+      content: item.content, externalRevision:item.externalRevision, externalAcl:item.externalAcl, deleted:item.deleted,
       metadata: { via: 'generic_webhook' },
     }));
     const batchId = `${Date.now()}-${changes.length}`;

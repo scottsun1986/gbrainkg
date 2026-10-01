@@ -67,6 +67,7 @@ LOCAL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="all"
 SKIP_BUILD=false
 SKIP_GATE=false
+GATE_PROFILE=quality-first
 ROLLBACK_MODE=false
 ROLLBACK_LIST=false
 ROLLBACK_REF="previous"
@@ -85,6 +86,8 @@ Usage:
 Deploy options:
   --target=all|instN   Which instance(s) to publish (default: all)
   --skip-build         Reuse existing local dist/.next (skip pnpm build)
+  --gate-profile=quality-first  Default: enabled core features, accuracy-first adaptive budgets
+  --gate-profile=baseline  Stage additive code with experimental retrieval flags OFF; full functional gate
   --skip-gate          Skip the release gate (GATE_STRICT=1 scripts/ci.sh). Warns.
   -h, --help           Show this help
 
@@ -95,7 +98,8 @@ Rollback options:
                        (alias: scripts/rollback-release.sh --list)
 
 Release gate (default ON):
-  GATE_STRICT=1 bash scripts/ci.sh must pass before any rsync. On gate failure
+  Default quality-first: the enabled-feature functional gate must pass before any rsync.
+  --gate-profile=full additionally requires official IR, feedback and A/B gates. On gate failure
   the deploy aborts. --skip-gate bypasses it (explicit, warned).
 
 Pre-release snapshot (always, before rsync):
@@ -124,6 +128,11 @@ while [[ $# -gt 0 ]]; do
     -h|--help)
       usage
       exit 0
+      ;;
+    --gate-profile=*)
+      GATE_PROFILE="${1#*=}"
+      [[ "$GATE_PROFILE" == full || "$GATE_PROFILE" == baseline || "$GATE_PROFILE" == quality-first ]] || { echo "Invalid gate profile" >&2; exit 1; }
+      shift
       ;;
     --skip-build)
       SKIP_BUILD=true
@@ -193,8 +202,11 @@ run_release_gate() {
     log "WARNING: Production deploy proceeds WITHOUT automated test verification."
     return 0
   fi
-  log "[gate] Running release gate: GATE_STRICT=1 bash scripts/ci.sh ..."
-  if ! (cd "$LOCAL_ROOT" && GATE_STRICT=1 bash scripts/ci.sh); then
+  local gate_script=scripts/ci.sh
+  if [[ "$GATE_PROFILE" == baseline ]]; then gate_script=scripts/release-baseline-gate.sh; fi
+  if [[ "$GATE_PROFILE" == quality-first ]]; then gate_script=scripts/release-quality-first-gate.sh; fi
+  log "[gate] Running release gate profile=$GATE_PROFILE: GATE_STRICT=1 bash $gate_script ..."
+  if ! (cd "$LOCAL_ROOT" && GATE_STRICT=1 bash "$gate_script"); then
     log "ERROR: Release gate FAILED. Aborting production deploy (no rsync, no restart)."
     log "       Fix the failing layers, or re-run with --skip-gate to bypass (not recommended)."
     exit 1
@@ -438,7 +450,18 @@ rollback_single_instance() {
 
     echo '  - Reinstalling lockfile-frozen dependencies...'
     cd '$PROD_REPO'
-    pnpm install --frozen-lockfile | tail -2
+    CI=true pnpm install --frozen-lockfile > /tmp/gbrain-release-pnpm-install.log 2>&1 || { tail -30 /tmp/gbrain-release-pnpm-install.log; exit 1; }
+    tail -2 /tmp/gbrain-release-pnpm-install.log
+    # The shared MaxSim subprocess uses numpy; stage its pinned runtime peer
+    # before restarting the parser. Existing parser dependencies stay intact.
+    shared_python=/home/ubuntu/gbrainkg/.venv/bin/python
+    if [[ -x \"\$shared_python\" ]]; then
+      if ! \"\$shared_python\" -c 'import numpy; assert numpy.__version__ == \"2.4.6\"'; then
+        \"\$shared_python\" -m pip install 'numpy==2.4.6'
+      fi
+    else
+      echo 'ERROR: shared parser virtualenv missing'; exit 1
+    fi
     cd '$PROD_REPO/packages/database'
     set -a
     source '$ENV_FILE'
@@ -497,6 +520,16 @@ deploy_single_instance() {
     [[ -d '$PROD_REPO' || -L '$PROD_REPO' ]] || { echo 'ERROR: $PROD_REPO missing'; exit 1; }
     [[ -f '$ENV_FILE' ]] || { echo 'ERROR: $ENV_FILE missing'; exit 1; }
 
+    if [[ '$GATE_PROFILE' == baseline ]]; then
+      source '$ENV_FILE'
+      for flag in CORE_AUTH_ENFORCE CORE_VERSIONING_ENABLED CORE_GRAPH_INCREMENTAL_ENABLED ADAPTIVE_RETRIEVAL_ENABLED BGE_M3_HYBRID_ENABLED BGE_M3_MAXSIM_ENABLED BGE_M3_LATE_CHUNKING_ENABLED; do
+        value=\${!flag:-}
+        if [[ \"\$value\" == 1 || \"\$value\" == true ]]; then
+          echo \"ERROR: baseline release cannot activate experimental flag \$flag\"; exit 1
+        fi
+      done
+    fi
+
     # 强校验：检查 REDIS_DB 配置，杜绝任何多实例连入同一 Redis 库导致的任务抢占卡死缺陷
     actual_redis=\$(grep -E '^REDIS_DB=' '$ENV_FILE' | cut -d= -f2 | tr -cd 0-9 || echo '')
     actual_redis=\${actual_redis:-0}
@@ -525,6 +558,7 @@ deploy_single_instance() {
   log "[$INST_NAME] Synchronizing code + dist..."
   rsync -az --info=stats1 \
     --exclude='.git' --exclude='node_modules' --exclude='.next/cache' \
+    --exclude='.next-live' --exclude='待美化' --exclude='__pycache__' \
     --exclude='.env*' --exclude='runtime' --exclude='scratch' \
     --exclude='screenshots' --exclude='.playwright-mcp' --exclude='.turbo' \
     --exclude='.pytest_cache' --exclude='.secrets' --exclude='.agents' \
@@ -543,6 +577,10 @@ deploy_single_instance() {
       "$PROD_HOST:/home/ubuntu/gbrainkg/apps/parser-worker/"
   fi
 
+  if [[ "$GATE_PROFILE" == quality-first ]]; then
+    ssh "$PROD_HOST" "python3 '$PROD_REPO/scripts/apply-knowledge-profile.py' '$ENV_FILE'"
+  fi
+
   # 3.3 依赖安装、Prisma 迁移与 GBrain 迁移
   log "[$INST_NAME] Running database migrations & pnpm install..."
   ssh "$PROD_HOST" "
@@ -551,7 +589,18 @@ deploy_single_instance() {
     cd '$PROD_REPO'
     # --frozen-lockfile: 生产依赖必须与仓库锁文件逐字一致，禁止发布过程中静默
     # 漂移到更新的传递依赖版本。若此处失败，请先在本地提交更新后的 pnpm-lock.yaml。
-    pnpm install --frozen-lockfile | tail -2
+    CI=true pnpm install --frozen-lockfile > /tmp/gbrain-release-pnpm-install.log 2>&1 || { tail -30 /tmp/gbrain-release-pnpm-install.log; exit 1; }
+    tail -2 /tmp/gbrain-release-pnpm-install.log
+    # The shared MaxSim subprocess uses numpy; stage its pinned runtime peer
+    # before restarting the parser. Existing parser dependencies stay intact.
+    shared_python=/home/ubuntu/gbrainkg/.venv/bin/python
+    if [[ -x \"\$shared_python\" ]]; then
+      if ! \"\$shared_python\" -c 'import numpy; assert numpy.__version__ == \"2.4.6\"'; then
+        \"\$shared_python\" -m pip install 'numpy==2.4.6'
+      fi
+    else
+      echo 'ERROR: shared parser virtualenv missing'; exit 1
+    fi
     cd '$PROD_REPO/packages/database'
     set -a
     source '$ENV_FILE'
@@ -560,6 +609,11 @@ deploy_single_instance() {
     npx prisma migrate deploy
     # Reconcile the NOBYPASSRLS runtime role before restarting the API.
     bash \"$PROD_REPO/scripts/reconcile-runtime-db-role.sh\" '$ENV_FILE'
+
+    if [[ '$GATE_PROFILE' == quality-first ]]; then
+      # Verify legacy source spans before strict versioned evidence is activated.
+      node '$PROD_REPO/apps/api/dist/bootstrap/backfill-original-snapshots.js'
+    fi
 
     # 执行 GBrain 底座迁移，确保 pages / content_chunks 架构同步
     gbrain apply-migrations --yes || true
@@ -630,6 +684,9 @@ deploy_single_instance() {
     set -a
     source '$ENV_FILE'
     set +a
+    if [[ '$GATE_PROFILE' == quality-first ]]; then
+      python3 -c 'import json,urllib.request; p=json.load(urllib.request.urlopen(\"http://127.0.0.1:$API_PORT/ready\"))[\"knowledgeProfile\"]; assert p[\"profile\"]==\"quality-first\" and all(p[k] for k in [\"authorization\",\"immutableVersions\",\"incrementalGraph\",\"adaptiveRetrieval\"]) and not any(p[k] for k in [\"sparse\",\"maxSim\",\"lateChunking\"])' || { echo '  - Knowledge policy: FAIL'; ok=0; }
+    fi
     gbrain sources status --json >/dev/null && echo '  - GBrain engine status: OK' || { echo '  - GBrain engine status: FAIL'; ok=0; }
     exit \$((1 - ok))
   " || health_rc=1
@@ -683,8 +740,11 @@ if [[ "$ROLLBACK_MODE" == true ]]; then
 fi
 
 # 发布路径：门禁 -> 构建 -> 逐实例（预检/快照/rsync/迁移/重启/健康）
-run_release_gate
+if [[ "$GATE_PROFILE" == quality-first ]]; then
+  python3 "$LOCAL_ROOT/scripts/apply-knowledge-profile.py" "$LOCAL_ROOT/apps/api/.env"
+fi
 build_local_artifacts
+run_release_gate
 
 if [[ "$TARGET" == "all" ]]; then
   log "Discovering all configured instances on $PROD_HOST..."

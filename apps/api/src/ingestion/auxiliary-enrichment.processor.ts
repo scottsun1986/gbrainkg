@@ -1,3 +1,4 @@
+import { runAsService } from '../db/service-principal';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { EnrichmentJobData, EnrichmentProcessor } from './enrichment.processor';
@@ -8,6 +9,6 @@ export class AuxiliaryEnrichmentProcessor extends WorkerHost {
   constructor(private readonly enrichment: EnrichmentProcessor) { super(); }
 
   async process(job: Job<EnrichmentJobData>): Promise<void> {
-    await this.enrichment.processAuxiliary(job);
+    await runAsService('auxiliary-enrichment', () => this.enrichment.processAuxiliary(job), job.data.kbId);
   }
 }

@@ -1,4 +1,5 @@
 import { isRefusalAnswerText } from './chat.service';
+import { isRefusalShapedAnswer } from './citation-assembly';
 
 /**
  * The semantic cache must never store a refusal.
@@ -52,5 +53,53 @@ describe('isRefusalAnswerText', () => {
   it('still keeps ordinary answers that merely contain "not" out of the refusal bucket', () => {
     expect(isRefusalAnswerText('The film was not directed by Douglas Sirk but by George Sherman [1].')).toBe(false);
     expect(isRefusalAnswerText('The treaty was signed in 1920 [1]; it was not ratified until 1922 [2].')).toBe(false);
+  });
+});
+
+/**
+ * The citation-validation exemption must cover real refusal answers that also
+ * explain, per source, why none of the evidence contains the answer. Those
+ * explanation sentences cannot be grounded against cited evidence (absence
+ * claims cite nothing), so the low-coverage warning on a genuine refusal is a
+ * false alarm. Regression: both samples below are actual production answers
+ * (sota suite P4-02) that exceeded the old 80-character cap and were reported
+ * as "证据语义覆盖率偏低 (33%)".
+ */
+describe('isRefusalShapedAnswer', () => {
+  const split = (answer: string) =>
+    answer.split(/(?:\n+|[。！？])/).map((s) => s.trim()).filter((s) => s.length >= 5);
+
+  it('exempts refusals with per-source irrelevance explanations (production sample)', () => {
+    const answer =
+      '已知知识库资料中未包含相关信息，无法回答该问题。已核查的参考知识库资料均不涉及区块链存证第三方部署方案编号：\n' +
+      '- 来源 3 为《2026年度设备运维考核指标总表》，记录的是设备编号（如 EQ-0001 等智能巡检机器人）及负责班组、权重、巡检周期等运维指标 [3]。';
+    expect(isRefusalShapedAnswer(answer, split(answer))).toBe(true);
+  });
+
+  it('exempts refusals with a lead-in line and cited source walkthrough (production sample)', () => {
+    const answer =
+      '具体说明如下：\n已知知识库资料中未包含该部署方案编号，无法回答该问题。\n' +
+      '- 来源 1 为《运维手册完整版》相关页，内容涉及技术选型、架构分层与接口规范 [1]，但未记载任何与区块链存证部署相关的具体方案编号。\n' +
+      '- 其余来源（设备运维指标总表、检测维护条款）分别涉及设备巡检参数与维护记录保存要求[3][4]，均与第三方存证部署方案编号无关。';
+    expect(isRefusalShapedAnswer(answer, split(answer))).toBe(true);
+  });
+
+  it('keeps the short-refusal fast path', () => {
+    expect(isRefusalShapedAnswer('知识库中未找到相关规定，无法回答。', ['知识库中未找到相关规定，无法回答'])).toBe(true);
+    expect(isRefusalShapedAnswer('', [])).toBe(true);
+  });
+
+  it('does not exempt substantive answers that merely mention missing information', () => {
+    const answer =
+      '知识库中未找到该方案的正式编号。\n' +
+      '该系统通常采用 Hyperledger Fabric 搭建，包含共识层、账本层与存储层。\n' +
+      '部署时需要注意证书有效期与共识节点数量。';
+    expect(isRefusalShapedAnswer(answer, split(answer))).toBe(false);
+  });
+
+  it('does not exempt an answer with no strict refusal sentence even if it has absence wording', () => {
+    const answer =
+      '手册未记载该编号，但第 3 页规定巡检周期为 30 天 [3]。\n设备编号 EQ-0077 由智能巡检班组负责。';
+    expect(isRefusalShapedAnswer(answer, split(answer))).toBe(false);
   });
 });

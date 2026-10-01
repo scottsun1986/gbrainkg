@@ -1,11 +1,15 @@
+import { requestFetch } from '../retrieval/request-signal';
+import { rethrowAuthorizationFailure as throwAuthorizationFailure } from '../permission/authorization-revision';
 import { IndexedMarkdownChunk } from './markdown-chunker';
 import { estimateTokens } from '../chat/context-budget';
 import { createHash } from 'node:crypto';
+import { instanceIdentity } from '../observability/instance-identity';
 
 export interface ContextualRetrievalConfig {
   baseUrl: string;
   apiKey: string;
   modelName: string;
+  deploymentRevision?: string;
 }
 
 export interface ContextualRetrievalOptions {
@@ -46,10 +50,11 @@ export function contextualRequestKey(
   modelName: string,
   systemPrompt: string,
   userContent: string,
+  identity?: { route: string; revision: string; instance: string },
 ): string {
   return createHash('sha256')
     .update(
-      `${CONTEXT_CACHE_VERSION}\u0000${modelName}\u0000${systemPrompt}\u0000${userContent}`,
+      `${CONTEXT_CACHE_VERSION}\u0000${JSON.stringify(identity)}\u0000${modelName}\u0000${systemPrompt}\u0000${userContent}`,
     )
     .digest('hex');
 }
@@ -143,6 +148,9 @@ export async function enrichChunksWithContext(
   const targetBatchSize = Math.max(1, options?.batchSize ?? Number(process.env.CONTEXTUAL_RETRIEVAL_BATCH_SIZE || 1));
 
   const enrichedChunks: IndexedMarkdownChunk[] = [...chunks];
+  const revision = config.deploymentRevision || process.env.CONTEXTUAL_LLM_DEPLOYMENT_REVISION;
+  const cache = revision ? options?.cache : undefined;
+  const cacheIdentity = { route:config.baseUrl,revision:revision || 'unversioned',instance:instanceIdentity() };
   const budgetIndices = selectIndicesForBudget(chunks, MAX_ENRICH_CHUNKS);
   if (budgetIndices) {
     console.log(`[ContextualRetrieval] ${chunks.length} chunks exceed budget ${MAX_ENRICH_CHUNKS}; enriching a section-stratified sample of ${budgetIndices.size}.`);
@@ -179,6 +187,12 @@ export async function enrichChunksWithContext(
   const filteredIndices: number[] = [];
   for (const originalIndex of candidateIndices) {
     const chunk = enrichedChunks[originalIndex];
+    // Explicitly selective in the versioned pipeline: short fragments and
+    // anaphora may lack a subject; long self-contained blocks keep structure.
+    if (process.env.CORE_VERSIONING_ENABLED === '1' && (chunk.tokenCount ?? 0) >= 180
+      && !/(?:\b(?:this|that|these|those|it|they|above|aforementioned)\b|上述|该项|该条|此项|其)/iu.test(chunk.content)) {
+      skipCount++; continue;
+    }
     if ((chunk.tokenCount ?? 0) < MIN_CHUNK_TOKENS) {
       skipCount++;
       continue;
@@ -254,7 +268,7 @@ export async function enrichChunksWithContext(
         ].filter(Boolean).join('\n\n');
 
         const enrichOnce = async (): Promise<string | null> => {
-          const response = await fetch(`${config.baseUrl}/chat/completions`, {
+          const response = await requestFetch(`${config.baseUrl}/chat/completions`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -270,8 +284,7 @@ export async function enrichChunksWithContext(
               temperature: 0,
               max_tokens: 1200,
             }),
-            signal: AbortSignal.timeout(timeoutMs),
-          });
+          }, timeoutMs);
           if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status} ${response.statusText}`);
           }
@@ -288,12 +301,13 @@ export async function enrichChunksWithContext(
           config.modelName,
           systemPromptSingle,
           userContent,
+          cacheIdentity,
         );
         // Durable-prefix cache first: an identical request (same chunk text,
         // same section path, same neighbouring window, same model) must not pay
         // the LLM again after a retry or a re-ingest.
         try {
-          const cached = await options?.cache?.get([requestKey]);
+          const cached = await cache?.get([requestKey]);
           const cachedValue = cached?.get(requestKey);
           if (cachedValue) {
             cacheHitCount++;
@@ -301,8 +315,6 @@ export async function enrichChunksWithContext(
             enrichedChunks[originalIndex] = {
               ...chunk,
               content: prefix + chunk.content,
-              charStart: (chunk.charStart ?? 0) + prefix.length,
-              charEnd: (chunk.charEnd ?? 0) + prefix.length,
               metadata: {
                 ...chunk.metadata,
                 rawText: chunk.content,
@@ -316,7 +328,7 @@ export async function enrichChunksWithContext(
             successCount++;
             return;
           }
-        } catch (error) {
+        } catch (error) { throwAuthorizationFailure(error);
           console.warn('[ContextualRetrieval] Prefix cache lookup failed:', error);
         }
 
@@ -326,12 +338,12 @@ export async function enrichChunksWithContext(
             try {
               contextDescription = await enrichOnce();
               break;
-            } catch (error) {
+            } catch (error) { throwAuthorizationFailure(error);
               if (attempt >= maxAttempts) throw error;
               await new Promise((resolve) => setTimeout(resolve, 800 * attempt));
             }
           }
-        } catch (error) {
+        } catch (error) { throwAuthorizationFailure(error);
           console.warn(`[ContextualRetrieval] Error enriching chunk ${originalIndex}:`, error);
           failCount++;
         }
@@ -344,7 +356,7 @@ export async function enrichChunksWithContext(
         }
 
         if (contextDescription) {
-          void options?.cache
+          void cache
             ?.put([{ key: requestKey, value: contextDescription }])
             .catch(() => undefined);
           const prefix = `[上下文: ${contextDescription}]\n\n`;
@@ -386,7 +398,7 @@ export async function enrichChunksWithContext(
         ].filter(Boolean).join('\n\n');
 
         const enrichBatchOnce = async (): Promise<Record<string, string> | null> => {
-          const response = await fetch(`${config.baseUrl}/chat/completions`, {
+          const response = await requestFetch(`${config.baseUrl}/chat/completions`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -402,8 +414,7 @@ export async function enrichChunksWithContext(
               temperature: 0,
               max_tokens: 1800,
             }),
-            signal: AbortSignal.timeout(timeoutMs),
-          });
+          }, timeoutMs);
           if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status} ${response.statusText}`);
           }
@@ -435,16 +446,17 @@ export async function enrichChunksWithContext(
           config.modelName,
           systemPromptBatch,
           userContent,
+          cacheIdentity,
         );
         let parsedDescriptions: Record<string, string> | null = null;
         try {
-          const cached = await options?.cache?.get([batchRequestKey]);
+          const cached = await cache?.get([batchRequestKey]);
           const cachedValue = cached?.get(batchRequestKey);
           if (cachedValue) {
             parsedDescriptions = JSON.parse(cachedValue);
             cacheHitCount += chunkIndices.length;
           }
-        } catch (error) {
+        } catch (error) { throwAuthorizationFailure(error);
           console.warn('[ContextualRetrieval] Prefix cache lookup failed for batch:', error);
         }
         if (!parsedDescriptions) {
@@ -453,16 +465,16 @@ export async function enrichChunksWithContext(
               try {
                 parsedDescriptions = await enrichBatchOnce();
                 if (parsedDescriptions) break;
-              } catch (error) {
+              } catch (error) { throwAuthorizationFailure(error);
                 if (attempt >= maxAttempts) throw error;
                 await new Promise((resolve) => setTimeout(resolve, 800 * attempt));
               }
             }
-          } catch (error) {
+          } catch (error) { throwAuthorizationFailure(error);
             console.warn(`[ContextualRetrieval] Error enriching batch:`, error);
           }
           if (parsedDescriptions) {
-            void options?.cache
+            void cache
               ?.put([{ key: batchRequestKey, value: JSON.stringify(parsedDescriptions) }])
               .catch(() => undefined);
           }

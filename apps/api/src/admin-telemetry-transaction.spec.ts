@@ -42,6 +42,7 @@ describe('admin audit telemetry transaction boundary', () => {
     const controller = new AdminController(
       {
         getCapabilities: jest.fn().mockResolvedValue(['*']),
+        isSystemAdmin: jest.fn().mockResolvedValue(true),
         getManagedOrgIds: jest.fn().mockResolvedValue(new Set()),
         getVisibleKnowledgeBases: jest.fn().mockResolvedValue([]),
         canManageKnowledgeBases: jest.fn().mockResolvedValue(new Map()),

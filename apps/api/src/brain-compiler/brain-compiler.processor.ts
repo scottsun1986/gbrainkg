@@ -1,3 +1,4 @@
+import { runAsService } from '../db/service-principal';
 import { Processor, WorkerHost } from "@nestjs/bullmq";
 import { Job } from "bullmq";
 import { Logger, Optional, Inject } from "@nestjs/common";
@@ -42,6 +43,10 @@ export class BrainCompilerProcessor extends WorkerHost {
   }
 
   async process(job: Job<any, any, string>): Promise<any> {
+    return runAsService("brain-compiler", () => this.processInternal(job), undefined);
+  }
+
+  private async processInternal(job: Job<any, any, string>): Promise<any> {
     const db: any = this.prisma;
 
     // 1. 权限与组织对账任务

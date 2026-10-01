@@ -1,12 +1,18 @@
+import { validateHybridCapability } from './hybrid-capability';
+import { admitModelCall } from '../retrieval/model-admission';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ModelConfigService } from '../model-config.service';
 import { createHash } from 'node:crypto';
+import { embeddingFingerprint, reusableEmbeddingIdentity } from './model-fingerprint';
+import { requestFetch, requestSignal } from '../retrieval/request-signal';
+import { rethrowAuthorizationFailure } from '../permission/authorization-revision';
 
 export interface EmbeddingProviderConfig {
   baseUrl: string;
   apiKey: string;
   modelName: string;
   dimensions: number | null;
+  deploymentRevision?: string;
 }
 
 export interface SparseEmbedding {
@@ -56,7 +62,7 @@ export class EmbeddingService {
     // Model names are not globally unique. Include the route and dimensions so
     // a provider/model migration cannot reuse vectors from an incompatible
     // embedding space.
-    const route = `${config.baseUrl}|${config.modelName}|${config.dimensions ?? 'dynamic'}`;
+    const route = embeddingFingerprint(config);
     const textHash = createHash('sha256').update(String(text || '')).digest('hex').slice(0, 32);
     return `${route}:${textHash}`;
   }
@@ -66,13 +72,10 @@ export class EmbeddingService {
   }
 
   /**
-   * BGE-M3 sparse / late-interaction arms. Default ON: the sparse and
-   * ColBERT paths are fail-open (missing endpoint or dense-only gateway
-   * simply leaves those channels empty and records `recordFailopen`), so the
-   * safe default is to try. Set `BGE_M3_HYBRID_ENABLED=false` to opt out.
+   * Experimental sparse and late-interaction arms are independently opt-in.
    */
   isHybridEnabled(): boolean {
-    return process.env.BGE_M3_HYBRID_ENABLED !== 'false';
+    return process.env.BGE_M3_HYBRID_ENABLED === 'true';
   }
 
   /**
@@ -97,6 +100,7 @@ export class EmbeddingService {
         apiKey,
         modelName: config.modelName || process.env.EMBEDDING_MODEL || 'BAAI/bge-m3',
         dimensions: config.dimensions ?? Number(process.env.EMBEDDING_DIMENSIONS || 1024),
+        deploymentRevision: process.env.EMBEDDING_DEPLOYMENT_REVISION,
       };
     } catch {
       return null;
@@ -109,7 +113,7 @@ export class EmbeddingService {
     if (!config) return null;
     const cacheKey = this.cacheKey(config, text);
     const now = Date.now();
-    const cached = this.cache.get(cacheKey);
+    const cached = reusableEmbeddingIdentity(config) ? this.cache.get(cacheKey) : undefined;
     if (cached && cached.expiresAt > now) {
       this.touchCache(cacheKey, cached);
       return cached.vector;
@@ -127,7 +131,7 @@ export class EmbeddingService {
         // both doubled control-plane work and could mix routes during a model
         // migration.
         const [result] = await this.embedBatch([text], config);
-        if (result) {
+        if (result && reusableEmbeddingIdentity(config)) {
           this.touchCache(cacheKey, { vector: result, expiresAt: Date.now() + this.cacheTtlMs });
         }
         return result ?? null;
@@ -144,9 +148,9 @@ export class EmbeddingService {
    * Embed a list of texts in bounded batches with client-side caching.
    * Always returns an array aligned to the input; entries that fail are null. Never throws.
    */
-  async embed(texts: string[]): Promise<Array<number[] | null>> {
+  async embed(texts: string[], pinnedConfig?: EmbeddingProviderConfig): Promise<Array<number[] | null>> {
     if (!texts.length) return [];
-    const config = await this.getConfig();
+    const config = pinnedConfig ?? await this.getConfig();
     if (!config) return texts.map(() => null);
 
     const results: Array<number[] | null> = new Array(texts.length).fill(null);
@@ -157,7 +161,7 @@ export class EmbeddingService {
     for (let i = 0; i < texts.length; i++) {
       const text = texts[i];
       const cacheKey = this.cacheKey(config, text);
-      const cached = this.cache.get(cacheKey);
+      const cached = reusableEmbeddingIdentity(config) ? this.cache.get(cacheKey) : undefined;
       if (cached && cached.expiresAt > now) {
         this.touchCache(cacheKey, cached);
         results[i] = cached.vector;
@@ -178,7 +182,7 @@ export class EmbeddingService {
       for (let i = 0; i < batchResult.length; i++) {
         const vec = batchResult[i];
         results[batchIndices[i]] = vec;
-        if (vec) {
+        if (vec && reusableEmbeddingIdentity(config)) {
           const cacheKey = this.cacheKey(config, batchTexts[i]);
           this.touchCache(cacheKey, { vector: vec, expiresAt: now + this.cacheTtlMs });
         }
@@ -200,6 +204,7 @@ export class EmbeddingService {
     options: { lateChunking?: boolean } = {},
   ): Promise<HybridEmbedding[]> {
     if (!texts.length) return [];
+    if (options.lateChunking) throw new Error('Late chunking requires a verified shared-context/offset contract; independent text input is unsupported');
     if (!this.isHybridEnabled()) {
       return texts.map(() => ({ dense: null, sparse: null, multiVector: null }));
     }
@@ -220,7 +225,11 @@ export class EmbeddingService {
       return texts.map(() => ({ dense: null, sparse: null, multiVector: null }));
     }
     try {
-      const response = await fetch(endpoint, {
+      const revision=process.env.BGE_M3_HYBRID_DEPLOYMENT_REVISION || config?.deploymentRevision || '';
+      const capabilityResponse=await requestFetch(process.env.BGE_M3_CAPABILITIES_ENDPOINT || `${config?.baseUrl || ''}/capabilities`,{ headers:config?.apiKey ? { Authorization:`Bearer ${config.apiKey}` }:{} },3000);
+      if (!capabilityResponse.ok) throw new Error('Hybrid capability unavailable');
+      const capability=validateHybridCapability(await capabilityResponse.json(),config?.modelName || process.env.EMBEDDING_MODEL || 'BAAI/bge-m3',revision,config?.dimensions || 1024,process.env.BGE_M3_MAXSIM_ENABLED==='true');
+      const response = await requestFetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -232,11 +241,10 @@ export class EmbeddingService {
           input_type: inputType,
           return_dense: true,
           return_sparse: true,
-          return_colbert_vecs: true,
-          late_chunking: options.lateChunking === true,
+          return_colbert_vecs: process.env.BGE_M3_MAXSIM_ENABLED === 'true',
+          late_chunking: false,
         }),
-        signal: AbortSignal.timeout(Number(process.env.BGE_M3_HYBRID_TIMEOUT_MS || this.timeoutMs)),
-      });
+      }, Number(process.env.BGE_M3_HYBRID_TIMEOUT_MS || this.timeoutMs));
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const payload: any = await response.json();
       const data = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload?.embeddings) ? payload.embeddings : [];
@@ -247,18 +255,19 @@ export class EmbeddingService {
         const index = Number.isInteger(item.index) ? item.index : position;
         if (index < 0 || index >= output.length) continue;
         const rawDense = item.embedding ?? item.dense_embedding ?? item.dense_vecs;
-        const dense = Array.isArray(rawDense) ? rawDense.map(Number).filter(Number.isFinite) : null;
+        const dense = Array.isArray(rawDense) && rawDense.every((v: unknown) => Number.isFinite(Number(v)))
+          ? rawDense.map(Number) : null;
         const rawSparse = item.sparse_embedding ?? item.sparse ?? item.lexical_weights;
         let sparse: SparseEmbedding | null = null;
         if (rawSparse && Array.isArray(rawSparse.indices) && Array.isArray(rawSparse.values)) {
           const pairs = rawSparse.indices
             .map((tokenId: unknown, pairIndex: number) => ({ tokenId: Number(tokenId), value: Number(rawSparse.values[pairIndex]) }))
-            .filter((pair: any) => Number.isInteger(pair.tokenId) && Number.isFinite(pair.value) && pair.value !== 0);
+            .filter((pair: any) => Number.isInteger(pair.tokenId) && pair.tokenId>=0 && pair.tokenId<capability.vocabSize && Number.isFinite(pair.value) && pair.value>0);
           sparse = { indices: pairs.map((pair: any) => pair.tokenId), values: pairs.map((pair: any) => pair.value) };
         } else if (rawSparse && typeof rawSparse === 'object') {
           const pairs = Object.entries(rawSparse)
             .map(([tokenId, value]) => ({ tokenId: Number(tokenId), value: Number(value) }))
-            .filter((pair) => Number.isInteger(pair.tokenId) && Number.isFinite(pair.value) && pair.value !== 0);
+            .filter((pair) => Number.isInteger(pair.tokenId) && pair.tokenId>=0 && pair.tokenId<capability.vocabSize && Number.isFinite(pair.value) && pair.value>0);
           sparse = { indices: pairs.map((pair) => pair.tokenId), values: pairs.map((pair) => pair.value) };
         }
         const rawMulti = item.colbert_vecs ?? item.multi_vector ?? item.token_embeddings;
@@ -266,16 +275,17 @@ export class EmbeddingService {
           ? rawMulti.slice(0, maxTokenVectors)
               .filter(Array.isArray)
               .map((vector: unknown[]) => vector.map(Number))
-              .filter((vector: number[]) => vector.length > 0 && vector.every(Number.isFinite))
+              .filter((vector: number[]) => vector.length === capability.tokenDimensions && vector.every(Number.isFinite))
           : null;
         output[index] = {
           dense: dense && dense.length && (!config?.dimensions || dense.length === config.dimensions) ? dense : null,
           sparse: sparse?.indices.length ? sparse : null,
-          multiVector: multiVector?.length ? multiVector : null,
+          multiVector: process.env.BGE_M3_MAXSIM_ENABLED==='true' && multiVector?.length ? multiVector : null,
         };
       }
       return output;
     } catch (err) {
+      rethrowAuthorizationFailure(err);
       this.logger.warn(`BGE-M3 hybrid embedding failed: ${err instanceof Error ? err.message : String(err)}`);
       return texts.map(() => ({ dense: null, sparse: null, multiVector: null }));
     }
@@ -292,7 +302,10 @@ export class EmbeddingService {
   ): Promise<Array<number[] | null>> {
     const inputs = batch.map((text) => String(text || '').slice(0, this.maxChars));
     for (let attempt = 0; attempt < 2; attempt++) {
+      const cancellation = requestSignal(this.timeoutMs);
       try {
+        if (cancellation.signal.aborted) throw cancellation.signal.reason;
+        await admitModelCall(config.baseUrl,config.modelName,Math.ceil(inputs.reduce((sum,text) => sum+text.length,0)/3));
         const response = await fetch(`${config.baseUrl}/embeddings`, {
           method: 'POST',
           headers: {
@@ -300,7 +313,7 @@ export class EmbeddingService {
             ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
           },
           body: JSON.stringify({ model: config.modelName, input: inputs }),
-          signal: AbortSignal.timeout(this.timeoutMs),
+          signal: cancellation.signal,
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const payload: any = await response.json();
@@ -310,7 +323,7 @@ export class EmbeddingService {
           const item = data[i];
           const embedding = Array.isArray(item?.embedding) ? item.embedding.map(Number) : null;
           const index = Number.isInteger(item?.index) ? item.index : i;
-          if (embedding && embedding.length > 0 && index >= 0 && index < output.length) {
+          if (embedding && embedding.every(Number.isFinite) && embedding.length > 0 && index >= 0 && index < output.length) {
             if (config.dimensions && embedding.length !== config.dimensions) {
               // Skip the offending item only. Discarding the whole batch made a
               // single malformed vector cost a 32x retry and left 31 good
@@ -325,6 +338,8 @@ export class EmbeddingService {
         }
         return output;
       } catch (err) {
+        rethrowAuthorizationFailure(err);
+        if (cancellation.signal.aborted) throw err;
         if (attempt === 1) {
           this.logger.warn(
             `Embedding batch failed (${batch.length} inputs): ${err instanceof Error ? err.message : String(err)}`,
@@ -332,7 +347,7 @@ export class EmbeddingService {
           void import('../observability/failopen').then(({ recordFailopen }) => recordFailopen('embedding_batch')).catch(() => undefined);
           return new Array(batch.length).fill(null);
         }
-      }
+      } finally { cancellation.dispose(); }
     }
     return new Array(batch.length).fill(null);
   }

@@ -209,7 +209,7 @@ describe('MFA/TOTP two-step login', () => {
 
   describe('requireMfaForAdmins', () => {
     it('admin without MFA is forced into setup instead of receiving a token', async () => {
-      userState.roles = [{ role: { name: '超级管理员', builtin: false } }] as any;
+      userState.roles = [{ role: { name: 'renamed display label', code: 'super_admin', builtin: false } }] as any;
       (prisma as any).systemSetting.findUnique = jest
         .fn()
         .mockResolvedValue({ key: 'requireMfaForAdmins', value: 'true' });

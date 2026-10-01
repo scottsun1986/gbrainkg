@@ -13,8 +13,14 @@
 
 export class RetrievalDeadline {
   private readonly startedAt = Date.now();
+  private readonly cancellation = new AbortController();
+  get signal(): AbortSignal { return this.cancellation.signal; }
+  abort(reason?: unknown): void { this.cancellation.abort(reason); }
 
-  constructor(private readonly totalMs: number) {}
+  constructor(private totalMs: number, private readonly ceilingMs = totalMs) {}
+  extendTo(totalMs: number): void {
+    if (!this.expired()) this.totalMs=Math.max(this.totalMs,Math.min(totalMs,this.ceilingMs));
+  }
 
   /** Milliseconds left before the whole retrieval pass must give up. */
   remainingMs(): number {
@@ -22,7 +28,7 @@ export class RetrievalDeadline {
   }
 
   expired(): boolean {
-    return this.remainingMs() <= 0;
+    return this.signal.aborted || this.remainingMs() <= 0;
   }
 
   /** Budget for one arm: never more than the remaining global budget. */
@@ -34,15 +40,23 @@ export class RetrievalDeadline {
    * Resolve with the promise result, or with `fallback` when the deadline
    * passes first. Retrieval prefers a partial answer over a hung request.
    */
-  async guard<T>(promise: Promise<T>, fallback: T, label?: string): Promise<T> {
+  async guard<T>(task: (signal: AbortSignal) => Promise<T>, fallback: T, label?: string): Promise<T> {
     const budget = this.remainingMs();
-    if (budget <= 0) return fallback;
+    if (budget <= 0 || this.signal.aborted) { this.cancellation.abort(); return fallback; }
     let timer: NodeJS.Timeout | undefined;
     try {
       return await Promise.race([
-        promise.catch(() => fallback),
+        Promise.resolve().then(() => task(this.signal)).catch(error => {
+          if (error?.getStatus?.() === 403 || error?.getStatus?.() === 503) throw error;
+          return fallback;
+        }),
         new Promise<T>((resolve) => {
-          timer = setTimeout(() => resolve(fallback), budget);
+          const expire = () => {
+            const remaining=this.remainingMs();
+            if (remaining > 0 && !this.signal.aborted) { timer=setTimeout(expire,remaining); timer.unref?.(); return; }
+            this.cancellation.abort(new Error(`Retrieval deadline: ${label || 'arm'}`)); resolve(fallback);
+          };
+          timer = setTimeout(expire, budget);
           timer.unref?.();
         }),
       ]);
@@ -57,7 +71,9 @@ export class Bulkhead {
   private active = 0;
   private readonly waiting: Array<() => void> = [];
 
-  constructor(private readonly limit: number, private readonly queueLimit = Number(process.env.RETRIEVAL_QUEUE_LIMIT || 200)) {}
+  constructor(private readonly limit: number, private readonly queueLimit = Number(process.env.RETRIEVAL_QUEUE_LIMIT || 200)) {
+    if (!Number.isInteger(limit) || limit < 1 || !Number.isInteger(queueLimit) || queueLimit < 0) throw new Error('Invalid bulkhead capacity');
+  }
 
   get pending(): number {
     return this.waiting.length;
@@ -94,6 +110,7 @@ export class Bulkhead {
       this.active += 1;
       return Promise.resolve();
     }
+    if (this.waiting.length >= this.queueLimit) return Promise.reject(new Error('Resource queue capacity exhausted'));
     return new Promise<void>((resolve) => {
       this.waiting.push(() => {
         this.active += 1;

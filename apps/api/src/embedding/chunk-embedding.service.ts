@@ -5,6 +5,7 @@ import { getPrismaClient } from '../prisma';
 import { EmbeddingService } from './embedding.service';
 import { indexableChunkText } from '../ingestion/chunk-text';
 import { formatVectorValues, withServiceContext } from '../db/tenant-context.service';
+import { embeddingFingerprint, hybridFingerprint, reusableEmbeddingIdentity } from './model-fingerprint';
 
 export interface EmbedDocumentChunksResult {
   requested: number;
@@ -115,19 +116,19 @@ export class ChunkEmbeddingService {
 
   /**
    * Populate learned sparse postings and ColBERT token vectors for one
-   * document. The provider receives the ordered chunk batch with
-   * `late_chunking=true`; gateways that implement BGE-M3 late chunking can pool
-   * from the shared document encoding, while simpler gateways may return the
-   * same aligned hybrid representation without breaking the pipeline.
+   * document. Optional representations never overwrite the core dense space.
+   * Independent strings are not a shared-context late-chunking contract.
    */
   async indexHybridDocument(documentId: string): Promise<{ requested: number; indexed: number }> {
     if (!this.embeddingService.isHybridEnabled?.()) return { requested: 0, indexed: 0 };
+    const config = await this.embeddingService.getConfig?.();
+    const fingerprint = config ? hybridFingerprint(config) : null;
     const rows: any = await withServiceContext(this.prisma, (tx) =>
       tx.$queryRaw<Array<{ id: string; content: string; ord: number }>>`
       SELECT c.id, c.content, c.ord
       FROM "Chunk" c
       WHERE c."documentId" = ${documentId}::uuid
-        AND c.hybrid_indexed = false
+        AND (c.hybrid_indexed = false OR c.hybrid_fingerprint IS DISTINCT FROM ${fingerprint})
       ORDER BY c.ord ASC
     `);
     if (!rows.length) return { requested: 0, indexed: 0 };
@@ -138,7 +139,7 @@ export class ChunkEmbeddingService {
       const representations = await this.embeddingService.embedHybrid(
         slice.map((row: any) => indexableChunkText(row.content)),
         'document',
-        { lateChunking: process.env.BGE_M3_LATE_CHUNKING !== 'false' },
+        { lateChunking: false },
       );
       for (let index = 0; index < slice.length; index += 1) {
         const row = slice[index];
@@ -167,8 +168,9 @@ export class ChunkEmbeddingService {
             await (tx as any).$executeRaw`
               UPDATE "Chunk"
               SET multi_vector = ${representation.multiVector ? JSON.stringify(representation.multiVector) : null}::jsonb,
-                  late_context = ${process.env.BGE_M3_LATE_CHUNKING !== 'false'},
-                  hybrid_indexed = ${Boolean(sparseRows.length && representation.multiVector?.length)},
+                  late_context = false,
+                  hybrid_indexed = ${Boolean(sparseRows.length)},
+                  hybrid_fingerprint = ${fingerprint},
                   metadata = jsonb_set(
                     jsonb_set(COALESCE(metadata, '{}'::jsonb), '{canonical_block,retrieval,sparse}',
                       ${sparseRows.length > 0 ? 'true' : 'false'}::jsonb, true),
@@ -177,14 +179,8 @@ export class ChunkEmbeddingService {
                   )
               WHERE id = ${row.id}::uuid
             `;
-            if (representation.dense?.length) {
-              const literal = `[${representation.dense.join(',')}]`;
-              await (tx as any).$executeRaw`
-                UPDATE "Chunk" SET embedding = ${literal}::vector WHERE id = ${row.id}::uuid
-              `;
-            }
           });
-          if (sparseRows.length && representation.multiVector?.length) indexed += 1;
+          if (sparseRows.length) indexed += 1;
         } catch (err) {
           // Migration/provider rollout is fail-open: dense+BM25 remains live.
           this.logger.debug(
@@ -258,9 +254,12 @@ export class ChunkEmbeddingService {
 
   private async embedAndStore(
     rows: Array<{ id: string; content: string }>,
+    table: 'Chunk' | 'BlockArtifact' = 'Chunk',
   ): Promise<{ stored: number; failed: number }> {
     let stored = 0;
     let failed = 0;
+    const config = await this.embeddingService.getConfig?.();
+    const fingerprint = config ? embeddingFingerprint(config) : null;
     for (let start = 0; start < rows.length; start += this.writeBatchSize) {
       const slice = rows.slice(start, start + this.writeBatchSize);
 
@@ -272,7 +271,7 @@ export class ChunkEmbeddingService {
       const existingVecByContent = new Map<string, string>();
       try {
         const uniqueContents = Array.from(new Set(slice.map((r: any) => r.content))).filter(Boolean);
-        if (uniqueContents.length > 0) {
+        if (uniqueContents.length > 0 && fingerprint && config && reusableEmbeddingIdentity(config)) {
           const contentByHash = new Map<string, string>();
           for (const content of uniqueContents) {
             contentByHash.set(createHash('md5').update(content).digest('hex'), content);
@@ -283,6 +282,11 @@ export class ChunkEmbeddingService {
             SELECT DISTINCT ON (md5(content)) md5(content) AS hash, embedding::text as vec
             FROM "Chunk"
             WHERE md5(content) = ANY(${hashes}::text[]) AND embedding IS NOT NULL
+              AND embedding_fingerprint = ${fingerprint}
+            UNION ALL
+            SELECT DISTINCT ON (md5(content)) md5(content) AS hash, embedding::text as vec
+            FROM "BlockArtifact" WHERE md5(content) = ANY(${hashes}::text[])
+              AND embedding IS NOT NULL AND embedding_fingerprint = ${fingerprint}
           `);
           for (const c of cached || []) {
             const content = c.hash ? contentByHash.get(c.hash) : undefined;
@@ -312,13 +316,16 @@ export class ChunkEmbeddingService {
       }
 
       if (neededTexts.length > 0) {
-        let vectors = await this.embeddingService.embed(neededTexts);
+        let vectors = config ? await this.embeddingService.embed(neededTexts, config)
+          : await this.embeddingService.embed(neededTexts);
         const missingAfterFirst: number[] = [];
         for (let i = 0; i < neededTexts.length; i++) {
           if (!vectors[i] || !vectors[i]!.length) missingAfterFirst.push(i);
         }
         if (missingAfterFirst.length) {
-          const retry = await this.embeddingService.embed(missingAfterFirst.map((i) => neededTexts[i]));
+          const retryTexts = missingAfterFirst.map((i) => neededTexts[i]);
+          const retry = config ? await this.embeddingService.embed(retryTexts, config)
+            : await this.embeddingService.embed(retryTexts);
           missingAfterFirst.forEach((neededIdx, k) => {
             vectors[neededIdx] = retry[k] ?? vectors[neededIdx];
           });
@@ -357,10 +364,9 @@ export class ChunkEmbeddingService {
             const values = formatVectorValues(validStore);
             await withServiceContext(this.prisma, (tx) =>
               (tx as any).$executeRaw`
-              UPDATE "Chunk" AS c
-              SET embedding = v.vec,
-                  metadata = jsonb_set(COALESCE(c.metadata, '{}'::jsonb),
-                    '{canonical_block,retrieval,dense}', 'true'::jsonb, true)
+              UPDATE ${Prisma.raw(`"${table}"`)} AS c
+              SET embedding = v.vec, embedding_fingerprint = ${fingerprint}
+                  ${Prisma.raw(table === 'Chunk' ? ", metadata = jsonb_set(COALESCE(c.metadata, '{}'::jsonb), '{canonical_block,retrieval,dense}', 'true'::jsonb, true)" : '')}
               FROM (VALUES ${Prisma.raw(values)}) AS v(id, vec)
               WHERE c.id = v.id
             `);
@@ -377,10 +383,9 @@ export class ChunkEmbeddingService {
             try {
               await withServiceContext(this.prisma, (tx) =>
                 (tx as any).$executeRaw`
-                UPDATE "Chunk"
-                SET embedding = ${item.vec}::vector,
-                    metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb),
-                      '{canonical_block,retrieval,dense}', 'true'::jsonb, true)
+                UPDATE ${Prisma.raw(`"${table}"`)}
+                SET embedding = ${item.vec}::vector, embedding_fingerprint = ${fingerprint}
+                    ${Prisma.raw(table === 'Chunk' ? ", metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{canonical_block,retrieval,dense}', 'true'::jsonb, true)" : '')}
                 WHERE id = ${item.id}::uuid
               `);
               stored += 1;
@@ -396,6 +401,39 @@ export class ChunkEmbeddingService {
     }
     if (stored) this.logger.log(`Stored ${stored}/${rows.length} chunk embeddings.`);
     return { stored, failed };
+  }
+
+  async embedVersionArtifacts(versionId: string): Promise<{ fingerprint: string; missing: number }> {
+    const config = await this.embeddingService.getConfig();
+    if (!config) throw new Error('Embedding model configuration is required for publication');
+    if (!reusableEmbeddingIdentity(config)) {
+      if (process.env.ALLOW_UNVERSIONED_EMBEDDING_PUBLICATION !== 'true') throw new Error('Immutable embedding deployment revision required for publication');
+      // Hosted dense-only APIs may not expose weight revisions. Permit fresh
+      // per-version outputs explicitly, retaining immutable vector snapshots;
+      // reusableEmbeddingIdentity stays false, so neither persistent nor memory
+      // cross-request vector reuse is enabled and no known revision is invented.
+      this.logger.warn('Publishing fresh version vectors with an unversioned hosted provider; cross-version embedding reuse remains disabled');
+    }
+    const fingerprint = embeddingFingerprint(config);
+    let cursor = -1;
+    for (;;) {
+      const rows: any[] = await withServiceContext(this.prisma, tx => tx.$queryRaw`
+        SELECT id,ord,content FROM "BlockArtifact"
+        WHERE "versionId"=${versionId}::uuid AND ord>${cursor}
+          AND (embedding IS NULL OR embedding_fingerprint IS DISTINCT FROM ${fingerprint})
+        ORDER BY ord LIMIT ${this.readBatchSize}
+      `);
+      if (!rows.length) break;
+      cursor = rows[rows.length - 1].ord;
+      await this.embedAndStore(rows, 'BlockArtifact');
+    }
+    const current = await this.embeddingService.getConfig();
+    if (!current || embeddingFingerprint(current) !== fingerprint) throw new Error('Embedding model changed during generation');
+    const rows: any[] = await withServiceContext(this.prisma, tx => tx.$queryRaw`
+      SELECT count(*) FILTER (WHERE embedding IS NULL OR embedding_fingerprint IS DISTINCT FROM ${fingerprint})::int AS missing
+      FROM "BlockArtifact" WHERE "versionId"=${versionId}::uuid
+    `);
+    return { fingerprint, missing: Number(rows[0]?.missing || 0) };
   }
 
   async coverage(): Promise<{ total: number; embedded: number }> {

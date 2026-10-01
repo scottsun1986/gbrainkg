@@ -68,7 +68,7 @@ function boundedInteger(value: unknown, field: string, min: number, max: number)
 // 生成、无法硬编码，因此在此以名称集中维护"显示名 → 受保护身份"的映射。判定不得
 // 依赖 builtin 标记：builtin 只是种子数据属性，自定义角色一旦被误置为 builtin: true
 // 就会形成提权漏洞。
-const PROTECTED_ROLE_NAMES = new Set(["超级管理员", "系统管理员"]);
+const PROTECTED_ROLE_CODES = new Set(['super_admin', 'system_admin']);
 const ORG_ADMIN_ROLE_NAME = "组织管理员";
 const BASIC_USER_ROLE_NAME = "普通用户";
 
@@ -499,7 +499,7 @@ export class AdminController {
     const auditWindow = Math.min(1000, auditPage * auditLimit);
     const adminId = await this.authService.userIdFromRequest(req);
     const capabilities = await this.permissionService.getCapabilities(adminId);
-    const isSystemAdmin = capabilities.includes("*");
+    const isSystemAdmin = await this.permissionService.isSystemAdmin(adminId);
     const managedOrgIds =
       await this.permissionService.getManagedOrgIds(adminId);
     const directIndustryScopeCount = await this.prisma.knowledgeBase.count({
@@ -719,7 +719,7 @@ export class AdminController {
         // 仅按受保护角色名判定，不再信任 builtin 标记（自定义角色可能被误置
         // builtin: 名称集合见文件顶部 PROTECTED_ROLE_NAMES 注释）。
         const isTargetSystemAdmin = user.roles.some(
-          (r: any) => r.role?.name !== undefined && PROTECTED_ROLE_NAMES.has(r.role.name),
+          (r: any) => PROTECTED_ROLE_CODES.has(r.role?.code),
         );
         const canManage =
           isSystemAdmin ||
@@ -2110,12 +2110,12 @@ export class AdminController {
     if (!roleIds || !roleIds.length) return;
     const roles = await this.prisma.role.findMany({
       where: { id: { in: roleIds } },
-      select: { id: true, name: true, builtin: true, permissions: true },
+      select: { id: true, name: true, code: true, builtin: true, permissions: true },
     });
     if (
       roles.some(
         (role) =>
-          PROTECTED_ROLE_NAMES.has(role.name) ||
+          PROTECTED_ROLE_CODES.has(role.code || '') ||
           (Array.isArray(role.permissions) && role.permissions.includes("*")),
       )
     ) {

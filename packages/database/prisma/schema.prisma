@@ -60,6 +60,7 @@ model OrgNode {
 // 角色
 model Role {
   id          String     @id @default(uuid()) @db.Uuid
+  code        String?    @unique
   name        String     @unique
   description String?
   builtin     Boolean    @default(false)
@@ -162,11 +163,21 @@ model Document {
   storageProvider String @default("local") // local/minio
   objectKey    String?
   sensitivity  String   @default("internal") // public/internal/secret
+  aclMode      String   @default("inherit") // inherit/restricted; empty restricted ACL denies
   language     String?
   contentHash  String?
   sourceExternalId String?
+  sourceConnectorId String? @db.Uuid
+  sourceExternalRevision String?
+  sourceExternalAcl Json?
+  sourceAclSyncStatus String @default("unknown")
+  sourceAclSyncedAt DateTime?
   sourceCursor String?
   version      Int      @default(1)
+  ingestVersion Int?    @default(1) // pending input version; published version remains stable
+  pendingRawFileOid String?
+  pendingTitle String?
+  pendingContentHash String?
   gitCommit    String?
   uploadedById String?  @db.Uuid
   status       String   @default("parsing") // parsing/parsed/indexing/published/failed
@@ -182,6 +193,8 @@ model Document {
   supersedesDocumentId String? @db.Uuid
   // 富化索引就绪状态机: legacy(历史数据) / pending(已发布待富化) / enriching / ready / degraded
   indexReadiness String @default("legacy")
+  activeVersionId String? @db.Uuid
+  buildingVersionId String? @db.Uuid
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -192,6 +205,9 @@ model Document {
   brainSourceDocuments BrainSourceDocument[]
   raptorNodes  RaptorNode[]
   aclEntries   DocumentAcl[]
+  versions     DocumentVersion[] @relation("DocumentVersions")
+  activeVersion DocumentVersion? @relation("ActiveDocumentVersion", fields: [activeVersionId], references: [id], onDelete: SetNull)
+  buildingVersion DocumentVersion? @relation("BuildingDocumentVersion", fields: [buildingVersionId], references: [id], onDelete: SetNull)
   versionFrom  DocumentVersionLink[] @relation("VersionFrom")
   versionTo    DocumentVersionLink[] @relation("VersionTo")
 
@@ -200,6 +216,74 @@ model Document {
   @@index([kbId, status, updatedAt(sort: Desc)])
   @@index([kbId, lifecycleStatus, effectiveFrom])
   @@index([indexReadiness])
+}
+
+/// Immutable source versions; Chunk remains the atomically published read projection.
+model DocumentVersion {
+  id String @id @default(uuid()) @db.Uuid
+  documentId String @db.Uuid
+  number Int
+  state String @default("parsed")
+  sourceHash String?
+  parserFingerprint String
+  chunkerFingerprint String
+  manifestHash String
+  mdPath String
+  title String
+  publicationData Json
+  createdAt DateTime @default(now())
+  publishedAt DateTime?
+  document Document @relation("DocumentVersions", fields: [documentId], references: [id], onDelete: Cascade)
+  activeFor Document[] @relation("ActiveDocumentVersion")
+  buildingFor Document[] @relation("BuildingDocumentVersion")
+  blocks BlockArtifact[]
+  generations IndexGeneration[]
+  @@unique([documentId, number])
+  @@index([state, createdAt])
+}
+
+model BlockArtifact {
+  id String @id @default(uuid()) @db.Uuid
+  versionId String @db.Uuid
+  ord Int
+  content String
+  rawContent String?
+  tokenCount Int
+  charStart Int
+  charEnd Int
+  rawHash String
+  indexTextHash String
+  metadata Json?
+  version DocumentVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  @@unique([versionId, ord])
+  @@index([indexTextHash])
+  originalSnapshot OriginalBlockSnapshot?
+}
+
+model IndexGeneration {
+  id String @id @default(uuid()) @db.Uuid
+  versionId String @db.Uuid
+  channel String
+  modelFingerprint String
+  projectionFingerprint String
+  manifestHash String
+  expectedCount Int
+  readyCount Int @default(0)
+  state String @default("pending")
+  version DocumentVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  @@unique([versionId, channel, modelFingerprint, projectionFingerprint])
+}
+
+model ArtifactDependency {
+  id String @id @default(uuid()) @db.Uuid
+  artifactId String
+  artifactKind String
+  sourceDocumentId String @db.Uuid
+  sourceVersionId String? @db.Uuid
+  sourceBlockId String? @db.Uuid
+  sourceHash String
+  @@index([artifactId, artifactKind])
+  @@index([sourceDocumentId])
 }
 
 model EnrichmentStage {
@@ -330,6 +414,7 @@ model Message {
   role             String   // user/assistant/system
   content          String
   citationsSummary Json?
+  dependencyManifest Json?
   processingTrace  Json?
   latencyMs        Int?
   feedback         String?
@@ -719,6 +804,7 @@ model SemanticCache {
   cacheFingerprint String?
   responseContent  String
   citations        Json?
+  dependencyManifest Json?
   processingTrace  Json?
   modelName        String?
   hitCount         Int      @default(0)
@@ -774,4 +860,21 @@ model SystemSetting {
   key       String   @id
   value     String
   updatedAt DateTime @default(now()) @updatedAt
+}
+
+
+// Verified original spans for legacy immutable blocks; existing block IDs and
+// published version inputs are retained. No enriched index text is copied here.
+model OriginalBlockSnapshot {
+  blockId String @id @db.Uuid
+  versionId String @db.Uuid
+  charStart Int
+  charEnd Int
+  rawContent String
+  rawHash String
+  parsedHash String
+  sourcePath String
+  createdAt DateTime @default(now())
+  block BlockArtifact @relation(fields: [blockId], references: [id], onDelete: Cascade)
+  @@index([versionId])
 }

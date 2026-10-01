@@ -1,3 +1,6 @@
+import { requestFetch } from '../retrieval/request-signal';
+import { rethrowAuthorizationFailure as throwAuthorizationFailure } from '../permission/authorization-revision';
+import { modelArtifactKey, readModelArtifact, saveModelArtifact } from '../embedding/model-artifact-cache';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -7,6 +10,8 @@ import { EmbeddingService } from '../embedding/embedding.service';
 import { ModelConfigService } from '../model-config.service';
 import { withServiceContext } from '../db/tenant-context.service';
 import { recordFailopen } from '../observability/failopen';
+import { randomUUID } from 'node:crypto';
+import { reconcileIncrementalGraph,communityInputFingerprint,withCommunityInputs } from './incremental-projection';
 
 export type EntityType = 'concept' | 'organization' | 'system' | 'policy' | 'person' | 'document';
 export type RelationType = 'contains' | 'references' | 'regulates' | 'depends_on' | 'relates_to' | 'mentions' | 'supersedes' | 'amends';
@@ -98,12 +103,41 @@ export class GraphRagService {
    * Falls back to a direct synchronous rebuild when no queue is assembled
    * (unit tests, or a deployment without Redis) so behaviour is unchanged there.
    */
+  /** Coalesced reconciliation reuses per-block full-prompt model artifacts. */
+  async reconcileProjectionForKb(kbId: string): Promise<void> {
+    if (process.env.CORE_VERSIONING_ENABLED !== '1') return;
+    if (process.env.CORE_GRAPH_INCREMENTAL_ENABLED === '1') {
+      const config=await this.modelConfigService?.getDefault('llm');
+      const llm=config ? { baseUrl:config.provider.baseUrl,apiKey:config.provider.apiKey || '',modelName:config.modelName } : null;
+      const revision=process.env.GRAPH_LLM_DEPLOYMENT_REVISION;
+      const identity=['graph-shards-v1',llm?.baseUrl,llm?.modelName,revision,
+        Object.entries(process.env).filter(([key])=>(key.startsWith('GRAPHRAG_') || key.startsWith('AUTO_GRAPH_')) && !/(KEY|TOKEN|SECRET|PASSWORD)/.test(key)).sort(([a],[b])=>a.localeCompare(b))];
+      const result=await reconcileIncrementalGraph(this.prisma,kbId,identity,!llm || !!revision,
+        doc=>this.extractGraphElementsHybrid(doc.title,doc.id,doc.chunks,doc.version,llm));
+      this.logger.log(`Incremental graph ${kbId}: extracted=${result.extracted}, changed=${result.changed}`);
+      return;
+    }
+    const docs = await this.prisma.document.findMany({ where:{ kbId,status:'published' }, select:{ id:true,title:true,version:true,chunks:{ orderBy:{ ord:'asc' },take:Number(process.env.AUTO_GRAPH_EXTRACT_MAX_CHUNKS || 50), select:{ id:true,content:true,metadata:true } } }, orderBy:{ id:'asc' } });
+    const config = await this.modelConfigService?.getDefault('llm');
+    const llm = config ? { baseUrl:config.provider.baseUrl,apiKey:config.provider.apiKey || '',modelName:config.modelName } : null;
+    const inputs = [];
+    for (const doc of docs) inputs.push(await this.extractGraphElementsHybrid(doc.title,doc.id,doc.chunks,doc.version,llm));
+    // Prepare all inputs before removing stale navigation. Facts continue through the core projection.
+    await this.prisma.$transaction(async tx => {
+      await tx.graphCommunity.deleteMany({ where:{ kbId } });
+      await tx.graphRelation.deleteMany({ where:{ kbId } });
+      await tx.graphEntity.deleteMany({ where:{ kbId } });
+    });
+    for (const input of inputs) await this.persistGraphElements(kbId,input);
+  }
+
   async scheduleCommunityRebuild(kbId: string): Promise<void> {
     const debounceMs = Math.max(
       0,
       Number(process.env.GRAPHRAG_COMMUNITY_DEBOUNCE_MS || 15_000),
     );
     if (!this.communityQueue || typeof this.communityQueue.add !== 'function') {
+      await this.reconcileProjectionForKb(kbId);
       await this.buildCommunitiesForKb(kbId, { incremental: true }).catch(() => undefined);
       return;
     }
@@ -120,12 +154,13 @@ export class GraphRagService {
           backoff: { type: 'exponential', delay: 30_000 },
         },
       );
-    } catch (err) {
+    } catch (err) { throwAuthorizationFailure(err);
       // A queue outage must not fail document enrichment: fall back to the
       // (more expensive but correct) synchronous rebuild.
       this.logger.warn(
         `Community rebuild enqueue failed for KB ${kbId}, rebuilding inline: ${err instanceof Error ? err.message : String(err)}`,
       );
+      await this.reconcileProjectionForKb(kbId);
       await this.buildCommunitiesForKb(kbId, { incremental: true }).catch(() => undefined);
     }
   }
@@ -418,6 +453,8 @@ ${chunkContent.slice(0, 4000)}
 4. 过滤掉过于泛化的词（如"内容"、"文档"、"目录"等）
 5. 只输出 JSON，不要其他内容`;
 
+    const artifactKey = modelArtifactKey(llmConfig.baseUrl, llmConfig.modelName, process.env.GRAPH_LLM_DEPLOYMENT_REVISION,
+      ['graph-extraction-v1', '你是一个专业的知识图谱构建助手。只输出合法的 JSON。', prompt, 0, 1500]);
     try {
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
@@ -425,7 +462,9 @@ ${chunkContent.slice(0, 4000)}
       };
       // OpenCode Zen Go requires a routing session header.
       if (llmConfig.baseUrl.includes('opencode.ai')) headers['x-opencode-session'] = 'llmwiki-graph';
-      const response = await fetch(`${llmConfig.baseUrl}/chat/completions`, {
+      let parsed = await readModelArtifact(artifactKey);
+      if (!parsed) {
+      const response = await requestFetch(`${llmConfig.baseUrl}/chat/completions`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -438,8 +477,7 @@ ${chunkContent.slice(0, 4000)}
           max_tokens: 1500,
           response_format: { type: 'json_object' },
         }),
-        signal: AbortSignal.timeout(20000),
-      });
+      }, 20000);
 
       if (!response.ok) {
         this.logger.warn(`LLM entity extraction failed: HTTP ${response.status}`);
@@ -453,7 +491,11 @@ ${chunkContent.slice(0, 4000)}
       const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
       if (jsonMatch) content = jsonMatch[1].trim();
       
-      const parsed = JSON.parse(content);
+      parsed = JSON.parse(content);
+      if (!Array.isArray(parsed.entities) || !Array.isArray(parsed.relations)) throw new Error('Invalid graph extraction contract');
+      await saveModelArtifact(artifactKey, 'graph_extraction', parsed);
+      }
+
       
       const entities: ExtractedEntity[] = [];
       const relations: ExtractedRelation[] = [];
@@ -497,7 +539,7 @@ ${chunkContent.slice(0, 4000)}
 
       this.logger.log(`LLM extracted ${entities.length} entities, ${relations.length} relations from chunk`);
       return { entities, relations };
-    } catch (err) {
+    } catch (err) { throwAuthorizationFailure(err);
       this.logger.warn(`LLM entity extraction error: ${err instanceof Error ? err.message : String(err)}`);
       return { entities: [], relations: [] };
     }
@@ -559,6 +601,7 @@ ${chunkContent.slice(0, 4000)}
         ),
       );
       for (const result of results) {
+        if (result.status === 'rejected') throwAuthorizationFailure(result.reason);
         if (result.status === 'fulfilled') {
           allLlmEntities.push(...result.value.entities);
           allLlmRelations.push(...result.value.relations);
@@ -923,7 +966,7 @@ ${chunkContent.slice(0, 4000)}
            OR position(seed.name in candidate.name) > 0
            OR position(candidate.name in seed.name) > 0
       `)) || [];
-    } catch (err) {
+    } catch (err) { throwAuthorizationFailure(err);
       this.logger.debug(
         `Entity alias candidate lookup failed (continuing without resolution): ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -1059,7 +1102,7 @@ ${chunkContent.slice(0, 4000)}
         );
       }
       return result;
-    } catch (err) {
+    } catch (err) { throwAuthorizationFailure(err);
       this.logger.warn(
         `Graph cleanup failed for document ${documentId} in KB ${kbId}: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -1083,12 +1126,18 @@ ${chunkContent.slice(0, 4000)}
       },
     });
 
-    if (!entities.length) return 0;
+    if (!entities.length) {
+      if (process.env.CORE_GRAPH_INCREMENTAL_ENABLED === '1') await this.prisma.graphCommunity.deleteMany({ where:{ kbId } });
+      return 0;
+    }
 
     const entityById = new Map<string, any>(entities.map((e: any) => [e.id, e]));
     const communities = this.clusterEntitiesForCommunities(entities, entityById, kbId);
 
-    if (!communities.length) return 0;
+    if (!communities.length) {
+      if (process.env.CORE_GRAPH_INCREMENTAL_ENABLED === '1') await this.prisma.graphCommunity.deleteMany({ where:{ kbId } });
+      return 0;
+    }
 
     return this.rebuildCommunitiesFromClusters(kbId, communities, options);
   }
@@ -1208,7 +1257,8 @@ ${chunkContent.slice(0, 4000)}
     communities: Array<any[]>,
     options?: { incremental?: boolean },
   ): Promise<number> {
-
+    const summaryConfig=process.env.CORE_GRAPH_INCREMENTAL_ENABLED === '1' && process.env.GRAPHRAG_COMMUNITY_SUMMARY_LLM !== 'false' ? await this.getLlmConfig() : null;
+    const summaryIdentity=summaryConfig ? [summaryConfig.baseUrl,summaryConfig.modelName,process.env.GRAPH_LLM_DEPLOYMENT_REVISION || randomUUID()] : ['deterministic-summary-v1'];
     if (options?.incremental) {
       // Incremental Community Self-Healing:
       // Compare newly computed clusters against existing communities in database.
@@ -1216,6 +1266,7 @@ ${chunkContent.slice(0, 4000)}
       const existing = await (this.prisma as any).graphCommunity.findMany({ where: { kbId } });
       const existingMap = new Map<string, any>();
       for (const comm of existing || []) {
+        if (process.env.CORE_GRAPH_INCREMENTAL_ENABLED === '1' && comm.level !== 0) continue;
         const key = Array.isArray(comm.entityIds) ? [...comm.entityIds].sort().join(",") : "";
         if (key) existingMap.set(key, comm);
       }
@@ -1226,7 +1277,7 @@ ${chunkContent.slice(0, 4000)}
       for (const cluster of communities) {
         const key = cluster.map((e: any) => e.id).sort().join(",");
         const matched = existingMap.get(key);
-        if (matched) {
+        if (matched && (process.env.CORE_GRAPH_INCREMENTAL_ENABLED !== '1' || matched.fingerprint===communityInputFingerprint(cluster,summaryIdentity))) {
           keptCommunityIds.add(matched.id);
         } else {
           clustersToCreate.push(cluster);
@@ -1234,7 +1285,7 @@ ${chunkContent.slice(0, 4000)}
       }
 
       // Delete only obsolete communities that were modified or merged
-      const toDelete = (existing || []).filter((c: any) => !keptCommunityIds.has(c.id)).map((c: any) => c.id);
+      const toDelete = (existing || []).filter((c:any)=>process.env.CORE_GRAPH_INCREMENTAL_ENABLED !== '1' || c.level === 0).filter((c: any) => !keptCommunityIds.has(c.id)).map((c: any) => c.id);
       if (toDelete.length > 0) {
         await (this.prisma as any).graphCommunity.deleteMany({
           where: { id: { in: toDelete } },
@@ -1249,7 +1300,7 @@ ${chunkContent.slice(0, 4000)}
         const mainTitle = titles.slice(0, 3).join(" / ") + ` (增量社区 ${created + 1})`;
         const { summary, findings } = await this.summarizeCommunity(cluster, mainTitle);
 
-        const comm = await (this.prisma as any).graphCommunity.create({
+        const createCommunity = () => (this.prisma as any).graphCommunity.create({
           data: {
             kbId,
             title: mainTitle,
@@ -1257,8 +1308,11 @@ ${chunkContent.slice(0, 4000)}
             summary,
             entityIds: cluster.map((e: any) => e.id),
             findings,
+            ...(process.env.CORE_GRAPH_INCREMENTAL_ENABLED === '1' ? { fingerprint:communityInputFingerprint(cluster,summaryIdentity) } : {}),
           },
         });
+        const comm:any = process.env.CORE_GRAPH_INCREMENTAL_ENABLED === '1'
+          ? await withCommunityInputs(this.prisma,cluster,createCommunity) : await createCommunity();
         createdCommunities.push({ id: comm.id, text: `${mainTitle}\n${summary}` });
         created++;
       }
@@ -1274,12 +1328,13 @@ ${chunkContent.slice(0, 4000)}
               WHERE id = ${createdCommunities[i].id}::uuid
             `);
           }
-        } catch (err) {
+        } catch (err) { throwAuthorizationFailure(err);
           this.logger.debug(`Community embedding skipped: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
 
       this.logger.log(`Incrementally healed ${created} GraphRAG communities for KB ${kbId} (created ${clustersToCreate.length}, pruned ${toDelete.length})`);
+      if (process.env.CORE_GRAPH_INCREMENTAL_ENABLED === '1' && !createdCommunities.length && !toDelete.length) return created;
       await this.rebuildCommunityHierarchy(kbId).catch((err) => {
         this.logger.warn(
           `Community hierarchy rebuild failed for KB ${kbId}: ${err instanceof Error ? err.message : String(err)}`,
@@ -1328,7 +1383,7 @@ ${chunkContent.slice(0, 4000)}
             WHERE id = ${createdCommunities[i].id}::uuid
           `);
         }
-      } catch (err) {
+      } catch (err) { throwAuthorizationFailure(err);
         this.logger.debug(`Community embedding skipped: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
@@ -1405,7 +1460,11 @@ ${entityLines.join('\n')}
 关系：
 ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
 
-      const response = await fetch(`${config.baseUrl}/chat/completions`, {
+      const artifactKey = modelArtifactKey(config.baseUrl,config.modelName,process.env.GRAPH_LLM_DEPLOYMENT_REVISION,
+        ['graph-community-summary-v1',prompt,Number(process.env.GRAPHRAG_COMMUNITY_SUMMARY_MAX_TOKENS || 700)]);
+      const cached = await readModelArtifact(artifactKey);
+      if (cached && typeof cached.summary === 'string' && Array.isArray(cached.findings)) return cached;
+      const response = await requestFetch(`${config.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1421,8 +1480,7 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
           max_tokens: Number(process.env.GRAPHRAG_COMMUNITY_SUMMARY_MAX_TOKENS || 700),
           response_format: { type: 'json_object' },
         }),
-        signal: AbortSignal.timeout(Number(process.env.GRAPHRAG_COMMUNITY_SUMMARY_TIMEOUT_MS || 20000)),
-      });
+      }, Number(process.env.GRAPHRAG_COMMUNITY_SUMMARY_TIMEOUT_MS || 20000));
       if (!response.ok) return { summary: fallbackSummary, findings: fallbackFindings };
       const payload: any = await response.json();
       const message = payload?.choices?.[0]?.message || {};
@@ -1437,8 +1495,10 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
       const findings = Array.isArray(parsed?.findings)
         ? parsed.findings.map((f: any) => String(f)).filter((f: string) => f.trim()).slice(0, 6)
         : fallbackFindings;
-      return { summary, findings: findings.length ? findings : fallbackFindings };
-    } catch (err) {
+      const result = { summary, findings: findings.length ? findings : fallbackFindings };
+      await saveModelArtifact(artifactKey,'graph_community_summary',result);
+      return result;
+    } catch (err) { throwAuthorizationFailure(err);
       this.logger.debug(
         `Community LLM summary failed, using template fallback: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -1509,7 +1569,7 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
         })),
         title,
       );
-      const parent = await (this.prisma as any).graphCommunity.create({
+      const createParent = () => (this.prisma as any).graphCommunity.create({
         data: {
           kbId,
           title,
@@ -1519,6 +1579,8 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
           findings,
         },
       });
+      const parent:any = process.env.CORE_GRAPH_INCREMENTAL_ENABLED === '1'
+        ? await withCommunityInputs(this.prisma,children,createParent) : await createParent();
       created += 1;
       if (this.embeddingService?.isEnabled()) {
         try {
@@ -1685,7 +1747,7 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
             take: Math.max(5, limit),
             include: { source: { select: { name: true, type: true } }, target: { select: { name: true, type: true } } },
           })) || [];
-        } catch (err) {
+        } catch (err) { throwAuthorizationFailure(err);
           this.logger.debug(
             `Graph 2-hop expansion failed (returning 1-hop only): ${err instanceof Error ? err.message : String(err)}`,
           );
@@ -1905,7 +1967,7 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
           return a.chunkId < b.chunkId ? -1 : a.chunkId > b.chunkId ? 1 : 0;
         })
         .slice(0, Math.max(1, limit));
-    } catch (err) {
+    } catch (err) { throwAuthorizationFailure(err);
       this.logger.debug(
         `Graph chunk-arm lookup failed: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -1959,7 +2021,7 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
             };
           }
         }
-      } catch (err) {
+      } catch (err) { throwAuthorizationFailure(err);
         this.logger.debug(`Community vector search unavailable: ${err instanceof Error ? err.message : String(err)}`);
         recordFailopen('graph');
       }
@@ -2070,7 +2132,7 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
       }
       if (!probes.length) probes.push(...seedEntities.slice(0, maxProbes));
       return { probes: probes.slice(0, maxProbes), communityIds, seedEntities };
-    } catch (err) {
+    } catch (err) { throwAuthorizationFailure(err);
       this.logger.debug(`DRIFT planning unavailable: ${err instanceof Error ? err.message : String(err)}`);
       recordFailopen('graph');
       return empty;

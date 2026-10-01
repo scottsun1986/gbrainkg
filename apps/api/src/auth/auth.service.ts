@@ -10,7 +10,7 @@ const ACCESS_TOKEN_TTL_SECONDS = 8 * 60 * 60;
 const MFA_TOKEN_TTL_SECONDS = 300;
 const MFA_POLICY_KEY = 'requireMfaForAdmins';
 const ADMIN_ROLE_MATCH = {
-  OR: [{ name: '超级管理员' }, { name: '系统管理员' }, { builtin: true }],
+  code: { in: ['super_admin', 'system_admin'] },
 };
 
 @Injectable()
@@ -149,13 +149,11 @@ export class AuthService {
     });
   }
 
-  private isPrivilegedRole(user: { roles?: { role: { name: string; builtin: boolean } }[] }): boolean {
+  private isPrivilegedRole(user: { roles?: { role: { name: string; builtin: boolean; code?: string | null } }[] }): boolean {
     return Boolean(
       user.roles?.some(
         (entry) =>
-          entry.role.name === '超级管理员' ||
-          entry.role.name === '系统管理员' ||
-          entry.role.builtin,
+          entry.role.code === 'super_admin' || entry.role.code === 'system_admin',
       ),
     );
   }

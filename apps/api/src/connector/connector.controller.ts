@@ -1,3 +1,4 @@
+import type { WebhookPayload } from './webhook-connector';
 import {
   BadRequestException,
   Body,
@@ -129,7 +130,7 @@ export class ConnectorController {
     @Param('kbId') kbId: string,
     @Param('id') id: string,
     @Req() req: any,
-    @Body() body: { externalId?: string; title?: string; content?: string },
+    @Body() body: Partial<WebhookPayload>,
   ) {
     await this.assertManager(req, kbId);
     const source = await this.assertSourceInKb(id, kbId);
@@ -140,7 +141,7 @@ export class ConnectorController {
       const payload = this.connectorService.enqueueWebhook(id, {
         externalId: String(body?.externalId || ''),
         title: String(body?.title || ''),
-        content: String(body?.content ?? ''),
+        content: String(body?.content ?? ''), externalRevision:body?.externalRevision, externalAcl:body?.externalAcl, deleted:body?.deleted,
       });
       return { queued: payload };
     } catch (err) {

@@ -157,3 +157,34 @@ describe('FeishuConnector.fetchChanges', () => {
     });
   });
 });
+
+describe('Feishu source ACL synchronization', () => {
+  function sourceFetch(permissionFailure = false, contentFailure = false) {
+    return jest.fn(async (url: string) => {
+      if (url.includes('tenant_access_token')) return jsonResponse({ code:0,tenant_access_token:'test' });
+      if (url.includes('/drive/v1/files')) return jsonResponse({ code:0,data:{ files:[{ token:'same-id',name:'native doc',type:'docx' }],has_more:false } });
+      if (url.includes('/permissions/')) return permissionFailure ? jsonResponse({ code:999,msg:'denied' },false,403) : jsonResponse({ code:0,data:{ items:[{ member_type:'openid',member_id:'source-reader',perm:'view' }] } });
+      if (url.includes('/raw_content')) return contentFailure ? jsonResponse({},false,503) : jsonResponse({ code:0,data:{ content:'unchanged body' } });
+      throw new Error('Unexpected source request');
+    });
+  }
+  const config = { appId:'test',appSecret:'test',syncAcl:true };
+  it('rechecks permissions even when the cursor and content are unchanged', async () => {
+    const connector = new FeishuConnector('feishu_drive',sourceFetch() as any);
+    const first = await connector.fetchChanges(config,null);
+    const second = await connector.fetchChanges(config,first.nextCursor);
+    expect(second.snapshotIds).toEqual(['same-id']);
+    expect(second.changes).toHaveLength(1);
+    expect(second.changes[0].externalAcl).toMatchObject({ verified:true,subjects:[{ type:'openid',id:'source-reader' }] });
+  });
+  it('records unreadable ACL as unavailable instead of preserving authorization', async () => {
+    const connector = new FeishuConnector('feishu_drive',sourceFetch(true) as any);
+    const result = await connector.fetchChanges(config,null);
+    expect(result.changes[0].externalAcl).toMatchObject({ verified:false,subjects:[] });
+  });
+  it('emits a closed ACL update when source content cannot be fetched', async () => {
+    const connector = new FeishuConnector('feishu_drive',sourceFetch(false,true) as any);
+    const result = await connector.fetchChanges(config,null);
+    expect(result.changes[0]).toMatchObject({ aclOnly:true,externalAcl:{ verified:false } });
+  });
+});

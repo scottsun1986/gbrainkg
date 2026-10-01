@@ -10,11 +10,14 @@ describe('EmbeddingService', () => {
   } as any;
 
   let service: EmbeddingService;
+  const originalRevision = process.env.EMBEDDING_DEPLOYMENT_REVISION;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.EMBEDDING_DEPLOYMENT_REVISION = 'fixture-weights-v1';
     service = new EmbeddingService(modelConfigService);
   });
+  afterEach(() => { if (originalRevision === undefined) delete process.env.EMBEDDING_DEPLOYMENT_REVISION; else process.env.EMBEDDING_DEPLOYMENT_REVISION = originalRevision; });
 
   it('parses OpenAI-compatible embeddings and preserves input order', async () => {
     const originalFetch = global.fetch;
@@ -152,7 +155,9 @@ describe('EmbeddingService', () => {
     const originalFetch = global.fetch;
     const originalFlag = process.env.BGE_M3_HYBRID_ENABLED;
     process.env.BGE_M3_HYBRID_ENABLED = 'true';
-    (global as any).fetch = jest.fn().mockResolvedValue({
+    const previousMaxSim=process.env.BGE_M3_MAXSIM_ENABLED;
+    process.env.BGE_M3_MAXSIM_ENABLED='true';
+    (global as any).fetch = jest.fn().mockResolvedValueOnce({ok:true,json:async()=>({contract:'bge-m3-representations-v1',model:'BAAI/bge-m3',revision:'fixture-weights-v1',tokenizerRevision:'fixture-tokenizer',denseDimensions:4,sparse:true,vocabSize:100,multiVector:true,tokenDimensions:2})}).mockResolvedValue({
       ok: true,
       json: async () => ({
         data: [{
@@ -169,6 +174,7 @@ describe('EmbeddingService', () => {
       expect(result.sparse).toEqual({ indices: [11, 22], values: [0.8, 0.4] });
       expect(result.multiVector).toEqual([[1, 0], [0, 1]]);
     } finally {
+      if (previousMaxSim===undefined) delete process.env.BGE_M3_MAXSIM_ENABLED; else process.env.BGE_M3_MAXSIM_ENABLED=previousMaxSim;
       if (originalFlag === undefined) delete process.env.BGE_M3_HYBRID_ENABLED;
       else process.env.BGE_M3_HYBRID_ENABLED = originalFlag;
       (global as any).fetch = originalFetch;
