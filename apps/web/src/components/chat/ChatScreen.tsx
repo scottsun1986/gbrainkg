@@ -485,6 +485,46 @@ export function ChatScreen(){
                       <span>百纳 · 大脑综述</span>
                       <span style={{color:'var(--ink-4)'}}>· 你的大脑 · {scopeLabel}{allSel ? `（${selected.length} 库）` : ''}</span>
                     </div>
+                    {/* Bug 4 修复：流式生成期间展示动态管线进度 */}
+                    {!msg.done && traceNodes.length > 0 && (() => {
+                      const PIPELINE_STAGES: [string, string][] = [
+                        ['query_rewrite', '意图分析'],
+                        ['gbrain_retrieval', '知识检索'],
+                        ['confidence_rerank', '证据重排'],
+                        ['grounding_gate', '事实校验'],
+                        ['llm_generation', '生成回答'],
+                        ['citation_validation', '引用校验'],
+                      ];
+                      const activeIds = new Set(traceNodes.map((n: TraceNode) => n.id));
+                      const doneIds = new Set(traceNodes.filter((n: TraceNode) => n.status === 'success' || n.status === 'skipped').map((n: TraceNode) => n.id));
+                      const runningIds = new Set(traceNodes.filter((n: TraceNode) => n.status === 'running').map((n: TraceNode) => n.id));
+                      return (
+                        <div className="pipeline-progress" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '8px 0 4px', fontSize: 12, lineHeight: 1 }}>
+                          {PIPELINE_STAGES.map(([id, label]) => {
+                            const done = doneIds.has(id);
+                            const running = runningIds.has(id);
+                            const pending = !activeIds.has(id);
+                            return (
+                              <span
+                                key={id}
+                                style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                                  padding: '3px 10px', borderRadius: 12,
+                                  background: done ? 'var(--evidence-bg, #e8f5e9)' : running ? 'var(--accent-bg, #e3f2fd)' : 'var(--bg-2, #f5f5f5)',
+                                  color: done ? 'var(--evidence, #2e7d32)' : running ? 'var(--accent, #1565c0)' : 'var(--ink-4, #999)',
+                                  fontWeight: running ? 600 : 400,
+                                  transition: 'all 0.3s ease',
+                                }}
+                              >
+                                {done ? '✓' : running ? '◉' : pending ? '○' : '○'}
+                                {' '}{label}
+                                {running && <span style={{ display: 'inline-block', width: 4, height: 4, borderRadius: '50%', background: 'currentColor', animation: 'pulse 1s infinite' }} />}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
                     <AnswerMarkdown content={msg.text} sources={msg.sources} activeCitation={activeCite} streaming={!msg.done} onCitation={handleAnswerCitation} />
                     {msg.done && (msg.sources?.length ?? 0) > 0 && <div className="answer-sources"><span>来源：</span>{(msg.sources || []).map((source: Citation, index: number) => <button key={source.id || index} onClick={()=>previewCitation(source)} title="打开原始文档预览">[{source.citationIndex || index + 1}] {source.title}</button>)}</div>}
                     {traceNodes.length > 0 && (

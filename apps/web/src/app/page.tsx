@@ -67,8 +67,9 @@ function App() {
       setAuthState('mustChangePassword');
       return;
     }
-    await loadAdminData(token);
+    // 先立即切换至 loggedIn，让用户看到主壳；admin 数据在后台异步补齐。
     setAuthState('loggedIn');
+    void loadAdminData(token);
   }, [loadAdminData]);
 
   // The OIDC callback carries no credential in the URL. Claim the short-lived
@@ -130,6 +131,9 @@ function App() {
     }
   }, [completeLogin]);
 
+  // ---------- 页面加载时自动校验 localStorage 中的 token ----------
+  const [authRetry, setAuthRetry] = useState(false);
+
   useEffect(() => {
     const token = window.localStorage.getItem('llmwiki_token');
     if (!token) {
@@ -137,11 +141,13 @@ function App() {
       return;
     }
     const controller = new AbortController();
+    // 超时阈值从 3.5s 提升至 15s，避免多实例 / 慢网环境下误判超时。
     const timeoutId = setTimeout(() => {
       controller.abort();
-      window.localStorage.removeItem('llmwiki_token');
+      // 超时不再静默清除 token，而是展示重试按钮，让用户决策。
+      setAuthRetry(true);
       setAuthState('loggedOut');
-    }, 3500);
+    }, 15000);
 
     fetch(`${API_BASE_URL}/api/v1/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -157,13 +163,19 @@ function App() {
           setAuthState('mustChangePassword');
           return;
         }
-        await loadAdminData(token);
+        // 先切 loggedIn 展示主壳，admin 数据后台异步补齐。
         setAuthState('loggedIn');
+        void loadAdminData(token);
       })
-      .catch(() => {
+      .catch((err) => {
         clearTimeout(timeoutId);
-        window.localStorage.removeItem('llmwiki_token');
-        setAuthState('loggedOut');
+        const isAbort = (err as { name?: string })?.name === 'AbortError';
+        if (!isAbort) {
+          // 真正的认证失败（401 / 网络错误等），清除 token。
+          window.localStorage.removeItem('llmwiki_token');
+          setAuthState('loggedOut');
+        }
+        // abort 由上面 setTimeout 处理，这里无需额外操作。
       });
     return () => clearTimeout(timeoutId);
   }, [loadAdminData]);
@@ -407,13 +419,27 @@ function App() {
 
   if (authState === 'checking') return <div style={{ padding: 40, textAlign: "center", color: "#999" }}>正在验证登录状态…</div>;
   if (authState === 'loggedOut') return (
-    <LoginScreen
-      onSubmit={handleLogin}
-      error={loginError}
-      loading={loginLoading}
-      oidcEnabled={oidcEnabled}
-      onOidcLogin={handleOidcLogin}
-    />
+    <>
+      {authRetry && (
+        <div style={{ padding: '12px 24px', textAlign: 'center', background: 'var(--warning-bg, #fff8e1)', color: 'var(--warning-fg, #e65100)', fontSize: 13, borderBottom: '1px solid var(--warning-border, #ffe0b2)' }}>
+          服务器响应超时，已保留你的登录凭证。
+          <button
+            type="button"
+            style={{ marginLeft: 12, padding: '4px 16px', border: '1px solid currentColor', borderRadius: 6, background: 'transparent', color: 'inherit', cursor: 'pointer', fontSize: 13 }}
+            onClick={() => { setAuthRetry(false); setAuthState('checking'); window.location.reload(); }}
+          >
+            重试
+          </button>
+        </div>
+      )}
+      <LoginScreen
+        onSubmit={handleLogin}
+        error={loginError}
+        loading={loginLoading}
+        oidcEnabled={oidcEnabled}
+        onOidcLogin={handleOidcLogin}
+      />
+    </>
   );
   if (authState === 'mfaRequired') return (
     <MfaScreen onSubmit={handleMfaLogin} onLogout={handleLogout} error={mfaError} loading={mfaLoading} />
@@ -431,7 +457,7 @@ function App() {
     );
   }
   if (authState === 'mustChangePassword') return <PasswordChangeScreen onSubmit={handlePasswordChange} onLogout={handleLogout} error={passwordChangeError} loading={passwordChangeLoading} />;
-  if (!dbData) return <div style={{ padding: 40, textAlign: "center", color: "#999" }}>系统正在加载企业数据底座，请稍候...</div>;
+  if (!dbData) return <div style={{ padding: 40, textAlign: "center", color: "#999" }}><div style={{ fontSize: 28, marginBottom: 12 }}>⏳</div>正在加载企业数据，请稍候…</div>;
   if (dbData.error) return <div style={{ padding: 40, textAlign: "center", color: "#999" }}>企业数据底座暂不可用，请检查 API、数据库和登录状态后重试。</div>;
   const canAdmin = canAccessAdmin(appStore.CAPABILITIES);
   const canSettings = canAccessSettings(appStore.CAPABILITIES);

@@ -480,6 +480,15 @@ export class BrainRepoAdapter {
       env.GBRAIN_DATABASE_URL = normalizedDatabaseUrl;
     }
     return new Promise((resolve, reject) => {
+      // A signal that aborted while earlier await points ran (e.g. source
+      // initialization ahead of the query) never fires its 'abort' listener
+      // again — the child would then spawn uncancelled and only the 180s
+      // command timeout would reap it, starving the process pool (observed on
+      // production inst2: the request deadline died waiting on one such child).
+      if (signal?.aborted) {
+        reject(new Error('GBRAIN_CANCELLED'));
+        return;
+      }
       // detached: true puts the child in its own process group so a timeout
       // can SIGTERM the whole tree (-pid) instead of orphaning grandchildren
       // (embedding/rerank workers spawned by the CLI) that would keep running.
