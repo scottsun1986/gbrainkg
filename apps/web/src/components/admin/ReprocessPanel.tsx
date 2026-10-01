@@ -10,7 +10,7 @@ import { errorMessage, apiMessage, asRecord, asArray, str, num, bool } from '@/l
 import { emitToast } from '@/lib/app-events';
 import type { Pagination } from '@/types';
 
-export function ReprocessPanel() {
+export function ReprocessPanel({ active = true }: { active?: boolean }) {
   const [stats, setStats] = useState<any>(null);
   const [status, setStatus] = useState<any>(null);
   const [loading, setLoading] = useState(false);
@@ -39,8 +39,10 @@ export function ReprocessPanel() {
 
   // 任务运行中以 2s 跟踪进度；空闲时该接口背后的语料统计（11 个聚合查询）
   // 不需要秒级轮询——退避到 60s 低频兜底。语料统计服务端另有 30s 缓存。
+  // 面板不可见（管理后台切到其它屏幕）时暂停轮询，回到前台立即刷新一次。
   const runningRef = useRef(false);
   useEffect(() => {
+    if (!active) return;
     void fetchStatus();
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
@@ -65,7 +67,7 @@ export function ReprocessPanel() {
     };
     schedule();
     return () => { cancelled = true; clearTimeout(timer); };
-  }, []);
+  }, [active]);
 
   useEffect(() => {
     if (logContainerRef.current) {

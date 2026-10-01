@@ -19,7 +19,7 @@ import { hasCapability, canAccessAdmin } from '@/lib/capabilities';
 import { flattenOrgTree } from '@/lib/org-utils';
 import type { AuditRow, IndustryKbRow, OrgTreeNode, Pagination } from '@/types';
 
-export function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = []}: { onOpenGrant?: (kbId: string) => void; onManageKb?: (kbId: string) => void; initialTab?: string; capabilities?: string[] }){
+export function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities = [], active = true}: { onOpenGrant?: (kbId: string) => void; onManageKb?: (kbId: string) => void; initialTab?: string; capabilities?: string[]; active?: boolean }){
   const [tab, setTab] = useState(initialTab || 'org');
   const [auditMeta, setAuditMeta] = useState(appStore.AUDIT_META);
   useEffect(()=>{
@@ -309,7 +309,7 @@ export function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities =
         {tab==='industry' && <IndustryKBPanel canCreate={hasCapability('kb.industry.create', capabilities)} onOpenGrant={(k)=>{setGrantKb(k.id); setTab('grant');}}/>}
         {tab==='grant' && <GrantPanel kbId={grantKb} setKbId={setGrantKb}/>}
         {tab==='model' && <ModelPanel/>}
-        {tab==='reprocess' && <ReprocessPanel/>}
+        {tab==='reprocess' && <ReprocessPanel active={active}/>}
         {tab==='audit' && (
           <>
             <div style={{display:'flex',alignItems:'flex-start',marginBottom:18}}>

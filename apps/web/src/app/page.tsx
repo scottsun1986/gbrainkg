@@ -7,20 +7,13 @@
  */
 /* eslint-disable */
 import React, { useState, useEffect, useRef } from "react";
+import dynamic from "next/dynamic";
 import { LoginScreen, PasswordChangeScreen, MfaScreen, MfaSetupScreen } from "@/components/auth/LoginScreens";
-import { KnowledgeGraphScreen } from "@/components/knowledge-graph/KnowledgeGraphScreen";
-import { PersonalSettingsScreen } from "@/components/settings/PersonalSettingsScreen";
 import { SideNav } from "@/components/common/SideNav";
 import { TopBar } from "@/components/common/TopBar";
 import { CommandPalette } from "@/components/common/CommandPalette";
 import { HelpOverlay } from "@/components/common/HelpOverlay";
-import {
-  UniversalDocumentViewer,
-  OnlinePreviewModal,
-} from "@/components/preview/UniversalDocumentViewer";
 import { ChatScreen } from "@/components/chat/ChatScreen";
-import { LibrariesScreen } from "@/components/libraries/LibrariesScreen";
-import { AdminScreen } from "@/components/admin/AdminScreen";
 import { API_BASE_URL, apiHeaders } from "@/lib/api";
 import { appStore } from "@/lib/app-store";
 import { errorMessage, apiMessage } from "@/lib/errors";
@@ -33,6 +26,17 @@ import { useSideCollapsed } from "@/hooks/useSideCollapsed";
 import { useAdminBootstrap } from "@/hooks/useAdminBootstrap";
 import type { PaletteNavPayload } from "@/components/common/CommandPalette";
 import type { PreviewTarget } from "@/types";
+
+// 非默认屏幕按需分包：登录首屏只加载对话屏的代码，知识库/图谱/设置/管理
+// 在首次切入时才拉取对应 chunk（挂载后常驻，跨屏切换仍不丢状态）。
+const ScreenLoading = () => (
+  <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--ink-4, #999)', fontSize: 14 }}>加载中…</div>
+);
+const LibrariesScreen = dynamic(() => import("@/components/libraries/LibrariesScreen").then((m) => ({ default: m.LibrariesScreen })), { ssr: false, loading: ScreenLoading });
+const KnowledgeGraphScreen = dynamic(() => import("@/components/knowledge-graph/KnowledgeGraphScreen").then((m) => ({ default: m.KnowledgeGraphScreen })), { ssr: false, loading: ScreenLoading });
+const PersonalSettingsScreen = dynamic(() => import("@/components/settings/PersonalSettingsScreen").then((m) => ({ default: m.PersonalSettingsScreen })), { ssr: false, loading: ScreenLoading });
+const AdminScreen = dynamic(() => import("@/components/admin/AdminScreen").then((m) => ({ default: m.AdminScreen })), { ssr: false, loading: ScreenLoading });
+const OnlinePreviewModal = dynamic(() => import("@/components/preview/UniversalDocumentViewer").then((m) => ({ default: m.OnlinePreviewModal })), { ssr: false });
 
 type AuthState = 'checking' | 'loggedOut' | 'mustChangePassword' | 'mfaRequired' | 'mfaSetup' | 'loggedIn';
 
@@ -133,6 +137,7 @@ function App() {
 
   // ---------- 页面加载时自动校验 localStorage 中的 token ----------
   const [authRetry, setAuthRetry] = useState(false);
+  const authTimedOutRef = useRef(false);
 
   useEffect(() => {
     const token = window.localStorage.getItem('llmwiki_token');
@@ -140,44 +145,47 @@ function App() {
       setAuthState('loggedOut');
       return;
     }
-    const controller = new AbortController();
-    // 超时阈值从 3.5s 提升至 15s，避免多实例 / 慢网环境下误判超时。
+    // 刷新链路不再先串行打 auth/me：session/bootstrap 本身就校验 token、返回
+    // 会话用户与能力/知识库/会话列表，一次请求完成首屏数据获取。403（如强制
+    // 改密）时回退 auth/me 判定原因。超时不再静默清除 token，展示重试按钮。
+    authTimedOutRef.current = false;
+    let cancelled = false;
     const timeoutId = setTimeout(() => {
-      controller.abort();
-      // 超时不再静默清除 token，而是展示重试按钮，让用户决策。
+      if (cancelled) return;
+      authTimedOutRef.current = true;
       setAuthRetry(true);
       setAuthState('loggedOut');
     }, 15000);
-
-    fetch(`${API_BASE_URL}/api/v1/auth/me`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        if (!response.ok) throw new Error(`API ${response.status}`);
-        return response.json();
-      })
-      .then(async (me: { user?: { mustChangePassword?: boolean } }) => {
+    void (async () => {
+      try {
+        const sessionUser = await loadAdminData(token);
+        if (cancelled || authTimedOutRef.current) return;
         clearTimeout(timeoutId);
-        if (me.user?.mustChangePassword) {
+        if (sessionUser?.mustChangePassword) {
           setAuthState('mustChangePassword');
           return;
         }
-        // 先切 loggedIn 展示主壳，admin 数据后台异步补齐。
         setAuthState('loggedIn');
-        void loadAdminData(token);
-      })
-      .catch((err) => {
+      } catch (error) {
+        if (cancelled || authTimedOutRef.current) return;
         clearTimeout(timeoutId);
-        const isAbort = (err as { name?: string })?.name === 'AbortError';
-        if (!isAbort) {
-          // 真正的认证失败（401 / 网络错误等），清除 token。
-          window.localStorage.removeItem('llmwiki_token');
-          setAuthState('loggedOut');
+        const status = (error as { status?: number })?.status;
+        if (status === 403) {
+          // bootstrap 被权限门禁拦截：用 auth/me 判定是否为强制改密。
+          try {
+            const meRes = await fetch(`${API_BASE_URL}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
+            const me = await meRes.json().catch(() => ({} as Record<string, unknown>));
+            if ((me as { user?: { mustChangePassword?: boolean } })?.user?.mustChangePassword) {
+              setAuthState('mustChangePassword');
+              return;
+            }
+          } catch {}
         }
-        // abort 由上面 setTimeout 处理，这里无需额外操作。
-      });
-    return () => clearTimeout(timeoutId);
+        window.localStorage.removeItem('llmwiki_token');
+        setAuthState('loggedOut');
+      }
+    })();
+    return () => { cancelled = true; clearTimeout(timeoutId); };
   }, [loadAdminData]);
 
   useEffect(() => {
@@ -356,6 +364,9 @@ function App() {
   };
 
   const [screen, setScreen] = useState('chat');
+  // 屏幕懒挂载：默认只挂对话屏，其余屏幕首次切入才挂载（chunk 与数据按需
+  // 加载）；挂载后常驻，跨屏切换仍不丢会话/表单状态。
+  const [mountedScreens, setMountedScreens] = useState<Set<string>>(() => new Set(['chat']));
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sideCollapsed, toggleSideCollapsed] = useSideCollapsed();
   const [adminTab, setAdminTab] = useState('org');
@@ -364,6 +375,13 @@ function App() {
   const [graphOnlinePreview, setGraphOnlinePreview] = useState<PreviewTarget | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+
+  const canAdmin = canAccessAdmin(appStore.CAPABILITIES);
+  const canSettings = canAccessSettings(appStore.CAPABILITIES);
+  const visibleScreen = (screen === 'admin' && !canAdmin) || (screen === 'settings' && !canSettings) ? 'chat' : screen;
+  useEffect(() => {
+    setMountedScreens((prev) => (prev.has(visibleScreen) ? prev : new Set([...prev, visibleScreen])));
+  }, [visibleScreen]);
 
   useEffect(() => {
     if (window.location.pathname.startsWith('/admin')) setScreen('admin');
@@ -459,9 +477,7 @@ function App() {
   if (authState === 'mustChangePassword') return <PasswordChangeScreen onSubmit={handlePasswordChange} onLogout={handleLogout} error={passwordChangeError} loading={passwordChangeLoading} />;
   if (!dbData) return <div style={{ padding: 40, textAlign: "center", color: "#999" }}><div style={{ fontSize: 28, marginBottom: 12 }}>⏳</div>正在加载企业数据，请稍候…</div>;
   if (dbData.error) return <div style={{ padding: 40, textAlign: "center", color: "#999" }}>企业数据底座暂不可用，请检查 API、数据库和登录状态后重试。</div>;
-  const canAdmin = canAccessAdmin(appStore.CAPABILITIES);
-  const canSettings = canAccessSettings(appStore.CAPABILITIES);
-  const visibleScreen = (screen === 'admin' && !canAdmin) || (screen === 'settings' && !canSettings) ? 'chat' : screen;
+  const adminActive = visibleScreen === 'admin' || visibleScreen === 'settings';
   return (
     <div className="app">
       <SideNav
@@ -489,22 +505,31 @@ function App() {
           onToggleCollapse={toggleSideCollapsed}
         />
         <div className="content">
-          {/* 多屏常驻挂载：跨屏切换不丢会话/表单状态 */}
+          {/* 常驻挂载已访问过的屏幕：跨屏切换不丢会话/表单状态；
+              未访问过的屏幕不挂载、代码分包按需加载。 */}
           <div style={{ display: visibleScreen === 'chat' ? 'flex' : 'none', flex: 1, minWidth: 0 }}>
             <ChatScreen />
           </div>
-          <div style={{ display: visibleScreen === 'libs' ? 'flex' : 'none', flex: 1, minWidth: 0 }}>
-            <LibrariesScreen active={visibleScreen === 'libs'} initialKbId={libraryKbId} capabilities={appStore.CAPABILITIES} onManageGrant={() => { setAdminTab('grant'); setScreen('admin'); }} />
-          </div>
-          <div style={{ display: visibleScreen === 'graph' ? 'flex' : 'none', flex: 1, minWidth: 0 }}>
-            <KnowledgeGraphScreen active={visibleScreen === 'graph'} onOpenDocument={openGraphDocument} onOpenKb={openGraphKb} />
-          </div>
-          <div style={{ display: visibleScreen === 'personal_settings' ? 'flex' : 'none', flex: 1, minWidth: 0, overflowY: 'auto' }}>
-            <PersonalSettingsScreen active={visibleScreen === 'personal_settings'} user={currentUser} apiBaseUrl={API_BASE_URL} apiHeaders={apiHeaders} onNotify={(msg: string) => setToast({ text: msg, undo: null })} />
-          </div>
-          <div style={{ display: visibleScreen === 'admin' || visibleScreen === 'settings' ? 'flex' : 'none', flex: 1, minWidth: 0 }}>
-            <AdminScreen initialTab={visibleScreen === 'settings' ? 'model' : visibleScreen === 'admin' ? adminTab : undefined} capabilities={appStore.CAPABILITIES} onOpenGrant={() => { setAdminTab('grant'); setScreen('admin'); }} onManageKb={(kbId: string) => { setLibraryKbId(kbId); setScreen('libs'); }} />
-          </div>
+          {mountedScreens.has('libs') && (
+            <div style={{ display: visibleScreen === 'libs' ? 'flex' : 'none', flex: 1, minWidth: 0 }}>
+              <LibrariesScreen active={visibleScreen === 'libs'} initialKbId={libraryKbId} capabilities={appStore.CAPABILITIES} onManageGrant={() => { setAdminTab('grant'); setScreen('admin'); }} />
+            </div>
+          )}
+          {mountedScreens.has('graph') && (
+            <div style={{ display: visibleScreen === 'graph' ? 'flex' : 'none', flex: 1, minWidth: 0 }}>
+              <KnowledgeGraphScreen active={visibleScreen === 'graph'} onOpenDocument={openGraphDocument} onOpenKb={openGraphKb} />
+            </div>
+          )}
+          {mountedScreens.has('personal_settings') && (
+            <div style={{ display: visibleScreen === 'personal_settings' ? 'flex' : 'none', flex: 1, minWidth: 0, overflowY: 'auto' }}>
+              <PersonalSettingsScreen active={visibleScreen === 'personal_settings'} user={currentUser} apiBaseUrl={API_BASE_URL} apiHeaders={apiHeaders} onNotify={(msg: string) => setToast({ text: msg, undo: null })} />
+            </div>
+          )}
+          {(mountedScreens.has('admin') || mountedScreens.has('settings')) && (
+            <div style={{ display: adminActive ? 'flex' : 'none', flex: 1, minWidth: 0 }}>
+              <AdminScreen active={adminActive} initialTab={visibleScreen === 'settings' ? 'model' : visibleScreen === 'admin' ? adminTab : undefined} capabilities={appStore.CAPABILITIES} onOpenGrant={() => { setAdminTab('grant'); setScreen('admin'); }} onManageKb={(kbId: string) => { setLibraryKbId(kbId); setScreen('libs'); }} />
+            </div>
+          )}
         </div>
       </div>
       {toast && (

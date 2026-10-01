@@ -44,13 +44,14 @@ export function withRlsContext(base: PrismaClient): PrismaClient {
     if (typeof (client as any)?.$transaction !== 'function') return fn(client as any);
     return client.$transaction(async (tx: any) => {
       if (typeof tx?.$executeRaw !== 'function') return fn(tx);
-      await tx.$executeRaw`SELECT set_config('app.user_id', ${userId}, true), set_config('app.service', ${service}, true), set_config('app.as_of', ${new Date(context?.asOf ?? Date.now()).toISOString()}, true)`;
-      if (context?.artifactInputs) await tx.$executeRaw`SELECT set_config('app.artifact_inputs', ${context.artifactInputs}, true)`;
       const deadline = context?.execution?.retrievalComplete ? undefined : context?.execution?.deadline;
       const remaining = deadline?.remainingMs() ?? Number(process.env.RLS_STATEMENT_TIMEOUT_MS || 25000);
       if (remaining <= 0 || deadline?.signal.aborted) throw new Error('Query execution deadline exhausted');
-      // Prisma transaction expiry alone does not cancel a running PostgreSQL query.
-      await tx.$executeRaw`SELECT set_config('statement_timeout', ${String(Math.max(1, remaining))}, true), set_config('lock_timeout', ${String(Math.max(1, Math.min(1000, remaining)))}, true)`;
+      // 事务级 GUC 与超时合并为一条语句：RLS 模式下每条逻辑查询都要走这个
+      // 事务壳，逐条 set_config 会让 bootstrap/admin/data 这类 20~35 查询的
+      // 请求多付一倍往返。
+      await tx.$executeRaw`SELECT set_config('app.user_id', ${userId}, true), set_config('app.service', ${service}, true), set_config('app.as_of', ${new Date(context?.asOf ?? Date.now()).toISOString()}, true), set_config('statement_timeout', ${String(Math.max(1, remaining))}, true), set_config('lock_timeout', ${String(Math.max(1, Math.min(1000, remaining)))}, true)`;
+      if (context?.artifactInputs) await tx.$executeRaw`SELECT set_config('app.artifact_inputs', ${context.artifactInputs}, true)`;
       return fn(tx);
     }, {
       maxWait: Number(process.env.RLS_TX_MAX_WAIT_MS || 20_000),

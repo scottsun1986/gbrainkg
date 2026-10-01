@@ -415,6 +415,9 @@ export class AdminController {
   }
 
   private async scheduleAccessReconciliation() {
+    // 角色组织授权等变更会让 PermissionService 的短 TTL 缓存失效，立即清除，
+    // 不等 TTL 自然过期（缓存仅是收敛重复查询的手段，不改变 ACL 语义）。
+    this.permissionService?.invalidatePermissionCaches?.();
     await this.brainCompilerService
       .queueAccessReconciliation()
       .catch((error) => {
@@ -1507,6 +1510,7 @@ export class AdminController {
       },
       include: { admins: { select: { userId: true } } },
     });
+    this.permissionService?.invalidatePermissionCaches?.();
     return { organization: org };
   }
 

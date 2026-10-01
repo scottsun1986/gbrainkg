@@ -38,7 +38,12 @@ describe('RLS Prisma context', () => {
     const { prisma, tx } = fixture();
     const asOf = Date.parse('2025-03-01T02:00:00+08:00');
     await runWithRequestContext({ requestId: 'historical', userId: 'user-1', asOf }, () => prisma.document.findMany());
-    expect(tx.$executeRaw.mock.calls[0].slice(1)).toEqual(['user-1', 'off', '2025-02-28T18:00:00.000Z']);
+    // GUC 与超时合并为单条 set_config 语句（每查询省一次 DB 往返）：
+    // 参数依次为 user_id / service / as_of / statement_timeout / lock_timeout。
+    const params = tx.$executeRaw.mock.calls[0].slice(1);
+    expect(params.slice(0, 3)).toEqual(['user-1', 'off', '2025-02-28T18:00:00.000Z']);
+    expect(Number(params[3])).toBeGreaterThan(0);
+    expect(Number(params[4])).toBeGreaterThan(0);
   });
 
   it('missing context never grants a service identity', async () => {

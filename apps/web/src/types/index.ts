@@ -184,6 +184,7 @@ export interface Citation {
 }
 
 export interface ChatMessage {
+  id?: string;
   role: 'user' | 'ai';
   text: string;
   done?: boolean;

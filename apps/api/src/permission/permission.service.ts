@@ -12,6 +12,47 @@ import {
 export class PermissionService implements OnModuleInit {
   private readonly logger = new Logger(PermissionService.name);
   private prisma = getPrismaClient();
+  /**
+   * 单个请求（guard + handler）会把 isSystemAdmin / getRolePermissions /
+   * getManagedOrgIds 各算 3~6 次，RLS 模式下每条查询又是独立事务（4~5 次往返），
+   * bootstrap / admin/data 因此各多花 30~80 次 DB 往返。用与用户状态缓存一致的
+   * 短 TTL 进程内缓存收敛；角色、组织、授权变更入口调用 invalidatePermissionCaches
+   * 主动失效，TTL 只兜底。
+   */
+  private static readonly PERM_TTL_MS = Math.max(
+    0,
+    Number(process.env.PERMISSION_CACHE_TTL_MS ?? 5_000),
+  );
+  private readonly systemAdminCache = new Map<string, { expiresAt: number; value: boolean }>();
+  private readonly rolePermissionsCache = new Map<string, { expiresAt: number; value: Set<string> }>();
+  private readonly managedOrgIdsCache = new Map<string, { expiresAt: number; value: Set<string> }>();
+  private orgNodeListCache: { expiresAt: number; nodes: { id: string; parentId: string | null }[] } | null = null;
+
+  invalidatePermissionCaches(userId?: string): void {
+    if (userId) {
+      this.systemAdminCache.delete(userId);
+      this.rolePermissionsCache.delete(userId);
+      this.managedOrgIdsCache.delete(userId);
+      return;
+    }
+    this.systemAdminCache.clear();
+    this.rolePermissionsCache.clear();
+    this.managedOrgIdsCache.clear();
+    this.orgNodeListCache = null;
+  }
+
+  private async cachedOrgNodeList(): Promise<{ id: string; parentId: string | null }[]> {
+    const ttl = PermissionService.PERM_TTL_MS;
+    if (this.orgNodeListCache && this.orgNodeListCache.expiresAt > Date.now()) {
+      return this.orgNodeListCache.nodes;
+    }
+    const nodes = await this.prisma.orgNode.findMany({
+      where: { status: 'active' },
+      select: { id: true, parentId: true },
+    });
+    if (ttl > 0) this.orgNodeListCache = { expiresAt: Date.now() + ttl, nodes };
+    return nodes;
+  }
 
   async onModuleInit() { return runAsService('permission-initialize', () => this.initializeInternal()); }
 
@@ -83,10 +124,13 @@ export class PermissionService implements OnModuleInit {
   }
 
   async isSystemAdmin(userId: string, prisma: any = this.prisma): Promise<boolean> {
+    const ttl = PermissionService.PERM_TTL_MS;
+    const cached = this.systemAdminCache.get(userId);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
     // Only the dedicated system-admin role names grant system administration.
     // Matching on `builtin: true` alone would promote any future built-in
     // role (e.g. an internal service role) to system admin.
-    return Boolean(
+    const value = Boolean(
       await prisma.userRole.findFirst({
         where: {
           userId,
@@ -97,9 +141,14 @@ export class PermissionService implements OnModuleInit {
         select: { userId: true },
       }),
     );
+    if (ttl > 0) this.systemAdminCache.set(userId, { expiresAt: Date.now() + ttl, value });
+    return value;
   }
 
   async getRolePermissions(userId: string): Promise<Set<string>> {
+    const ttl = PermissionService.PERM_TTL_MS;
+    const cached = this.rolePermissionsCache.get(userId);
+    if (cached && cached.expiresAt > Date.now()) return new Set(cached.value);
     const roles = await this.prisma.userRole.findMany({
       where: { userId },
       select: { role: { select: { permissions: true } } },
@@ -114,7 +163,8 @@ export class PermissionService implements OnModuleInit {
           )
           .forEach((permission) => permissions.add(permission));
     }
-    return permissions;
+    if (ttl > 0) this.rolePermissionsCache.set(userId, { expiresAt: Date.now() + ttl, value: permissions });
+    return new Set(permissions);
   }
 
   async hasPermission(userId: string, permission: string): Promise<boolean> {
@@ -124,11 +174,17 @@ export class PermissionService implements OnModuleInit {
   }
 
   async getManagedOrgIds(userId: string): Promise<Set<string>> {
+    const ttl = PermissionService.PERM_TTL_MS;
+    const cached = this.managedOrgIdsCache.get(userId);
+    if (cached && cached.expiresAt > Date.now()) return new Set(cached.value);
+    const value = await this.computeManagedOrgIds(userId);
+    if (ttl > 0) this.managedOrgIdsCache.set(userId, { expiresAt: Date.now() + ttl, value });
+    return new Set(value);
+  }
+
+  private async computeManagedOrgIds(userId: string): Promise<Set<string>> {
     if (await this.isSystemAdmin(userId)) {
-      const nodes = await this.prisma.orgNode.findMany({
-        where: { status: "active" },
-        select: { id: true },
-      });
+      const nodes = await this.cachedOrgNodeList();
       return new Set(nodes.map((node) => node.id));
     }
     const rolePermissions = await this.getRolePermissions(userId);
@@ -149,10 +205,7 @@ export class PermissionService implements OnModuleInit {
           select: { orgNodeId: true },
         })
       : [];
-    const nodes = await this.prisma.orgNode.findMany({
-      where: { status: "active" },
-      select: { id: true, parentId: true },
-    });
+    const nodes = await this.cachedOrgNodeList();
     // 组织管理员角色以当前组织为管理根范围；OrgAdmin 关系作为历史数据和显式授权继续兼容。
     const managed = new Set([
       ...managedRoots.map((item) => item.orgNodeId),
@@ -372,10 +425,7 @@ export class PermissionService implements OnModuleInit {
       select: { orgNodeId: true },
     });
     const nodes = prisma.orgNode
-      ? await prisma.orgNode.findMany({
-          where: { status: "active" },
-          select: { id: true, parentId: true },
-        })
+      ? await this.cachedOrgNodeList()
       : [];
     const byId = new Map<string, any>(nodes.map((node: any) => [node.id, node]));
     const visibleOrgIds = new Set<string>();

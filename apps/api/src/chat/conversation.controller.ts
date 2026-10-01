@@ -15,7 +15,14 @@ export class ConversationController {
   @Get()
   async list(@Req() req: any) {
     const userId = await this.authService.userIdFromRequest(req);
-    return this.prisma.conversation.findMany({ where: { userId }, orderBy: { createdAt: 'desc' }, take: 100 });
+    // 列表只回给侧栏/命令面板用的三个字段；kbScope 等 JSON 列在百级会话下
+    // 会让登录首屏的并行 bootstrap 载荷无谓膨胀。
+    return this.prisma.conversation.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      select: { id: true, title: true, createdAt: true },
+    });
   }
 
   @Get(':id')
@@ -33,7 +40,12 @@ export class ConversationController {
         if (!checks.get(key)) conversation.messages[index] = { ...message, content: '该回答的来源已失效或您已无权访问。', citationsSummary: null, processingTrace: null, dependencyManifest: null };
       }
     }
-    return conversation;
+    // dependencyManifest 只服务端证据校验使用；trace JSON 可达百 KB/条，
+    // 不下发给前端。
+    return {
+      ...conversation,
+      messages: conversation.messages.map(({ dependencyManifest: _drop, ...message }) => message),
+    };
   }
 
   @Patch(':id')

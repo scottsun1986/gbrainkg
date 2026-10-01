@@ -1,10 +1,10 @@
 "use client";
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, memo, startTransition } from 'react';
+import dynamic from 'next/dynamic';
 import { Icon } from '@/components/common/Icon';
 import { TypeBadge, TYPE_BADGE } from '@/components/common/TypeBadge';
 import { ScopePicker } from '@/components/common/ScopePicker';
 import { ContextMenu } from '@/components/common/ContextMenu';
-import { OnlinePreviewModal } from '@/components/preview/UniversalDocumentViewer';
 import { API_BASE_URL, apiHeaders } from '@/lib/api';
 import { appStore } from '@/lib/app-store';
 import { errorMessage, asRecord, str } from '@/lib/errors';
@@ -13,6 +13,9 @@ import { AnswerMarkdown } from './AnswerMarkdown';
 import type {
   ChatMessage, Citation, ConversationSummary, CtxMenuItem, KbInfo, PreviewTarget, TraceNode,
 } from '@/types';
+
+// 预览弹窗挂载了 docx/ppt 解析链路，仅在用户点开引用预览时才加载对应分包。
+const OnlinePreviewModal = dynamic(() => import('@/components/preview/UniversalDocumentViewer').then((m) => ({ default: m.OnlinePreviewModal })), { ssr: false });
 
 interface CtxMenuState { x: number; y: number; items: CtxMenuItem[] }
 
@@ -36,6 +39,7 @@ export function ChatScreen(){
   }));
   const [citations, setCitations] = useState<Citation[]>([]);
   const [onlinePreview, setOnlinePreview] = useState<PreviewTarget | null>(null);
+  const [convLoading, setConvLoading] = useState(false);
   const [citeCollapsed, setCiteCollapsed] = useState(true);
   const [feedbackMap, setFeedbackMap] = useState<Record<string, string>>({});
   const [rewriting, setRewriting] = useState(false);
@@ -45,6 +49,7 @@ export function ChatScreen(){
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const streamController = useRef<AbortController | null>(null);
+  const openSeqRef = useRef(0);
 
   const allSel = selected.length === visibleKbs.length;
   const scopeLabel = allSel ? '我可见的全部' : (selected.length === 0 ? '未选择任何库' : `已选 ${selected.length} 库`);
@@ -57,12 +62,6 @@ export function ChatScreen(){
     window.addEventListener('app-data-refresh', refresh);
     return () => window.removeEventListener('app-data-refresh', refresh);
   }, [visibleKbs.length]);
-
-  useEffect(() => {
-    const onOpen = (e: Event) => { const detail = (e as CustomEvent<string>).detail; if (detail) void openConversation(detail); };
-    window.addEventListener('app-open-conversation', onOpen);
-    return () => window.removeEventListener('app-open-conversation', onOpen);
-  }, []);
 
   useEffect(() => {
     const onNew = () => { newChat(); };
@@ -250,15 +249,22 @@ export function ChatScreen(){
     if(taRef.current){ taRef.current.style.height = 'auto'; taRef.current.focus(); }
   };
 
-  const copyAnswer = async (text: string) => { try { await navigator.clipboard.writeText(text); window.dispatchEvent(new CustomEvent('app-toast',{detail:'回答已复制'})); } catch { window.dispatchEvent(new CustomEvent('app-toast',{detail:'复制失败，请检查浏览器权限'})); } };
-  const saveFeedback = async (feedback: string) => {
+  const copyAnswer = useCallback(async (text: string) => { try { await navigator.clipboard.writeText(text); window.dispatchEvent(new CustomEvent('app-toast',{detail:'回答已复制'})); } catch { window.dispatchEvent(new CustomEvent('app-toast',{detail:'复制失败，请检查浏览器权限'})); } }, []);
+  const saveFeedback = useCallback(async (feedback: string, messageId?: string) => {
     if (!activeConv) return;
+    let targetId = messageId || '';
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/conversations/${activeConv}` ,{headers:apiHeaders()});
-      const conversation = await response.json(); const message = [...(conversation.messages || [])].reverse().find(item=>item.role==='assistant');
-      if (message) { await fetch(`${API_BASE_URL}/api/v1/conversations/${activeConv}/messages/${message.id}/feedback`,{method:'POST',headers:{'Content-Type':'application/json',...apiHeaders()},body:JSON.stringify({feedback})}); window.dispatchEvent(new CustomEvent('app-toast',{detail:'反馈已记录'})); }
+      // 历史消息自带 id，直接反馈；旧数据缺 id 时才回退拉取整段会话找末条回答。
+      if (!targetId) {
+        const response = await fetch(`${API_BASE_URL}/api/v1/conversations/${activeConv}` ,{headers:apiHeaders()});
+        const conversation = await response.json();
+        targetId = [...(conversation.messages || [])].reverse().find(item=>item.role==='assistant')?.id || '';
+      }
+      if (!targetId) return;
+      await fetch(`${API_BASE_URL}/api/v1/conversations/${activeConv}/messages/${targetId}/feedback`,{method:'POST',headers:{'Content-Type':'application/json',...apiHeaders()},body:JSON.stringify({feedback})});
+      window.dispatchEvent(new CustomEvent('app-toast',{detail:'反馈已记录'}));
     } catch {}
-  };
+  }, [activeConv]);
 
   const previewCitation = useCallback((citation: Citation) => {
     if (!citation?.kb || !citation?.documentId) {
@@ -281,23 +287,45 @@ export function ChatScreen(){
     previewCitation(source);
   }, [previewCitation]);
 
-  const openConversation = async (id: string) => {
+  const openConversation = useCallback(async (id: string) => {
     if (streaming || !id) return;
+    // 连续点击不同会话时只应用最后一次响应，避免慢响应覆盖新选择。
+    const seq = ++openSeqRef.current;
+    setConvLoading(true);
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/conversations/${id}`, { headers: apiHeaders() });
       if (!response.ok) throw new Error('会话加载失败');
       const conversation = await response.json();
-      setActiveConv(id);
-      setMessages((conversation.messages || []).map((message: any) => ({
+      if (seq !== openSeqRef.current) return;
+      const mapped = (conversation.messages || []).map((message: any) => ({
+        id: message.id as string | undefined,
         role: message.role === 'assistant' ? 'ai' : 'user',
         text: message.content,
         done: true,
         trace: message.role === 'assistant' && Array.isArray(message.processingTrace) ? message.processingTrace : [],
         sources: message.role === 'assistant' && Array.isArray(message.citationsSummary) ? message.citationsSummary.map((cite: any, index: number) => ({ id: `${message.id}-${index}`, citationIndex: Number(cite.index || index + 1), title: cite.timeline_entry?.doc_title || cite.topic_slug || '知识主题', kb: cite.timeline_entry?.source_kb, documentId: cite.timeline_entry?.document_id, kbName: cite.timeline_entry?.kb_name || cite.timeline_entry?.source_kb || '知识库', truth: '—', evidences: 1, lastUpdate: new Date(message.createdAt).toLocaleString('zh-CN'), snippet: cite.timeline_entry?.snippet || '', path: cite.topic_slug, pageNo: cite.timeline_entry?.page_no, bbox: cite.timeline_entry?.bbox })) : [],
-      })));
-      setCitations((conversation.messages || []).flatMap((message: any) => Array.isArray(message.citationsSummary) ? message.citationsSummary.map((cite: any, index: number) => ({ id: `${message.id}-${index}`, citationIndex: Number(cite.index || index + 1), title: cite.timeline_entry?.doc_title || cite.topic_slug || '知识主题', kb: cite.timeline_entry?.source_kb, documentId: cite.timeline_entry?.document_id, kbName: cite.timeline_entry?.kb_name || cite.timeline_entry?.source_kb || '知识库', truth: '—', evidences: 1, lastUpdate: new Date(message.createdAt).toLocaleString('zh-CN'), snippet: cite.timeline_entry?.snippet || '', pageNo: cite.timeline_entry?.page_no, bbox: cite.timeline_entry?.bbox })) : []));
-    } catch (error) { window.dispatchEvent(new CustomEvent('app-toast', {detail: errorMessage(error) || '会话加载失败'})); }
-  };
+      }));
+      const allCitations = (conversation.messages || []).flatMap((message: any) => Array.isArray(message.citationsSummary) ? message.citationsSummary.map((cite: any, index: number) => ({ id: `${message.id}-${index}`, citationIndex: Number(cite.index || index + 1), title: cite.timeline_entry?.doc_title || cite.topic_slug || '知识主题', kb: cite.timeline_entry?.source_kb, documentId: cite.timeline_entry?.document_id, kbName: cite.timeline_entry?.kb_name || cite.timeline_entry?.source_kb || '知识库', truth: '—', evidences: 1, lastUpdate: new Date(message.createdAt).toLocaleString('zh-CN'), snippet: cite.timeline_entry?.snippet || '', pageNo: cite.timeline_entry?.page_no, bbox: cite.timeline_entry?.bbox })) : []);
+      // 长会话整列表渲染放进 transition：期间用户输入/滚动仍可中断，
+      // 避免切换会话时的整帧卡死。
+      startTransition(() => {
+        setActiveConv(id);
+        setMessages(mapped);
+        setCitations(allCitations);
+      });
+    } catch (error) {
+      if (seq === openSeqRef.current) window.dispatchEvent(new CustomEvent('app-toast', {detail: errorMessage(error) || '会话加载失败'}));
+    } finally {
+      if (seq === openSeqRef.current) setConvLoading(false);
+    }
+  }, [streaming]);
+
+  // 命令面板跨屏打开会话：订阅最新的 openConversation，保证流式期间守卫生效。
+  useEffect(() => {
+    const onOpen = (e: Event) => { const detail = (e as CustomEvent<string>).detail; if (detail) void openConversation(detail); };
+    window.addEventListener('app-open-conversation', onOpen);
+    return () => window.removeEventListener('app-open-conversation', onOpen);
+  }, [openConversation]);
 
   const hideConversation = (conv: ConversationSummary) => {
     const id = conv?.id;
@@ -348,6 +376,40 @@ export function ChatScreen(){
 
   const answerDone = messages.length>0 && messages[messages.length-1].done;
 
+  // 会话分组按列表/搜索/隐藏集合记忆化：输入框打字等高频重渲染不再
+  // 重复做 O(n) 的日期分组过滤。
+  const convGroups = useMemo(() => {
+    const q = convSearch.trim().toLowerCase();
+    const visibleList = conversationList.filter((c) => !hiddenConvs.has(c.id));
+    const filtered = q ? visibleList.filter((c) => (c.title || '').toLowerCase().includes(q)) : visibleList;
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const startOfTodayMs = startOfToday.getTime();
+    const sevenDaysAgoMs = startOfTodayMs - 6 * 24 * 3600 * 1000;
+    const thirtyDaysAgoMs = startOfTodayMs - 29 * 24 * 3600 * 1000;
+    const ts = (c: ConversationSummary) => (c.createdAt ? new Date(c.createdAt).getTime() : NaN);
+    return [
+      { label: '今天', items: filtered.filter((c) => { const t = ts(c); return Number.isFinite(t) && t >= startOfTodayMs; }) },
+      { label: '昨天', items: filtered.filter((c) => { const t = ts(c); return Number.isFinite(t) && t < startOfTodayMs && t >= startOfTodayMs - 86400000; }) },
+      { label: '近 7 天', items: filtered.filter((c) => { const t = ts(c); return Number.isFinite(t) && t < startOfTodayMs - 86400000 && t >= sevenDaysAgoMs; }) },
+      { label: '30 天内', items: filtered.filter((c) => { const t = ts(c); return Number.isFinite(t) && t < sevenDaysAgoMs && t >= thirtyDaysAgoMs; }) },
+      { label: '更早', items: filtered.filter((c) => { const t = ts(c); return Number.isFinite(t) && t < thirtyDaysAgoMs; }) },
+      { label: '未分类', items: filtered.filter((c) => !Number.isFinite(ts(c))) },
+    ].filter((g) => g.items.length > 0);
+  }, [conversationList, convSearch, hiddenConvs]);
+
+  // “重写”取最近一条提问；messages 每次流式刷新都会变，这里按值记忆化
+  // 保证传给消息组件的 prop 引用稳定。
+  const lastUserText = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') return messages[i].text;
+    }
+    return undefined;
+  }, [messages]);
+  const sendRef = useRef(send);
+  useEffect(() => { sendRef.current = send; });
+  const resend = useCallback((question?: string) => { sendRef.current(question); }, []);
+
   return (
     <div className="chat">
       {convOpen && <div className="conv-backdrop" onClick={() => setConvOpen(false)} />}
@@ -369,52 +431,35 @@ export function ChatScreen(){
           {convSearch && <button type="button" className="conv-search-clear" onClick={() => setConvSearch('')} aria-label="清除">×</button>}
         </div>
         <div className="conv-list">
-          {(() => {
-            const q = convSearch.trim().toLowerCase();
-            const visibleList = conversationList.filter((c) => !hiddenConvs.has(c.id));
-            const filtered = q ? visibleList.filter((c) => (c.title || '').toLowerCase().includes(q)) : visibleList;
-            const startOfToday = new Date();
-            startOfToday.setHours(0, 0, 0, 0);
-            const startOfTodayMs = startOfToday.getTime();
-            const sevenDaysAgoMs = startOfTodayMs - 6 * 24 * 3600 * 1000;
-            const thirtyDaysAgoMs = startOfTodayMs - 29 * 24 * 3600 * 1000;
-
-            const groups = [
-              { label: '今天', items: filtered.filter((c) => c.createdAt && new Date(c.createdAt).getTime() >= startOfTodayMs) },
-              { label: '昨天', items: filtered.filter((c) => c.createdAt && new Date(c.createdAt).getTime() < startOfTodayMs && new Date(c.createdAt).getTime() >= startOfTodayMs - 86400000) },
-              { label: '近 7 天', items: filtered.filter((c) => c.createdAt && new Date(c.createdAt).getTime() < startOfTodayMs - 86400000 && new Date(c.createdAt).getTime() >= sevenDaysAgoMs) },
-              { label: '30 天内', items: filtered.filter((c) => c.createdAt && new Date(c.createdAt).getTime() < sevenDaysAgoMs && new Date(c.createdAt).getTime() >= thirtyDaysAgoMs) },
-              { label: '更早', items: filtered.filter((c) => c.createdAt && new Date(c.createdAt).getTime() < thirtyDaysAgoMs) },
-              { label: '未分类', items: filtered.filter((c) => !c.createdAt) },
-            ].filter((g) => g.items.length > 0);
-            if (groups.length === 0) return <div className="conv-empty">{q ? '没有匹配的会话' : '暂无会话'}</div>;
-            return groups.map((g) => {
-              const hasActive = g.items.some((c) => c.id === activeConv);
-              const isCollapsed = !q && !hasActive && Boolean(collapsedGroups[g.label as keyof typeof collapsedGroups]);
-              return (
-                <div key={g.label} className="conv-group">
-                  <div
-                    className={`conv-group-label ${isCollapsed ? 'collapsed' : ''}`}
-                    onClick={() => setCollapsedGroups((prev) => ({ ...prev, [g.label]: !isCollapsed }))}
-                    title={isCollapsed ? '点击展开' : '点击折叠'}
-                  >
-                    <span>{g.label} <em>· {g.items.length}</em></span>
-                    <span className="group-arrow">▾</span>
-                  </div>
-                  {!isCollapsed && (
-                    <div className="conv-group-items">
-                      {g.items.map((c) => (
-                        <div key={c.id} className={`conv-item ${activeConv===c.id?'active':''}`} onClick={()=>{ openConversation(c.id); setConvOpen(false); }} onContextMenu={(e) => showConvMenu(e, c)}>
-                          <span className="conv-title">{c.title || '未命名会话'}</span>
-                          <span className="conv-time">{c.createdAt ? new Date(c.createdAt).toLocaleDateString('zh-CN') : ''}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+          {convGroups.length === 0 ? (
+            <div className="conv-empty">{convSearch.trim() ? '没有匹配的会话' : '暂无会话'}</div>
+          ) : convGroups.map((g) => {
+            const hasActive = g.items.some((c) => c.id === activeConv);
+            const q = convSearch.trim();
+            const isCollapsed = !q && !hasActive && Boolean(collapsedGroups[g.label as keyof typeof collapsedGroups]);
+            return (
+              <div key={g.label} className="conv-group">
+                <div
+                  className={`conv-group-label ${isCollapsed ? 'collapsed' : ''}`}
+                  onClick={() => setCollapsedGroups((prev) => ({ ...prev, [g.label]: !isCollapsed }))}
+                  title={isCollapsed ? '点击展开' : '点击折叠'}
+                >
+                  <span>{g.label} <em>· {g.items.length}</em></span>
+                  <span className="group-arrow">▾</span>
                 </div>
-              );
-            });
-          })()}
+                {!isCollapsed && (
+                  <div className="conv-group-items">
+                    {g.items.map((c) => (
+                      <div key={c.id} className={`conv-item ${activeConv===c.id?'active':''}`} onClick={()=>{ openConversation(c.id); setConvOpen(false); }} onContextMenu={(e) => showConvMenu(e, c)}>
+                        <span className="conv-title">{c.title || '未命名会话'}</span>
+                        <span className="conv-time">{c.createdAt ? new Date(c.createdAt).toLocaleDateString('zh-CN') : ''}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
         <div className="new-chat" onClick={()=>{ newChat(); setConvOpen(false); }} title="开始一段新对话 (⌘N)">
           <Icon name="plus" size={12}/> 新建会话
@@ -422,6 +467,12 @@ export function ChatScreen(){
       </div>
 
       <div className="chat-main">
+        {convLoading && (
+          <div style={{ position: 'absolute', top: 12, right: 20, zIndex: 6, display: 'flex', alignItems: 'center', gap: 6, padding: '4px 12px', borderRadius: 14, background: 'var(--bg-2, rgba(0,0,0,0.05))', color: 'var(--ink-3, #666)', fontSize: 12 }}>
+            <span className="streaming-dot" aria-hidden="true" />
+            会话加载中…
+          </div>
+        )}
         <div className="conv-mobile-bar">
           <button type="button" className="chat-mobile-conv-btn" onClick={() => setConvOpen(true)}>
             <Icon name="chat" size={13}/>
@@ -458,118 +509,22 @@ export function ChatScreen(){
               </div>
             )}
 
-            {messages.map((msg, mi)=>{
-              const isLast = mi === messages.length-1;
-              if(msg.role==='user'){
-                return (
-                  <div key={mi} className="msg msg-user">
-                    <div className="bubble">{msg.text}</div>
-                  </div>
-                );
-              }
-              const traceNodes = Array.isArray(msg.trace) ? msg.trace : [];
-              const traceSuccess = traceNodes.filter((node: TraceNode) => node.status === 'success' || node.status === 'skipped').length;
-              const traceWarnings = traceNodes.filter((node: TraceNode) => node.status === 'warning').length;
-              const traceFailed = traceNodes.filter((node: TraceNode) => node.status === 'failed').length;
-              const traceRunning = traceNodes.filter((node: TraceNode) => node.status === 'running').length;
-              const traceStarted = traceNodes.map((node: TraceNode) => Date.parse(node.startedAt || '')).filter(Number.isFinite);
-              const traceFinished = traceNodes.map((node: TraceNode) => Date.parse(node.finishedAt || '')).filter(Number.isFinite);
-              const traceDuration = traceStarted.length && traceFinished.length
-                ? Math.max(0, Math.max(...traceFinished) - Math.min(...traceStarted))
-                : null;
-              return (
-                <div key={mi} className="msg msg-ai">
-                  <div className="body">
-                    <div className="who">
-                      <span className="dot"/>
-                      <span>百纳 · 大脑综述</span>
-                      <span style={{color:'var(--ink-4)'}}>· 你的大脑 · {scopeLabel}{allSel ? `（${selected.length} 库）` : ''}</span>
-                    </div>
-                    {/* Bug 4 修复：流式生成期间展示动态管线进度 */}
-                    {!msg.done && traceNodes.length > 0 && (() => {
-                      const PIPELINE_STAGES: [string, string][] = [
-                        ['query_rewrite', '意图分析'],
-                        ['gbrain_retrieval', '知识检索'],
-                        ['confidence_rerank', '证据重排'],
-                        ['grounding_gate', '事实校验'],
-                        ['llm_generation', '生成回答'],
-                        ['citation_validation', '引用校验'],
-                      ];
-                      const activeIds = new Set(traceNodes.map((n: TraceNode) => n.id));
-                      const doneIds = new Set(traceNodes.filter((n: TraceNode) => n.status === 'success' || n.status === 'skipped').map((n: TraceNode) => n.id));
-                      const runningIds = new Set(traceNodes.filter((n: TraceNode) => n.status === 'running').map((n: TraceNode) => n.id));
-                      return (
-                        <div className="pipeline-progress" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '8px 0 4px', fontSize: 12, lineHeight: 1 }}>
-                          {PIPELINE_STAGES.map(([id, label]) => {
-                            const done = doneIds.has(id);
-                            const running = runningIds.has(id);
-                            const pending = !activeIds.has(id);
-                            return (
-                              <span
-                                key={id}
-                                style={{
-                                  display: 'inline-flex', alignItems: 'center', gap: 4,
-                                  padding: '3px 10px', borderRadius: 12,
-                                  background: done ? 'var(--evidence-bg, #e8f5e9)' : running ? 'var(--accent-bg, #e3f2fd)' : 'var(--bg-2, #f5f5f5)',
-                                  color: done ? 'var(--evidence, #2e7d32)' : running ? 'var(--accent, #1565c0)' : 'var(--ink-4, #999)',
-                                  fontWeight: running ? 600 : 400,
-                                  transition: 'all 0.3s ease',
-                                }}
-                              >
-                                {done ? '✓' : running ? '◉' : pending ? '○' : '○'}
-                                {' '}{label}
-                                {running && <span style={{ display: 'inline-block', width: 4, height: 4, borderRadius: '50%', background: 'currentColor', animation: 'pulse 1s infinite' }} />}
-                              </span>
-                            );
-                          })}
-                        </div>
-                      );
-                    })()}
-                    <AnswerMarkdown content={msg.text} sources={msg.sources} activeCitation={activeCite} streaming={!msg.done} onCitation={handleAnswerCitation} />
-                    {msg.done && (msg.sources?.length ?? 0) > 0 && <div className="answer-sources"><span>来源：</span>{(msg.sources || []).map((source: Citation, index: number) => <button key={source.id || index} onClick={()=>previewCitation(source)} title="打开原始文档预览">[{source.citationIndex || index + 1}] {source.title}</button>)}</div>}
-                    {traceNodes.length > 0 && (
-                      <details className="retrieval">
-                        <summary>
-                          <Icon name="spark" size={12} color="var(--evidence)"/>
-                          <span>本次响应处理调用链 ·</span>
-                          <b>{traceFailed ? `${traceFailed} 个异常` : traceRunning ? `${traceRunning} 个执行中` : `${traceSuccess}/${traceNodes.length} 个节点正常`}</b>
-                          {traceWarnings > 0 && <span className="trace-summary-warning">· {traceWarnings} 个警告</span>}
-                          {traceDuration !== null && <span className="trace-total">{traceDuration}ms</span>}
-                          <span className="trace-expand">展开 ▾</span>
-                        </summary>
-                        <div className="retrieval-body">
-                          {traceNodes.map((node: TraceNode, index: number) => (
-                            <div className={`ret-step trace-${String(node.status ?? '')}`} key={node.id || index}>
-                              <span className="n">{node.status === 'success' ? '✓' : node.status === 'warning' ? '!' : node.status === 'failed' ? '×' : node.status === 'skipped' ? '–' : '…'}</span>
-                              <span className="txt">
-                                <b>{String(node.name ?? '')}</b>
-                                {node.summary ? ` · ${String(node.summary ?? '')}` : ''}
-                                {node.details && Object.keys(node.details).length > 0 && (
-                                  <details className="trace-details">
-                                    <summary>查看节点反馈</summary>
-                                    <pre>{JSON.stringify(node.details, null, 2)}</pre>
-                                  </details>
-                                )}
-                              </span>
-                              <span className="v">{node.status === 'running' ? '执行中' : node.status === 'skipped' ? '跳过' : `${node.durationMs ?? 0}ms`}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </details>
-                    )}
-                    {msg.done && (
-                      <>
-                        <div className="actions">
-                          <button onClick={()=>copyAnswer(msg.text)}><Icon name="copy" size={12}/> 复制</button>
-                          <button onClick={()=>send([...messages].reverse().find(item=>item.role==='user')?.text)}><Icon name="refresh" size={12}/> 重写</button>
-                          <button style={{marginLeft:'auto'}} onClick={()=>saveFeedback('useful')}><Icon name="check" size={12}/> 有用</button>
-                        </div>
-                                              </>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+            {messages.map((msg, mi) => (
+              <MessageItem
+                key={mi}
+                msg={msg}
+                scopeLabel={scopeLabel}
+                allSel={allSel}
+                selectedCount={selected.length}
+                activeCitation={activeCite}
+                lastUserText={lastUserText}
+                onCitation={handleAnswerCitation}
+                onPreview={previewCitation}
+                onCopy={copyAnswer}
+                onResend={resend}
+                onFeedback={saveFeedback}
+              />
+            ))}
 
           </div>
         </div>
@@ -663,3 +618,161 @@ return (
     </div>
   );
 }
+
+interface MessageItemProps {
+  msg: ChatMessage;
+  scopeLabel: string;
+  allSel: boolean;
+  selectedCount: number;
+  activeCitation: number | null;
+  lastUserText?: string;
+  onCitation: (source: Citation, index: number) => void;
+  onPreview: (citation: Citation) => void;
+  onCopy: (text: string) => void;
+  onResend: (question?: string) => void;
+  onFeedback: (feedback: string, messageId?: string) => void;
+}
+
+/**
+ * 单条消息 memo 化：会话切换/流式刷新/输入打字时只有内容变化的消息
+ * 重渲染，历史消息的 AnswerMarkdown（marked 解析）不再反复重建。
+ */
+const MessageItem = memo(function MessageItem(props: MessageItemProps) {
+  if (props.msg.role === 'user') {
+    return (
+      <div className="msg msg-user">
+        <div className="bubble">{props.msg.text}</div>
+      </div>
+    );
+  }
+  return <AiMessageBody {...props} />;
+});
+
+const AiMessageBody = memo(function AiMessageBody({
+  msg, scopeLabel, allSel, selectedCount, activeCitation, lastUserText,
+  onCitation, onPreview, onCopy, onResend, onFeedback,
+}: MessageItemProps) {
+  const traceNodes = useMemo(() => (Array.isArray(msg.trace) ? (msg.trace as TraceNode[]) : []), [msg.trace]);
+  const traceStats = useMemo(() => {
+    const started = traceNodes.map((node) => Date.parse(node.startedAt || '')).filter(Number.isFinite);
+    const finished = traceNodes.map((node) => Date.parse(node.finishedAt || '')).filter(Number.isFinite);
+    return {
+      total: traceNodes.length,
+      success: traceNodes.filter((node) => node.status === 'success' || node.status === 'skipped').length,
+      warnings: traceNodes.filter((node) => node.status === 'warning').length,
+      failed: traceNodes.filter((node) => node.status === 'failed').length,
+      running: traceNodes.filter((node) => node.status === 'running').length,
+      duration: started.length && finished.length
+        ? Math.max(0, Math.max(...finished) - Math.min(...started))
+        : null,
+    };
+  }, [traceNodes]);
+
+  return (
+    <div className="msg msg-ai">
+      <div className="body">
+        <div className="who">
+          <span className="dot"/>
+          <span>百纳 · 大脑综述</span>
+          <span style={{color:'var(--ink-4)'}}>· 你的大脑 · {scopeLabel}{allSel ? `（${selectedCount} 库）` : ''}</span>
+        </div>
+        {/* 流式生成期间展示动态管线进度 */}
+        {!msg.done && traceNodes.length > 0 && <PipelineProgress nodes={traceNodes} />}
+        <AnswerMarkdown content={msg.text} sources={msg.sources} activeCitation={activeCitation} streaming={!msg.done} onCitation={onCitation} />
+        {msg.done && (msg.sources?.length ?? 0) > 0 && (
+          <div className="answer-sources"><span>来源：</span>{(msg.sources || []).map((source: Citation, index: number) => <button key={source.id || index} onClick={()=>onPreview(source)} title="打开原始文档预览">[{source.citationIndex || index + 1}] {source.title}</button>)}</div>
+        )}
+        {traceNodes.length > 0 && <TraceDetails nodes={traceNodes} stats={traceStats} />}
+        {msg.done && (
+          <div className="actions">
+            <button onClick={()=>onCopy(msg.text)}><Icon name="copy" size={12}/> 复制</button>
+            <button onClick={()=>onResend(lastUserText)}><Icon name="refresh" size={12}/> 重写</button>
+            <button style={{marginLeft:'auto'}} onClick={()=>onFeedback('useful', msg.id)}><Icon name="check" size={12}/> 有用</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});
+
+const PIPELINE_STAGES: [string, string][] = [
+  ['query_rewrite', '意图分析'],
+  ['gbrain_retrieval', '知识检索'],
+  ['confidence_rerank', '证据重排'],
+  ['grounding_gate', '事实校验'],
+  ['llm_generation', '生成回答'],
+  ['citation_validation', '引用校验'],
+];
+
+function PipelineProgress({ nodes }: { nodes: TraceNode[] }) {
+  const activeIds = new Set(nodes.map((n) => n.id));
+  const doneIds = new Set(nodes.filter((n) => n.status === 'success' || n.status === 'skipped').map((n) => n.id));
+  const runningIds = new Set(nodes.filter((n) => n.status === 'running').map((n) => n.id));
+  return (
+    <div className="pipeline-progress" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '8px 0 4px', fontSize: 12, lineHeight: 1 }}>
+      {PIPELINE_STAGES.map(([id, label]) => {
+        const done = doneIds.has(id);
+        const running = runningIds.has(id);
+        const pending = !activeIds.has(id);
+        return (
+          <span
+            key={id}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              padding: '3px 10px', borderRadius: 12,
+              background: done ? 'var(--evidence-bg, #e8f5e9)' : running ? 'var(--accent-bg, #e3f2fd)' : 'var(--bg-2, #f5f5f5)',
+              color: done ? 'var(--evidence, #2e7d32)' : running ? 'var(--accent, #1565c0)' : 'var(--ink-4, #999)',
+              fontWeight: running ? 600 : 400,
+              transition: 'all 0.3s ease',
+            }}
+          >
+            {done ? '✓' : running ? '◉' : pending ? '○' : '○'}
+            {' '}{label}
+            {running && <span style={{ display: 'inline-block', width: 4, height: 4, borderRadius: '50%', background: 'currentColor', animation: 'pulse 1s infinite' }} />}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * 调用链明细懒渲染：折叠状态只渲染摘要（计数/耗时），展开时才把每个
+ * 节点的 details JSON 序列化进 DOM——长会话切换不再为每条消息的历史
+ * trace 做全量 stringify。
+ */
+const TraceDetails = memo(function TraceDetails({ nodes, stats }: { nodes: TraceNode[]; stats: { total: number; success: number; warnings: number; failed: number; running: number; duration: number | null } }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details className="retrieval" onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
+      <summary>
+        <Icon name="spark" size={12} color="var(--evidence)"/>
+        <span>本次响应处理调用链 ·</span>
+        <b>{stats.failed ? `${stats.failed} 个异常` : stats.running ? `${stats.running} 个执行中` : `${stats.success}/${stats.total} 个节点正常`}</b>
+        {stats.warnings > 0 && <span className="trace-summary-warning">· {stats.warnings} 个警告</span>}
+        {stats.duration !== null && <span className="trace-total">{stats.duration}ms</span>}
+        <span className="trace-expand">展开 ▾</span>
+      </summary>
+      {open && (
+        <div className="retrieval-body">
+          {nodes.map((node: TraceNode, index: number) => (
+            <div className={`ret-step trace-${String(node.status ?? '')}`} key={node.id || index}>
+              <span className="n">{node.status === 'success' ? '✓' : node.status === 'warning' ? '!' : node.status === 'failed' ? '×' : node.status === 'skipped' ? '–' : '…'}</span>
+              <span className="txt">
+                <b>{String(node.name ?? '')}</b>
+                {node.summary ? ` · ${String(node.summary ?? '')}` : ''}
+                {node.details && Object.keys(node.details).length > 0 && (
+                  <details className="trace-details">
+                    <summary>查看节点反馈</summary>
+                    <pre>{JSON.stringify(node.details, null, 2)}</pre>
+                  </details>
+                )}
+              </span>
+              <span className="v">{node.status === 'running' ? '执行中' : node.status === 'skipped' ? '跳过' : `${node.durationMs ?? 0}ms`}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </details>
+  );
+});

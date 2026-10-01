@@ -29,6 +29,11 @@ export class AuthService {
     string,
     { expiresAt: number; active: boolean; mustChangePassword: boolean; mfaEnabled: boolean }
   >();
+  private static readonly MFA_POLICY_TTL_MS = Math.max(
+    0,
+    Number(process.env.AUTH_MFA_POLICY_TTL_MS ?? 5_000),
+  );
+  private mfaPolicyCache: { expiresAt: number; value: boolean } | null = null;
 
   invalidateUserStatus(userId: string): void {
     this.userStatusCache.delete(userId);
@@ -134,11 +139,20 @@ export class AuthService {
   }
 
   async isMfaEnforcedForAdmins(): Promise<boolean> {
+    // AdminGuard 在每条 admin 路由上都会读取该策略；用短 TTL 缓存把
+    // systemSetting 查询收敛，setMfaEnforcedForAdmins 负责主动失效。
+    const ttl = AuthService.MFA_POLICY_TTL_MS;
+    if (ttl > 0) {
+      const cached = this.mfaPolicyCache;
+      if (cached && cached.expiresAt > Date.now()) return cached.value;
+    }
     const row = await this.prisma.systemSetting.findUnique({
       where: { key: MFA_POLICY_KEY },
     });
     const raw = String(row?.value ?? '').trim().toLowerCase();
-    return raw === 'true' || raw === '1' || raw === 'yes';
+    const value = raw === 'true' || raw === '1' || raw === 'yes';
+    if (ttl > 0) this.mfaPolicyCache = { expiresAt: Date.now() + ttl, value };
+    return value;
   }
 
   async setMfaEnforcedForAdmins(enabled: boolean): Promise<void> {
@@ -147,6 +161,7 @@ export class AuthService {
       create: { key: MFA_POLICY_KEY, value: enabled ? 'true' : 'false' },
       update: { value: enabled ? 'true' : 'false' },
     });
+    this.mfaPolicyCache = null;
   }
 
   private isPrivilegedRole(user: { roles?: { role: { name: string; builtin: boolean; code?: string | null } }[] }): boolean {

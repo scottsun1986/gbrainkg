@@ -63,7 +63,8 @@ function mapUsers(raw: unknown[]): UserRow[] {
 
 /** Fetch admin/session bootstrap data and refresh the shared app store. */
 export function useAdminBootstrap(): {
-  loadAdminData: (token: string) => Promise<void>;
+  /** Resolves with the session user (含 mustChangePassword 标记) 供刷新链路判定。 */
+  loadAdminData: (token: string) => Promise<CurrentUser | null>;
   currentUser: CurrentUser | null;
   setCurrentUser: (user: CurrentUser | null) => void;
   dbData: AdminData | null;
@@ -72,7 +73,7 @@ export function useAdminBootstrap(): {
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [dbData, setDbData] = useState<AdminData | null>(null);
 
-  const loadAdminData = useCallback(async (token: string) => {
+  const loadAdminData = useCallback(async (token: string): Promise<CurrentUser | null> => {
     const headers = { Authorization: `Bearer ${token}` };
     // 阶段一：轻量 session/bootstrap（所有用户可用）+ 会话列表并行拉取。
     // 普通用户不再先打注定 403 的 admin/data（服务端在拒绝前还要执行数个
@@ -237,13 +238,19 @@ export function useAdminBootstrap(): {
           await applyBootstrap((await adminRes.json()) as AdminData, null);
         }
       }
-      return;
+      return (asRecord(session?.user) ? (session!.user as CurrentUser) : null);
     }
 
     // session/bootstrap 不可用（旧版本后端等）时回退原 admin/data 路径。
     const res = await fetch(`${API_BASE_URL}/api/v1/admin/data`, { headers });
-    if (!res.ok) throw new Error(`API ${res.status}`);
-    await applyBootstrap((await res.json()) as AdminData, conversationsResponse);
+    if (!res.ok) {
+      const error = new Error(`API ${res.status}`) as Error & { status?: number };
+      error.status = res.status;
+      throw error;
+    }
+    const fallback = (await res.json()) as AdminData;
+    await applyBootstrap(fallback, conversationsResponse);
+    return asRecord(fallback?.user) ? (fallback.user as CurrentUser) : null;
   }, []);
 
   return { loadAdminData, currentUser, setCurrentUser, dbData, setDbData };
