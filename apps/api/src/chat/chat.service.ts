@@ -5519,7 +5519,14 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
       // Commit verified text in model order. A delayed clause must never be
       // appended underneath a later heading. History and SSE use this same text.
       fullAnswer = tidyVerifiedAnswer(orderedAnswer.render());
-      const substantiveLines = fullAnswer.split(/\n+/).filter(line => line.trim() && !isStructuralHeadingLine(line));
+      // A line that carries no letters, digits or Han characters is markup
+      // residue, not an answer. "）" alone passed this check (it is not blank and
+      // not a heading), so a response whose every sentence was held by the
+      // grounding gate could reach the user as a lone bracket.
+      const substantiveLines = fullAnswer
+        .split(/\n+/)
+        .filter(line => line.trim() && !isStructuralHeadingLine(line))
+        .filter(line => /[\p{L}\p{N}]/u.test(line));
       if (!substantiveLines.length) {
         synthesizedRefusal = true;
         fullAnswer = isEnglishQuery

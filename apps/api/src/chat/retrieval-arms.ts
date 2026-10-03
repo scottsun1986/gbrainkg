@@ -269,12 +269,97 @@ export function calibratedScoreOf(citation: any): number | null {
  * which also poisoned the international benchmarks, where an answer generated before
  * a retrieval improvement kept being replayed for the whole cache TTL.
  */
+/** Clause split that keeps terminal punctuation, so a clause can be tested. */
+function clausesOf(text: string): string[] {
+  return String(text || '')
+    .split(/(?<=[。！？!?;；\n])/)
+    .map((c) => c.trim())
+    .filter(Boolean);
+}
+
 export function isRefusalAnswerText(text: string): boolean {
   const value = String(text || '').trim();
   if (!value) return true;
   return /(?:与[^。！？\n]{1,120}无关[^。！？\n]*(?:不能作为|不足以回答)|(?:资料|文档|知识库)[^。！？\n]{0,300}均未(?:记载|提及|提供))[^。！？\n]*[。！？]?$/u.test(value) ||
     /(未包含相关信息|无法(?:根据知识库)?回答|不知道|无法提供(?:该信息)?|无法确定|没有找到|未检索到|知识库中未)/u.test(value) ||
-    /(?:not|no)\s+(?:available|recorded|mentioned|provided|found|contained|specified|stated|listed|given|documented|reported)|cannot\s+(?:answer|be\s+determined)|unable\s+to\s+answer|insufficient\s+information|no\s+(?:relevant\s+information|record|mention|information)|do(?:es)?\s+not\s+(?:contain|specify|state|mention|record|document|provide|list|include)|information\s+is\s+not|is\s+not\s+(?:recorded|specified|mentioned|stated|documented|available)/i.test(value);
+    /(?:not|no)\s+(?:available|recorded|mentioned|provided|found|contained|specified|stated|listed|given|documented|reported)|cannot\s+(?:answer|be\s+determined)|unable\s+to\s+answer|insufficient\s+information|no\s+(?:relevant\s+information|record|mention|information)|do(?:es)?\s+not\s+(?:contain|specify|state|mention|record|document|provide|list|include)|information\s+is\s+not|is\s+not\s+(?:recorded|specified|mentioned|stated|documented|available)/i.test(value) ||
+    // Contextual refusals. The release gate (SOTA E2E P4-01) failed because a
+    // correct contextual refusal - "资料中未记载任何…技术实施方案编号",
+    // "未出现…相关方案，也无任何技术实施方案编号" - matched none of the markers
+    // above: the model names the irrelevant value it found and denies the
+    // asked one, in wording that varies per run.
+    //
+    // The discriminator is clause-level and corpus-agnostic, not a longer
+    // phrase list: an answer is a set of ASSERTIVE clauses ("…编号是
+    // SUM-2026-5566[1]"). A refusal either denies the asked value
+    // (denialClause) or explicitly disqualifies a value as unrelated
+    // (disqualifyClause), possibly after stating which unrelated value the
+    // evidence does hold. "手册未记载该编号，但巡检周期为 30 天" denies one
+    // thing and answers another, so it is not a refusal - the denial clause is
+    // dropped and the assertive remainder decides.
+    refusalByClauseShape(value);
+}
+
+/** Clause that denies the asked value is present in the evidence. */
+// Two denial shapes: an explicit verb ("资料中未记载…编号") and the elliptical
+// form that drops it ("也无任何技术实施方案编号", "也没有关于…的任何记载").
+const denialClause =
+  /(?:(?:未|没有|无|不含|不涉及|未涉及|未见|不包含|无任何|没有任何)[^。！？\n]{0,40}(?:记载|记录|提及|说明|写明|出现|包含|提供|涉及)|(?:也无|也没有|同样未|同样没有|均未|均无)[^。！？\n]{0,40}(?:记载|记录|提及|说明|出现|包含|提供|涉及|编号|方案|标准|条款|规定|记录|数据|信息))/u;
+/** Clause that disqualifies a value found in the evidence as an answer. */
+const disqualifyClause =
+  /(?:与[^。！？\n]{1,80}无关|并不属于|并非|只属于|不能作为|不足以回答|无法给出|无法判断|无从判断)/u;
+/** Clause that asserts a value, i.e. actually answers the question. */
+const assertionClause =
+  /(?:为|是|等于|应为|即|采用|包含|负责|需要注意|规定)/u;
+
+/**
+ * Clause-shape refusal test.
+ *
+ * A refusal can name the irrelevant value the evidence does hold and deny the
+ * asked one ("…唯一编号是运维手册编号 OM-2026-3001，与量子纠缠保密通信无关，
+ * 资料中未记载任何…技术实施方案编号"). No fixed marker list catches every such
+ * phrasing, and the release gate scored correct contextual refusals as
+ * "未拒答" (SOTA E2E P4-01 failed 2 of 5 runs).
+ *
+ * The shape is what decides:
+ *   - at least one clause denies the asked value or disqualifies a found one;
+ *   - no clause STATES the asked value. A clause may describe the evidence
+ *     before the denial ("其中出现的唯一编号是…OM-2026-3001"), because that is
+ *     the model explaining what it did find, not answering;
+ *   - a sentence that both denies and answers is an answer: "手册未记载该编号，
+ *     但巡检周期为 30 天" delivers the cycle period and must not be suppressed.
+ */
+const answerValueClause =
+  /(?:编号|方案|标准|条款|规定|周期|金额|比例|时间|日期)(?:为|是|即|＝|=)|为\s*[0-9０-９A-Za-z]/u;
+const evidenceDescriptionClause = /资料|其中|来源|手册|证据|文档|知识库/u;
+
+function refusalByClauseShape(value: string): boolean {
+  const clauses = clausesOf(value)
+    .flatMap((c) => c.split(/[，,；;]/))
+    .map((c) =>
+      c
+        // Citation markers and list bullets are not part of the clause wording.
+        .replace(/\[\d+\]/g, '')
+        .replace(/^[\s\u2022\-*>]+/, '')
+        .trim(),
+    )
+    .filter(Boolean);
+  if (!clauses.length) return false;
+
+  const refusing = (c: string) => denialClause.test(c) || disqualifyClause.test(c);
+  if (!clauses.some(refusing)) return false;
+  const firstRefusal = clauses.findIndex(refusing);
+  if (firstRefusal < 0) return false;
+
+  // Every clause after the first denial/disqualification must be one of those
+  // too; a later clause that states a value answers part of the question.
+  if (!clauses.slice(firstRefusal).every(refusing)) return false;
+
+  // Before the refusal mark, a value may appear only as a description of the
+  // evidence ("其中出现的唯一编号是…"), never as the answer itself.
+  const leading = clauses.slice(0, firstRefusal).filter((c) => !evidenceDescriptionClause.test(c));
+  if (leading.some((c) => answerValueClause.test(c))) return false;
+  return true;
 }
 
 /**
