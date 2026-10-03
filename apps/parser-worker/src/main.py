@@ -10,10 +10,10 @@ import re
 import secrets
 import subprocess
 import sys
-if __package__:
-    from .controlled_jobs import FairLimiter, run_process
-    from . import artifact_cache
-else:
+try:
+    from src.controlled_jobs import FairLimiter, run_process
+    from src import artifact_cache
+except (ImportError, ModuleNotFoundError):
     from controlled_jobs import FairLimiter, run_process
     import artifact_cache
 import tempfile
