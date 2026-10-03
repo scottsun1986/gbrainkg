@@ -1,4 +1,4 @@
-import { IncrementalAnswerStreamer, StageReporter, collectStablePrefix } from './answer-stream';
+import { IncrementalAnswerStreamer, StageReporter, collectStablePrefix, incrementalStreamingEnabled } from './answer-stream';
 import { tidyVerifiedAnswer } from './ordered-answer';
 
 function fakeSubscriber() {
@@ -138,5 +138,34 @@ describe('StageReporter', () => {
     reporter.emit('reranking');
     const stages = events.filter((e) => e.data.type === 'stage').map((e) => e.data.stage);
     expect(stages).toEqual(['retrieving', 'reranking']);
+  });
+});
+
+describe("incrementalStreamingEnabled", () => {
+  const original = process.env.KNOWLEDGE_INCREMENTAL_STREAM;
+  const originalStrict = process.env.KNOWLEDGE_STRICT_OUTPUT;
+  afterEach(() => {
+    if (original === undefined) delete process.env.KNOWLEDGE_INCREMENTAL_STREAM;
+    else process.env.KNOWLEDGE_INCREMENTAL_STREAM = original;
+    if (originalStrict === undefined) delete process.env.KNOWLEDGE_STRICT_OUTPUT;
+    else process.env.KNOWLEDGE_STRICT_OUTPUT = originalStrict;
+  });
+
+  it("is buffered by default: the post-gate answer outranks first-token latency", () => {
+    delete process.env.KNOWLEDGE_INCREMENTAL_STREAM;
+    delete process.env.KNOWLEDGE_STRICT_OUTPUT;
+    expect(incrementalStreamingEnabled()).toBe(false);
+  });
+
+  it("is opt-in", () => {
+    process.env.KNOWLEDGE_INCREMENTAL_STREAM = "1";
+    delete process.env.KNOWLEDGE_STRICT_OUTPUT;
+    expect(incrementalStreamingEnabled()).toBe(true);
+  });
+
+  it("stays buffered under the strict contract even when set to 1", () => {
+    process.env.KNOWLEDGE_INCREMENTAL_STREAM = "1";
+    process.env.KNOWLEDGE_STRICT_OUTPUT = "1";
+    expect(incrementalStreamingEnabled()).toBe(false);
   });
 });

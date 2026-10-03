@@ -1,4 +1,4 @@
-import { OrderedAnswer, tidyVerifiedAnswer, answerSentenceBoundary } from './ordered-answer';
+import { OrderedAnswer, tidyVerifiedAnswer, answerSentenceBoundary, isStructuralHeadingLine, isSourceLabelHeading, dropEmptySectionHeadings } from './ordered-answer';
 
 describe('verified answer order', () => {
   it('restores delayed evidence beneath its own heading, ahead of later sections', () => {
@@ -57,4 +57,44 @@ it('preserves code blank lines, headings and mixed fence literals verbatim', () 
   const code = '~~~~text\n```literal\n\n\n# code heading\n~~~~';
   expect(tidyVerifiedAnswer(code)).toBe(code);
   expect(tidyVerifiedAnswer('```text\n\n# unfinished code heading')).toBe('```text\n\n# unfinished code heading');
+});
+
+describe('multi-source answer structure', () => {
+  it('treats a per-source label as a heading even when it ends with a full stop', () => {
+    expect(isSourceLabelHeading('**来源 1《软件研发中心绩效管理办法 V2.doc》（第 5-11 页）：**')).toBe(true);
+    expect(isSourceLabelHeading('**来源 2《软件研发中心绩效管理办法.doc》（第 1-5 页）：**')).toBe(true);
+    expect(isSourceLabelHeading('来源 1《企业考勤制度手册V2.docx》。')).toBe(true);
+    expect(isSourceLabelHeading('**Source 2 — Employee Handbook.pdf**')).toBe(true);
+    expect(isStructuralHeadingLine('**来源 1《软件研发中心绩效管理办法 V2.doc》（第 5-11 页）：**')).toBe(true);
+  });
+
+  it('does not treat a sentence that merely mentions a source as a heading', () => {
+    expect(isSourceLabelHeading('来源 1 规定员工迟到一小时按旷工半日处理[1]。')).toBe(false);
+    expect(isSourceLabelHeading('根据来源 2 的规定')).toBe(false);
+    expect(isSourceLabelHeading('')).toBe(false);
+  });
+
+  it('drops a source label whose section lost all its content', () => {
+    const answer = [
+      '**来源 1《V1.doc》：**',
+      '**来源 2《V2.doc》：**',
+      '权重 60%-80%[2]。',
+    ].join('\n');
+    expect(tidyVerifiedAnswer(answer)).toBe('**来源 2《V2.doc》：**\n权重 60%-80%[2]。');
+  });
+
+  it('keeps a label that still has content under it', () => {
+    const answer = [
+      '**来源 1《V1.doc》：**',
+      '权重 50%-60%[1]。',
+      '**来源 2《V2.doc》：**',
+      '权重 60%-80%[2]。',
+    ].join('\n');
+    expect(tidyVerifiedAnswer(answer)).toBe(answer);
+  });
+
+  it('leaves a fenced heading untouched', () => {
+    const code = '~~~\n# heading\n~~~';
+    expect(dropEmptySectionHeadings(code.split('\n'))).toEqual(code.split('\n'));
+  });
 });

@@ -153,6 +153,14 @@ export function ChatScreen(){
             accumulatedText += String(data.content || '');
             accumulatedTextRef.current = accumulatedText;
             scheduleAssistantFlush();
+          } else if (data.type === 'replace') {
+            // The grounding gate runs after sentences are streamed and can drop
+            // or reinsert them. The server sends the authoritative post-gate text
+            // as `replace`; replacing (not appending) keeps section order and
+            // completeness identical to the stored message.
+            accumulatedText = String(data.content || '');
+            accumulatedTextRef.current = accumulatedText;
+            flushAssistant(false);
           } else if (data.type === 'stage') {
             // 真实阶段进度（retrieving → reranking → generating → verifying）
             const STAGE_LABELS: Record<string, string> = {

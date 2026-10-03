@@ -454,3 +454,37 @@ describe("capitalised candidate extraction with non-ASCII names", () => {
     );
   });
 });
+
+// Production (2026-10-03): the rank guarantee restored leading documents purely
+// by pool position, so unrelated top-ranked documents (公车管理办法 /
+// 合规管理办法) entered an attendance answer's context.
+describe("top-rank guarantee relevance gate", () => {
+  const key = (c: any) => `id:${c.docId}`;
+
+  it("does not restore a leading document unrelated to the question", () => {
+    const selected = [{ docId: "attendance", title: "企业考勤管理制度详细手册.doc" }];
+    const pool = [
+      { docId: "attendance", title: "企业考勤管理制度详细手册.doc", score: 0.9, evidence: "迟到" },
+      { docId: "car", title: "公车管理办法.docx", score: 0.7, evidence: "车辆" },
+      { docId: "v2", title: "企业考勤制度手册V2.docx", score: 0.06, evidence: "考勤" },
+    ];
+    const plan = planTopRankGuarantee({
+      selected,
+      pool,
+      keyOf: key,
+      topDocs: 5,
+      isRelevant: (c: any) => String(c.evidence || "").includes("考勤"),
+    });
+    expect(plan.docs).toEqual(["id:v2"]);
+  });
+
+  it("keeps every leading document when no gate is supplied", () => {
+    const selected = [{ docId: "attendance", title: "A" }];
+    const pool = [
+      { docId: "attendance", title: "A", score: 0.9 },
+      { docId: "car", title: "B", score: 0.7 },
+    ];
+    const plan = planTopRankGuarantee({ selected, pool, keyOf: key, topDocs: 5 });
+    expect(plan.indices).toEqual([1]);
+  });
+});

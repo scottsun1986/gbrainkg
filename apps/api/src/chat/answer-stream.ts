@@ -1,6 +1,7 @@
 import type { Subscriber } from 'rxjs';
 import type { MessageEvent } from '@nestjs/common';
 import { metricsService } from '../observability/metrics.service';
+import { isStructuralHeadingLine } from './ordered-answer';
 
 /** Coarse pipeline stages surfaced to the client while the answer is building. */
 export type ChatStage = 'retrieving' | 'reranking' | 'verifying' | 'generating';
@@ -72,8 +73,16 @@ export function strictOutputEnabled(): boolean {
 }
 
 export function incrementalStreamingEnabled(): boolean {
-  // Explicit strict contract wins; otherwise stream incrementally by default.
-  return !strictOutputEnabled() && process.env.KNOWLEDGE_INCREMENTAL_STREAM !== '0';
+  // Buffered by default. Incremental streaming pushes the verified prefix while
+  // the model is still generating, but the grounding gate runs afterwards and
+  // can drop or reinsert sentences, so the client rendered a prefix the final
+  // answer no longer matched (sections out of order, a source header with
+  // nothing under it). Final answer quality outranks first-token latency, so
+  // streaming is opt-in via KNOWLEDGE_INCREMENTAL_STREAM=1. When it is on, the
+  // caller emits an authoritative `replace` event if the post-gate text diverges
+  // from what was streamed.
+  // The strict contract (KNOWLEDGE_STRICT_OUTPUT=1) stays buffered either way.
+  return !strictOutputEnabled() && process.env.KNOWLEDGE_INCREMENTAL_STREAM === '1';
 }
 
 /**
@@ -124,8 +133,6 @@ function tidyStableLine(
   prevEmittedBlank: boolean,
 ): LineVerdict {
   const line = lines[i];
-  const next = lines[i + 1];
-  const nextIsComplete = i + 1 < lines.length - 1;
   if (line.protectedByFence) return { action: 'emit', text: line.text };
   const cleaned = line.text;
   if (!cleaned.trim()) {
@@ -150,9 +157,16 @@ function tidyStableLine(
   const boldCount = parts.filter((_, i) => i % 2 === 0)
     .reduce((n, part) => n + (part.match(/(?<!\\)\*\*/g) || []).length, 0);
   if (boldCount % 2) return { action: 'stop', text: '' };
-  // Trailing headings are popped by tidy: only emit a heading once a later
-  // complete stable line has been rendered after it.
-  if (/^\s*#{1,6}\s+/.test(cleaned) && (!nextIsComplete || !next || !next.text.trim())) {
+  // Headings: only emit one once a later complete line has been rendered under
+  // it. tidy pops a trailing heading, and tidyVerifiedAnswer now also removes a
+  // heading whose whole section is empty, so pushing one without content would
+  // diverge from the final text.
+  if (isStructuralHeadingLine(cleaned)) {
+    for (let j = i + 1; j < lines.length - 1; j++) {
+      if (!lines[j].text.trim()) continue;
+      if (isStructuralHeadingLine(lines[j].text)) break;
+      return { action: 'emit', text: cleaned };
+    }
     return { action: 'stop', text: '' };
   }
   return { action: 'emit', text: cleaned };
@@ -181,6 +195,11 @@ export class IncrementalAnswerStreamer {
 
   get pushedLength(): number {
     return this.pushed.length;
+  }
+
+  /** Everything already pushed to the client, for prefix checks. */
+  get streamedText(): string {
+    return this.pushed;
   }
 
   /**

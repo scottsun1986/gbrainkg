@@ -444,6 +444,13 @@ export interface TopRankGuaranteeInput {
   /** How many leading documents (by score) must be represented (default 5). */
   topDocs?: number;
   keyOf?: (citation: any) => string;
+  /**
+   * Optional relevance test for a candidate. Leading documents that fail it are
+   * not restored: the guarantee exists to recover a bridge document that scored
+   * low against the full question, not to re-inject unrelated top-ranked noise
+   * (production: 公车管理办法 / 合规管理办法 entered an attendance answer).
+   */
+  isRelevant?: (citation: any) => boolean;
 }
 
 export interface TopRankGuaranteePlan {
@@ -668,6 +675,7 @@ export function planTopRankGuarantee(input: TopRankGuaranteeInput): TopRankGuara
     if (represented.has(key)) continue;
     const index = byScore.find((item) => keyOf(item.citation) === key)?.index ?? -1;
     if (index < 0) continue;
+    if (input.isRelevant && !input.isRelevant(byScore[index].citation)) continue;
     plan.indices.push(index);
     plan.docs.push(key);
     represented.add(key);

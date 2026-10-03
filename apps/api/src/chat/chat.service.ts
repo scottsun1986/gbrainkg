@@ -3,7 +3,10 @@ import { countDocumentNeedle, countDocumentTitleTerms, countDocumentTitleMatches
 import { evidenceIdentity, distinctRankedPassages } from './evidence-identity';
 import { StreamDeadline } from './stream-deadline';
 import { outlineDocumentTitle, normalizeDocumentTitle, renderDocumentOutline } from './document-outline';
-import { OrderedAnswer, tidyVerifiedAnswer, answerSentenceBoundary } from './ordered-answer';
+import { OrderedAnswer, tidyVerifiedAnswer, answerSentenceBoundary, isStructuralHeadingLine, isTableSyntaxLine, isBlockLevelStart } from './ordered-answer';
+import { alignSiblingEditionChunks, normalizeFamilyTitle } from './version-sibling-evidence';
+
+export { isStructuralHeadingLine, isTableSyntaxLine, isBlockLevelStart } from './ordered-answer';
 import { admitModelCall } from '../retrieval/model-admission';
 import { rethrowAuthorizationFailure } from '../permission/authorization-revision';
 import { requestFetch } from '../retrieval/request-signal';
@@ -316,143 +319,6 @@ export function evidenceConfidenceScores(citations: any[]): {
     maxSynthetic = maxSynthetic === null ? synthetic : Math.max(maxSynthetic, synthetic);
   }
   return { maxCalibrated, maxSynthetic };
-}
-
-/**
- * Structural heading lines (章节标题 / markdown 标题 / 加粗小标题).
- *
- * The per-sentence grounding gate verifies every sentence against evidence and
- * HOLDS anything unsupported for the flush-time NLI review — which re-emits
- * recovered sentences at the END of the answer. A heading ("**三、技能接入与
- * 创建**") carries no facts of its own, so it routinely fails the lexical
- * overlap bar, gets held, and lands after the last content bullet: sections
- * end up headless and headings dangle at the tail (observed in production:
- * held=6/recovered=6 headings appended after the closing paragraph, one
- * heading glued onto the previous line's citation marker).
- *
- * Headings are navigation, not claims: stream them through immediately, in
- * order. Constraints keep this narrow — short, no citation markers, no
- * terminal punctuation (a real sentence ends with 。.!?), and shaped like a
- * heading (Chinese section ordinal, markdown #, bold-phrase title, or a bare
- * list/label fragment).
- */
-export function isStructuralHeadingLine(sentence: string): boolean {
-  const raw = String(sentence || '').trim();
-  let t = raw;
-  if (!t) return false;
-  // Markdown table syntax (rows / separators) is table STRUCTURE, not a
-  // heading: the gate holds marker-less header rows and drops |---|
-  // separators (production: held=7/dropped=3 left a table body headless and
-  // its header appended at the answer tail). Table lines are handled by the
-  // dedicated isTableSyntaxLine branch in gateSentence.
-  if (/^\|/.test(t) || (/^[-:|\s]+$/.test(t) && t.includes('-'))) return false;
-  // A heading may carry citation markers ("**一、现行版 V2.0 的上下班要求[2]**"):
-  // the marker binds the section to its source, it does not turn navigation
-  // into a claim. Excluding marked headings re-introduced the
-  // held-then-appended-at-tail disorder for them (production follow-up).
-  t = t.replace(/\[\d+\]/g, '').trim();
-  if (!t) return false;
-  if (/[：:]/.test(t)) {
-    const idx = t.search(/[：:]/);
-    const head = t.slice(0, idx);
-    const rest = t.slice(idx + 1);
-    const rawRest = raw.slice(raw.search(/[：:]/) + 1);
-    // Arm A — section-ordinal heading with a nominal colon payload:
-    //   "**一、现行有效版本：V2《企业考勤制度手册V2.docx》（现行有效）**",
-    //   "**三、生态开放：第三方产品接入路径**".
-    // The payload names the section's subject — a document title (《》) or a
-    // short digit-free path phrase. A payload carrying a citation marker or
-    // ending as a sentence is a claim and stays gated.
-    if (
-      /^\*\*?\s*[一二三四五六七八九十\d]+\s*[、.．]/.test(head)
-      && t.length <= 64
-      && !/\[\d+\]/.test(rawRest)
-      && !/[。．.!！?？;；]$/.test(rest)
-      && (rest.includes('《') || (rest.length <= 20 && !/\d/.test(rest)))
-    ) {
-      return true;
-    }
-    // Arm B — discourse lead-in ending at the colon ("两版规定存在差异，
-    // 分别陈述如下:", a bullet label introducing nested items "- **作息安排
-    // 分令时执行**:"): the payload after the colon is empty, so the line
-    // navigates the block that follows and must stay in place.
-    return rest.replace(/\s/g, '').length <= 4
-      && t.length <= 40
-      && head.length >= 6
-      && !/\d/.test(t);
-  }
-  if (t.length > 40) return false;
-  if (/[。．.!！?？;；]$/.test(t)) return false;
-  if (isPlainTextHeading(t)) return true;
-  return /^\*\*?\s*[一二三四五六七八九十\d]+\s*[、.．]/.test(t)
-    || /^#{1,6}\s+\S/.test(t)
-    || /^\*\*[^*]{2,40}\*\*$/.test(t)
-    || /^[（(【\[]?\s*[一二三四五六七八九十\d]+\s*[)）】\]]?\s*[\u4e00-\u9fffA-Za-z]{0,28}$/.test(t);
-}
-
-/** Section-type tails: a heading ends by naming the section, not by stating a rule. */
-const HEADING_TAIL = /(?:处理|方式|流程|标准|规定|说明|依据|界定|认定|渠道|条件|范围|要求|职责|步骤|环节|情形|问题|解答|清单|目录|要点|总结|结论|附录|注意|建议|方案|措施|办法|机制|原则|目标|背景|概述|适用|对象|期限|时点|节点|口径|误区|案例|示例|对比|差异|影响|风险|保障|资源|成本|效益|模板|总则|细则|附则|正文|引言|前言|序言|答疑|问答|结语|声明)$/;
-/** Limit wording: turns an ordinal line into a rule statement, not a heading. */
-const HEADING_RULE_LIMIT = /(?:以上|以下|以内|超过|不足|不满|未满|达到|视为|每次|每月|每日|累计|扣发|扣除|扣款|罚款|不予|不得)/;
-/** Predicates that state what happens to someone: a claim, never a heading. */
-const HEADING_PREDICATE = /(?:扣|罚|补|奖|停|辞|退|缴|报|批|审|签|归档|提交|申请|登记|打卡|考勤|核算|计算|折算|执行|需要|应当|必须|可以|禁止|允许)/;
-
-/**
- * Plain-text section heading (no bold, no '#').
- *
- * Models routinely emit "一、考勤迟到处理流程" or "2. 处理方式" with no markup. The
- * previous matcher required the line to be a *single* short phrase, so a heading
- * whose subject is more than one token ("一、迟到一小时的处理") fell through to the
- * grounding gate, was held for lacking evidence, and — since headings are
- * navigation rather than claims — was recovered at the END of the answer. That is
- * the reported "标题跑到最后" misplacement.
- *
- * The discriminator is what the line *is*: a heading names a section, a claim
- * states a rule. A rule shows up as limit wording ("一、迟到一小时以上…"), a
- * predicate applied to a person ("一、迟到者扣除…") or a quantity; a heading ends
- * on a section-type noun. Single-token headings ("一、总则") are allowed because
- * the ordinal plus short nominal phrase cannot carry a rule.
- */
-function isPlainTextHeading(t: string): boolean {
-  const matched = /^[（(【\[]?\s*[一二三四五六七八九十百千零两\d]{1,3}\s*[、.．)）】\]]\s*(.*)$/.exec(t);
-  if (!matched) return false;
-  const rest = String(matched[1] || '').trim();
-  if (rest.length < 2 || rest.length > 40) return false;
-  // Punctuation ends a sentence; a colon introduces a payload and belongs to the
-  // colon arms above, which already decided this line is not a heading.
-  if (/[。．.!！?？;；:：]$/.test(rest) || /[：:]/.test(t)) return false;
-  if (HEADING_TAIL.test(rest) && !HEADING_RULE_LIMIT.test(rest)) return true;
-  if (HEADING_RULE_LIMIT.test(rest)) return false;
-  if (HEADING_PREDICATE.test(rest)) return false;
-  // A heading's only number is its own ordinal.
-  if (/[0-9０-９]/.test(rest)) return false;
-  return true;
-}
-
-/**
- * Markdown table line (a row or a separator). Separate from heading
- * recognition: table lines stream through in order to preserve the table
- * (splitting a header/separator from its body wrecks rendering), but numeric
- * grounding still applies per row in gateSentence — a fabricated number must
- * not ride the table's structure through.
- */
-export function isTableSyntaxLine(sentence: string): boolean {
-  const t = String(sentence || '').trim();
-  if (!t) return false;
-  if (/^[-:|\s]+$/.test(t) && t.includes('-')) return true;
-  return t.startsWith('|') && t.length <= 600;
-}
-
-/**
- * Block-level answer element that deserves its own line: heading, table line,
- * or list item. Used by the streaming gate to normalise layout — insert a
- * newline before it when the streamed answer does not end with one — because
- * models routinely run them together with the preceding prose
- * ("…另行规定[2]。**二、旧版…**", "1. …[2]。2. …[2]。").
- */
-export function isBlockLevelStart(sentence: string): boolean {
-  if (isStructuralHeadingLine(sentence) || isTableSyntaxLine(sentence)) return true;
-  return /^\s*(?:\d{1,2}\s*[.、)]\s|\*\*\s*\d{1,2}\s*[.、)]|[-*•]\s)/.test(String(sentence || ''));
 }
 
 export interface EvidenceSufficiency {
@@ -794,6 +660,113 @@ export class ChatService {
     knownEvidence?: string;
   }): Promise<Set<number>> {
     return this.citationAssembly.verifyPassageContainment(params);
+  }
+
+  /**
+   * For each cited document that has other published editions in scope (linked
+   * by supersedes in either direction, or sharing a normalized title in the
+   * same KB), add the sibling edition's chunk that best matches each cited
+   * chunk. Every added chunk passes the same current-permission recheck as
+   * retrieved evidence. See version-sibling-evidence.ts for the rationale.
+   */
+  private async alignSiblingEditions(
+    citations: any[],
+    question: string,
+    scope: string[],
+    guard: { scopeId: string; sourceKeys: string[]; aclEpoch: number; knowledgeEpoch: number; userId?: string },
+  ): Promise<any[]> {
+    const maxAdd = Math.max(0, Number(process.env.RETRIEVAL_SIBLING_EDITION_MAX || 4));
+    if (!maxAdd) return [];
+    const citedDocIds = Array.from(new Set(
+      citations.map((c: any) => c.docId).filter((id: any): id is string => typeof id === 'string' && id.length > 0),
+    ));
+    if (!citedDocIds.length) return [];
+    const docSelect = { id: true, kbId: true, title: true, version: true, supersedesDocumentId: true };
+    const cited = await this.prisma.document.findMany({
+      where: { id: { in: citedDocIds }, kbId: { in: scope }, status: 'published' },
+      select: docSelect,
+    });
+    if (!cited.length) return [];
+    const titleProbes = Array.from(new Set(
+      cited.map((d: any) => normalizeFamilyTitle(d.title).slice(0, 6)).filter((t) => t.length >= 2),
+    ));
+    const supersededIds = cited.map((d: any) => d.supersedesDocumentId).filter(Boolean) as string[];
+    const candidates = await this.prisma.document.findMany({
+      where: {
+        kbId: { in: scope },
+        status: 'published',
+        id: { notIn: citedDocIds },
+        OR: [
+          { supersedesDocumentId: { in: citedDocIds } },
+          ...(supersededIds.length ? [{ id: { in: supersededIds } }] : []),
+          ...titleProbes.map((t) => ({ title: { contains: t } })),
+        ],
+      },
+      select: docSelect,
+      take: 50,
+    });
+    const families = new Map<string, string[]>();
+    const siblingDocs = new Map<string, any>();
+    for (const doc of cited as any[]) {
+      const norm = normalizeFamilyTitle(doc.title);
+      const members = (candidates as any[]).filter((s) =>
+        s.supersedesDocumentId === doc.id ||
+        doc.supersedesDocumentId === s.id ||
+        (s.kbId === doc.kbId && norm.length >= 2 && normalizeFamilyTitle(s.title) === norm),
+      );
+      if (!members.length) continue;
+      families.set(doc.id, [doc.id, ...members.map((s) => s.id)]);
+      for (const s of members) siblingDocs.set(s.id, s);
+    }
+    if (!siblingDocs.size) return [];
+    const chunks = await this.prisma.chunk.findMany({
+      where: { documentId: { in: Array.from(siblingDocs.keys()) }, kbId: { in: scope } },
+      orderBy: [{ documentId: 'asc' }, { ord: 'asc' }],
+      select: { id: true, documentId: true, kbId: true, ord: true, content: true, metadata: true },
+      take: 600,
+    });
+    const chunksByDoc = new Map<string, Array<{ id: string; documentId: string; ord: number; text: string }>>();
+    const chunkById = new Map<string, any>();
+    for (const c of chunks as any[]) {
+      chunkById.set(c.id, c);
+      const list = chunksByDoc.get(c.documentId) || [];
+      list.push({ id: c.id, documentId: c.documentId, ord: c.ord, text: extractRawChunkText(String(c.content || '')) });
+      chunksByDoc.set(c.documentId, list);
+    }
+    const anchors = citations
+      .filter((c: any) => typeof c.docId === 'string' && families.has(c.docId))
+      .map((c: any) => ({
+        documentId: c.docId,
+        text: extractRawChunkText(String(c.context || c.evidence || c.snippet || '')),
+      }));
+    const citedChunkIds = new Set<string>(citations.map((c: any) => String(c.id || c.chunkId || '')).filter(Boolean));
+    const aligned = alignSiblingEditionChunks(anchors, families, chunksByDoc, citedChunkIds, { question, max: maxAdd });
+    if (!aligned.length) return [];
+    const proposed = aligned.map((a) => {
+      const row = chunkById.get(a.id);
+      const doc = siblingDocs.get(a.documentId);
+      const meta = (row?.metadata || {}) as any;
+      return {
+        id: a.id,
+        docId: a.documentId,
+        kbId: row?.kbId,
+        ord: a.ord,
+        docTitle: doc?.title,
+        topic: doc?.title,
+        version: doc?.version,
+        pageNo: meta.page_no || meta.pageNumber || a.ord + 1,
+        context: row?.content,
+        evidence: row?.content,
+        snippet: String(row?.content || '').slice(0, 300),
+        metadata: row?.metadata,
+        score: Number(Math.min(0.9, 0.5 + a.score).toFixed(3)),
+        scoreSource: 'synthetic',
+        siblingEdition: true,
+        alignedFrom: a.alignedFrom,
+      };
+    });
+    const checked = await this.filterQueryResultByCurrentPermission({ citations: proposed }, scope, guard);
+    return Array.isArray(checked?.citations) ? checked.citations : [];
   }
 
   private async judgeEntailment(statements: string[], evidence: string): Promise<Set<number>> {
@@ -3957,10 +3930,25 @@ export class ChatService {
     // possibly-irrelevant document. Restore distinct leading documents only —
     // never a second passage of a document already represented.
     if (process.env.RETRIEVAL_TOP_RANK_GUARANTEE !== 'false' && preSelectionPool.length > 1) {
+      // Relevance gate. The guarantee restores leading documents by rank, and
+      // production showed it re-injecting unrelated documents (公车管理办法 /
+      // 合规管理办法 in an attendance answer) because pool position alone says
+      // nothing about relevance. A leading document is restored only when its
+      // title or text mentions at least `minCover` of the question's key terms.
+      const questionTerms = Array.from(new Set(this.extractSearchKeywords(question)))
+        .filter((term) => String(term).length >= 2);
+      const minCover = Math.max(0, Number(process.env.RETRIEVAL_TOP_RANK_MIN_TERM_COVER || 0.2));
+      const isRelevantToQuestion = (citation: any): boolean => {
+        if (!questionTerms.length) return true;
+        const haystack = `${String(citation?.docTitle || citation?.topic || '')}\n${String(citation?.evidence || citation?.snippet || citation?.context || '')}`.toLowerCase();
+        const hit = questionTerms.filter((term) => haystack.includes(String(term).toLowerCase())).length;
+        return hit / questionTerms.length >= minCover;
+      };
       const plan = planTopRankGuarantee({
         selected: (queryResult.citations || []) as any[],
         pool: preSelectionPool as any[],
         topDocs: Number(process.env.RETRIEVAL_TOP_RANK_DOCS || 5),
+        isRelevant: isRelevantToQuestion,
       });
       if (plan.indices.length) {
         const already = new Set(
@@ -4196,6 +4184,29 @@ export class ChatService {
         : "命中主题页均无需即时重编译",
       { checked: hitTopics.length, compiled: lazyCompiled, injected: freshlyCompiledCards.length },
     );
+
+    if (process.env.RETRIEVAL_SIBLING_EDITION_ALIGN !== 'false' && citations.length > 0) {
+      try {
+        const added = await this.alignSiblingEditions(citations, question, scope, { ...userScope, userId });
+        if (added.length) {
+          citations.push(...added);
+          this.logger.log(
+            `[SIBLING_EDITION] +${added.length} aligned chunk(s) from other editions: ` +
+              added.map((c: any) => `${c.docTitle}#${c.ord}`).join(', '),
+          );
+          trace.warn(
+            'sibling_edition',
+            '跨版本对应段落补入',
+            `命中文档存在其他版本，已按段落对应补入 ${added.length} 条其他版本证据`,
+            { added: added.length, docs: Array.from(new Set(added.map((c: any) => c.docTitle))) },
+          );
+        }
+      } catch (siblingErr) { rethrowAuthorizationFailure(siblingErr);
+        this.logger.debug(
+          `Sibling edition alignment skipped: ${siblingErr instanceof Error ? siblingErr.message : String(siblingErr)}`,
+        );
+      }
+    }
 
     trace.start("version_conflict_check", "时序效力与版本裁决", "检测多版本并裁决现行有效标准");
     let versionConflictNote = "";
@@ -4788,7 +4799,9 @@ ${answerStyleRule(true)}`
 2. 【证据收敛与指标完整性】：参考资料是候选证据，只使用直接支持当前问题的来源。当资料在同一规定或句子中说明了多项关联指标或条件（例如一个数值伴随的阈值、单位、百分比或连带条件等），必须完整列出全部关联指标和要求，严禁遗漏任何并列参数。
 3. 【章节目录全景列举】：当用户询问有哪些章、全部章名或结构目录时，请务必根据参考资料中出现的各章标题，完整列出全部章节序号与名称，按原文顺序给出清单。只有完整扫描目标文档原文后才能声称列出全部章节；局部检索片段不足时应明确说明缺失范围，禁止补造章节或隐瞒不完整。
 4. 【表格行记录与关键锚点事实并存处理】：若参考资料中同时存在表格行记录与正文/关键锚点事实，且两者对同一事项的表述不一致，必须在回答中完整陈述这两种事实（明确说明“表格第 N 行记录为 X，而正文/锚点事实为 Y”），严禁只提到其中一处。
-5. 【多源对比与冲突完整呈现】：当参考资料中存在多份文件、不同版本或不同条款对同一事项存在不同规定或潜在冲突时，必须同时且完整列出各份文件的具体规定内容（包括具体数值、标准与文档名称），并清晰对比其差异与适用背景（例如说明版本差异、生效日期与适用范围）。严禁只选择其中一份而忽略另一份。只比较与本问题相关的规定；不同知识库或适用范围需分别说明。文件名的版本号、上传时间及标题相似度不能证明替代关系，缺少明确依据时不得断言某份制度取代其他制度。
+5. 【多源覆盖与对比完整呈现】：当参考资料中存在多份文件、不同版本或不同条款对同一事项存在不同规定或潜在冲突时，必须同时且完整列出各份文件的具体规定内容（包括具体数值、标准与文档名称），并清晰对比其差异与适用背景（例如说明版本差异、生效日期与适用范围）。严禁只选择其中一份而忽略另一份。
+- 若两份以上资料都与问题直接相关，先用一句话说明共有几份资料覆盖该问题，再为每一份单独建立一个以“**来源 N《文档名》**”开头的小节，逐节写明该来源的相关规定；小节必须按来源编号升序排列，且每一节都必须有实质内容，禁止出现没有内容的小节。
+- 只比较与本问题相关的规定；不同知识库或适用范围需分别说明。文件名的版本号、上传时间及标题相似度不能证明替代关系，缺少明确依据时不得断言某份制度取代其他制度。
 6. 【多源合并】：若多个来源共同支持某一相同结论，可合并标注如 [1][2]。严禁捏造未在参考资料中提供的引用编号；可用编号严格限制在参考资料实际提供的来源序号范围内。
 7. 【客观真实与分层回答】：
 - 部分相关事实必须涉及问题中的同一主体，或有资料明确证明与该主体的关系；仅有词语重合、宽泛主题相似、其他文档的名称或编号，不属于相关事实。若问题主体没有证据，禁止罗列无关资料或用这些资料的引用证明不存在，直接使用下述标准拒答。
@@ -5480,6 +5493,15 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
       // B-1：增量模式下此前已分块下发 tidy 稳定前缀，这里只补尾段；
       // KNOWLEDGE_STRICT_OUTPUT=1 时保持整篇一次性下发的产品契约。
       answerStreamer.finishFinal(fullAnswer);
+      // The post-gate text can differ from what was streamed: sentences the
+      // gate held are dropped, delayed ones are reinserted at their original
+      // position, and empty section headers are removed. Streaming is therefore
+      // off by default (see incrementalStreamingEnabled); a client that opts
+      // back in receives this authoritative replacement so it never renders the
+      // pre-gate prefix as the final answer.
+      if (answerStreamer.pushedLength > 0 && !fullAnswer.startsWith(answerStreamer.streamedText)) {
+        subscriber.next({ data: { type: 'replace', content: fullAnswer } });
+      }
 
       // Observability for the marker repair: a warning here means the model
       // stamped at least one wrong source index and the answer was corrected

@@ -840,9 +840,43 @@ export class CitationAssemblyService {
     return verified;
   }
 
+  /**
+   * Judge which statements the evidence entails.
+   *
+   * Statements are judged in small parallel batches, and a batch whose call
+   * fails or times out is retried once. A single call for every held sentence
+   * used to take just over the 6 s timeout on long answers, so ONE slow call
+   * dropped every held sentence at once (production: 6009 ms / 6015 ms, all 6
+   * held sentences of a "V1 vs V2" answer lost, leaving a bare heading).
+   * Smaller batches finish faster and a failure only costs that batch.
+   */
   async judgeEntailment(statements: string[], evidence: string): Promise<Set<number>> {
     const supported = new Set<number>();
     if (!statements.length || !evidence.trim()) return supported;
+    const batchSize = Math.max(1, Number(process.env.SEMANTIC_COVERAGE_BATCH_SIZE || 3));
+    const batches: number[][] = [];
+    for (let i = 0; i < statements.length; i += batchSize) {
+      batches.push(statements.slice(i, i + batchSize).map((_, j) => i + j));
+    }
+    const results = await Promise.all(
+      batches.map(async (indexes) => {
+        const batch = indexes.map((i) => statements[i]);
+        let judged = await this.judgeEntailmentBatch(batch, evidence);
+        if (judged === null) judged = await this.judgeEntailmentBatch(batch, evidence);
+        return { indexes, judged };
+      }),
+    );
+    for (const { indexes, judged } of results) {
+      for (const local of judged || []) {
+        if (local >= 0 && local < indexes.length) supported.add(indexes[local]);
+      }
+    }
+    return supported;
+  }
+
+  /** One entailment call. Returns null when the call itself failed (retryable). */
+  private async judgeEntailmentBatch(statements: string[], evidence: string): Promise<Set<number> | null> {
+    const supported = new Set<number>();
     try {
       const llmRequest = this.modelConfigService
         ? (await this.modelConfigService?.getFastLlmChatConfig?.('llmwiki-entailment')) ??
@@ -873,7 +907,7 @@ export class CitationAssemblyService {
           response_format: { type: 'json_object' },
         }),
         }, Number(process.env.SEMANTIC_COVERAGE_TIMEOUT_MS || 6000));
-      if (!response.ok) return supported;
+      if (!response.ok) return null;
       const payload: any = await response.json();
       const message = payload?.choices?.[0]?.message || {};
       let content = String(message.content || '').trim();
@@ -889,6 +923,7 @@ export class CitationAssemblyService {
       }
     } catch (err) { rethrowAuthorizationFailure(err);
       this.logger.debug(`Entailment judge skipped: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
     }
     return supported;
   }

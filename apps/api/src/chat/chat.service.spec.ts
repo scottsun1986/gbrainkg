@@ -93,6 +93,9 @@ jest.mock("@llmwiki/gbrain-adapter", () => ({
 describe("ChatService", () => {
   jest.setTimeout(15000);
   let service: ChatService;
+  afterEach(() => {
+    delete process.env.RETRIEVAL_SIBLING_EDITION_ALIGN;
+  });
 
   it('does not turn a cancelled rewrite into a fallback query', async () => {
     const isolated = new ChatService({} as any, {} as any, {} as any);
@@ -646,6 +649,10 @@ describe("ChatService", () => {
   });
 
   it("should strip citations for documents that are revoked before emission", async () => {
+    // These cases pin the ordered findMany sequence of the version and
+    // permission gates; sibling-edition alignment adds its own lookups ahead of
+    // them and has dedicated coverage in version-sibling-evidence.spec.ts.
+    process.env.RETRIEVAL_SIBLING_EDITION_ALIGN = "false";
     // 1. Initial layer permission check (retrieval time)
     mockPermissionService.getVisibleKnowledgeBases
       .mockResolvedValueOnce(["kb-1"]) // First call in processChat
@@ -712,6 +719,10 @@ describe("ChatService", () => {
     }
   });
   it("should detect version conflicts and include version details in timeline_entry", async () => {
+    // These cases pin the ordered findMany sequence of the version and
+    // permission gates; sibling-edition alignment adds its own lookups ahead of
+    // them and has dedicated coverage in version-sibling-evidence.spec.ts.
+    process.env.RETRIEVAL_SIBLING_EDITION_ALIGN = "false";
     mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(["kb-1"]);
 
     mockCompilerService.ensureUserBrainRepo.mockResolvedValue({
