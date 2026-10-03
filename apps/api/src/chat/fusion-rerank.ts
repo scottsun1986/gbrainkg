@@ -303,7 +303,7 @@ export class FusionRerankService {
         const rerankQuery = key === '__primary__' ? question : key;
         const pool = list.slice(0, maxDocs);
         const documents = pool
-          .map((citation) => String(citation?.evidence || citation?.snippet || citation?.context || '').slice(0, 3000).trim())
+          .map((citation) => [String(citation?.docTitle || citation?.title || ''), String(citation?.evidence || citation?.snippet || citation?.context || '')].filter(Boolean).join('\n').slice(0, 3000).trim())
           .filter(Boolean);
         if (documents.length < 2 || documents.length !== pool.length) return;
         try {
@@ -443,7 +443,7 @@ export class FusionRerankService {
       .map((citation: any) => {
         const text = String(citation.snippet || citation.context || citation.evidence || citation.docTitle || citation.topic || "");
         const raw = extractRawChunkText(text);
-        return (raw || text).slice(0, 3000).trim();
+        return [String(citation.docTitle || citation.title || ''), raw || text].filter(Boolean).join('\n').slice(0, 3000).trim();
       })
       .filter(Boolean);
     if (documents.length < 2) return result;
@@ -455,7 +455,7 @@ export class FusionRerankService {
       .map((citation: any, i: number) => {
         const text = String(citation.snippet || citation.context || citation.evidence || citation.docTitle || citation.topic || "");
         const raw = extractRawChunkText(text);
-        const trimmed = (raw || text).slice(0, 3000).trim();
+        const trimmed = [String(citation.docTitle || citation.title || ''), raw || text].filter(Boolean).join('\n').slice(0, 3000).trim();
         return trimmed ? i : null;
       })
       .filter((i: any): i is number => i !== null);

@@ -1,9 +1,18 @@
 import { BrainOutboxService } from './brain-outbox.service';
+import { runWithRequestContext } from '../observability/request-context';
 const mockFindMany = jest.fn();
-const mockPrisma: any = { brainChangeEvent: { findMany: mockFindMany },
+const mockUpdateMany = jest.fn().mockResolvedValue({ count: 0 });
+const mockUpdate = jest.fn();
+const mockFindUnique = jest.fn();
+const mockPrisma: any = { brainChangeEvent: { findMany: mockFindMany, updateMany: mockUpdateMany, update: mockUpdate, findUnique: mockFindUnique },
   $transaction: jest.fn(async (fn: any) => fn(mockPrisma)),
 };
 jest.mock('../prisma', () => ({ getPrismaClient: () => mockPrisma }));
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockUpdateMany.mockResolvedValue({ count: 0 });
+});
 
 describe('durable pending outbox dispatcher', () => {
   it('dispatches permission revocations after a malformed enrichment event', async () => {
@@ -99,5 +108,71 @@ describe('durable pending outbox dispatcher', () => {
     await service.dispatchPending();
     expect(add).toHaveBeenCalledWith('augment-document', expect.objectContaining({ documentId: 'doc-1' }),
       expect.objectContaining({ jobId: 'aux-outbox-event-aux' }));
+  });
+
+  it('dead-letters retry-exhausted events instead of silently dropping them', async () => {
+    mockFindMany.mockResolvedValue([]);
+    mockUpdateMany.mockResolvedValue({ count: 3 });
+    const service = new BrainOutboxService({} as any, {} as any, {} as any);
+    await service.dispatchPending();
+    expect(mockUpdateMany).toHaveBeenCalledWith({
+      where: { status: { in: ['pending', 'failed'] }, retryCount: { gte: 10 } },
+      data: { status: 'dead' },
+    });
+    // the exhausted events are no longer dispatch candidates
+    expect(mockFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { status: { in: ['pending', 'processing', 'failed'] }, retryCount: { lt: 10 } },
+    }));
+  });
+
+  it('keeps dead-lettering idempotent when nothing is exhausted', async () => {
+    mockFindMany.mockResolvedValue([]);
+    mockUpdateMany.mockResolvedValue({ count: 0 });
+    const service = new BrainOutboxService({} as any, {} as any, {} as any);
+    await expect(service.dispatchPending()).resolves.toBeUndefined();
+    expect(mockUpdateMany).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('outbox dead-letter replay', () => {
+  it('resets a dead event to pending with a fresh retry budget', async () => {
+    mockFindUnique.mockResolvedValue({ id: 'event-1', eventType: 'perm_revoke', status: 'dead', retryCount: 10 });
+    mockUpdate.mockResolvedValue({ id: 'event-1', eventType: 'perm_revoke', status: 'pending', retryCount: 0 });
+    const service = new BrainOutboxService({} as any, {} as any, {} as any);
+    const replayed = await service.replayDeadEvent('event-1');
+    expect(mockUpdate).toHaveBeenCalledWith({
+      where: { id: 'event-1' },
+      data: { status: 'pending', retryCount: 0 },
+    });
+    expect(replayed).toMatchObject({ id: 'event-1', status: 'pending' });
+  });
+
+  it('refuses to replay an event that is not dead-lettered', async () => {
+    mockFindUnique.mockResolvedValue({ id: 'event-2', status: 'failed', retryCount: 3 });
+    const service = new BrainOutboxService({} as any, {} as any, {} as any);
+    await expect(service.replayDeadEvent('event-2')).resolves.toBeNull();
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it('returns null for an unknown event', async () => {
+    mockFindUnique.mockResolvedValue(null);
+    const service = new BrainOutboxService({} as any, {} as any, {} as any);
+    await expect(service.replayDeadEvent('missing')).resolves.toBeNull();
+  });
+});
+
+describe('outbox dispatch kick from HTTP handlers', () => {
+  it('dispatches from a request context without identity-promotion failure', async () => {
+    mockFindMany.mockResolvedValue([{ id: 'event-1', eventType: 'perm_revoke' }]);
+    const add = jest.fn().mockResolvedValue({});
+    const service = new BrainOutboxService({ add, getJob: jest.fn().mockResolvedValue(undefined) } as any, {} as any, {} as any);
+    // Regression: admin mutation endpoints used to await dispatchPending inside
+    // the request context, which runAsService rejects with
+    // "Cannot promote request identity to service" (HTTP 500).
+    await runWithRequestContext({ requestId: 'kick-regression', userId: 'admin' } as any, async () => {
+      expect(() => service.kickDispatch()).not.toThrow();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(add).toHaveBeenCalledWith('process-outbox-event', { eventId: 'event-1' }, expect.any(Object));
+    });
   });
 });

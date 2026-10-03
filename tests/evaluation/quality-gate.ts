@@ -20,6 +20,7 @@ import path from 'path';
 import { llmChat, extractJson, llmConfig } from './llm-client';
 import { runMetadata } from './run-meta';
 import { requireResolvedScopes, resolveGateToken } from './quality-gate-auth';
+import { classifyResultError, evaluateValidity, isEnvironmentError, validityBounds } from './quality-gate-validity';
 
 interface EvalQuestion {
   id: string;
@@ -173,12 +174,6 @@ async function fetchChatCompletion(
   }
 }
 
-function requireChatSuccess(result: ChatResult, questionId: string): void {
-  if (result.error || (result.status !== 200 && result.status !== 201)) {
-    throw new Error(`Quality gate request failed for ${questionId}: ${result.error || `HTTP ${result.status}`}`);
-  }
-}
-
 // Max evidence text passed to the judge per citation (keeps prompts bounded).
 const EVIDENCE_SNIPPET_MAX_CHARS = 800;
 
@@ -275,6 +270,29 @@ async function runQualityGate() {
 
   TOKEN = await resolveGateToken(API_BASE, process.env);
 
+  // Pre-flight probe. The 2026-09-27 run produced a 50-row report in which every
+  // row was HTTP 401 and the summary still printed a 40% success rate; the score
+  // existed because an empty answer satisfies several rules by construction.
+  // One authenticated request before scoring means a bad credential ends the run
+  // with a diagnosis instead of a number that can be misread as quality.
+  {
+    const probe = await apiJson('GET', '/api/v1/kbs?page=1&limit=1', TOKEN);
+    if (probe.status === 401 || probe.status === 403) {
+      console.error(
+        `${colors.red}Quality gate aborted: the API rejected the gate credential (HTTP ${probe.status}).${colors.reset}`,
+      );
+      console.error('Set LLMWIKI_TOKEN/AUTH_TOKEN (or LLMWIKI_USER+LLMWIKI_PASS) to a credential the instance accepts, then re-run.');
+      console.error('No report was written: an unauthenticated run measures nothing.');
+      process.exit(1);
+    }
+    if (probe.status === 0 || probe.status >= 500) {
+      console.error(
+        `${colors.red}Quality gate aborted: the API did not answer the pre-flight probe (HTTP ${probe.status}).${colors.reset}`,
+      );
+      process.exit(1);
+    }
+  }
+
   const allScopes = dataset.map((item) => item.expected_kb_scope).filter((s) => s.length > 0);
   const scopeMap = await resolveScopeMap(allScopes);
   const requiredScopes = [...new Set(allScopes.flat())];
@@ -287,8 +305,17 @@ async function runQualityGate() {
     permission: boolean; keywordCoverage: number;
     faithfulness: number; contextPrecision: number; judged: boolean;
     answer: string; citations: string[]; error?: string; llmJudge?: number;
+    /**
+     * Set when the case produced no score for an environmental reason (auth,
+     * transport, timeout, corpus). Such a row is excluded from every metric:
+     * scoring it would let an unreachable API satisfy the rules that are
+     * vacuously true for an empty answer (see quality-gate-validity.ts).
+     */
+    envError?: string;
   }
   const results: Row[] = [];
+  /** Cases in which the environment, not the system, decided the outcome. */
+  let envErrorCount = 0;
   let totalScore = 0;
 
   for (const item of dataset) {
@@ -297,28 +324,59 @@ async function runQualityGate() {
       .map((scope) => scopeMap.get(scope))
       .filter((id): id is string => Boolean(id));
 
+    // An environmental failure here means the case was never scored, so it is
+    // recorded and excluded from every metric instead of being scored against
+    // rules that an empty answer satisfies by construction.
+    const envFailure = (result: ChatResult): string | null => {
+      const category = classifyResultError({ status: result.status, error: result.error });
+      if (!isEnvironmentError(category)) return null;
+      return `${category}: ${result.error || `HTTP ${result.status}`}`;
+    };
+
     // Multi-turn cases: establish conversation context with the prior turns,
     // then ask the referencing question inside the same conversation.
     let conversationId: string | undefined;
-    if (item.prior_turns?.length) {
+    let envError: string | null = null;
+    if (item.prior_turns?.length && !envError) {
       for (const prior of item.prior_turns) {
         const turn = await fetchChatCompletion(prior, scopeIds, conversationId);
-        requireChatSuccess(turn, item.id);
+        envError = envFailure(turn);
+        if (envError) break;
         conversationId = turn.conversationId ?? conversationId;
       }
     }
-    let res = await fetchChatCompletion(item.question, scopeIds, conversationId);
-    requireChatSuccess(res, item.id);
+    let res: ChatResult = envError
+      ? { answer: '', citations: [], status: 0, error: envError }
+      : await fetchChatCompletion(item.question, scopeIds, conversationId);
+    if (!envError) envError = envFailure(res);
 
     // LLM answering is mildly nondeterministic: when the correct evidence WAS
     // retrieved (hitRate true) but the model refused, retry once with a nonce
     // so a stale cache entry or a temperature flake does not fail the gate.
-    const refused = REFUSAL_MARKERS.some((m) => res.answer.includes(m));
-    const hitOnFirst = item.expected_document_titles.length === 0
-      || item.expected_document_titles.some((t) => res.citations.some((c) => (c.doc_title || '').includes(t)));
-    if (!item.expected_no_answer && refused && hitOnFirst) {
-      res = await fetchChatCompletion(`${item.question}（复核）`, scopeIds);
-      requireChatSuccess(res, item.id);
+    if (!envError) {
+      const refused = REFUSAL_MARKERS.some((m) => res.answer.includes(m));
+      const hitOnFirst = item.expected_document_titles.length === 0
+        || item.expected_document_titles.some((t) => res.citations.some((c) => (c.doc_title || '').includes(t)));
+      if (!item.expected_no_answer && refused && hitOnFirst) {
+        const retry = await fetchChatCompletion(`${item.question}（复核）`, scopeIds);
+        // A retry that fails environmentally must not overwrite a real first
+        // answer: the first attempt is the measurement, the retry is a rescue.
+        const retryEnvError = envFailure(retry);
+        if (!retryEnvError) res = retry;
+      }
+    }
+
+    if (envError) {
+      envErrorCount += 1;
+      console.log(`${colors.red}SKIP (environment)${colors.reset} ${envError.slice(0, 80)}`);
+      results.push({
+        id: item.id, category: item.category, success: false,
+        hitRate: false, citationAccuracy: false, noAnswer: false,
+        permission: false, keywordCoverage: 0, faithfulness: 0,
+        contextPrecision: 0, judged: false,
+        answer: '', citations: [], error: envError, envError,
+      });
+      continue;
     }
     const titles = res.citations.map((c) => c.doc_title || '');
 
@@ -363,11 +421,29 @@ async function runQualityGate() {
         && res.answer.length > 20 && !finalRefused) ? 0 : 1;
 
     // Permission probe: any permission-boundary case must also reject an
-    // out-of-scope KB request outright (403), proving scope is enforced.
+    // out-of-scope KB request outright, proving scope is enforced.
+    //
+    // Only 403 counts. The previous rule accepted 401 as well, which made a
+    // rejected credential indistinguishable from an enforced scope: on the
+    // 2026-09-27 run every probe was 401 and 8 of 10 boundary cases were booked
+    // as passing permission checks. A 401 here is an environment failure.
     let permission = true;
     if (item.unauthorized_users.length > 0 || item.category === 'permission_boundary') {
       const probe = await fetchChatCompletion(item.question, ['00000000-0000-4000-8000-000000000000']);
-      permission = probe.status === 403 || probe.status === 401;
+      if (probe.status === 401) {
+        envErrorCount += 1;
+        console.log(`${colors.red}SKIP (environment)${colors.reset} permission probe rejected the gate credential (HTTP 401)`);
+        results.push({
+          id: item.id, category: item.category, success: false,
+          hitRate: false, citationAccuracy: false, noAnswer: false,
+          permission: false, keywordCoverage: 0, faithfulness: 0,
+          contextPrecision: 0, judged: false,
+          answer: '', citations: [], error: 'auth: permission probe rejected the credential',
+          envError: 'auth: permission probe rejected the credential',
+        });
+        continue;
+      }
+      permission = probe.status === 403;
     }
 
     const success = (item.expected_no_answer ? noAnswer : hitRate) && permission;
@@ -384,16 +460,37 @@ async function runQualityGate() {
   }
 
   const total = dataset.length;
+  // Environment failures produced no score, so every rate is computed over the
+  // cases that were actually scored. Dividing by `total` would let an outage
+  // depress the score, and dividing by `results.length` (which still contains
+  // the skipped rows) would do the same. The verdict below decides whether the
+  // scored subset is large enough to be reported at all.
+  const scoredRows = results.filter((r) => !r.envError);
+  const scored = scoredRows.length;
+  const rate = (predicate: (row: Row) => boolean): number =>
+    scored > 0 ? scoredRows.filter(predicate).length / scored : 0;
+  const mean = (pick: (row: Row) => number): number =>
+    scored > 0 ? scoredRows.reduce((acc, r) => acc + pick(r), 0) / scored : 0;
+
+  const bounds = validityBounds();
+  const verdict = evaluateValidity({
+    scored,
+    attempted: total,
+    envErrors: envErrorCount,
+    minScoredCases: bounds.minScoredCases,
+    maxEnvErrorRate: bounds.maxEnvErrorRate,
+  });
+
   const agg = {
-    hitRate: results.filter((r) => r.hitRate).length / total,
-    keywordCoverage: results.reduce((acc, r) => acc + r.keywordCoverage, 0) / total,
-    permission: results.filter((r) => r.permission).length / total,
-    noAnswer: results.filter((r) => r.noAnswer).length / total,
-    citationAccuracy: results.filter((r) => r.citationAccuracy).length / total,
-    faithfulness: results.reduce((acc, r) => acc + r.faithfulness, 0) / total,
-    contextPrecision: results.reduce((acc, r) => acc + r.contextPrecision, 0) / total,
+    hitRate: rate((r) => r.hitRate),
+    keywordCoverage: mean((r) => r.keywordCoverage),
+    permission: rate((r) => r.permission),
+    noAnswer: rate((r) => r.noAnswer),
+    citationAccuracy: rate((r) => r.citationAccuracy),
+    faithfulness: mean((r) => r.faithfulness),
+    contextPrecision: mean((r) => r.contextPrecision),
     llmJudge: (() => {
-      const judged = results.filter((r) => typeof r.llmJudge === 'number');
+      const judged = scoredRows.filter((r) => typeof r.llmJudge === 'number');
       return judged.length ? judged.reduce((acc, r) => acc + (r.llmJudge as number), 0) / judged.length : -1;
     })(),
   };
@@ -401,11 +498,16 @@ async function runQualityGate() {
   const categories: Record<string, any> = {};
   for (const category of new Set(dataset.map((d) => d.category))) {
     const rows = results.filter((r) => r.category === category);
+    const categoryRows = rows.filter((r) => !r.envError);
     categories[category] = {
       total: rows.length,
-      successRate: rows.filter((r) => r.success).length / rows.length,
-      hitRate: rows.filter((r) => r.hitRate).length / rows.length,
-      keywordCoverage: rows.reduce((acc, r) => acc + r.keywordCoverage, 0) / rows.length,
+      scored: categoryRows.length,
+      envErrors: rows.length - categoryRows.length,
+      successRate: categoryRows.length ? categoryRows.filter((r) => r.success).length / categoryRows.length : null,
+      hitRate: categoryRows.length ? categoryRows.filter((r) => r.hitRate).length / categoryRows.length : null,
+      keywordCoverage: categoryRows.length
+        ? categoryRows.reduce((acc, r) => acc + r.keywordCoverage, 0) / categoryRows.length
+        : null,
     };
   }
 
@@ -417,7 +519,24 @@ async function runQualityGate() {
     api: API_BASE,
     thresholds: THRESHOLDS,
     summary: {
-      total, passed: totalScore, overallSuccessRate: totalScore / total,
+      total, passed: totalScore,
+      // Reported for debugging only; read `valid` first. An invalid run's rate
+      // is not a quality measurement (see quality-gate-validity.ts).
+      overallSuccessRate: scored > 0 ? totalScore / scored : 0,
+      // The full verdict, not just a boolean: a non-null invalidReason is what
+      // makes an invalid report actionable instead of merely red.
+      validity: {
+        valid: verdict.valid,
+        invalidReason: verdict.invalidReason,
+        envErrorRate: verdict.envErrorRate,
+        scored,
+        envErrors: envErrorCount,
+        attempted: total,
+        minScoredCases: bounds.minScoredCases,
+        maxEnvErrorRate: bounds.maxEnvErrorRate,
+      },
+      valid: verdict.valid,
+      invalidReason: verdict.invalidReason,
       metrics: agg, byCategory: categories,
       judge: {
         enabled: LLM_JUDGE_ENABLED,
@@ -444,8 +563,22 @@ async function runQualityGate() {
     ['LLM Judge (independent)', LLM_JUDGE_MIN, agg.llmJudge, llmJudgePass],
   ];
 
+  if (!verdict.valid) {
+    // Print the counts, then refuse to present them as a result. The banner is
+    // explicit so a reader skimming output cannot mistake the numbers below for
+    // a quality measurement.
+    console.log(`\n${colors.red}========================================${colors.reset}`);
+    console.log(`${colors.red}  INVALID RUN - NOT A QUALITY RESULT     ${colors.reset}`);
+    console.log(`${colors.red}========================================${colors.reset}`);
+    console.log(`Reason: ${verdict.invalidReason}`);
+    console.log(`Attempted: ${total}  Scored: ${scored}  Environment errors: ${envErrorCount} (${(verdict.envErrorRate * 100).toFixed(1)}%)`);
+    console.log(`Report (for debugging only): ${reportPath}`);
+    console.log(`\n${colors.red}  QUALITY GATE FAILED (invalid run)${colors.reset}`);
+    process.exit(1);
+  }
+
   console.log(`\n${colors.cyan}--- Quality Gate Summary ---${colors.reset}`);
-  console.log(`Total: ${total}  Passed: ${totalScore} (${((totalScore / total) * 100).toFixed(1)}%)\n`);
+  console.log(`Total: ${total}  Scored: ${scored}  Env errors: ${envErrorCount}  Passed: ${totalScore} (${((totalScore / Math.max(1, scored)) * 100).toFixed(1)}%)\n`);
   console.log('Metric                | Threshold | Actual  | Status');
   console.log('----------------------|-----------|---------|-------');
   let allPassed = true;

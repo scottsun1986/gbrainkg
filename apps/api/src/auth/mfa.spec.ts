@@ -34,7 +34,7 @@ describe('MFA/TOTP two-step login', () => {
   let userState: ReturnType<typeof baseUser>;
 
   beforeEach(() => {
-    process.env.AUTH_SECRET = process.env.AUTH_SECRET || 'llmwiki-unittest-secret';
+    process.env.AUTH_SECRET = process.env.AUTH_SECRET || 'llmwiki-unittest-secret-0123456789';
     authService = new AuthService();
     mfaService = new MfaService(authService);
     userState = baseUser();

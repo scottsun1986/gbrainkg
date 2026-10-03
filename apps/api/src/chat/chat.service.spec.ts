@@ -1,3 +1,5 @@
+import { TableEvidenceService } from '../retrieval/table-evidence.service';
+import { countTables } from './table-count';
 import { Test, TestingModule } from "@nestjs/testing";
 import {
   ChatService,
@@ -164,6 +166,89 @@ describe("ChatService", () => {
     expect(results).toEqual([{ documentId: 'public-doc', evidence: 'visible' }]);
   });
 
+  it.each(['示例杯团队打分，研发超过90的有几支', '示例杯团队相关研发打分超过90的有几支'])('counts a complete named table with typed filters and keeps original citations: %s', async (question) => {
+    jest.spyOn((service as any).modelConfigService, 'getLlmChatConfig').mockResolvedValue({baseUrl:'https://model.test/v1',modelName:'test-model',headers:{'Content-Type':'application/json'}});
+    mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(['kb-1']);
+    mockCompilerService.ensureUserBrainRepo.mockResolvedValue({ gitRepoUrl: '/tmp/repo' });
+    mockPrisma.document.findMany.mockResolvedValue([{id:'table-doc',kbId:'kb-1',aclMode:'inherit',title:'示例杯团队打分表.md',version:1,activeVersionId:'v1'}]);
+    const oldChunks = mockPrisma.chunk;
+    const markdown = '| 名称 | 部门 | 分数 |\n| --- | --- | --- |\n| A | 研发 | 90 |\n| B | 研发 | 95 |\n| C | 运维 | 99 |';
+    mockPrisma.chunk = {count:jest.fn().mockResolvedValue(1),findMany:jest.fn().mockResolvedValue([{id:'table-row',documentId:'table-doc',kbId:'kb-1',ord:0,content:markdown}])};
+    const source = jest.spyOn(TableEvidenceService.prototype, 'readPublishedTables').mockResolvedValue({tables:countTables(markdown),sourceHash:'hash',versionId:'v1'});
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn().mockResolvedValue({ok:true,json:async()=>({choices:[{message:{content:JSON.stringify({table:0,filters:[{column:1,operator:'eq',value:'研发'},{column:2,operator:'gt',value:'90'}]})}}]})});
+    try {
+      const stream = await service.handleChatStream('user-1',question);
+      const events = await lastValueFrom(stream.pipe(toArray()));
+      const answer = events.filter(e=>(e.data as any).type==='delta').map(e=>(e.data as any).content).join('');
+      expect(answer).toContain('**1 条**'); expect(answer).toContain('名称：B');
+      expect(answer).not.toContain('名称：A'); expect(answer).not.toContain('名称：C');
+      expect(source).toHaveBeenCalledWith('user-1','table-doc','v1');
+      expect(events.some(e=>(e.data as any).type==='citation')).toBe(true);
+    } finally {global.fetch=originalFetch;source.mockRestore();mockPrisma.chunk=oldChunks;}
+  });
+
+  it('enumerates all source chunks without invoking search or generation', async () => {
+    mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(['kb-1']);
+    mockCompilerService.ensureUserBrainRepo.mockResolvedValue({ gitRepoUrl: '/tmp/repo' });
+    mockPrisma.document.findMany.mockResolvedValue([
+      { id: 'outline-doc', kbId: 'kb-1', aclMode: 'inherit', title: '指南.docx', version: 1, kb: { name: '知识库' } },
+    ]);
+    const oldChunks = mockPrisma.chunk;
+    mockPrisma.chunk = { count: jest.fn().mockResolvedValue(2), findMany: jest.fn().mockResolvedValue([
+      { id: 'first', documentId: 'outline-doc', kbId: 'kb-1', ord: 0, content: '\\## 第一章 总则' },
+      { id: 'last', documentId: 'outline-doc', kbId: 'kb-1', ord: 50, content: '\\## 第八章 附则' },
+    ]) };
+    const retrieval = jest.spyOn((service as any).retrievalArms, 'searchChunksFallback');
+    try {
+      const stream = await service.handleChatStream('user-1', '请列出《指南》的全部章名');
+      const events = await lastValueFrom(stream.pipe(toArray()));
+      const answer = events.filter(e => (e.data as any).type === 'delta').map(e => (e.data as any).content).join('');
+      expect(answer).toContain('第一章 总则 [1]'); expect(answer).toContain('第八章 附则 [1]');
+      expect(events.some(e => (e.data as any).type === 'error')).toBe(false);
+      expect(events.some(e => (e.data as any).type === 'done')).toBe(true);
+      expect(retrieval).not.toHaveBeenCalled();
+      expect(mockPrisma.chunk.findMany.mock.calls[0][0].where.kbId).toEqual({ in: ['kb-1'] });
+    } finally { mockPrisma.chunk = oldChunks; retrieval.mockRestore(); }
+  });
+
+  it('does not disclose headings from a named document denied by document ACL', async () => {
+    mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(['kb-1']);
+    mockCompilerService.ensureUserBrainRepo.mockResolvedValue({ gitRepoUrl: '/tmp/repo' });
+    mockPrisma.document.findMany.mockResolvedValue([
+      { id: 'denied-doc', kbId: 'kb-1', aclMode: 'restricted', title: '指南.docx', version: 1 },
+    ]);
+    const oldChunks = mockPrisma.chunk;
+    mockPrisma.chunk = { count: jest.fn().mockResolvedValue(1), findMany: jest.fn().mockResolvedValue([
+      { id: 'secret', documentId: 'denied-doc', kbId: 'kb-1', ord: 0, content: '## 第一章 SECRET_HEADING' },
+    ]) };
+    jest.spyOn((service as any).documentAclService, 'filterReadableDocuments').mockResolvedValue(new Set());
+    try {
+      const stream = await service.handleChatStream('user-1', '请列出《指南》的全部章名');
+      const events = await lastValueFrom(stream.pipe(toArray()));
+      expect(JSON.stringify(events)).not.toContain('SECRET_HEADING');
+      expect(events.filter(e => (e.data as any).type === 'citation')).toHaveLength(0);
+    } finally { mockPrisma.chunk = oldChunks; }
+  });
+
+  it('does not claim a full outline when the source scan is truncated', async () => {
+    mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(['kb-1']);
+    mockCompilerService.ensureUserBrainRepo.mockResolvedValue({ gitRepoUrl: '/tmp/repo' });
+    mockPrisma.document.findMany.mockResolvedValue([
+      { id: 'outline-doc', kbId: 'kb-1', aclMode: 'inherit', title: '指南.docx', version: 1 },
+    ]);
+    const oldChunks = mockPrisma.chunk;
+    mockPrisma.chunk = { count: jest.fn().mockResolvedValue(2), findMany: jest.fn().mockResolvedValue([
+      { id: 'first', documentId: 'outline-doc', kbId: 'kb-1', ord: 0, content: '## 第一章 总则' },
+    ]) };
+    try {
+      const stream = await service.handleChatStream('user-1', '请列出《指南》的全部章名');
+      const events = await lastValueFrom(stream.pipe(toArray()));
+      const answer = events.filter(e => (e.data as any).type === 'delta').map(e => (e.data as any).content).join('');
+      expect(answer).toContain('无法回答全部章名'); expect(answer).not.toContain('第一章');
+    } finally { mockPrisma.chunk = oldChunks; }
+  });
+
   it("should stream chat and trigger lazy compile if topic is dirty", async () => {
     // This tests compilation/evidence streaming, not a live model gateway.
     jest.spyOn((service as any).modelConfigService, 'getLlmChatConfig').mockResolvedValue(null);
@@ -205,6 +290,10 @@ describe("ChatService", () => {
   });
 
   it('turns graph relations into ACL-checked source citations instead of graph prose', async () => {
+    // P2-3 routing gates the graph probe by query shape; this contract test
+    // pins the graph-binding behaviour itself, so it opts into GRAPHRAG_ROUTE=always.
+    const previousGraphRoute = process.env.GRAPHRAG_ROUTE;
+    process.env.GRAPHRAG_ROUTE = 'always';
     const chunkId = '11111111-1111-4111-8111-111111111111';
     jest.spyOn((service as any).retrievalArms, 'searchChunksFallback').mockResolvedValue([]);
     mockGbrainQuery.mockResolvedValueOnce({ citations: [], topics: [], answer: '', reranked: true });
@@ -246,6 +335,8 @@ describe("ChatService", () => {
       docTitle: '制度B.md',
     });
     expect(hits[0].context).not.toContain('GRAPH_ONLY_PROSE');
+    if (previousGraphRoute === undefined) delete process.env.GRAPHRAG_ROUTE;
+    else process.env.GRAPHRAG_ROUTE = previousGraphRoute;
   });
 
   it("should preserve conversation context without sending stale assistant turns as live messages", async () => {
@@ -649,6 +740,8 @@ describe("ChatService", () => {
       ok: true,
       body: {
         getReader: () => ({
+          cancel: jest.fn().mockResolvedValue(undefined),
+          releaseLock: jest.fn(),
           read: jest.fn()
             .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode('data: {"choices":[{"delta":{"content":"这里是回答[1]"}}]}\n\n') })
             .mockResolvedValueOnce({ done: true, value: undefined }),
@@ -696,6 +789,8 @@ describe("ChatService", () => {
       ok: true,
       body: {
         getReader: () => ({
+          cancel: jest.fn().mockResolvedValue(undefined),
+          releaseLock: jest.fn(),
           read: jest.fn()
             .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode('data: {"choices":[{"delta":{"content":"这里是未经引用的第一句话。这里是毫无关联的第二句话。没有任何角标。"}}]}\n\n') })
             .mockResolvedValueOnce({ done: true, value: undefined }),
@@ -729,6 +824,36 @@ describe("ChatService", () => {
     }
   });
 
+  it('does not prepend a refusal when the only sentence is verified late', async () => {
+    mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(['kb-1']);
+    mockCompilerService.ensureUserBrainRepo.mockResolvedValue({ gitRepoUrl: '/tmp/repo' });
+    mockPrisma.document.findMany.mockResolvedValue([
+      { id: 'doc-1', kbId: 'kb-1', aclMode: 'inherit', title: '规则.md', version: 1 },
+    ]);
+    const originalFetch = global.fetch;
+    const oldKey = process.env.DEEPSEEK_API_KEY;
+    process.env.DEEPSEEK_API_KEY = 'test-key';
+    const judge = jest.spyOn(service as any, 'judgeEntailment').mockResolvedValue(new Set([0]));
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, body: { getReader: () => ({
+      read: jest.fn().mockResolvedValueOnce({ done: false, value: new TextEncoder().encode(
+        'data: {"choices":[{"delta":{"content":"这是经语义复核确认的回答内容。"}}]}\n\n',
+      ) }).mockResolvedValueOnce({ done: true }),
+      cancel: jest.fn().mockResolvedValue(undefined), releaseLock: jest.fn(),
+    }) } });
+    try {
+      const events = await lastValueFrom((await service.handleChatStream('user-1', '测试问题', ['kb-1'])).pipe(toArray()));
+      const answer = events.filter(e => (e.data as any).type === 'delta').map(e => (e.data as any).content).join('');
+      expect(judge).toHaveBeenCalled();
+      expect(answer).toContain('这是经语义复核确认的回答内容。');
+      expect(answer).not.toContain('无法回答');
+      expect(answer).not.toContain('未包含相关信息');
+    } finally {
+      global.fetch = originalFetch;
+      if (oldKey === undefined) delete process.env.DEEPSEEK_API_KEY; else process.env.DEEPSEEK_API_KEY = oldKey;
+      judge.mockRestore();
+    }
+  });
+
   it("does not flag low coverage for a standard refusal answer", async () => {
     mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(["kb-1"]);
     mockCompilerService.ensureUserBrainRepo.mockResolvedValue({
@@ -745,6 +870,8 @@ describe("ChatService", () => {
       ok: true,
       body: {
         getReader: () => ({
+          cancel: jest.fn().mockResolvedValue(undefined),
+          releaseLock: jest.fn(),
           read: jest.fn()
             .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode('data: {"choices":[{"delta":{"content":"已知知识库资料中未包含相关信息，无法回答该问题。"}}]}\n\n') })
             .mockResolvedValueOnce({ done: true, value: undefined }),
@@ -822,6 +949,8 @@ describe("ChatService", () => {
       ok: true,
       body: {
         getReader: () => ({
+          cancel: jest.fn().mockResolvedValue(undefined),
+          releaseLock: jest.fn(),
           read: jest.fn()
             .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode('data: {"choices":[{"delta":{"content":"测试回答[1]"}}]}\n\n') })
             .mockResolvedValueOnce({ done: true, value: undefined }),

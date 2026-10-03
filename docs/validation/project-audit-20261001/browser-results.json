@@ -1,0 +1,9 @@
+{
+  "shell_ready_ms_with_3000ms_admin_delay": 2822,
+  "scope_refresh_with_same_library_count": "passed",
+  "feedback_original_message_and_http_error": "passed",
+  "stop_keeps_partial_answer_and_completes_ui": "passed",
+  "new_chat_fences_late_history_response": "passed",
+  "runtime_errors": [],
+  "mobile_overflow": "passed"
+}

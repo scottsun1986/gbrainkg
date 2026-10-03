@@ -14,6 +14,7 @@ import {
 import { createHmac, createPublicKey, createVerify, randomBytes, timingSafeEqual } from 'node:crypto';
 import { getPrismaClient } from '../prisma';
 import { AuthService } from './auth.service';
+import { authSigningSecret } from './auth-secret';
 
 export interface OidcEnvConfig {
   configured: boolean;
@@ -110,16 +111,8 @@ export class OidcService {
     return config;
   }
 
-  private secret(): string {
-    const secret = process.env.AUTH_SECRET;
-    if (!secret && process.env.NODE_ENV === 'production') {
-      throw new UnauthorizedException('AUTH_SECRET is not configured.');
-    }
-    return secret || 'llmwiki-local-development-secret';
-  }
-
   private signState(body: string): string {
-    const signature = createHmac('sha256', this.secret()).update(body).digest('base64url');
+    const signature = createHmac('sha256', authSigningSecret()).update(body).digest('base64url');
     return `${body}.${signature}`;
   }
 
@@ -127,7 +120,7 @@ export class OidcService {
     const parts = String(state || '').split('.');
     const [body, signature] = parts;
     if (parts.length !== 2 || !body || !signature) throw new UnauthorizedException('Invalid OIDC state.');
-    const expected = createHmac('sha256', this.secret()).update(body).digest('base64url');
+    const expected = createHmac('sha256', authSigningSecret()).update(body).digest('base64url');
     const suppliedBytes = Buffer.from(signature);
     const expectedBytes = Buffer.from(expected);
     if (

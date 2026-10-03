@@ -1,0 +1,9 @@
+{
+  "local_qr_decodes_to_exact_provisioning_uri": "passed",
+  "no_external_provisioning_request": "passed",
+  "logged_out_does_not_download_chat_renderer": "passed",
+  "login_javascript_uncompressed_bytes": 525767,
+  "runtime_errors": [],
+  "temporary_session_failure_preserves_token_and_does_not_fetch_admin": "passed",
+  "invalid_session_clears_token_and_does_not_fetch_admin": "passed"
+}

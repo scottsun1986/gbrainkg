@@ -331,6 +331,25 @@ describe("BrainCompilerService coalesced source sync", () => {
 });
 
 describe("BrainCompilerService query freshness", () => {
+  it('checks permissions once per selected-source request and rereads them on the next request', async () => {
+    const permission = { getVisibleKnowledgeBases: jest.fn().mockResolvedValue(['kb-1']) };
+    const service = new BrainCompilerService({} as any, permission as any, {} as any, {} as any, {} as any);
+    const sourceKey = BrainCompilerService.sourceKeyForKnowledgeBase('kb-1');
+    const db = {
+      knowledgeBase: { findMany: jest.fn().mockResolvedValue([{ id: 'kb-1', type: 'org' }]) },
+      document: { findMany: jest.fn().mockResolvedValue([{ kbId: 'kb-1' }]) },
+      brainSource: { findMany: jest.fn().mockResolvedValue([{ id: 'source-id', sourceKey }]), upsert: jest.fn() },
+      brainSourceMember: { findMany: jest.fn().mockResolvedValue([{ sourceId: 'source-id' }]), upsert: jest.fn(), deleteMany: jest.fn() },
+    };
+    (service as any).prisma = db;
+    expect(await service.getUserSourceRefsForKnowledgeBases('user-1', ['kb-1'])).toEqual([`gbrain://source/${sourceKey}`]);
+    expect(permission.getVisibleKnowledgeBases).toHaveBeenCalledTimes(1);
+    expect(db.brainSourceMember.deleteMany).toHaveBeenCalled();
+    permission.getVisibleKnowledgeBases.mockResolvedValue([]);
+    db.knowledgeBase.findMany.mockResolvedValue([]);
+    expect(await service.getUserSourceRefsForKnowledgeBases('user-1', ['kb-1'])).toEqual([]);
+    expect(permission.getVisibleKnowledgeBases).toHaveBeenCalledTimes(2);
+  });
   it("checks a large source with aggregate SQL instead of loading all documents and mappings", async () => {
     const queue = { add: jest.fn() };
     const outbox = { logOperation: jest.fn() };

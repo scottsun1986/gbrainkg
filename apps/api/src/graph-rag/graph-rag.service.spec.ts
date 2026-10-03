@@ -30,6 +30,21 @@ jest.mock('@prisma/client', () => ({
 describe('GraphRagService', () => {
   let service: GraphRagService;
 
+  // These cases assert the *legacy* full-scan rebuild path. Jest loads the
+  // developer's apps/api/.env, so a local CORE_GRAPH_INCREMENTAL_ENABLED=1 made
+  // scheduleCommunityRebuild take the incremental branch, which requires an
+  // explicit worker identity in the request context and threw before the scan
+  // under test. Pin the flag instead of depending on the machine's .env: the
+  // incremental branch has its own coverage in incremental-projection.spec.ts.
+  const originalIncremental = process.env.CORE_GRAPH_INCREMENTAL_ENABLED;
+  beforeAll(() => {
+    process.env.CORE_GRAPH_INCREMENTAL_ENABLED = '0';
+  });
+  afterAll(() => {
+    if (originalIncremental === undefined) delete process.env.CORE_GRAPH_INCREMENTAL_ENABLED;
+    else process.env.CORE_GRAPH_INCREMENTAL_ENABLED = originalIncremental;
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
     service = new GraphRagService();

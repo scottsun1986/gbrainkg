@@ -33,9 +33,14 @@ async function main() {
         description: role.description,
         builtin: role.builtin,
         permissions: role.permissions,
+        ...('code' in role ? { code: role.code as string } : {}),
       },
       create: {
         name: role.name,
+        // DEFAULT_ROLES entries with `code` (system_admin/super_admin) must be
+        // created with it: PermissionService.ensureDefaultRoles looks them up
+        // by code and re-inserting by name hits the unique(name) constraint.
+        code: 'code' in role ? role.code as string : null,
         description: role.description,
         builtin: role.builtin,
         permissions: role.permissions,

@@ -26,6 +26,7 @@ export function ChatScreen(){
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);   // {role:'user'|'ai', text, done}
   const [streaming, setStreaming] = useState(false);
+  const [stageLabel, setStageLabel] = useState<string | null>(null);
   const [activeCite, setActiveCite] = useState<number | null>(null);
   const [activeConv, setActiveConv] = useState<string | null>(null);
   const [conversationList, setConversationList] = useState<ConversationSummary[]>(appStore.CONVERSATIONS);
@@ -49,19 +50,31 @@ export function ChatScreen(){
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const streamController = useRef<AbortController | null>(null);
+  const finishStream = useRef<(() => void) | null>(null);
   const openSeqRef = useRef(0);
 
   const allSel = selected.length === visibleKbs.length;
   const scopeLabel = allSel ? '我可见的全部' : (selected.length === 0 ? '未选择任何库' : `已选 ${selected.length} 库`);
 
-  // 真实流式输出状态机对接
+  // Preserve an explicit scope across refreshes; changed IDs matter even when
+  // the number of visible libraries stays the same.
+  const previousKbIds = useRef<string[]>([]);
   useEffect(() => {
-    setSelected(visibleKbs.map(k=>k.id));
-    setConversationList(appStore.CONVERSATIONS);
-    const refresh = () => { setConversationList([...appStore.CONVERSATIONS]); setSelected(visibleKbs.map(k=>k.id)); };
-    window.addEventListener('app-data-refresh', refresh);
-    return () => window.removeEventListener('app-data-refresh', refresh);
-  }, [visibleKbs.length]);
+    const ids = visibleKbs.map(kb => kb.id);
+    const previous = previousKbIds.current;
+    previousKbIds.current = ids;
+    setSelected(current => {
+      const wasAll = current.length === previous.length && previous.every(id => current.includes(id));
+      const next = wasAll ? ids : current.filter(id => ids.includes(id));
+      return next.length === current.length && next.every((id, index) => id === current[index]) ? current : next;
+    });
+  }, [visibleKbs]);
+
+  useEffect(() => {
+    const refresh = () => setConversationList([...appStore.CONVERSATIONS]);
+    window.addEventListener('app-admin-data-updated', refresh);
+    return () => window.removeEventListener('app-admin-data-updated', refresh);
+  }, []);
 
   useEffect(() => {
     const onNew = () => { newChat(); };
@@ -97,6 +110,7 @@ export function ChatScreen(){
       if (flushTimer !== null) { clearTimeout(flushTimer); flushTimer = null; }
       updateAssistant(accumulatedTextRef.current, done);
     };
+    finishStream.current = () => flushAssistant(true);
     const scheduleAssistantFlush = () => {
       if (flushTimer !== null) return;
       flushTimer = setTimeout(() => { flushTimer = null; updateAssistant(accumulatedTextRef.current, false); }, 50);
@@ -139,6 +153,12 @@ export function ChatScreen(){
             accumulatedText += String(data.content || '');
             accumulatedTextRef.current = accumulatedText;
             scheduleAssistantFlush();
+          } else if (data.type === 'stage') {
+            // 真实阶段进度（retrieving → reranking → generating → verifying）
+            const STAGE_LABELS: Record<string, string> = {
+              retrieving: '检索证据', reranking: '重排验证', generating: '生成回答', verifying: '证据核验',
+            };
+            setStageLabel(STAGE_LABELS[data.stage] || data.detail || null);
           } else if (data.type === 'error') {
             streamError = String(data.content || '问答服务返回错误');
             if (!accumulatedText) { accumulatedTextRef.current = streamError; flushAssistant(false); }
@@ -171,6 +191,9 @@ export function ChatScreen(){
               return next;
             });
           } else if (data.type === 'done') {
+            if (typeof data.message_id === 'string') {
+              setMessages(items => items.map((item, index) => index === items.length - 1 && item.role === 'ai' ? { ...item, id: data.message_id } : item));
+            }
             streamFinished = true;
           }
         };
@@ -187,7 +210,7 @@ export function ChatScreen(){
         if (buffer.trim()) consumeLine(buffer);
         accumulatedTextRef.current = accumulatedText || streamError;
         flushAssistant(true);
-        if (active) setStreaming(false);
+        if (active) { setStreaming(false); setStageLabel(null); }
       } catch (err) {
         const isAbort = errorMessage(err) === 'AbortError' || (err as { name?: string })?.name === 'AbortError';
         if (isAbort) {
@@ -196,11 +219,11 @@ export function ChatScreen(){
         } else if (active) {
           accumulatedTextRef.current = "大模型请求失败：" + (errorMessage(err) || '未知错误');
           flushAssistant(true);
-          setStreaming(false);
+          setStreaming(false); setStageLabel(null);
         }
       }
     })();
-    return () => { active = false; streamController.current = null; if (flushTimer !== null) clearTimeout(flushTimer); controller.abort(); };
+    return () => { active = false; streamController.current = null; finishStream.current = null; if (flushTimer !== null) clearTimeout(flushTimer); controller.abort(); };
   }, [streaming]);
 
   // 流式期间自动滚底（除非用户主动上滑）
@@ -222,6 +245,8 @@ export function ChatScreen(){
   }, []);
 
   const stopStream = () => {
+    // Complete the visible answer before effect cleanup disables late flushes.
+    finishStream.current?.();
     streamController.current?.abort();
     setStreaming(false);
   };
@@ -245,6 +270,8 @@ export function ChatScreen(){
   };
 
   const newChat = ()=>{
+    ++openSeqRef.current;
+    setConvLoading(false);
     setMessages([]); setStreaming(false); setActiveCite(null); setCitations([]); setActiveConv(null); setInput('');
     if(taRef.current){ taRef.current.style.height = 'auto'; taRef.current.focus(); }
   };
@@ -257,13 +284,17 @@ export function ChatScreen(){
       // 历史消息自带 id，直接反馈；旧数据缺 id 时才回退拉取整段会话找末条回答。
       if (!targetId) {
         const response = await fetch(`${API_BASE_URL}/api/v1/conversations/${activeConv}` ,{headers:apiHeaders()});
+        if (!response.ok) throw new Error('会话加载失败，反馈未提交');
         const conversation = await response.json();
         targetId = [...(conversation.messages || [])].reverse().find(item=>item.role==='assistant')?.id || '';
       }
-      if (!targetId) return;
-      await fetch(`${API_BASE_URL}/api/v1/conversations/${activeConv}/messages/${targetId}/feedback`,{method:'POST',headers:{'Content-Type':'application/json',...apiHeaders()},body:JSON.stringify({feedback})});
+      if (!targetId) throw new Error('未找到回答，反馈未提交');
+      const response = await fetch(`${API_BASE_URL}/api/v1/conversations/${activeConv}/messages/${targetId}/feedback`,{method:'POST',headers:{'Content-Type':'application/json',...apiHeaders()},body:JSON.stringify({feedback})});
+      if (!response.ok) throw new Error('反馈提交失败，请重试');
       window.dispatchEvent(new CustomEvent('app-toast',{detail:'反馈已记录'}));
-    } catch {}
+    } catch (error) {
+      emitToast(errorMessage(error) || '反馈提交失败，请重试');
+    }
   }, [activeConv]);
 
   const previewCitation = useCallback((citation: Citation) => {
@@ -471,6 +502,12 @@ export function ChatScreen(){
           <div style={{ position: 'absolute', top: 12, right: 20, zIndex: 6, display: 'flex', alignItems: 'center', gap: 6, padding: '4px 12px', borderRadius: 14, background: 'var(--bg-2, rgba(0,0,0,0.05))', color: 'var(--ink-3, #666)', fontSize: 12 }}>
             <span className="streaming-dot" aria-hidden="true" />
             会话加载中…
+          </div>
+        )}
+        {streaming && stageLabel && (
+          <div style={{ position: 'absolute', top: convLoading ? 48 : 12, right: 20, zIndex: 6, display: 'flex', alignItems: 'center', gap: 6, padding: '4px 12px', borderRadius: 14, background: 'var(--bg-2, rgba(0,0,0,0.05))', color: 'var(--ink-3, #666)', fontSize: 12 }} aria-live="polite">
+            <span className="streaming-dot" aria-hidden="true" />
+            {stageLabel}…
           </div>
         )}
         <div className="conv-mobile-bar">

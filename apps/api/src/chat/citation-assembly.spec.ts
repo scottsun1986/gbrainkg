@@ -1,4 +1,4 @@
-import { mergeCitationsByDocument } from './citation-assembly';
+import { mergeCitationsByDocument, stripMarkersOfDroppedCitations } from './citation-assembly';
 
 describe('mergeCitationsByDocument', () => {
   const chunk = (over: Record<string, any>) => ({
@@ -66,5 +66,30 @@ describe('mergeCitationsByDocument', () => {
     ]);
     expect(merged[0].isCompiledTruth).toBe(true);
     expect(merged[0].isCompiledDerived).toBe(true);
+  });
+});
+
+describe('stripMarkersOfDroppedCitations (ACL strip marker hygiene)', () => {
+  it('keeps surviving markers by ORIGINAL index when a middle citation is ACL-dropped', () => {
+    // citations [1,2,3]; [2] failed the independent ACL check → survivors {1,3}
+    const answer = stripMarkersOfDroppedCitations(
+      '结论甲[1]。结论乙[2]。结论丙[3]。',
+      new Set([1, 3]),
+    );
+    expect(answer).toBe('结论甲[1]。结论乙。结论丙[3]。');
+  });
+
+  it('keeps the last marker when all earlier citations are dropped', () => {
+    const answer = stripMarkersOfDroppedCitations('a[1] b[2] c[3]', new Set([3]));
+    expect(answer).toBe('a b c[3]');
+  });
+
+  it('strips every marker when nothing survives', () => {
+    expect(stripMarkersOfDroppedCitations('x[1] y[2]', new Set())).toBe('x y');
+  });
+
+  it('does not touch markers when the full set survives', () => {
+    const original = '甲[1] 乙[2] 丙[3]';
+    expect(stripMarkersOfDroppedCitations(original, new Set([1, 2, 3]))).toBe(original);
   });
 });

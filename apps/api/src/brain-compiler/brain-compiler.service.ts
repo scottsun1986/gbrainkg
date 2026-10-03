@@ -204,6 +204,12 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
   /** Sources visible to this user. The database ACL is still authoritative at query time. */
   async getUserSourceRefs(userId: string): Promise<string[]> {
     const definitions = await this.getSourcePlan(userId);
+    return this.materializeUserSourceRefs(userId, definitions);
+  }
+
+  private async materializeUserSourceRefs(userId: string, definitions: Array<{
+    sourceKey: string; kind: string; scopeKey: string; kbIds: string[];
+  }>): Promise<string[]> {
     const refs: string[] = [];
     const db: any = this.prisma as any;
     const desiredSourceIds: string[] = [];
@@ -303,7 +309,9 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
     // Materialize memberships before returning the references. This keeps the
     // DB representation in sync with current ACLs and makes revocation
     // auditable, while the query itself remains limited to the selected set.
-    await this.getUserSourceRefs(userId);
+    // Reuse the plan authorized in this invocation, rather than querying the
+    // same permissions and KB inventory again. Nothing is cached across requests.
+    await this.materializeUserSourceRefs(userId, plan);
     return effectiveSelected.map((definition) => `gbrain://source/${definition.sourceKey}`);
   }
 
@@ -722,14 +730,13 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
     if (!plan.length) return { checked: 0, rebuilt: 0, fresh: true, staleSources: [], sourceKeys: [] };
 
     const sourceIds = plan.map((definition) => definition.sourceKey);
-    const indexedPageCounts = await this.gbrain.getSourcePageCounts(sourceIds);
     const db: any = this.prisma as any;
     const staleDefinitions: typeof plan = [];
     const rebuilt: string[] = [];
     const publishedCounts = new Map<string, number>();
 
     // Batch per-source queries with Promise.all to avoid sequential round-trips.
-    const inventoryResults = await Promise.all(
+    const inventoryPromise = Promise.all(
       plan.map(async (definition) => {
         const source = await db.brainSource.findUnique({
           where: { sourceKey: definition.sourceKey },
@@ -785,6 +792,12 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
         };
       }),
     );
+
+    // The external read-plane status and DB inventory are independent reads.
+    // Both must complete successfully before deciding whether sources are fresh.
+    const [indexedPageCounts, inventoryResults] = await Promise.all([
+      this.gbrain.getSourcePageCounts(sourceIds), inventoryPromise,
+    ]);
 
     for (let i = 0; i < plan.length; i++) {
       const definition = plan[i];

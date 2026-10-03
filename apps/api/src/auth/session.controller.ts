@@ -29,6 +29,7 @@ export class SessionController {
     // documentCount 不再在 bootstrap 中聚合（原先 N+1 COUNT 导致 54 个 KB 耗时 5s）。
     // 文档数量延迟到知识库详情页按需加载。
     const mappedKbs = kbs.map((kb) => ({ ...kb, documentCount: 0, canWrite: writePermissions.get(kb.id) || false, canDelete: systemAdmin || (kb.type === 'personal' && kb.ownerUserId === userId) }));
-    return { user, kbs: mappedKbs, knowledgeBases: mappedKbs, capabilities, managedOrgIds: [...managedOrgIds] };
+    // B-3: knowledgeBases 重复字段已删除（web 仅消费 kbs）；载荷减半。
+    return { user, kbs: mappedKbs, capabilities, managedOrgIds: [...managedOrgIds] };
   }
 }

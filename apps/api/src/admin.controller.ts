@@ -580,18 +580,6 @@ export class AdminController {
         take: inventoryLimit,
       })
         : [];
-      const orgs =
-        canReadOrg || canReadIndustry
-          ? allOrgs.map((org: any) => ({
-              ...org,
-              canManage: isSystemAdmin || managedOrgIds.has(org.id),
-              canCreateChild: isSystemAdmin || managedOrgIds.has(org.id),
-              // Organization administrators may delegate administration within their
-              // own subtree. They never receive access to a parent or sibling node
-              // because managedOrgIds is rooted at their assigned organization(s).
-              canSetAdmin: isSystemAdmin || managedOrgIds.has(org.id),
-            }))
-          : [];
       const kbs = wantAudit
         ? await (db as any).knowledgeBase.findMany({
         where: { status: "active" },
@@ -693,6 +681,27 @@ export class AdminController {
             kb.ownerUserId === adminId ||
             kb.admins.some((admin: any) => admin.userId === adminId)),
       );
+      // B-2: kb.industry.read 只解锁行业库关联的组织节点，绝不放行全量组织树。
+      // 全量组织树仍由 org.read / org.user.read 控制。
+      const industryLinkedOrgNodeIds = new Set(
+        industryScopeKbs
+          .map((kb: any) => kb.orgNodeId)
+          .filter((id: any): id is string => typeof id === "string"),
+      );
+      const orgs = (canReadOrg
+        ? allOrgs
+        : canReadIndustry
+          ? allOrgs.filter((org: any) => industryLinkedOrgNodeIds.has(org.id))
+          : []
+      ).map((org: any) => ({
+        ...org,
+        canManage: isSystemAdmin || managedOrgIds.has(org.id),
+        canCreateChild: isSystemAdmin || managedOrgIds.has(org.id),
+        // Organization administrators may delegate administration within their
+        // own subtree. They never receive access to a parent or sibling node
+        // because managedOrgIds is rooted at their assigned organization(s).
+        canSetAdmin: isSystemAdmin || managedOrgIds.has(org.id),
+      }));
       // 管理后台的管理范围和用户实际阅读范围不同：普通成员不能管理组织库，
       // 但仍应在对话/知识库页面看到自己按组织继承规则可读的组织库。
       const readableKbIds = new Set(
@@ -710,14 +719,16 @@ export class AdminController {
               [...readableKbs, ...industryScopeKbs].map((kb: any) => [kb.id, kb]),
             ).values(),
           ];
-      const directoryUsers =
-        isSystemAdmin || canReadIndustry || directIndustryScopeCount > 0
-          ? users
-          : users.filter(
-              (user: any) =>
-                user.id === adminId ||
-                user.orgs.some((org: any) => managedOrgIds.has(org.orgNodeId)),
-            );
+      // B-2: 用户目录按 org.read / org.user.read 输出全量；行业库阅读能力
+      // （kb.industry.read / 行业库管理员）不再放行全量用户清单，未持组织
+      // 阅读能力者只看到自己与其管理组织子树内的成员。
+      const directoryUsers = canReadOrg
+        ? users
+        : users.filter(
+            (user: any) =>
+              user.id === adminId ||
+              user.orgs.some((org: any) => managedOrgIds.has(org.orgNodeId)),
+          );
       const safeUsers = directoryUsers.map((user: any) => {
         // 仅按受保护角色名判定，不再信任 builtin 标记（自定义角色可能被误置
         // builtin: 名称集合见文件顶部 PROTECTED_ROLE_NAMES 注释）。
@@ -883,11 +894,14 @@ export class AdminController {
         })(),
         users: safeUsers,
         orgs,
-        roles: roles.map(({ _count, ...role }: any) => ({
-          ...role,
-          users: _count.users,
-          perms: Array.isArray(role.permissions) ? role.permissions : [],
-        })),
+        // B-2: 角色清单按 role.read 输出，未持能力者返回空清单。
+        roles: canReadRoles
+          ? roles.map(({ _count, ...role }: any) => ({
+              ...role,
+              users: _count.users,
+              perms: Array.isArray(role.permissions) ? role.permissions : [],
+            }))
+          : [],
         kbs: visibleKbs.map(({ _count, ...kb }: any) => ({
           ...kb,
           documentCount: _count.documents,
@@ -1227,11 +1241,12 @@ export class AdminController {
     }));
 
     // 5. Outbox & Queues
-    const [outboxTotal, outboxPending, outboxCompleted, outboxFailed, recentOutboxEvents] = await timed("outbox-queues", () => Promise.all([
+    const [outboxTotal, outboxPending, outboxCompleted, outboxFailed, outboxDead, recentOutboxEvents] = await timed("outbox-queues", () => Promise.all([
       countOutboxEvents(),
       countOutboxEvents("pending"),
       countOutboxEvents("completed"),
       countOutboxEvents("failed"),
+      countOutboxEvents("dead"),
       listOutboxEvents(offsetFor("outbox"), limit),
     ]));
 
@@ -1269,7 +1284,7 @@ export class AdminController {
           uploadBytes,
           uploadFormatted: formatBytes(uploadBytes)
         },
-        outboxStatus: { pending: outboxPending, completed: outboxCompleted, failed: outboxFailed, total: outboxTotal },
+        outboxStatus: { pending: outboxPending, completed: outboxCompleted, failed: outboxFailed, dead: outboxDead, total: outboxTotal },
         activeUsersCount: totalUsers,
         activeScopesCount: scopesTotal,
         scopeCompressionRatio,
@@ -1408,6 +1423,22 @@ export class AdminController {
       throw new ForbiddenException("Only a system administrator can trigger Dream maintenance.");
     const job = await this.brainCompilerService.queueDreamCycle("manual");
     return { queued: true, jobId: job?.id || null };
+  }
+
+  /**
+   * Replay a dead-lettered outbox event after its root cause has been fixed.
+   * Dead events exhausted their retry budget (see BrainOutboxService) and are
+   * surfaced in system status telemetry under outboxStatus.dead.
+   */
+  @Post("outbox/:id/replay")
+  async replayOutboxEvent(@Req() req: any, @Param("id") id: string) {
+    const userId = await this.authService.userIdFromRequest(req);
+    if (!(await this.permissionService.isSystemAdmin(userId)))
+      throw new ForbiddenException("Only a system administrator can replay outbox events.");
+    const event = await this.brainOutboxService?.replayDeadEvent(id);
+    if (!event)
+      throw new NotFoundException("Outbox event not found or not in dead-letter state.");
+    return { replayed: true, id: event.id, eventType: event.eventType, status: event.status };
   }
 
   @Post("brain/sources/rebuild")
@@ -1944,7 +1975,7 @@ export class AdminController {
     } });
     return created;
     });
-    await this.brainOutboxService?.dispatchPending();
+    this.brainOutboxService?.kickDispatch();
     await this.brainCompilerService.ensureUserBrainRepo(user.id);
     await this.scheduleAccessReconciliation();
     return { user: safeAdminUser(user) };
@@ -2061,7 +2092,7 @@ export class AdminController {
         })
         .catch(() => undefined);
     }
-    await this.brainOutboxService?.dispatchPending();
+    this.brainOutboxService?.kickDispatch();
     await this.scheduleAccessReconciliation();
     this.authService.invalidateUserStatus(id);
     if (typeof this.brainCompilerService?.invalidateUserScope === "function") {
@@ -2100,7 +2131,7 @@ export class AdminController {
         },
       })
       .catch(() => undefined);
-    await this.brainOutboxService?.dispatchPending();
+    this.brainOutboxService?.kickDispatch();
     await this.scheduleAccessReconciliation();
     this.authService.invalidateUserStatus(id);
     if (typeof this.brainCompilerService?.invalidateUserScope === "function") {
@@ -2427,7 +2458,7 @@ export class AdminController {
         },
       })
       .catch(() => undefined);
-    await this.brainOutboxService?.dispatchPending();
+    this.brainOutboxService?.kickDispatch();
     await this.scheduleAccessReconciliation();
     if (typeof this.brainCompilerService?.invalidateKbScope === "function") {
       await this.brainCompilerService.invalidateKbScope(kbId, "acl").catch(() => undefined);
@@ -2463,7 +2494,7 @@ export class AdminController {
         details: { grantId: id, kbId: grant.kbId },
       })
       .catch(() => undefined);
-    await this.brainOutboxService?.dispatchPending();
+    this.brainOutboxService?.kickDispatch();
     await this.scheduleAccessReconciliation();
     if (typeof this.brainCompilerService?.invalidateKbScope === "function") {
       await this.brainCompilerService.invalidateKbScope(grant.kbId, "acl").catch(() => undefined);

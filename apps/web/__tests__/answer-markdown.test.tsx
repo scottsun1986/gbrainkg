@@ -33,11 +33,21 @@ describe('answer Markdown structure and citation safety', () => {
     assert.match(html('`示例。**标题**`'), /<code>示例。\*\*标题\*\*<\/code>/);
   });
 
-  it('renders GFM tables with alignments, inline citations and a focusable scroll region', () => {
+  it('renders task checkboxes once without leaking Markdown markers', () => {
+    const result = html('- [x] 已完成\n- [ ] 待处理');
+    assert.equal((result.match(/type="checkbox"/g) || []).length, 2);
+    assert.ok(!result.includes('[x]') && !result.includes('[ ]'));
+    assert.match(result, /aria-label="已完成"/);
+    assert.match(result, /aria-label="未完成"/);
+  });
+
+  it('renders GFM tables with alignments, inline citations and responsive column labels', () => {
     const result = html('| 项目 | 数值 |\n| --- | ---: |\n| 甲[2] | 30 |');
     assert.match(result, /role="region"/);
-    assert.match(result, /<thead>/);
+    assert.match(result, /<thead\b/);
     assert.match(result, /scope="col"/);
+    assert.match(result, /answer-cell-label/);
+    assert.ok(!result.includes("可横向滚动"));
     assert.match(result, /text-align:right/);
     assert.match(result, /查看来源 2/);
   });
@@ -65,4 +75,21 @@ describe('answer Markdown structure and citation safety', () => {
     const result = html('A &amp; B &lt; C &#x1f600;');
     assert.ok(result.includes('A &amp; B &lt; C 😀'));
   });
+});
+
+
+it('keeps source row and cell order when a wide table becomes stacked entries', () => {
+  const result = html('| A | B | C | D | E | F | G |\n|---|---|---|---|---|---|---|\n| first | second[2] | third | fourth | fifth | sixth | seventh |\n| eighth | ninth | tenth | eleventh | twelfth | thirteenth | fourteenth |');
+  assert.match(result, /answer-table-stacked/);
+  const values = [...result.matchAll(/class="answer-cell-value">([\s\S]*?)<\/span>/g)].map(m => m[1]);
+  assert.equal(values.length, 14);
+  assert.ok(values[0].includes('first') && values[4].includes('fifth') && values[7].includes('eighth'));
+  assert.equal((result.match(/<button/g) || []).length, 1);
+});
+
+it('uses noninteractive, formatted-text labels when headers contain links and emphasis', () => {
+  const result = html('| **字段** | [名称](https://example.test) | C |\n|---|---|---|\n| a | b | c |');
+  assert.match(result, /aria-hidden="true">字段<\/span>/);
+  assert.match(result, /aria-hidden="true">名称<\/span>/);
+  assert.equal((result.match(/<a /g) || []).length, 1);
 });

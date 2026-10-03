@@ -289,8 +289,18 @@ def c_ultralong(case):
 def c_chapters(case):
     r = chat("请列出《企业考勤管理制度详细手册》的全部章名")
     LATENCIES.append(r["latency_s"]); case.latency_s = r["latency_s"]
-    ok = ("第一章" in r["answer"]) and ("第八章" in r["answer"])
-    expect(case, ok, f"answer={r['answer'][:160]}")
+    expected = ["第一章 总则", "第二章 工时制度与作息时间", "第三章 考勤方式与规范",
+                "第四章 考勤异常认定与处理", "第五章 加班管理", "第六章 请假休假管理",
+                "第七章 考勤统计与薪资核算", "第八章 附则"]
+    missing = [title for title in expected if title not in r["answer"]]
+    ok = not missing and any("详细手册" in t for t in doc_titles(r))
+    expect(case, ok, f"missing={missing} answer={r['answer'][:160]}")
+    if case.status == "PASS" and r.get("conversation_id"):
+        status, _, raw = http("GET", f"/api/v1/conversations/{r['conversation_id']}", token=TOKEN)
+        history = json.loads(raw) if status == 200 else {}
+        saved = " ".join(m.get("content", "") for m in history.get("messages", []) if m.get("role") == "assistant")
+        expect(case, status == 200 and all(title in saved for title in expected),
+               "Saved chapter list failed immutable evidence/permission revalidation")
 
 
 @case("P3-01", "语义鸿沟与多源", "口语→术语：员工夏天几点上班 → 夏令时 08:30")

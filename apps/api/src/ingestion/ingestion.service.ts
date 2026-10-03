@@ -846,9 +846,15 @@ export class IngestionService implements OnModuleInit {
           where: { id: doc.buildingVersionId, state: { in: ['parsed', 'indexing'] } }, data: { state: 'failed' },
         });
         // A failed replacement cannot unpublish the last coherent projection.
+        // Merge into the existing parserMetadata: wholesale replacement drops
+        // the original parse metadata (engine, page map, source snapshot refs)
+        // that operators still need to diagnose the failed replacement.
+        const priorMetadata = (doc.parserMetadata && typeof doc.parserMetadata === 'object')
+          ? doc.parserMetadata as Record<string, unknown>
+          : {};
         await tx.document.update({ where: { id: documentId }, data: doc.activeVersionId
-          ? { parserMetadata: { pendingError: reason } }
-          : { status: 'failed', qualityStatus: 'rejected', qualityIssues: [reason], parserMetadata: { error: reason } } });
+          ? { parserMetadata: { ...priorMetadata, pendingError: reason } }
+          : { status: 'failed', qualityStatus: 'rejected', qualityIssues: [reason], parserMetadata: { ...priorMetadata, error: reason } } });
       });
       this.logger.error(`Document ${documentId} pending ingestion failed: ${reason}`);
       return;

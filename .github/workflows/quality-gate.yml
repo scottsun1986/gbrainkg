@@ -30,26 +30,61 @@ jobs:
           name: test-results
           path: '**/test-results/'
 
-  retrieval-quality:
+  # Offline harness self-tests. These need no API and no credentials, so they
+  # run on every PR: they are what catches a metric or a gate that has quietly
+  # stopped measuring anything (e.g. the 2026-09-27 report, whose 50/50 rows
+  # were HTTP 401 and whose summary still printed a 40% success rate).
+  harness-selftests:
     runs-on: ubuntu-latest
     needs: unit-tests
-    if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: pnpm/action-setup@v4
         with:
-          python-version: '3.12'
-      - run: pip install pytest requests sseclient-py
-      - name: Run Retrieval Quality Evaluation
-        run: python -m pytest tests/evaluation/test_retrieval_quality.py --junitxml=eval-results.xml -v
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Evaluation harness self-tests
+        run: pnpm run benchmark:selftest
+
+  # Live retrieval-quality gate. The previous version of this job could never
+  # pass: it read TEST_HOST/TEST_PORT secrets that no other workflow defines,
+  # pointed them at 127.0.0.1 on a GitHub-hosted runner where nothing listens,
+  # and fed that into quality_gate.py - a checker that reads a
+  # latest_results.json this job never produced.
+  #
+  # It now runs against the instance the repo already targets through
+  # LLMWIKI_API_URL, using the same credentials as ci.yml, and only when those
+  # are configured: a missing secret surfaces as a skipped job, not as a fake
+  # pass or a mysterious failure.
+  retrieval-quality:
+    runs-on: [self-hosted, llmwiki]
+    needs: harness-selftests
+    if: ${{ github.event_name == 'push' && secrets.LLMWIKI_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run live quality gate
         env:
-          TEST_HOST: ${{ secrets.TEST_HOST }}
-          TEST_PORT: ${{ secrets.TEST_PORT }}
-      - name: Quality Gate Check
-        # Thresholds come from tests/evaluation/gate-thresholds.sh so this
-        # workflow can never disagree with ci-gate.sh / the self-hosted gate.
-        run: |
-          source tests/evaluation/gate-thresholds.sh
-          python tests/evaluation/quality_gate.py \
-            --threshold-hit-rate "$GATE_HIT_RATE" \
-            --threshold-faithfulness "$GATE_FAITHFULNESS"
+          API_BASE: ${{ secrets.LLMWIKI_API_URL }}
+          LLMWIKI_TOKEN: ${{ secrets.LLMWIKI_TOKEN }}
+          GATE_HIT_RATE: "0.80"
+          GATE_KEYWORD_COVERAGE: "0.75"
+          GATE_PERMISSION_RATE: "1.00"
+          GATE_NO_HALLUCINATION: "0.90"
+          GATE_FAITHFULNESS: "0.95"
+          GATE_CITATION_ACCURACY: "0.90"
+          GATE_CONTEXT_PRECISION: "0.85"
+        # Thresholds and the credential/scope pre-flight live in ci-gate.sh, so
+        # this workflow cannot disagree with the self-hosted gate.
+        run: bash tests/evaluation/ci-gate.sh

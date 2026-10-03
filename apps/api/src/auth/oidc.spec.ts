@@ -29,7 +29,7 @@ function enableOidc() {
   process.env.OIDC_CLIENT_SECRET = 'shhh-secret';
   process.env.OIDC_REDIRECT_URI = 'https://kb.example.com/api/v1/auth/oidc/callback';
   process.env.OIDC_SCOPES = 'openid email profile';
-  process.env.AUTH_SECRET = process.env.AUTH_SECRET || 'llmwiki-unittest-secret';
+  process.env.AUTH_SECRET = process.env.AUTH_SECRET || 'llmwiki-unittest-secret-0123456789';
 }
 
 function disableOidc() {

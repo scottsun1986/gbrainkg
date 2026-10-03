@@ -76,14 +76,25 @@ def main():
         sys.exit(1)
 
     avg_hit_rate = sum(r["hit_rate_5"] for r in results) / len(results)
-    avg_faith = sum(r["faithfulness"] for r in results) / len(results)
+    # Faithfulness is None when the entailment judge did not run (the results
+    # file records the substring proxy as snippet_match_rate instead). An
+    # unmeasured metric must not be gated as if it had been measured: it fails
+    # closed with a message telling the operator how to measure it.
+    measured_faith = [r["faithfulness"] for r in results
+                      if isinstance(r.get("faithfulness"), (int, float))]
+    avg_faith = (sum(measured_faith) / len(measured_faith)) if measured_faith else None
     ndcg_values = [r["rank_ndcg_10"] for r in results if isinstance(r.get("rank_ndcg_10"), (int, float))]
     hallucination_count = sum(1 for r in results if r["hallucination"])
 
     print("=== Quality Gate Summary ===")
     print(f"Total Cases: {len(results)}")
     print(f"Hit Rate @ 5: {avg_hit_rate:.2%} (Threshold: {threshold_hit_rate:.2%})")
-    print(f"Faithfulness: {avg_faith:.2%} (Threshold: {threshold_faithfulness:.2%})")
+    if avg_faith is None:
+        print(f"Faithfulness: NOT MEASURED ({len(results) - len(measured_faith)}/{len(results)} "
+              f"cases) — run with EVAL_LLM_JUDGE=true (Threshold: {threshold_faithfulness:.2%})")
+    else:
+        print(f"Faithfulness: {avg_faith:.2%} over {len(measured_faith)}/{len(results)} cases "
+              f"(Threshold: {threshold_faithfulness:.2%})")
     if ndcg_values:
         avg_ndcg = sum(ndcg_values) / len(ndcg_values)
         print(f"nDCG @ 10: {avg_ndcg:.2%} (Threshold: {threshold_ndcg:.2%})")
@@ -93,6 +104,7 @@ def main():
     print(f"Hallucination Cases: {hallucination_count} (Threshold: 0)")
 
     passed = (avg_hit_rate >= threshold_hit_rate
+              and avg_faith is not None
               and avg_faith >= threshold_faithfulness
               and avg_ndcg >= threshold_ndcg
               and hallucination_count == 0)

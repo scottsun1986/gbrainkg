@@ -1,0 +1,1055 @@
+{
+  "instances": [
+    {
+      "instance": "inst1",
+      "ready": {
+        "status": "ready",
+        "checks": {
+          "database": "ok",
+          "redis": "ok"
+        },
+        "apiReleaseFingerprint": "903a0713f7c5b46dd4028a366b40ffee7ed5d5cea9906d448d98ad143099d847",
+        "knowledgeProfile": {
+          "profile": "quality-first",
+          "authorization": true,
+          "immutableVersions": true,
+          "incrementalGraph": true,
+          "adaptiveRetrieval": true,
+          "embeddingRevisionKnown": false,
+          "embeddingPublicationPolicy": "fresh-per-version",
+          "sparse": false,
+          "maxSim": false,
+          "lateChunking": false
+        },
+        "timestamp": "2026-10-02T03:44:05.089Z"
+      },
+      "webBuildId": "OXsHIW_blJUso0vtgIj14",
+      "publicHTTP": 200
+    },
+    {
+      "instance": "inst2",
+      "ready": {
+        "status": "ready",
+        "checks": {
+          "database": "ok",
+          "redis": "ok"
+        },
+        "apiReleaseFingerprint": "903a0713f7c5b46dd4028a366b40ffee7ed5d5cea9906d448d98ad143099d847",
+        "knowledgeProfile": {
+          "profile": "quality-first",
+          "authorization": true,
+          "immutableVersions": true,
+          "incrementalGraph": true,
+          "adaptiveRetrieval": true,
+          "embeddingRevisionKnown": false,
+          "embeddingPublicationPolicy": "fresh-per-version",
+          "sparse": false,
+          "maxSim": false,
+          "lateChunking": false
+        },
+        "timestamp": "2026-10-02T03:44:06.706Z"
+      },
+      "webBuildId": "OXsHIW_blJUso0vtgIj14",
+      "publicHTTP": 200
+    }
+  ],
+  "queries": [
+    {
+      "answer": "按《息壤杯团队打分表.xlsx》完整表格中的“队长所属部门 = 软研中心混成旅；最终得分 > 90”统计，符合条件的记录有 **1 条**。[1]\n\n- 团队名称：AI谛听产品小组；队长所属部门：软研中心混成旅；最终得分：95。[1]",
+      "citations": [
+        {
+          "doc_title": "息壤杯团队打分表.xlsx",
+          "document_id": "302b830e-9944-4bd9-bb54-470de7d4edf6",
+          "score": null,
+          "page_no": null,
+          "bbox": null,
+          "version": 1,
+          "version_conflict": null
+        }
+      ],
+      "traces": [
+        {
+          "id": "runtime_config",
+          "status": "running",
+          "summary": "读取平台数据库中的模型配置",
+          "details": null
+        },
+        {
+          "id": "runtime_config",
+          "status": "success",
+          "summary": "模型运行时配置已加载",
+          "details": null
+        },
+        {
+          "id": "permission_scope",
+          "status": "running",
+          "summary": "计算当前用户可读知识库及本次选择范围",
+          "details": null
+        },
+        {
+          "id": "permission_scope",
+          "status": "success",
+          "summary": "本次可检索 6 个知识库",
+          "details": {
+            "visibleCount": 6,
+            "selectedCount": 6,
+            "rejectedCount": 0,
+            "knowledgeBases": [
+              {
+                "id": "1ded0591-ef69-4083-b4db-e37c7531ba7d",
+                "name": "孙智强的笔记",
+                "type": "personal"
+              },
+              {
+                "id": "0173e892-595a-4f32-b2ec-d927ace28532",
+                "name": "软研中心知识库",
+                "type": "org"
+              },
+              {
+                "id": "4e856c91-a677-42d8-b9ee-5281c78a6fd3",
+                "name": "法律库",
+                "type": "industry"
+              },
+              {
+                "id": "2a3ec10c-3e33-4cc0-833b-045826ad9b9f",
+                "name": "测试行业库1",
+                "type": "industry"
+              },
+              {
+                "id": "877304ca-c5ea-4ec0-8bae-e21567b70b78",
+                "name": "根知识库",
+                "type": "org"
+              },
+              {
+                "id": "85d0744b-273c-4a20-a4f3-e0715fbc5d03",
+                "name": "南京电信知识库",
+                "type": "org"
+              }
+            ]
+          }
+        },
+        {
+          "id": "source_plan",
+          "status": "running",
+          "summary": "将业务权限范围映射为隔离的 GBrain Source",
+          "details": null
+        },
+        {
+          "id": "source_plan",
+          "status": "success",
+          "summary": "已选择 5 个原始知识 Source",
+          "details": {
+            "sourceKeys": [
+              "llmwiki-kb-1a8a44fe7e108df9",
+              "llmwiki-kb-502ebac1589d0a40",
+              "llmwiki-kb-6c5cdf402435f4e9",
+              "llmwiki-kb-ba4968262308c421",
+              "llmwiki-kb-e95b9bb1dfcd5f44"
+            ],
+            "scopeFingerprint": "707bea1e86bdaac8",
+            "aclEpoch": 6,
+            "knowledgeEpoch": 30
+          }
+        },
+        {
+          "id": "source_freshness",
+          "status": "running",
+          "summary": "核对业务文档与 GBrain 可检索页是否一致",
+          "details": null
+        },
+        {
+          "id": "source_freshness",
+          "status": "success",
+          "summary": "已核对 6 个 Source，索引新鲜",
+          "details": {
+            "checked": 6,
+            "rebuilt": 0,
+            "fresh": true,
+            "staleSources": [],
+            "sourceKeys": [
+              "llmwiki-kb-ba4968262308c421",
+              "llmwiki-kb-e95b9bb1dfcd5f44",
+              "llmwiki-kb-6c5cdf402435f4e9",
+              "llmwiki-kb-502ebac1589d0a40",
+              "llmwiki-kb-1a8a44fe7e108df9",
+              "llmwiki-kb-4ae1b61970d3b229"
+            ]
+          }
+        },
+        {
+          "id": "conversation_context",
+          "status": "running",
+          "summary": "读取同一会话的近期上下文",
+          "details": null
+        },
+        {
+          "id": "conversation_context",
+          "status": "success",
+          "summary": "已加载 0 条历史消息",
+          "details": {
+            "historyMessages": 0
+          }
+        },
+        {
+          "id": "table_count",
+          "status": "running",
+          "summary": "读取全部授权原文，解析条件后执行确定性计数",
+          "details": null
+        },
+        {
+          "id": "table_count",
+          "status": "success",
+          "summary": "完整原文已按明确条件计算",
+          "details": {
+            "coverage": 1,
+            "chunks": 1,
+            "conditions": "队长所属部门 = 软研中心混成旅；最终得分 > 90",
+            "count": 1,
+            "rows": 28,
+            "versionId": "d2dfde08-3aca-33e8-8123-f38768aabc4b",
+            "sourceHash": "9ae3d7744f7bcbc4106700741325fc278f790c50e0b454da346746cc6406d838"
+          }
+        },
+        {
+          "id": "citation_validation",
+          "status": "running",
+          "summary": "校验回答角标并绑定到原始文档预览",
+          "details": null
+        },
+        {
+          "id": "citation_validation",
+          "status": "warning",
+          "summary": "回答引用 1 个原始证据页面，但证据语义覆盖率偏低 (50%)，部分结论缺少明确引用支撑",
+          "details": {
+            "candidateCitations": 1,
+            "referencedCitations": [
+              1
+            ],
+            "invalidMarkersRemoved": false,
+            "aclStripped": 0,
+            "semanticCoverage": {
+              "totalStatements": 2,
+              "groundedStatements": 1,
+              "coverageRatio": 0.5,
+              "refusalExempt": false
+            }
+          }
+        },
+        {
+          "id": "message_persistence",
+          "status": "running",
+          "summary": "正在保存回答、引用和处理链路",
+          "details": null
+        },
+        {
+          "id": "message_persistence",
+          "status": "success",
+          "summary": "回答、引用和处理链路已保存",
+          "details": null
+        }
+      ],
+      "latency_s": 18.14,
+      "status": 201,
+      "conversation_id": "06990265-a18b-4ba3-968d-4ed4df9bde60"
+    },
+    {
+      "answer": "按《息壤杯团队打分表.xlsx》完整表格中的“队长所属部门 = 软研中心混成旅；最终得分 > 90”统计，符合条件的记录有 **1 条**。[1]\n\n- 团队名称：AI谛听产品小组；队长所属部门：软研中心混成旅；最终得分：95。[1]",
+      "citations": [
+        {
+          "doc_title": "息壤杯团队打分表.xlsx",
+          "document_id": "302b830e-9944-4bd9-bb54-470de7d4edf6",
+          "score": null,
+          "page_no": null,
+          "bbox": null,
+          "version": 1,
+          "version_conflict": null
+        }
+      ],
+      "traces": [
+        {
+          "id": "runtime_config",
+          "status": "running",
+          "summary": "读取平台数据库中的模型配置",
+          "details": null
+        },
+        {
+          "id": "runtime_config",
+          "status": "success",
+          "summary": "模型运行时配置已加载",
+          "details": null
+        },
+        {
+          "id": "permission_scope",
+          "status": "running",
+          "summary": "计算当前用户可读知识库及本次选择范围",
+          "details": null
+        },
+        {
+          "id": "permission_scope",
+          "status": "success",
+          "summary": "本次可检索 6 个知识库",
+          "details": {
+            "visibleCount": 6,
+            "selectedCount": 6,
+            "rejectedCount": 0,
+            "knowledgeBases": [
+              {
+                "id": "1ded0591-ef69-4083-b4db-e37c7531ba7d",
+                "name": "孙智强的笔记",
+                "type": "personal"
+              },
+              {
+                "id": "0173e892-595a-4f32-b2ec-d927ace28532",
+                "name": "软研中心知识库",
+                "type": "org"
+              },
+              {
+                "id": "4e856c91-a677-42d8-b9ee-5281c78a6fd3",
+                "name": "法律库",
+                "type": "industry"
+              },
+              {
+                "id": "2a3ec10c-3e33-4cc0-833b-045826ad9b9f",
+                "name": "测试行业库1",
+                "type": "industry"
+              },
+              {
+                "id": "877304ca-c5ea-4ec0-8bae-e21567b70b78",
+                "name": "根知识库",
+                "type": "org"
+              },
+              {
+                "id": "85d0744b-273c-4a20-a4f3-e0715fbc5d03",
+                "name": "南京电信知识库",
+                "type": "org"
+              }
+            ]
+          }
+        },
+        {
+          "id": "source_plan",
+          "status": "running",
+          "summary": "将业务权限范围映射为隔离的 GBrain Source",
+          "details": null
+        },
+        {
+          "id": "source_plan",
+          "status": "success",
+          "summary": "已选择 5 个原始知识 Source",
+          "details": {
+            "sourceKeys": [
+              "llmwiki-kb-1a8a44fe7e108df9",
+              "llmwiki-kb-502ebac1589d0a40",
+              "llmwiki-kb-6c5cdf402435f4e9",
+              "llmwiki-kb-ba4968262308c421",
+              "llmwiki-kb-e95b9bb1dfcd5f44"
+            ],
+            "scopeFingerprint": "707bea1e86bdaac8",
+            "aclEpoch": 6,
+            "knowledgeEpoch": 30
+          }
+        },
+        {
+          "id": "source_freshness",
+          "status": "running",
+          "summary": "核对业务文档与 GBrain 可检索页是否一致",
+          "details": null
+        },
+        {
+          "id": "source_freshness",
+          "status": "success",
+          "summary": "已核对 6 个 Source，索引新鲜",
+          "details": {
+            "checked": 6,
+            "rebuilt": 0,
+            "fresh": true,
+            "staleSources": [],
+            "sourceKeys": [
+              "llmwiki-kb-ba4968262308c421",
+              "llmwiki-kb-e95b9bb1dfcd5f44",
+              "llmwiki-kb-6c5cdf402435f4e9",
+              "llmwiki-kb-502ebac1589d0a40",
+              "llmwiki-kb-1a8a44fe7e108df9",
+              "llmwiki-kb-4ae1b61970d3b229"
+            ]
+          }
+        },
+        {
+          "id": "conversation_context",
+          "status": "running",
+          "summary": "读取同一会话的近期上下文",
+          "details": null
+        },
+        {
+          "id": "conversation_context",
+          "status": "success",
+          "summary": "已加载 0 条历史消息",
+          "details": {
+            "historyMessages": 0
+          }
+        },
+        {
+          "id": "table_count",
+          "status": "running",
+          "summary": "读取全部授权原文，解析条件后执行确定性计数",
+          "details": null
+        },
+        {
+          "id": "table_count",
+          "status": "success",
+          "summary": "完整原文已按明确条件计算",
+          "details": {
+            "coverage": 1,
+            "chunks": 1,
+            "conditions": "队长所属部门 = 软研中心混成旅；最终得分 > 90",
+            "count": 1,
+            "rows": 28,
+            "versionId": "d2dfde08-3aca-33e8-8123-f38768aabc4b",
+            "sourceHash": "9ae3d7744f7bcbc4106700741325fc278f790c50e0b454da346746cc6406d838"
+          }
+        },
+        {
+          "id": "citation_validation",
+          "status": "running",
+          "summary": "校验回答角标并绑定到原始文档预览",
+          "details": null
+        },
+        {
+          "id": "citation_validation",
+          "status": "warning",
+          "summary": "回答引用 1 个原始证据页面，但证据语义覆盖率偏低 (50%)，部分结论缺少明确引用支撑",
+          "details": {
+            "candidateCitations": 1,
+            "referencedCitations": [
+              1
+            ],
+            "invalidMarkersRemoved": false,
+            "aclStripped": 0,
+            "semanticCoverage": {
+              "totalStatements": 2,
+              "groundedStatements": 1,
+              "coverageRatio": 0.5,
+              "refusalExempt": false
+            }
+          }
+        },
+        {
+          "id": "message_persistence",
+          "status": "running",
+          "summary": "正在保存回答、引用和处理链路",
+          "details": null
+        },
+        {
+          "id": "message_persistence",
+          "status": "success",
+          "summary": "回答、引用和处理链路已保存",
+          "details": null
+        }
+      ],
+      "latency_s": 7.68,
+      "status": 201,
+      "conversation_id": "9ecfff0a-a223-4acc-a450-c169c24f7494"
+    },
+    {
+      "answer": "按《息壤杯团队打分表.xlsx》完整表格中的“队长所属部门 = 软研中心混成旅；最终得分 > 90”统计，符合条件的记录有 **1 条**。[1]\n\n- 团队名称：AI谛听产品小组；队长所属部门：软研中心混成旅；最终得分：95。[1]",
+      "citations": [
+        {
+          "doc_title": "息壤杯团队打分表.xlsx",
+          "document_id": "302b830e-9944-4bd9-bb54-470de7d4edf6",
+          "score": null,
+          "page_no": null,
+          "bbox": null,
+          "version": 1,
+          "version_conflict": null
+        }
+      ],
+      "traces": [
+        {
+          "id": "runtime_config",
+          "status": "running",
+          "summary": "读取平台数据库中的模型配置",
+          "details": null
+        },
+        {
+          "id": "runtime_config",
+          "status": "success",
+          "summary": "模型运行时配置已加载",
+          "details": null
+        },
+        {
+          "id": "permission_scope",
+          "status": "running",
+          "summary": "计算当前用户可读知识库及本次选择范围",
+          "details": null
+        },
+        {
+          "id": "permission_scope",
+          "status": "success",
+          "summary": "本次可检索 6 个知识库",
+          "details": {
+            "visibleCount": 6,
+            "selectedCount": 6,
+            "rejectedCount": 0,
+            "knowledgeBases": [
+              {
+                "id": "1ded0591-ef69-4083-b4db-e37c7531ba7d",
+                "name": "孙智强的笔记",
+                "type": "personal"
+              },
+              {
+                "id": "0173e892-595a-4f32-b2ec-d927ace28532",
+                "name": "软研中心知识库",
+                "type": "org"
+              },
+              {
+                "id": "4e856c91-a677-42d8-b9ee-5281c78a6fd3",
+                "name": "法律库",
+                "type": "industry"
+              },
+              {
+                "id": "2a3ec10c-3e33-4cc0-833b-045826ad9b9f",
+                "name": "测试行业库1",
+                "type": "industry"
+              },
+              {
+                "id": "877304ca-c5ea-4ec0-8bae-e21567b70b78",
+                "name": "根知识库",
+                "type": "org"
+              },
+              {
+                "id": "85d0744b-273c-4a20-a4f3-e0715fbc5d03",
+                "name": "南京电信知识库",
+                "type": "org"
+              }
+            ]
+          }
+        },
+        {
+          "id": "source_plan",
+          "status": "running",
+          "summary": "将业务权限范围映射为隔离的 GBrain Source",
+          "details": null
+        },
+        {
+          "id": "source_plan",
+          "status": "success",
+          "summary": "已选择 5 个原始知识 Source",
+          "details": {
+            "sourceKeys": [
+              "llmwiki-kb-1a8a44fe7e108df9",
+              "llmwiki-kb-502ebac1589d0a40",
+              "llmwiki-kb-6c5cdf402435f4e9",
+              "llmwiki-kb-ba4968262308c421",
+              "llmwiki-kb-e95b9bb1dfcd5f44"
+            ],
+            "scopeFingerprint": "707bea1e86bdaac8",
+            "aclEpoch": 6,
+            "knowledgeEpoch": 30
+          }
+        },
+        {
+          "id": "source_freshness",
+          "status": "running",
+          "summary": "核对业务文档与 GBrain 可检索页是否一致",
+          "details": null
+        },
+        {
+          "id": "source_freshness",
+          "status": "success",
+          "summary": "已核对 6 个 Source，索引新鲜",
+          "details": {
+            "checked": 6,
+            "rebuilt": 0,
+            "fresh": true,
+            "staleSources": [],
+            "sourceKeys": [
+              "llmwiki-kb-ba4968262308c421",
+              "llmwiki-kb-e95b9bb1dfcd5f44",
+              "llmwiki-kb-6c5cdf402435f4e9",
+              "llmwiki-kb-502ebac1589d0a40",
+              "llmwiki-kb-1a8a44fe7e108df9",
+              "llmwiki-kb-4ae1b61970d3b229"
+            ]
+          }
+        },
+        {
+          "id": "conversation_context",
+          "status": "running",
+          "summary": "读取同一会话的近期上下文",
+          "details": null
+        },
+        {
+          "id": "conversation_context",
+          "status": "success",
+          "summary": "已加载 0 条历史消息",
+          "details": {
+            "historyMessages": 0
+          }
+        },
+        {
+          "id": "table_count",
+          "status": "running",
+          "summary": "读取全部授权原文，解析条件后执行确定性计数",
+          "details": null
+        },
+        {
+          "id": "table_count",
+          "status": "success",
+          "summary": "完整原文已按明确条件计算",
+          "details": {
+            "coverage": 1,
+            "chunks": 1,
+            "conditions": "队长所属部门 = 软研中心混成旅；最终得分 > 90",
+            "count": 1,
+            "rows": 28,
+            "versionId": "d2dfde08-3aca-33e8-8123-f38768aabc4b",
+            "sourceHash": "9ae3d7744f7bcbc4106700741325fc278f790c50e0b454da346746cc6406d838"
+          }
+        },
+        {
+          "id": "citation_validation",
+          "status": "running",
+          "summary": "校验回答角标并绑定到原始文档预览",
+          "details": null
+        },
+        {
+          "id": "citation_validation",
+          "status": "warning",
+          "summary": "回答引用 1 个原始证据页面，但证据语义覆盖率偏低 (50%)，部分结论缺少明确引用支撑",
+          "details": {
+            "candidateCitations": 1,
+            "referencedCitations": [
+              1
+            ],
+            "invalidMarkersRemoved": false,
+            "aclStripped": 0,
+            "semanticCoverage": {
+              "totalStatements": 2,
+              "groundedStatements": 1,
+              "coverageRatio": 0.5,
+              "refusalExempt": false
+            }
+          }
+        },
+        {
+          "id": "message_persistence",
+          "status": "running",
+          "summary": "正在保存回答、引用和处理链路",
+          "details": null
+        },
+        {
+          "id": "message_persistence",
+          "status": "success",
+          "summary": "回答、引用和处理链路已保存",
+          "details": null
+        }
+      ],
+      "latency_s": 8.17,
+      "status": 201,
+      "conversation_id": "edbfe9ee-f307-4f39-8745-934721c277c1"
+    },
+    {
+      "answer": "按《息壤杯团队打分表.xlsx》完整表格中的“队长所属部门 = 软研中心混成旅；最终得分 > 90”统计，符合条件的记录有 **1 条**。[1]\n\n- 团队名称：AI谛听产品小组；队长所属部门：软研中心混成旅；最终得分：95。[1]",
+      "citations": [
+        {
+          "doc_title": "息壤杯团队打分表.xlsx",
+          "document_id": "302b830e-9944-4bd9-bb54-470de7d4edf6",
+          "score": null,
+          "page_no": null,
+          "bbox": null,
+          "version": 1,
+          "version_conflict": null
+        }
+      ],
+      "traces": [
+        {
+          "id": "runtime_config",
+          "status": "running",
+          "summary": "读取平台数据库中的模型配置",
+          "details": null
+        },
+        {
+          "id": "runtime_config",
+          "status": "success",
+          "summary": "模型运行时配置已加载",
+          "details": null
+        },
+        {
+          "id": "permission_scope",
+          "status": "running",
+          "summary": "计算当前用户可读知识库及本次选择范围",
+          "details": null
+        },
+        {
+          "id": "permission_scope",
+          "status": "success",
+          "summary": "本次可检索 6 个知识库",
+          "details": {
+            "visibleCount": 6,
+            "selectedCount": 6,
+            "rejectedCount": 0,
+            "knowledgeBases": [
+              {
+                "id": "1ded0591-ef69-4083-b4db-e37c7531ba7d",
+                "name": "孙智强的笔记",
+                "type": "personal"
+              },
+              {
+                "id": "0173e892-595a-4f32-b2ec-d927ace28532",
+                "name": "软研中心知识库",
+                "type": "org"
+              },
+              {
+                "id": "4e856c91-a677-42d8-b9ee-5281c78a6fd3",
+                "name": "法律库",
+                "type": "industry"
+              },
+              {
+                "id": "2a3ec10c-3e33-4cc0-833b-045826ad9b9f",
+                "name": "测试行业库1",
+                "type": "industry"
+              },
+              {
+                "id": "877304ca-c5ea-4ec0-8bae-e21567b70b78",
+                "name": "根知识库",
+                "type": "org"
+              },
+              {
+                "id": "85d0744b-273c-4a20-a4f3-e0715fbc5d03",
+                "name": "南京电信知识库",
+                "type": "org"
+              }
+            ]
+          }
+        },
+        {
+          "id": "source_plan",
+          "status": "running",
+          "summary": "将业务权限范围映射为隔离的 GBrain Source",
+          "details": null
+        },
+        {
+          "id": "source_plan",
+          "status": "success",
+          "summary": "已选择 5 个原始知识 Source",
+          "details": {
+            "sourceKeys": [
+              "llmwiki-kb-1a8a44fe7e108df9",
+              "llmwiki-kb-502ebac1589d0a40",
+              "llmwiki-kb-6c5cdf402435f4e9",
+              "llmwiki-kb-ba4968262308c421",
+              "llmwiki-kb-e95b9bb1dfcd5f44"
+            ],
+            "scopeFingerprint": "707bea1e86bdaac8",
+            "aclEpoch": 6,
+            "knowledgeEpoch": 30
+          }
+        },
+        {
+          "id": "source_freshness",
+          "status": "running",
+          "summary": "核对业务文档与 GBrain 可检索页是否一致",
+          "details": null
+        },
+        {
+          "id": "source_freshness",
+          "status": "success",
+          "summary": "已核对 6 个 Source，索引新鲜",
+          "details": {
+            "checked": 6,
+            "rebuilt": 0,
+            "fresh": true,
+            "staleSources": [],
+            "sourceKeys": [
+              "llmwiki-kb-ba4968262308c421",
+              "llmwiki-kb-e95b9bb1dfcd5f44",
+              "llmwiki-kb-6c5cdf402435f4e9",
+              "llmwiki-kb-502ebac1589d0a40",
+              "llmwiki-kb-1a8a44fe7e108df9",
+              "llmwiki-kb-4ae1b61970d3b229"
+            ]
+          }
+        },
+        {
+          "id": "conversation_context",
+          "status": "running",
+          "summary": "读取同一会话的近期上下文",
+          "details": null
+        },
+        {
+          "id": "conversation_context",
+          "status": "success",
+          "summary": "已加载 0 条历史消息",
+          "details": {
+            "historyMessages": 0
+          }
+        },
+        {
+          "id": "table_count",
+          "status": "running",
+          "summary": "读取全部授权原文，解析条件后执行确定性计数",
+          "details": null
+        },
+        {
+          "id": "table_count",
+          "status": "success",
+          "summary": "完整原文已按明确条件计算",
+          "details": {
+            "coverage": 1,
+            "chunks": 1,
+            "conditions": "队长所属部门 = 软研中心混成旅；最终得分 > 90",
+            "count": 1,
+            "rows": 28,
+            "versionId": "d2dfde08-3aca-33e8-8123-f38768aabc4b",
+            "sourceHash": "9ae3d7744f7bcbc4106700741325fc278f790c50e0b454da346746cc6406d838"
+          }
+        },
+        {
+          "id": "citation_validation",
+          "status": "running",
+          "summary": "校验回答角标并绑定到原始文档预览",
+          "details": null
+        },
+        {
+          "id": "citation_validation",
+          "status": "warning",
+          "summary": "回答引用 1 个原始证据页面，但证据语义覆盖率偏低 (50%)，部分结论缺少明确引用支撑",
+          "details": {
+            "candidateCitations": 1,
+            "referencedCitations": [
+              1
+            ],
+            "invalidMarkersRemoved": false,
+            "aclStripped": 0,
+            "semanticCoverage": {
+              "totalStatements": 2,
+              "groundedStatements": 1,
+              "coverageRatio": 0.5,
+              "refusalExempt": false
+            }
+          }
+        },
+        {
+          "id": "message_persistence",
+          "status": "running",
+          "summary": "正在保存回答、引用和处理链路",
+          "details": null
+        },
+        {
+          "id": "message_persistence",
+          "status": "success",
+          "summary": "回答、引用和处理链路已保存",
+          "details": null
+        }
+      ],
+      "latency_s": 8.22,
+      "status": 201,
+      "conversation_id": "15b4b1a9-8266-4a9a-8510-e1a8e21223a8"
+    },
+    {
+      "answer": "按《息壤杯团队打分表.xlsx》完整表格中的“队长所属部门 = 软研中心混成旅；最终得分 > 90”统计，符合条件的记录有 **1 条**。[1]\n\n- 团队名称：AI谛听产品小组；队长所属部门：软研中心混成旅；最终得分：95。[1]",
+      "citations": [
+        {
+          "doc_title": "息壤杯团队打分表.xlsx",
+          "document_id": "302b830e-9944-4bd9-bb54-470de7d4edf6",
+          "score": null,
+          "page_no": null,
+          "bbox": null,
+          "version": 1,
+          "version_conflict": null
+        }
+      ],
+      "traces": [
+        {
+          "id": "runtime_config",
+          "status": "running",
+          "summary": "读取平台数据库中的模型配置",
+          "details": null
+        },
+        {
+          "id": "runtime_config",
+          "status": "success",
+          "summary": "模型运行时配置已加载",
+          "details": null
+        },
+        {
+          "id": "permission_scope",
+          "status": "running",
+          "summary": "计算当前用户可读知识库及本次选择范围",
+          "details": null
+        },
+        {
+          "id": "permission_scope",
+          "status": "success",
+          "summary": "本次可检索 6 个知识库",
+          "details": {
+            "visibleCount": 6,
+            "selectedCount": 6,
+            "rejectedCount": 0,
+            "knowledgeBases": [
+              {
+                "id": "1ded0591-ef69-4083-b4db-e37c7531ba7d",
+                "name": "孙智强的笔记",
+                "type": "personal"
+              },
+              {
+                "id": "0173e892-595a-4f32-b2ec-d927ace28532",
+                "name": "软研中心知识库",
+                "type": "org"
+              },
+              {
+                "id": "4e856c91-a677-42d8-b9ee-5281c78a6fd3",
+                "name": "法律库",
+                "type": "industry"
+              },
+              {
+                "id": "2a3ec10c-3e33-4cc0-833b-045826ad9b9f",
+                "name": "测试行业库1",
+                "type": "industry"
+              },
+              {
+                "id": "877304ca-c5ea-4ec0-8bae-e21567b70b78",
+                "name": "根知识库",
+                "type": "org"
+              },
+              {
+                "id": "85d0744b-273c-4a20-a4f3-e0715fbc5d03",
+                "name": "南京电信知识库",
+                "type": "org"
+              }
+            ]
+          }
+        },
+        {
+          "id": "source_plan",
+          "status": "running",
+          "summary": "将业务权限范围映射为隔离的 GBrain Source",
+          "details": null
+        },
+        {
+          "id": "source_plan",
+          "status": "success",
+          "summary": "已选择 5 个原始知识 Source",
+          "details": {
+            "sourceKeys": [
+              "llmwiki-kb-1a8a44fe7e108df9",
+              "llmwiki-kb-502ebac1589d0a40",
+              "llmwiki-kb-6c5cdf402435f4e9",
+              "llmwiki-kb-ba4968262308c421",
+              "llmwiki-kb-e95b9bb1dfcd5f44"
+            ],
+            "scopeFingerprint": "707bea1e86bdaac8",
+            "aclEpoch": 6,
+            "knowledgeEpoch": 30
+          }
+        },
+        {
+          "id": "source_freshness",
+          "status": "running",
+          "summary": "核对业务文档与 GBrain 可检索页是否一致",
+          "details": null
+        },
+        {
+          "id": "source_freshness",
+          "status": "success",
+          "summary": "已核对 6 个 Source，索引新鲜",
+          "details": {
+            "checked": 6,
+            "rebuilt": 0,
+            "fresh": true,
+            "staleSources": [],
+            "sourceKeys": [
+              "llmwiki-kb-ba4968262308c421",
+              "llmwiki-kb-e95b9bb1dfcd5f44",
+              "llmwiki-kb-6c5cdf402435f4e9",
+              "llmwiki-kb-502ebac1589d0a40",
+              "llmwiki-kb-1a8a44fe7e108df9",
+              "llmwiki-kb-4ae1b61970d3b229"
+            ]
+          }
+        },
+        {
+          "id": "conversation_context",
+          "status": "running",
+          "summary": "读取同一会话的近期上下文",
+          "details": null
+        },
+        {
+          "id": "conversation_context",
+          "status": "success",
+          "summary": "已加载 0 条历史消息",
+          "details": {
+            "historyMessages": 0
+          }
+        },
+        {
+          "id": "table_count",
+          "status": "running",
+          "summary": "读取全部授权原文，解析条件后执行确定性计数",
+          "details": null
+        },
+        {
+          "id": "table_count",
+          "status": "success",
+          "summary": "完整原文已按明确条件计算",
+          "details": {
+            "coverage": 1,
+            "chunks": 1,
+            "conditions": "队长所属部门 = 软研中心混成旅；最终得分 > 90",
+            "count": 1,
+            "rows": 28,
+            "versionId": "d2dfde08-3aca-33e8-8123-f38768aabc4b",
+            "sourceHash": "9ae3d7744f7bcbc4106700741325fc278f790c50e0b454da346746cc6406d838"
+          }
+        },
+        {
+          "id": "citation_validation",
+          "status": "running",
+          "summary": "校验回答角标并绑定到原始文档预览",
+          "details": null
+        },
+        {
+          "id": "citation_validation",
+          "status": "warning",
+          "summary": "回答引用 1 个原始证据页面，但证据语义覆盖率偏低 (50%)，部分结论缺少明确引用支撑",
+          "details": {
+            "candidateCitations": 1,
+            "referencedCitations": [
+              1
+            ],
+            "invalidMarkersRemoved": false,
+            "aclStripped": 0,
+            "semanticCoverage": {
+              "totalStatements": 2,
+              "groundedStatements": 1,
+              "coverageRatio": 0.5,
+              "refusalExempt": false
+            }
+          }
+        },
+        {
+          "id": "message_persistence",
+          "status": "running",
+          "summary": "正在保存回答、引用和处理链路",
+          "details": null
+        },
+        {
+          "id": "message_persistence",
+          "status": "success",
+          "summary": "回答、引用和处理链路已保存",
+          "details": null
+        }
+      ],
+      "latency_s": 7.67,
+      "status": 201,
+      "conversation_id": "799efcb6-e5c8-4cf0-9609-609ce7fde099"
+    }
+  ],
+  "services": [
+    "active",
+    "active",
+    "active",
+    "active",
+    "active"
+  ]
+}

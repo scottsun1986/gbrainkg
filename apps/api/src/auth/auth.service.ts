@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, UnauthorizedExcept
 import { getPrismaClient } from '../prisma';
 import { setRequestContextUser } from '../observability/request-context';
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { authSigningSecret } from './auth-secret';
 
 export type TokenPayload = { sub: string; exp: number; purpose?: 'mfa' };
 
@@ -59,16 +60,6 @@ export class AuthService {
     return entry;
   }
 
-  private secret(): string {
-    const secret = process.env.AUTH_SECRET;
-    const env = String(process.env.NODE_ENV || '').toLowerCase();
-    const isExplicitDev = env === 'development' || env === 'dev' || env === 'test';
-    if (!secret && !isExplicitDev) {
-      throw new UnauthorizedException('AUTH_SECRET is not configured.');
-    }
-    return secret || 'llmwiki-local-development-secret';
-  }
-
   hashPassword(password: string): string {
     const salt = randomBytes(16).toString('hex');
     const hash = scryptSync(password, salt, 64).toString('hex');
@@ -85,7 +76,7 @@ export class AuthService {
 
   private encode(payload: TokenPayload): string {
     const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
-    const signature = createHmac('sha256', this.secret()).update(body).digest('base64url');
+    const signature = createHmac('sha256', authSigningSecret()).update(body).digest('base64url');
     return `${body}.${signature}`;
   }
 
@@ -94,7 +85,7 @@ export class AuthService {
     if (parts.length !== 2) return null;
     const [body, signature] = parts;
     if (!body || !signature) return null;
-    const expected = createHmac('sha256', this.secret()).update(body).digest('base64url');
+    const expected = createHmac('sha256', authSigningSecret()).update(body).digest('base64url');
     const supplied = Buffer.from(signature);
     const expectedBytes = Buffer.from(expected);
     if (supplied.length !== expectedBytes.length || !timingSafeEqual(supplied, expectedBytes)) return null;

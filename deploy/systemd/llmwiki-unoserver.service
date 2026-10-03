@@ -1,0 +1,18 @@
+[Unit]
+Description=LLMWiki Office Preview Converter (warm LibreOffice listener)
+After=network.target
+
+[Service]
+Type=simple
+#unoserver keeps one resident soffice process; conversions then skip the
+#2-6s cold start per document. unoconvert (same package) is called by the API.
+ExecStart=/usr/local/bin/unoserver --interface 127.0.0.1 --port 2003
+Restart=always
+RestartSec=3
+TimeoutStopSec=20
+MemoryMax=512M
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

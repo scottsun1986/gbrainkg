@@ -1,0 +1,660 @@
+[
+  {
+    "question": "星图记录里甲类且测量值超过17.5的记录有多少条？",
+    "answer": "按《星图记录.md》完整表格中的“分类 = 甲类；测量值 > 17.5”统计，符合条件的记录有 **1 条**。[1]\n\n- 分类：甲类；测量值：18.2。[1]",
+    "citations": [
+      {
+        "doc_title": "星图记录.md",
+        "document_id": "d43d98b9-fbb7-4c75-a5d1-0ed40dfc66b9",
+        "score": null,
+        "page_no": null,
+        "bbox": null,
+        "version": 1,
+        "version_conflict": null
+      }
+    ],
+    "traces": [
+      {
+        "id": "runtime_config",
+        "status": "running",
+        "summary": "读取平台数据库中的模型配置",
+        "details": null
+      },
+      {
+        "id": "runtime_config",
+        "status": "success",
+        "summary": "模型运行时配置已加载",
+        "details": null
+      },
+      {
+        "id": "permission_scope",
+        "status": "running",
+        "summary": "计算当前用户可读知识库及本次选择范围",
+        "details": null
+      },
+      {
+        "id": "permission_scope",
+        "status": "success",
+        "summary": "本次可检索 1 个知识库",
+        "details": {
+          "visibleCount": 56,
+          "selectedCount": 1,
+          "rejectedCount": 0,
+          "knowledgeBases": [
+            {
+              "id": "21325934-17a5-4620-8337-30a1a0a2a649",
+              "name": "通用算法回归-20261002",
+              "type": "personal"
+            }
+          ]
+        }
+      },
+      {
+        "id": "source_plan",
+        "status": "running",
+        "summary": "将业务权限范围映射为隔离的 GBrain Source",
+        "details": null
+      },
+      {
+        "id": "source_plan",
+        "status": "success",
+        "summary": "已选择 1 个原始知识 Source",
+        "details": {
+          "sourceKeys": [
+            "llmwiki-kb-e4c2a53e18b59e1b"
+          ],
+          "scopeFingerprint": "f07801db8812211c",
+          "aclEpoch": 1,
+          "knowledgeEpoch": 1
+        }
+      },
+      {
+        "id": "source_freshness",
+        "status": "running",
+        "summary": "核对业务文档与 GBrain 可检索页是否一致",
+        "details": null
+      },
+      {
+        "id": "source_freshness",
+        "status": "warning",
+        "summary": "部分 Source 待对账，已触发后台对账并继续执行检索",
+        "details": {
+          "checked": 1,
+          "rebuilt": 0,
+          "staleSources": [
+            "llmwiki-kb-e4c2a53e18b59e1b"
+          ]
+        }
+      },
+      {
+        "id": "conversation_context",
+        "status": "running",
+        "summary": "读取同一会话的近期上下文",
+        "details": null
+      },
+      {
+        "id": "conversation_context",
+        "status": "success",
+        "summary": "已加载 0 条历史消息",
+        "details": {
+          "historyMessages": 0
+        }
+      },
+      {
+        "id": "table_count",
+        "status": "running",
+        "summary": "读取全部授权原文，解析条件后执行确定性计数",
+        "details": null
+      },
+      {
+        "id": "table_count",
+        "status": "success",
+        "summary": "完整原文已按明确条件计算",
+        "details": {
+          "coverage": 1,
+          "chunks": 1,
+          "conditions": "分类 = 甲类；测量值 > 17.5",
+          "count": 1,
+          "rows": 3,
+          "versionId": "75aa73cc-ee98-4acf-8da3-61596274ff7d",
+          "sourceHash": "33c60c4414cf82c2b3fec6a575755170911f7666acaab7a90ab068a8338c1d0b"
+        }
+      },
+      {
+        "id": "citation_validation",
+        "status": "running",
+        "summary": "校验回答角标并绑定到原始文档预览",
+        "details": null
+      },
+      {
+        "id": "citation_validation",
+        "status": "warning",
+        "summary": "回答引用 1 个原始证据页面，但证据语义覆盖率偏低 (50%)，部分结论缺少明确引用支撑",
+        "details": {
+          "candidateCitations": 1,
+          "referencedCitations": [
+            1
+          ],
+          "invalidMarkersRemoved": false,
+          "aclStripped": 0,
+          "semanticCoverage": {
+            "totalStatements": 2,
+            "groundedStatements": 1,
+            "coverageRatio": 0.5,
+            "refusalExempt": false
+          }
+        }
+      },
+      {
+        "id": "message_persistence",
+        "status": "running",
+        "summary": "正在保存回答、引用和处理链路",
+        "details": null
+      },
+      {
+        "id": "message_persistence",
+        "status": "success",
+        "summary": "回答、引用和处理链路已保存",
+        "details": null
+      }
+    ],
+    "latency_s": 12.72,
+    "status": 201,
+    "conversation_id": "42d7cc8e-37d2-4767-9a16-c99b9c0719b8"
+  },
+  {
+    "question": "甲类测量值超过17.5的记录有多少条，查询星图记录。",
+    "answer": "按《星图记录.md》完整表格中的“分类 = 甲类；测量值 > 17.5”统计，符合条件的记录有 **1 条**。[1]\n\n- 分类：甲类；测量值：18.2。[1]",
+    "citations": [
+      {
+        "doc_title": "星图记录.md",
+        "document_id": "d43d98b9-fbb7-4c75-a5d1-0ed40dfc66b9",
+        "score": null,
+        "page_no": null,
+        "bbox": null,
+        "version": 1,
+        "version_conflict": null
+      }
+    ],
+    "traces": [
+      {
+        "id": "runtime_config",
+        "status": "running",
+        "summary": "读取平台数据库中的模型配置",
+        "details": null
+      },
+      {
+        "id": "runtime_config",
+        "status": "success",
+        "summary": "模型运行时配置已加载",
+        "details": null
+      },
+      {
+        "id": "permission_scope",
+        "status": "running",
+        "summary": "计算当前用户可读知识库及本次选择范围",
+        "details": null
+      },
+      {
+        "id": "permission_scope",
+        "status": "success",
+        "summary": "本次可检索 1 个知识库",
+        "details": {
+          "visibleCount": 56,
+          "selectedCount": 1,
+          "rejectedCount": 0,
+          "knowledgeBases": [
+            {
+              "id": "21325934-17a5-4620-8337-30a1a0a2a649",
+              "name": "通用算法回归-20261002",
+              "type": "personal"
+            }
+          ]
+        }
+      },
+      {
+        "id": "source_plan",
+        "status": "running",
+        "summary": "将业务权限范围映射为隔离的 GBrain Source",
+        "details": null
+      },
+      {
+        "id": "source_plan",
+        "status": "success",
+        "summary": "已选择 1 个原始知识 Source",
+        "details": {
+          "sourceKeys": [
+            "llmwiki-kb-e4c2a53e18b59e1b"
+          ],
+          "scopeFingerprint": "f07801db8812211c",
+          "aclEpoch": 1,
+          "knowledgeEpoch": 2
+        }
+      },
+      {
+        "id": "source_freshness",
+        "status": "running",
+        "summary": "核对业务文档与 GBrain 可检索页是否一致",
+        "details": null
+      },
+      {
+        "id": "source_freshness",
+        "status": "success",
+        "summary": "已核对 1 个 Source，索引新鲜",
+        "details": {
+          "checked": 1,
+          "rebuilt": 0,
+          "fresh": true,
+          "staleSources": [],
+          "sourceKeys": [
+            "llmwiki-kb-e4c2a53e18b59e1b"
+          ]
+        }
+      },
+      {
+        "id": "conversation_context",
+        "status": "running",
+        "summary": "读取同一会话的近期上下文",
+        "details": null
+      },
+      {
+        "id": "conversation_context",
+        "status": "success",
+        "summary": "已加载 0 条历史消息",
+        "details": {
+          "historyMessages": 0
+        }
+      },
+      {
+        "id": "table_count",
+        "status": "running",
+        "summary": "读取全部授权原文，解析条件后执行确定性计数",
+        "details": null
+      },
+      {
+        "id": "table_count",
+        "status": "success",
+        "summary": "完整原文已按明确条件计算",
+        "details": {
+          "coverage": 1,
+          "chunks": 1,
+          "conditions": "分类 = 甲类；测量值 > 17.5",
+          "count": 1,
+          "rows": 3,
+          "versionId": "75aa73cc-ee98-4acf-8da3-61596274ff7d",
+          "sourceHash": "33c60c4414cf82c2b3fec6a575755170911f7666acaab7a90ab068a8338c1d0b"
+        }
+      },
+      {
+        "id": "citation_validation",
+        "status": "running",
+        "summary": "校验回答角标并绑定到原始文档预览",
+        "details": null
+      },
+      {
+        "id": "citation_validation",
+        "status": "warning",
+        "summary": "回答引用 1 个原始证据页面，但证据语义覆盖率偏低 (50%)，部分结论缺少明确引用支撑",
+        "details": {
+          "candidateCitations": 1,
+          "referencedCitations": [
+            1
+          ],
+          "invalidMarkersRemoved": false,
+          "aclStripped": 0,
+          "semanticCoverage": {
+            "totalStatements": 2,
+            "groundedStatements": 1,
+            "coverageRatio": 0.5,
+            "refusalExempt": false
+          }
+        }
+      },
+      {
+        "id": "message_persistence",
+        "status": "running",
+        "summary": "正在保存回答、引用和处理链路",
+        "details": null
+      },
+      {
+        "id": "message_persistence",
+        "status": "success",
+        "summary": "回答、引用和处理链路已保存",
+        "details": null
+      }
+    ],
+    "latency_s": 23.82,
+    "status": 201,
+    "conversation_id": "03093ff6-9e14-4816-bf55-76126d39bf8d"
+  },
+  {
+    "question": "序列清单里标签为蓝色且成本大于42.8的记录有多少条？",
+    "answer": "按《序列清单.md》完整表格中的“标签 = 蓝色；成本 > 42.8”统计，符合条件的记录有 **1 条**。[1]\n\n- 记录名称：Q-2；标签：蓝色；成本：43.1。[1]",
+    "citations": [
+      {
+        "doc_title": "序列清单.md",
+        "document_id": "c41612ed-b221-4bd3-a276-a976896fc787",
+        "score": null,
+        "page_no": null,
+        "bbox": null,
+        "version": 1,
+        "version_conflict": null
+      }
+    ],
+    "traces": [
+      {
+        "id": "runtime_config",
+        "status": "running",
+        "summary": "读取平台数据库中的模型配置",
+        "details": null
+      },
+      {
+        "id": "runtime_config",
+        "status": "success",
+        "summary": "模型运行时配置已加载",
+        "details": null
+      },
+      {
+        "id": "permission_scope",
+        "status": "running",
+        "summary": "计算当前用户可读知识库及本次选择范围",
+        "details": null
+      },
+      {
+        "id": "permission_scope",
+        "status": "success",
+        "summary": "本次可检索 1 个知识库",
+        "details": {
+          "visibleCount": 56,
+          "selectedCount": 1,
+          "rejectedCount": 0,
+          "knowledgeBases": [
+            {
+              "id": "21325934-17a5-4620-8337-30a1a0a2a649",
+              "name": "通用算法回归-20261002",
+              "type": "personal"
+            }
+          ]
+        }
+      },
+      {
+        "id": "source_plan",
+        "status": "running",
+        "summary": "将业务权限范围映射为隔离的 GBrain Source",
+        "details": null
+      },
+      {
+        "id": "source_plan",
+        "status": "success",
+        "summary": "已选择 1 个原始知识 Source",
+        "details": {
+          "sourceKeys": [
+            "llmwiki-kb-e4c2a53e18b59e1b"
+          ],
+          "scopeFingerprint": "f07801db8812211c",
+          "aclEpoch": 1,
+          "knowledgeEpoch": 2
+        }
+      },
+      {
+        "id": "source_freshness",
+        "status": "running",
+        "summary": "核对业务文档与 GBrain 可检索页是否一致",
+        "details": null
+      },
+      {
+        "id": "source_freshness",
+        "status": "success",
+        "summary": "已核对 1 个 Source，索引新鲜",
+        "details": {
+          "checked": 1,
+          "rebuilt": 0,
+          "fresh": true,
+          "staleSources": [],
+          "sourceKeys": [
+            "llmwiki-kb-e4c2a53e18b59e1b"
+          ]
+        }
+      },
+      {
+        "id": "conversation_context",
+        "status": "running",
+        "summary": "读取同一会话的近期上下文",
+        "details": null
+      },
+      {
+        "id": "conversation_context",
+        "status": "success",
+        "summary": "已加载 0 条历史消息",
+        "details": {
+          "historyMessages": 0
+        }
+      },
+      {
+        "id": "table_count",
+        "status": "running",
+        "summary": "读取全部授权原文，解析条件后执行确定性计数",
+        "details": null
+      },
+      {
+        "id": "table_count",
+        "status": "success",
+        "summary": "完整原文已按明确条件计算",
+        "details": {
+          "coverage": 1,
+          "chunks": 1,
+          "conditions": "标签 = 蓝色；成本 > 42.8",
+          "count": 1,
+          "rows": 3,
+          "versionId": "09156a00-c70c-4757-83bb-7c6748c14c9d",
+          "sourceHash": "7a4658b10e4a6f7e4d4aea3efb3abb282a739f604dd823822ea0e6f04f62d384"
+        }
+      },
+      {
+        "id": "citation_validation",
+        "status": "running",
+        "summary": "校验回答角标并绑定到原始文档预览",
+        "details": null
+      },
+      {
+        "id": "citation_validation",
+        "status": "warning",
+        "summary": "回答引用 1 个原始证据页面，但证据语义覆盖率偏低 (50%)，部分结论缺少明确引用支撑",
+        "details": {
+          "candidateCitations": 1,
+          "referencedCitations": [
+            1
+          ],
+          "invalidMarkersRemoved": false,
+          "aclStripped": 0,
+          "semanticCoverage": {
+            "totalStatements": 2,
+            "groundedStatements": 1,
+            "coverageRatio": 0.5,
+            "refusalExempt": false
+          }
+        }
+      },
+      {
+        "id": "message_persistence",
+        "status": "running",
+        "summary": "正在保存回答、引用和处理链路",
+        "details": null
+      },
+      {
+        "id": "message_persistence",
+        "status": "success",
+        "summary": "回答、引用和处理链路已保存",
+        "details": null
+      }
+    ],
+    "latency_s": 9.53,
+    "status": 201,
+    "conversation_id": "a4269ad8-eed5-4111-8e08-14e3efbf98ed"
+  },
+  {
+    "question": "Prism Ledger, how many Alpha entries have level > 17.5?",
+    "answer": "按《Prism Ledger.md》完整表格中的“Category = Alpha；Level > 17.5”统计，符合条件的记录有 **1 条**。[1]\n\n- Category：Alpha；Level：18.2。[1]",
+    "citations": [
+      {
+        "doc_title": "Prism Ledger.md",
+        "document_id": "1c192c16-6724-494a-857f-e554c8ef54ec",
+        "score": null,
+        "page_no": null,
+        "bbox": null,
+        "version": 1,
+        "version_conflict": null
+      }
+    ],
+    "traces": [
+      {
+        "id": "runtime_config",
+        "status": "running",
+        "summary": "读取平台数据库中的模型配置",
+        "details": null
+      },
+      {
+        "id": "runtime_config",
+        "status": "success",
+        "summary": "模型运行时配置已加载",
+        "details": null
+      },
+      {
+        "id": "permission_scope",
+        "status": "running",
+        "summary": "计算当前用户可读知识库及本次选择范围",
+        "details": null
+      },
+      {
+        "id": "permission_scope",
+        "status": "success",
+        "summary": "本次可检索 1 个知识库",
+        "details": {
+          "visibleCount": 56,
+          "selectedCount": 1,
+          "rejectedCount": 0,
+          "knowledgeBases": [
+            {
+              "id": "21325934-17a5-4620-8337-30a1a0a2a649",
+              "name": "通用算法回归-20261002",
+              "type": "personal"
+            }
+          ]
+        }
+      },
+      {
+        "id": "source_plan",
+        "status": "running",
+        "summary": "将业务权限范围映射为隔离的 GBrain Source",
+        "details": null
+      },
+      {
+        "id": "source_plan",
+        "status": "success",
+        "summary": "已选择 1 个原始知识 Source",
+        "details": {
+          "sourceKeys": [
+            "llmwiki-kb-e4c2a53e18b59e1b"
+          ],
+          "scopeFingerprint": "f07801db8812211c",
+          "aclEpoch": 1,
+          "knowledgeEpoch": 2
+        }
+      },
+      {
+        "id": "source_freshness",
+        "status": "running",
+        "summary": "核对业务文档与 GBrain 可检索页是否一致",
+        "details": null
+      },
+      {
+        "id": "source_freshness",
+        "status": "success",
+        "summary": "已核对 1 个 Source，索引新鲜",
+        "details": {
+          "checked": 1,
+          "rebuilt": 0,
+          "fresh": true,
+          "staleSources": [],
+          "sourceKeys": [
+            "llmwiki-kb-e4c2a53e18b59e1b"
+          ]
+        }
+      },
+      {
+        "id": "conversation_context",
+        "status": "running",
+        "summary": "读取同一会话的近期上下文",
+        "details": null
+      },
+      {
+        "id": "conversation_context",
+        "status": "success",
+        "summary": "已加载 0 条历史消息",
+        "details": {
+          "historyMessages": 0
+        }
+      },
+      {
+        "id": "table_count",
+        "status": "running",
+        "summary": "读取全部授权原文，解析条件后执行确定性计数",
+        "details": null
+      },
+      {
+        "id": "table_count",
+        "status": "success",
+        "summary": "完整原文已按明确条件计算",
+        "details": {
+          "coverage": 1,
+          "chunks": 1,
+          "conditions": "Category = Alpha；Level > 17.5",
+          "count": 1,
+          "rows": 3,
+          "versionId": "8831ab85-6869-42b1-85e7-c062c4387ece",
+          "sourceHash": "a49e724a976a4825f7d9f174bd5331cb1e0251f51480eb59552c5c1682542a81"
+        }
+      },
+      {
+        "id": "citation_validation",
+        "status": "running",
+        "summary": "校验回答角标并绑定到原始文档预览",
+        "details": null
+      },
+      {
+        "id": "citation_validation",
+        "status": "success",
+        "summary": "回答引用 1 个原始证据页面",
+        "details": {
+          "candidateCitations": 1,
+          "referencedCitations": [
+            1
+          ],
+          "invalidMarkersRemoved": false,
+          "aclStripped": 0,
+          "semanticCoverage": {
+            "totalStatements": 2,
+            "groundedStatements": 2,
+            "coverageRatio": 1,
+            "refusalExempt": false
+          }
+        }
+      },
+      {
+        "id": "message_persistence",
+        "status": "running",
+        "summary": "正在保存回答、引用和处理链路",
+        "details": null
+      },
+      {
+        "id": "message_persistence",
+        "status": "success",
+        "summary": "回答、引用和处理链路已保存",
+        "details": null
+      }
+    ],
+    "latency_s": 11.14,
+    "status": 201,
+    "conversation_id": "6e6ea1cf-c0d2-4965-af09-3bf6441e720f"
+  }
+]

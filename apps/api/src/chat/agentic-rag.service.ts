@@ -76,12 +76,11 @@ export class AgenticRagService {
     if ((q.match(/？|\?/g) || []).length > 1) return 'multi_hop';
     if (/并且|同时|以及|而且|另外|还有|再加上/u.test(q) && q.length > 20) return 'multi_hop';
 
-    // English relational bridge / multi-hop query patterns (HotpotQA / 2Wiki / MuSiQue)
+    // Relation and clause syntax, independent of the entity or attribute vocabulary.
     if (/\b(?:who|what|where|when)\s+(?:is|was|are|were)\s+the\s+[\w\s-]+\s+of\s+/i.test(q)) return 'multi_hop';
-    if (/\b(?:who|what|where|when|which)\b.*['’]s\s+(?:father|mother|wife|husband|spouse|son|daughter|parent|child|director|author|creator|founder|manufacturer|developer|publisher|place\s+of|birthplace|burial|death|nationality|alma\s+mater|employer|capital)/i.test(q)) return 'multi_hop';
-    if (/\b(?:who|what|where|when|which)\b.*\b(?:born|directed|founded|created|written|composed|married|spouse|father|mother|director|author|producer|performer|singer|actor|actress|founder|headquarter|capital|located)\b.*\b(?:in|by|of|to)\b.*\b(?:and|or|who|which|where|when|while)\b/i.test(q)) return 'multi_hop';
+    if (/\b(?:who|what|where|when|which)\b.*['’]s\s+[\p{L}\p{N}_-]+/iu.test(q)) return 'multi_hop';
+    if (/\b(?:who|what|where|when|which)\b.+\b(?:in|by|of|to)\b.+\b(?:and|or|who|which|where|when|while)\b/i.test(q)) return 'multi_hop';
     if (/\b(?:which|what)\s+[\w\s-]+\s+(?:did|was|is|has|have)\s+[\w\s-]+\s+(?:and|also|while|where|when)\b/i.test(q)) return 'multi_hop';
-    if (/\b(?:place\s+of\s+burial|place\s+of\s+birth|date\s+of\s+death|date\s+of\s+birth)\s+of\b/i.test(q)) return 'multi_hop';
 
     // Structural compound detection: the question splits into multiple
     // self-contained clauses ("A怎么样，另外B如何"), regardless of which
@@ -122,7 +121,7 @@ export class AgenticRagService {
 Rules:
 1. Each sub-query must be specific, self-contained, and directly retrievable (avoid vague pronouns like "the first document").
 2. For comparative queries, query each entity or document separately.
-3. For multi-hop queries, follow the reasoning steps (e.g. step 1: who was the director of X; step 2: what other films were directed by that person).
+3. For multi-hop queries, retrieve the intermediate entity first, then retrieve the target attribute requested by the question. Use entities and attributes from the question, without inventing them.
 Output valid JSON format:
 {"subQueries": ["subquery 1", "subquery 2"], "reasoning": "brief explanation"}`
         : `你是一个查询分解专家。将复杂问题拆解为 2-4 个可独立检索的子问题。
@@ -501,28 +500,8 @@ Output valid JSON:
         .map((q) => String(q || '').trim())
         .filter((q) => q.length >= 4 && q !== query.trim());
 
-      // Bridge-entity extraction for benchmark-shaped English questions
-      // ("the husband of X", "X's director"). Same reasoning as the deterministic
-      // patterns in ChatService.decomposeQuery: these are 2Wiki/HotpotQA
-      // question templates, so they are gated behind RETRIEVAL_BENCHMARK_PATTERNS
-      // instead of steering every English production query.
-      const benchmarkPatternsEnabled =
-        process.env.RETRIEVAL_BENCHMARK_PATTERNS === 'true' ||
-        process.env.RETRIEVAL_BENCHMARK_PATTERNS === '1';
-      const bridgeEntity = benchmarkPatternsEnabled
-        ? (() => {
-            const ofMatch = query.match(/(?:husband|wife|spouse|father|mother|son|daughter|brother|sister|parent|child|director|author|producer|performer|composer|creator|founder|inventor|place of birth|birthplace)\s+of\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i);
-            const possMatch = query.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)'s\s+(?:husband|wife|spouse|father|mother|son|daughter|brother|sister|parent|child|director|author|producer|performer|composer|creator|founder|inventor|place of birth|birthplace)/);
-            return ofMatch
-              ? ofMatch[1].split(/\s+/).filter((w) => /^[A-Z][a-z]+/.test(w)).join(' ')
-              : possMatch ? possMatch[1] : null;
-          })()
-        : null;
-
+      // Semantic planning supplies entities and relations from the question.
       const combinedSet = new Set<string>();
-      if (bridgeEntity && bridgeEntity.length >= 3) {
-        combinedSet.add(bridgeEntity);
-      }
       for (const q of llmSubs) {
         if (q && q.length >= 4 && q !== query.trim()) {
           combinedSet.add(q);
@@ -609,33 +588,8 @@ Output valid JSON:
     // Heuristic entity coverage & subquery gap detection
     const heuristicGaps = this.analyzeHeuristicCoverage(query, retrievedContext, options);
 
-    // ── Fast-Pass Heuristic: skip LLM when evidence is demonstrably complete ──
-    if (heuristicGaps.missingAspects.length === 0 && retrievedContext.length >= 20) {
-      const docTitles = new Set((retrievedContext.match(/《([^》]+)》/g) || []).map((t) => t.replace(/[《》]/g, '').trim()));
-      const hasMultipleDocs = docTitles.size >= 2 || (retrievedContext.match(/(?:Source \d+|【来源 \d+】|^[A-Z0-9\s'-]{2,30}:)/gim) || []).length >= 2;
-      if (options?.complexity === 'comparative' && (hasMultipleDocs || docTitles.size >= 2)) {
-        this.logger.debug('Sufficiency Fast-Pass: comparative entities and multi-doc evidence fully covered by heuristic.');
-        return {
-          status: 'sufficient',
-          missingAspects: [],
-          suggestedFollowUp: [],
-          confidence: 0.95,
-          reasoning: '启发式验证已完整覆盖对比双方文档与全部关键维度',
-          hopNumber: iterationCount,
-        };
-      }
-      if (options?.complexity === 'multi_hop' && (options?.subQueries || []).length >= 2) {
-        this.logger.debug('Sufficiency Fast-Pass: multi-hop subquery evidence fully covered by heuristic.');
-        return {
-          status: 'sufficient',
-          missingAspects: [],
-          suggestedFollowUp: [],
-          confidence: 0.95,
-          reasoning: '启发式验证已完整覆盖多跳子问题推演关键证据',
-          hopNumber: iterationCount,
-        };
-      }
-    }
+    // Lexical coverage cannot prove the requested fact or a complete reasoning chain.
+    // Complex questions continue to the semantic evidence evaluator.
 
     // ── Fast-Fail Heuristic: skip LLM when a conflict question clearly lacks the second doc ──
     if (/冲突|矛盾|不一致|两个文档|两份文档|多份文档|两个版本|两份|多份|哪个为准|新旧|为何没有都出来|为什么没有都出来/u.test(query)) {
@@ -676,11 +630,11 @@ Output valid JSON:
           }
         }
         return {
-          status: 'sufficient',
-          missingAspects: [],
+          status: options?.complexity && options.complexity !== 'simple' ? 'insufficient' : 'sufficient',
+          missingAspects: options?.complexity && options.complexity !== 'simple' ? ['缺少语义证据核验'] : [],
           suggestedFollowUp: [],
           confidence: 0.7,
-          reasoning: '启发式判定当前证据充分',
+          reasoning: '当前仅有词面覆盖，复杂查询尚未确认完整事实',
           hopNumber: iterationCount,
         };
       }
@@ -693,12 +647,12 @@ Evaluate whether the currently retrieved context evidence (Context) is sufficien
 
 Rules:
 1. Comparative queries: Ensure evidence for all compared entities, versions, or aspects is present. If entity B is missing, status MUST be 'insufficient', missingAspects notes entity B, and suggestedFollowUp provides targeted query terms for B.
-2. Multi-hop/Bridge queries: Ensure all steps in the multi-step reasoning chain are supported. If the evidence only covers the first hop (e.g. mentions the intermediate person, work, or organisation) but lacks the required second-hop target property (e.g. birth place, date, nationality, spouse), status MUST be 'insufficient', and suggestedFollowUp MUST extract the intermediate bridge entity combined with the target attribute (e.g. '<Bridge Entity> <Target Attribute>').
+2. Multi-hop/Bridge queries: Ensure all steps in the multi-step reasoning chain are supported. If the evidence only covers an intermediate entity but lacks the target attribute requested by the question, status MUST be 'insufficient', and suggestedFollowUp MUST extract the intermediate bridge entity combined with the target attribute (e.g. '<Bridge Entity> <Target Attribute>').
 3. No duplicate queries: Already executed queries: [${executedListStr}]. suggestedFollowUp must provide novel, targeted queries (max 2).
 4. Grounded: If evidence is sufficient to answer completely, output status = 'sufficient'. If completely irrelevant, output 'irrelevant'.
 
 Procedure (follow it literally):
-1. State the exact fact the question asks for (e.g. "the birth date of the creator of X").
+1. State the exact fact and target attribute the question asks for, using the question’s own entities and attributes.
 2. Find a sentence in the Context that states that fact's VALUE. Put that sentence in evidenceQuote.
 3. If no sentence states the value — even when the topic, the entity, or adjacent facts are covered — status MUST be 'insufficient' and evidenceQuote MUST be empty. Never answer 'sufficient' because the topic is discussed or because a related entity is named.
 
@@ -843,11 +797,11 @@ Output strict JSON:
         }
       }
       return {
-        status: 'sufficient',
-        missingAspects: [],
+        status: options?.complexity && options.complexity !== 'simple' ? 'insufficient' : 'sufficient',
+        missingAspects: options?.complexity && options.complexity !== 'simple' ? ['语义证据核验服务未完成处理'] : [],
         suggestedFollowUp: [],
         confidence: 0.6,
-        reasoning: '判别模型响应超时或异常，安全放行至生成阶段',
+        reasoning: '判别模型响应超时或异常，复杂查询未确认事实充分',
         hopNumber: iterationCount,
       };
     }
@@ -949,42 +903,6 @@ Output strict JSON:
               missingAspects.push(`未覆盖子问题：“${sub}”`);
               suggestedFollowUp.push(sub);
             }
-          }
-        }
-      }
-    }
-
-    // 3. Multi-Hop Bridge Entity Discovery & Target Aspect Verification
-    const isMultiHop = options?.complexity === 'multi_hop' || /(.*的.*的|原著作者|导演|编剧|创始人|妻子|丈夫|出生地|出生在|毕业院校|母校|成立时间|研发者|属于哪个)/u.test(query);
-    if (isMultiHop && context.length >= 20) {
-      const isEn = !/[\u4e00-\u9fa5]/.test(query);
-      if (isEn) {
-        const candidateEntities = Array.from(context.matchAll(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b/g))
-          .map((m) => m[1])
-          .filter((ent) => !query.toLowerCase().includes(ent.toLowerCase()) && ent.length >= 4);
-
-        const aspectMatch = query.match(/\b(birth\s*place|birthplace|born|die|died|death|nationality|alma\s*mater|college|university|director|author|producer|spouse|wife|husband|capital|headquarter)\b/i);
-        if (candidateEntities.length > 0 && aspectMatch) {
-          const aspect = aspectMatch[1].toLowerCase();
-          const aspectAnswered = new RegExp(`${aspect}|\\b(?:in|at|on)\\s+[A-Z][a-z]+`, 'i').test(ctxLower);
-          if (!aspectAnswered) {
-            const bridgeEntity = candidateEntities[0];
-            missingAspects.push(`Bridge entity "${bridgeEntity}" discovered; missing secondary aspect "${aspect}"`);
-            suggestedFollowUp.push(`${bridgeEntity} ${aspect}`);
-          }
-        }
-      } else {
-        const zhAspectMatch = query.match(/(出生地|出生在|哪座城市|哪个城市|出生|成立时间|毕业于|毕业院校|母校|国籍|原名|现任|职务|首任)/u);
-        const roleEntityMatch = context.match(/(?:作者|导演|编剧|主演|创始人|研发|设计者|负责人|法定代表人|总经理|总裁|由)\s*[:：为是]?\s*([《「]?[\u4e00-\u9fa5]{2,10}[》」]?)/u);
-        const bookEntityMatch = context.match(/《([^》]+)》/);
-        const bridgeCandidate = roleEntityMatch ? roleEntityMatch[1].replace(/[《》「」]/g, '').trim() : (bookEntityMatch ? bookEntityMatch[1] : '');
-        
-        if (bridgeCandidate && bridgeCandidate.length >= 2 && !query.includes(bridgeCandidate) && zhAspectMatch) {
-          const aspect = zhAspectMatch[1];
-          const hasAspect = ctxLower.includes(aspect);
-          if (!hasAspect) {
-            missingAspects.push(`从前置证据中发现桥接实体“${bridgeCandidate}”，但缺少其“${aspect}”的后续关键事实`);
-            suggestedFollowUp.push(`${bridgeCandidate} ${aspect}`);
           }
         }
       }

@@ -15,6 +15,13 @@ describe('isRefusalAnswerText', () => {
     expect(isRefusalAnswerText('无法根据知识库回答')).toBe(true);
   });
 
+  it('holds irrelevant-source explanations instead of caching them as answers', () => {
+    expect(isRefusalAnswerText('现有资料涉及管理规范和运维要求，均未记载问题要求的方案或编号[1]。')).toBe(true);
+    expect(isRefusalAnswerText('资料中的编号仅属于其他方案，与所问方案无关[2]，不能作为该方案的编号。')).toBe(true);
+    expect(isRefusalAnswerText('该旧编号与本次申请无关，新编号为 ABC-123 [1]。')).toBe(false);
+    expect(isRefusalAnswerText('手册未记载该编号，但巡检周期为 30 天 [3]。')).toBe(false);
+  });
+
   it('detects English refusals', () => {
     for (const text of [
       'Based on the provided reference materials, the relevant information is not available.',

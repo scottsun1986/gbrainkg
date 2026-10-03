@@ -1,3 +1,5 @@
+import { distinctRankedPassages } from './evidence-identity';
+import { outlineDocumentTitle, normalizeDocumentTitle } from './document-outline';
 import { VerifiedLateChunking } from '../embedding/verified-late-chunking';
 import { rethrowAuthorizationFailure } from '../permission/authorization-revision';
 import { getRequestContext } from '../observability/request-context';
@@ -18,6 +20,7 @@ import { tokenizeQuery } from "../retrieval/lexical-tokenizer";
 import { Bulkhead, RetrievalDeadline } from "../retrieval/retrieval-budget";
 import type { EmbeddingService } from "../embedding/embedding.service";
 import type { GraphRagService } from "../graph-rag/graph-rag.service";
+import { graphProbeEnabledForQuery } from "../graph-rag/graph-rag.service";
 import type { RaptorService } from "../raptor/raptor.service";
 import type { LexicalIndexService } from "../retrieval/lexical-index.service";
 import type { RetrievalVariantParams } from "../experiments/retrieval-variants";
@@ -269,7 +272,8 @@ export function calibratedScoreOf(citation: any): number | null {
 export function isRefusalAnswerText(text: string): boolean {
   const value = String(text || '').trim();
   if (!value) return true;
-  return /(未包含相关信息|无法(?:根据知识库)?回答|不知道|无法提供(?:该信息)?|无法确定|没有找到|未检索到|知识库中未)/u.test(value) ||
+  return /(?:与[^。！？\n]{1,120}无关[^。！？\n]*(?:不能作为|不足以回答)|(?:资料|文档|知识库)[^。！？\n]{0,300}均未(?:记载|提及|提供))[^。！？\n]*[。！？]?$/u.test(value) ||
+    /(未包含相关信息|无法(?:根据知识库)?回答|不知道|无法提供(?:该信息)?|无法确定|没有找到|未检索到|知识库中未)/u.test(value) ||
     /(?:not|no)\s+(?:available|recorded|mentioned|provided|found|contained|specified|stated|listed|given|documented|reported)|cannot\s+(?:answer|be\s+determined)|unable\s+to\s+answer|insufficient\s+information|no\s+(?:relevant\s+information|record|mention|information)|do(?:es)?\s+not\s+(?:contain|specify|state|mention|record|document|provide|list|include)|information\s+is\s+not|is\s+not\s+(?:recorded|specified|mentioned|stated|documented|available)/i.test(value);
 }
 
@@ -424,73 +428,7 @@ export class RetrievalArmsService {
       /哪些章|全部章|所有章|章名|一共有哪些章/.test(raw)
     ) {
       subQueries.add(subject ? `${subject} 章 目录` : "章 目录");
-      subQueries.add(subject ? `${subject} 第一章 第二章` : "第一章 第二章");
-    }
 
-    // 5. English multi-hop, comparison, and conjunction patterns.
-    //
-    // These templates are modelled on public multi-hop benchmarks (2WikiMultiHopQA
-    // / HotpotQA question shapes: "which film has the director who died later,
-    // X or Y", "where was the place of burial of Z's father"). They are a
-    // benchmark-shaped heuristic, not a general decomposition rule, so they stay
-    // behind an explicit switch: on a normal production corpus the LLM planner
-    // handles decomposition, while the benchmark harness turns them on to keep
-    // published numbers comparable.
-    const benchmarkPatternsEnabled =
-      process.env.RETRIEVAL_BENCHMARK_PATTERNS === 'true' || process.env.RETRIEVAL_BENCHMARK_PATTERNS === '1';
-    if (benchmarkPatternsEnabled && subQueries.size === 0 && !/[\u4e00-\u9fa5]/.test(raw)) {
-      // 5.1 Bridge comparison: e.g. "Which film has the director who died later, The More The Merrier or Sleep, My Love?"
-      const compMatch = raw.match(/(?:which|who|what)\s+([a-z\s]+?)\s+(?:has the|whose|with)\s+([a-z\s]+?)\s+(?:who|that|which)?\s*(?:is|was|died|born)?\s*(?:earlier|later|older|younger|more|less|first|after|before)[^,]*,\s*([^,]+?)\s+or\s+([^?]+)/i);
-      if (compMatch) {
-        const rel = compMatch[2].trim();
-        const item1 = compMatch[3].trim().replace(/^["']|["']$/g, "").trim();
-        const item2 = compMatch[4].trim().replace(/^["']|["']$/g, "").trim();
-        if (item1 && item2) {
-          subQueries.add(`${item1} ${rel}`);
-          subQueries.add(`${item2} ${rel}`);
-          subQueries.add(item1);
-          subQueries.add(item2);
-        }
-      }
-
-      // 5.2 Direct comparison: "Which of X and Y ...", "Did X and Y have the same ..."
-      if (subQueries.size === 0) {
-        const whichOfMatch = raw.match(/(?:which of|did)\s+([A-Z][a-zA-Z0-9\s'(),.-]+?)\s+(?:and|or)\s+([A-Z][a-zA-Z0-9\s'(),.-]+?)(?:\s+(?:have|has|are|were|been|both|share))?/i);
-        if (whichOfMatch) {
-          const item1 = whichOfMatch[1].trim().replace(/^["']|["']$/g, "");
-          const item2 = whichOfMatch[2].trim().replace(/^["']|["']$/g, "");
-          if (item1 && item2) {
-            subQueries.add(item1);
-            subQueries.add(item2);
-          }
-        }
-      }
-
-      // 5.3 Compositional possessive: e.g. "Where was the place of burial of Charles Mathew's father?"
-      if (subQueries.size === 0) {
-        const possMatch = raw.match(/(?:(?:where|what|when|who)\s+(?:is|was|are|were)\s+(?:the\s+)?(?:place of (?:birth|death|burial)\s+of\s+)?)?([A-Z][a-zA-Z0-9\s'(),.-]+?)'s\s+([a-z\s]+?)(?:\s+(?:born|die|died|buried|burial|birth|death|located|married|graduated))?(?:\?|$)/i);
-        if (possMatch) {
-          const entity = possMatch[1].trim();
-          const rel = possMatch[2].trim();
-          if (entity.length >= 3 && rel.length >= 2) {
-            subQueries.add(`${entity} ${rel}`);
-            subQueries.add(entity);
-          }
-        }
-      }
-
-      // 5.4 Compositional "of": e.g. "Where was the husband of Octavie Coudreau born?"
-      if (subQueries.size === 0) {
-        const ofMatch = raw.match(/(?:where|what|when|who)\s+(?:is|was|are|were|did)\s+(?:the\s+)?(?:place of (?:birth|death|burial)\s+of\s+)?([a-z\s]+?)\s+of\s+(?:film\s+|movie\s+|book\s+|the\s+)?([A-Z][a-zA-Z0-9\s'(),.-]+?)(?:\s+(?:born|die|died|live|lived|directed|written|created|founded|located|married|graduated))?(?:\?|$)/i);
-        if (ofMatch) {
-          const rel = ofMatch[1].trim();
-          const entity = ofMatch[2].trim();
-          if (entity.length >= 3 && rel.length >= 2) {
-            subQueries.add(`${entity} ${rel}`);
-            subQueries.add(entity);
-          }
-        }
-      }
     }
 
     // 6. Chinese compound noun & interrogative stripping pattern (run when no prior pattern matched)
@@ -547,9 +485,7 @@ export class RetrievalArmsService {
         if (/附则/.test(qText)) set.add("附则");
         if (/总则/.test(qText)) set.add("总则");
         if (/罚则/.test(qText)) set.add("罚则");
-        if (/哪些章|所有章|全部章|章名/.test(qText)) {
-          ["第一章", "第二章", "第三章", "第四章", "第五章", "总则", "罚则", "附则"].forEach((t) => set.add(t));
-        }
+
       }
 
       // 3. Numbers with units
@@ -955,7 +891,9 @@ export class RetrievalArmsService {
       // 3. Multi-Hop GraphRAG Entity & Relation Probe:
       // Query Knowledge Graph for bridge entity relationships when available
       const graphHits: any[] = [];
-      if (this.graphRagService && scope.length > 0) {
+      // P2-3：按查询形态路由图谱探针（GRAPHRAG_ROUTE，默认 auto=仅多跳类
+      // 查询启用；全局主题走 RAPTOR 全局树，局部事实不被合成图谱分噪声干扰）。
+      if (this.graphRagService && scope.length > 0 && graphProbeEnabledForQuery(probe)) {
         try {
           const localGraph = await this.graphRagService.searchLocalGraph(scope, probe, 3);
           if (localGraph && Array.isArray(localGraph.relations)) {
@@ -1368,7 +1306,7 @@ export class RetrievalArmsService {
       const highPriorityTokens = keywords.filter((kw) =>
         /[\u0370-\u03FF]/.test(kw) || // Greek letters like ΨOmega-7
         /^[A-Za-z0-9]+-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(kw) || // EQ-0077, PRD-2026-8899, SUM-2026-5566, BIGDOC-VERIFY, WP-2026-R9
-        /^EMP\d+$/i.test(kw) || // EMP00077
+        /^[A-Za-z][A-Za-z_]*\d+$/i.test(kw) || // Compact identifiers, regardless of prefix
         /第[0-9一二三四五六七八九十百]+[条款章节]/.test(kw),
       );
 
@@ -1402,7 +1340,7 @@ export class RetrievalArmsService {
       const chChunksPromise = isChapterListing
         ? (async () => {
             let targetDocIds: string[] = [];
-            const cleanQuery = query.replace(/[？?。！!,，\s]+|一共有哪些章|有哪些章|所有章|全部章|章名|一共有几章|目录|结构/g, "").trim();
+            const cleanQuery = outlineDocumentTitle(query) || query.replace(/[？?。！!,，\s]+|一共有哪些章|有哪些章|所有章|全部章|章名|一共有几章|目录|结构/g, "").trim();
             if (cleanQuery.length >= 2) {
               const docRows = await (this.prisma as any).document.findMany({
                 where: {
@@ -1410,12 +1348,13 @@ export class RetrievalArmsService {
                   status: "published",
                   title: { contains: cleanQuery },
                 },
-                select: { id: true },
+                select: { id: true, title: true },
               }).catch(() => [] as any[]);
               if (docRows.length > 0) {
-                targetDocIds = docRows.map((d: any) => d.id);
+                targetDocIds = docRows.filter((d: any) => !outlineDocumentTitle(query) || normalizeDocumentTitle(d.title) === normalizeDocumentTitle(cleanQuery)).map((d: any) => d.id);
               }
             }
+            if (outlineDocumentTitle(query) && !targetDocIds.length) return [];
             return (this.prisma as any).chunk.findMany({
               where: {
                 kbId: { in: scope },
@@ -1683,7 +1622,20 @@ export class RetrievalArmsService {
         if (!chunkMap.has(hit.id)) chunkMap.set(hit.id, hit);
       }
 
-      const allFound = Array.from(chunkMap.values());
+      let allFound = Array.from(chunkMap.values());
+      const ctx = getRequestContext();
+      if (ctx?.userId) {
+        // Filter before duplicate grouping: a restricted copy must never mask
+        // the caller's readable copy, and no denied text enters reranking.
+        const checked = await this.filterQueryResultByCurrentPermission({ citations: allFound.map((c: any) => ({
+          id: c.id, docId: c.documentId, kbId: c.kbId, ord: c.ord, version: c.document?.version,
+          context: c.content, evidence: c.content,
+        })) }, scope, { scopeId: '', sourceKeys: [], aclEpoch: -1, knowledgeEpoch: -1 });
+        const allowed = new Map(checked.citations.map((c: any) => [c.id, c]));
+        allFound = allFound.filter((c: any) => allowed.has(c.id)).map((c: any) => ({
+          ...c, content: (allowed.get(c.id) as any).context || c.content,
+        }));
+      }
       if (allFound.length === 0) {
         return [];
       }
@@ -1748,6 +1700,14 @@ export class RetrievalArmsService {
         sortedKw.forEach((x, idx) => lexicalRankMap.set(x.id, idx + 1));
       }
 
+      // Title recall is an independent channel: a table may have no title words
+      // in its cells and must not lose all rank when its filename matches.
+      const titleRanks = new Map<string, number>();
+      [...(aChunks || [])].sort((a: any, b: any) => {
+        const matches = (c: any) => titleTokens.filter(t => String(c.document?.title || '').toLowerCase().includes(t.toLowerCase())).length;
+        return matches(b) - matches(a);
+      }).forEach((c: any, i: number) => titleRanks.set(c.id, i + 1));
+
       // Channel 2: Vector Ranking
       const vectorRankMap = new Map<string, number>();
       const sortedVector = [...allFound]
@@ -1780,6 +1740,8 @@ export class RetrievalArmsService {
       const lateRrfWeight = Number(variant?.lateWeight ?? process.env.RETRIEVAL_BGE_M3_LATE_RRF_WEIGHT ?? 1.0);
       const scored = allFound.map((c: any) => {
         let rrfScore = 0;
+        const titleRank = titleRanks.get(c.id);
+        if (titleRank) rrfScore += 1 / (rrfK + titleRank);
         const lRank = lexicalRankMap.get(c.id);
         if (lRank) rrfScore += 1 / (rrfK + lRank);
         const vRank = vectorRankMap.get(c.id);
@@ -1805,6 +1767,12 @@ export class RetrievalArmsService {
         if (baseTitle.length >= 2 && lowQuery.includes(baseTitle)) {
           boost += 1.0;
         }
+
+        const namedClause = lowQuery.split(/[，,。？?\n]/).some(part => {
+          const phrase = part.trim();
+          return phrase.length >= 4 && baseTitle.includes(phrase) && phrase.length / baseTitle.length >= 0.6;
+        });
+        if (namedClause) boost += 2.0;
 
         // Domain terms
         for (const term of activeDomainTerms) {
@@ -1840,18 +1808,20 @@ export class RetrievalArmsService {
         return b.score - a.score;
       });
 
+      const distinctScored = distinctRankedPassages(scored, item => String(item.chunk.content || ""));
+
       // Document diversity quota: prevent single 3MB document from crowding out smaller documents
       const maxPerDoc = Math.max(3, Number(process.env.RETRIEVAL_MAX_CHUNKS_PER_DOC || 10));
       const perDocCount = new Map<string, number>();
       const topSelected: typeof scored = [];
 
       if (isChapterListing) {
-        for (const item of scored) {
+        for (const item of distinctScored) {
           topSelected.push(item);
           if (topSelected.length >= Math.max(limit, 20)) break;
         }
       } else {
-        for (const item of scored) {
+        for (const item of distinctScored) {
           const docKey = item.chunk.documentId || "unknown";
           const count = perDocCount.get(docKey) || 0;
           const allowedForThisDoc = item.score >= 0.03 ? maxPerDoc + 2 : maxPerDoc;

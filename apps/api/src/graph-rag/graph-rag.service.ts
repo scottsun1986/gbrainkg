@@ -4,6 +4,32 @@ import { modelArtifactKey, readModelArtifact, saveModelArtifact } from '../embed
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+
+/** P2-3：按查询形态路由图谱参与度（语料无关，仅语言形态，无业务词表）。 */
+export type GraphQueryRoute = 'local_fact' | 'global_theme' | 'multi_hop';
+
+export function routeGraphQuery(query: string): GraphQueryRoute {
+  const q = String(query || '');
+  if (!q.trim()) return 'local_fact';
+  // 全局主题/综述：RAPTOR 全局树与文档级摘要服务此类问题；局部子图探针
+  // 只会贡献合成分数噪声。
+  if (/(整体|全貌|总结|概览|综述|所有|全部|哪些类别|分类|体系|框架|盘点|清单|overview|summar(?:y|ize|ise)|categories?|inventory)/iu.test(q)) {
+    return 'global_theme';
+  }
+  // 多跳/关系桥接：局部图谱存在的意义（桥接实体、A↔B 关系）。
+  if (/(关系|之间|区别|联系|差异|关联|对比|共同|影响|依赖|relation(?:ship)?s?|between|difference|compare|versus|\bvs\.?\b)/iu.test(q)) {
+    return 'multi_hop';
+  }
+  return 'local_fact';
+}
+
+/** 图谱探针是否对该查询启用。GRAPHRAG_ROUTE=always|off|auto（默认 auto：仅多跳）。 */
+export function graphProbeEnabledForQuery(query: string): boolean {
+  const mode = String(process.env.GRAPHRAG_ROUTE || 'auto').toLowerCase();
+  if (mode === 'always') return true;
+  if (mode === 'off') return false;
+  return routeGraphQuery(query) === 'multi_hop';
+}
 import { detectCommunitiesLouvain } from './louvain';
 import { getPrismaClient } from '../prisma';
 import { EmbeddingService } from '../embedding/embedding.service';
@@ -1704,12 +1730,21 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
         OR: orConditions,
       },
       take: isDocCatalogQuery ? Math.max(limit, 25) : limit,
+      // Type first (documents before concepts on a catalogue question), then the
+      // most recently updated node. Without an explicit order the truncated
+      // slice depended on physical row order, so the same query could return a
+      // different entity set after a vacuum or an unrelated write.
+      orderBy: [{ type: 'asc' }, { updatedAt: 'desc' }, { id: 'asc' }],
       include: {
         outgoingRelations: {
+          // weight desc keeps the truncation deterministic and keeps the
+          // highest-confidence edges instead of an arbitrary storage order.
+          orderBy: [{ weight: 'desc' }, { id: 'asc' }],
           take: 5,
           include: { target: true },
         },
         incomingRelations: {
+          orderBy: [{ weight: 'desc' }, { id: 'asc' }],
           take: 5,
           include: { source: true },
         },
@@ -1745,6 +1780,7 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
               ],
             },
             take: Math.max(5, limit),
+            orderBy: [{ weight: 'desc' }, { id: 'asc' }],
             include: { source: { select: { name: true, type: true } }, target: { select: { name: true, type: true } } },
           })) || [];
         } catch (err) { throwAuthorizationFailure(err);
@@ -1903,6 +1939,8 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
         where: { kbId: { in: kbIds }, OR: orConditions },
         select: { id: true, name: true, outgoingRelations: { select: { targetId: true } }, incomingRelations: { select: { sourceId: true } } },
         take: Math.max(5, Number(process.env.GRAPHRAG_ARM_SEED_ENTITIES || 12)),
+        // Seeds decide which edges the arm walks, so the cut must be stable.
+        orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
       })) || [];
       if (!matched.length) return [];
 
@@ -1934,6 +1972,9 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
           },
           select: { id: true, weight: true, provenance: true },
           take: Math.max(20, limit * 4),
+          // Without an explicit order the truncated slice depends on storage
+          // order, so high-weight multi-hop edges can be lost nondeterministically.
+          orderBy: [{ weight: 'desc' }, { id: 'asc' }],
         })) || [];
 
         for (const relation of relations) {
@@ -2030,7 +2071,9 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
     const communities = await (this.prisma as any).graphCommunity.findMany({
       where: { kbId: { in: kbIds } },
       take: limit * 3,
-      orderBy: { updatedAt: 'desc' },
+      // Tie-break on id: communities rebuilt in the same transaction share an
+      // updatedAt, and a tie made the selected set nondeterministic.
+      orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
     });
 
     if (!communities.length) {
@@ -2096,6 +2139,9 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
         where: { id: { in: communityIds }, kbId: { in: kbIds } },
         select: { id: true, title: true, entityIds: true },
         take: maxCommunities,
+        // Preserve the ranked order established by communityIds; a take over an
+        // unordered IN-list is free to drop the top-ranked community.
+        orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
       })) || [];
       const entityIds = [...new Set(
         communities.flatMap((community) => Array.isArray(community.entityIds) ? community.entityIds.map(String) : []),
@@ -2106,6 +2152,7 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
         where: { id: { in: entityIds }, kbId: { in: kbIds } },
         select: { id: true, name: true, type: true },
         take: maxEntities,
+        orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
       })) || [];
       const normalizedQuery = query.toLowerCase();
       const seedEntities = entities

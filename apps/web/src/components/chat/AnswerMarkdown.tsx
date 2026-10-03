@@ -14,6 +14,14 @@ function decodeEntities(text: string): string {
   });
 }
 
+function plainInlineText(tokens: Token[]): string {
+  return tokens.map(token => {
+    if ('tokens' in token && token.tokens) return plainInlineText(token.tokens);
+    if (token.type === 'br') return ' ';
+    return decodeEntities('text' in token ? String(token.text) : token.raw);
+  }).join('');
+}
+
 function safeLink(raw: string): string | undefined {
   const href = decodeEntities(raw).trim();
   if (/^(?:https?:\/\/|mailto:)/i.test(href)) return href;
@@ -89,7 +97,7 @@ export const AnswerMarkdown = memo(function AnswerMarkdown({ content, sources = 
       const key = `${prefix}-${index}`;
       const children = () => render('tokens' in token ? token.tokens || [] : [], key, true, cite);
       switch (token.type) {
-        case 'space': case 'def': return null;
+        case 'space': case 'def': case 'checkbox': return null;
         case 'heading': {
           const heading = token as Tokens.Heading;
           return React.createElement(`h${heading.depth}`, { key }, children());
@@ -112,7 +120,8 @@ export const AnswerMarkdown = memo(function AnswerMarkdown({ content, sources = 
         }
         case 'table': {
           const table = token as Tokens.Table;
-          return <div key={key} className="answer-table-scroll" role="region" aria-label="回答表格，可横向滚动" tabIndex={0}><table><thead><tr>{table.header.map((cell, i) => <th key={i} scope="col" style={{ textAlign: table.align[i] || undefined }}>{render(cell.tokens, `${key}-h${i}`, true)}</th>)}</tr></thead><tbody>{table.rows.map((row, r) => <tr key={r}>{row.map((cell, c) => <td key={c} style={{ textAlign: table.align[c] || undefined }}>{render(cell.tokens, `${key}-${r}-${c}`, true)}</td>)}</tr>)}</tbody></table></div>;
+          const stacked = table.header.length > 6 || (table.header.length > 2 && table.rows.some(row => row.some(cell => cell.text.length > 160)));
+          return <div key={key} className={`answer-table-scroll${table.header.length > 2 ? ' answer-table-multi' : ''}${stacked ? ' answer-table-stacked' : ''}`} role="region" aria-label="回答表格"><table role="table"><thead role="rowgroup"><tr role="row">{table.header.map((cell, i) => <th key={i} role="columnheader" scope="col" style={{ textAlign: table.align[i] || undefined }}>{render(cell.tokens, `${key}-h${i}`, true)}</th>)}</tr></thead><tbody role="rowgroup">{table.rows.map((row, r) => <tr key={r} role="row">{row.map((cell, c) => <td key={c} role="cell" style={{ textAlign: table.align[c] || undefined }}><span className="answer-cell-label" aria-hidden="true">{plainInlineText(table.header[c]?.tokens || [])}</span><span className="answer-cell-value">{render(cell.tokens, `${key}-${r}-${c}`, true)}</span></td>)}</tr>)}</tbody></table></div>;
         }
         case 'link': {
           const href = safeLink(token.href);

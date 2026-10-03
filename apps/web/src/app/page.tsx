@@ -13,7 +13,6 @@ import { SideNav } from "@/components/common/SideNav";
 import { TopBar } from "@/components/common/TopBar";
 import { CommandPalette } from "@/components/common/CommandPalette";
 import { HelpOverlay } from "@/components/common/HelpOverlay";
-import { ChatScreen } from "@/components/chat/ChatScreen";
 import { API_BASE_URL, apiHeaders } from "@/lib/api";
 import { appStore } from "@/lib/app-store";
 import { errorMessage, apiMessage } from "@/lib/errors";
@@ -27,11 +26,12 @@ import { useAdminBootstrap } from "@/hooks/useAdminBootstrap";
 import type { PaletteNavPayload } from "@/components/common/CommandPalette";
 import type { PreviewTarget } from "@/types";
 
-// 非默认屏幕按需分包：登录首屏只加载对话屏的代码，知识库/图谱/设置/管理
-// 在首次切入时才拉取对应 chunk（挂载后常驻，跨屏切换仍不丢状态）。
+// Screens are loaded on first use; the logged-out view does not need chat's
+// Markdown renderer or retrieval diagnostics. Mounted screens retain state.
 const ScreenLoading = () => (
   <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--ink-4, #999)', fontSize: 14 }}>加载中…</div>
 );
+const ChatScreen = dynamic(() => import("@/components/chat/ChatScreen").then((m) => ({ default: m.ChatScreen })), { ssr: false, loading: ScreenLoading });
 const LibrariesScreen = dynamic(() => import("@/components/libraries/LibrariesScreen").then((m) => ({ default: m.LibrariesScreen })), { ssr: false, loading: ScreenLoading });
 const KnowledgeGraphScreen = dynamic(() => import("@/components/knowledge-graph/KnowledgeGraphScreen").then((m) => ({ default: m.KnowledgeGraphScreen })), { ssr: false, loading: ScreenLoading });
 const PersonalSettingsScreen = dynamic(() => import("@/components/settings/PersonalSettingsScreen").then((m) => ({ default: m.PersonalSettingsScreen })), { ssr: false, loading: ScreenLoading });
@@ -73,7 +73,7 @@ function App() {
     }
     // 先立即切换至 loggedIn，让用户看到主壳；admin 数据在后台异步补齐。
     setAuthState('loggedIn');
-    void loadAdminData(token);
+    void loadAdminData(token).catch(() => window.dispatchEvent(new CustomEvent('app-toast', { detail: '会话初始化失败，请刷新重试' })));
   }, [loadAdminData]);
 
   // The OIDC callback carries no credential in the URL. Claim the short-lived
@@ -181,6 +181,11 @@ function App() {
             }
           } catch {}
         }
+        if (status !== 401 && status !== 403) {
+          setAuthRetry(true);
+          setAuthState('loggedOut');
+          return;
+        }
         window.localStorage.removeItem('llmwiki_token');
         setAuthState('loggedOut');
       }
@@ -197,7 +202,7 @@ function App() {
       debounceTimer = setTimeout(() => {
         debounceTimer = null;
         const token = window.localStorage.getItem('llmwiki_token');
-        if (token) void loadAdminData(token);
+        if (token) void loadAdminData(token).catch(() => window.dispatchEvent(new CustomEvent('app-toast', { detail: '数据刷新失败，请稍后重试' })));
       }, 250);
     };
     window.addEventListener('app-data-refresh', refresh);
@@ -440,7 +445,7 @@ function App() {
     <>
       {authRetry && (
         <div style={{ padding: '12px 24px', textAlign: 'center', background: 'var(--warning-bg, #fff8e1)', color: 'var(--warning-fg, #e65100)', fontSize: 13, borderBottom: '1px solid var(--warning-border, #ffe0b2)' }}>
-          服务器响应超时，已保留你的登录凭证。
+          服务器暂未响应，已保留你的登录凭证。
           <button
             type="button"
             style={{ marginLeft: 12, padding: '4px 16px', border: '1px solid currentColor', borderRadius: 6, background: 'transparent', color: 'inherit', cursor: 'pointer', fontSize: 13 }}

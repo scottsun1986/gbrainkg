@@ -281,6 +281,58 @@ export class MetricsService {
     metricsRegistry.incCounter('embedding_failures_total', {}, 1);
   }
 
+  /** Outbox events dead-lettered after exhausting their retry budget. */
+  incOutboxDeadLetter(delta = 1): void {
+    metricsRegistry.incCounter('outbox_dead_letter_total', {}, delta);
+  }
+
+  /** Chat latency marks: time to first readable text and total answer time. */
+  observeChatLatency(kind: 'first_text' | 'total', durationMs: number): void {
+    try {
+      metricsRegistry.observeHistogram(
+        kind === 'first_text' ? 'chat_first_text_ms' : 'chat_total_ms',
+        Math.max(0, durationMs),
+      );
+    } catch {
+      /* metrics must never break the answer stream */
+    }
+  }
+
+  /**
+   * Per-stage chat latency, from request start to the end of one pipeline
+   * phase. Time-to-first-token is a sum of phases, and without a per-phase
+   * breakdown a 17s first token is indistinguishable between "retrieval took
+   * 15s" and "the model was slow to produce its first chunk" - two problems
+   * with completely different fixes. Stage names are a bounded vocabulary, not
+   * user input, so the label cardinality stays fixed.
+   */
+  observeChatStage(stage: string, durationMs: number): void {
+    try {
+      metricsRegistry.observeHistogram('chat_stage_ms', Math.max(0, durationMs), { stage });
+    } catch {
+      /* metrics must never break the answer stream */
+    }
+  }
+
+  /** Incremental stream had to repair a prefix divergence (0 is the goal). */
+  incStreamRepair(): void {
+    metricsRegistry.incCounter('chat_stream_repair_total', {}, 1);
+  }
+
+  /**
+   * P2-2 retrieval-arm shadow A/B: the shadow arm's ranking is computed over
+   * the same candidates but never served. Emits agreement observability
+   * (overlap@10 as a gauge sample, top-1 disagreement as a counter label).
+   */
+  observeArmShadow(policy: string, overlapAt10: number, top1Differs: boolean): void {
+    try {
+      metricsRegistry.setGauge('retrieval_arm_shadow_overlap_at_10', Number(overlapAt10.toFixed(3)));
+      metricsRegistry.incCounter('retrieval_arm_shadow_total', { policy: policy || 'unknown', top1_differs: top1Differs ? '1' : '0' });
+    } catch {
+      /* observability must never break retrieval */
+    }
+  }
+
   render(): string {
     return metricsRegistry.render();
   }

@@ -198,6 +198,7 @@ export class ChatController {
       finalizePromise = (async () => {
         const content = answer || errorContent || "本次问答未生成可保存的回答。";
         upsertPersistenceTrace("running", "正在保存回答、引用和处理链路");
+        let messageId: string | undefined;
         try {
           const created = await this.prisma.message.create({
             data: {
@@ -210,6 +211,7 @@ export class ChatController {
               latencyMs: Date.now() - requestStartedAt,
             },
           });
+          messageId = created.id;
           const citationRows = citations
             .map((item: any) => item?.timeline_entry || {})
             .filter((item: any) => item.document_id && item.snippet)
@@ -236,6 +238,7 @@ export class ChatController {
         } finally {
           writeEvent({
             type: "done",
+            message_id: messageId,
             total_tokens: totalTokens,
             latency_ms: Date.now() - requestStartedAt,
             trace_id: traceId,

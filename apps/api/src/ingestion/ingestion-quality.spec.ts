@@ -177,4 +177,28 @@ describe('ingestion publication boundary', () => {
       where: { id: 'doc-1', version: 9 },
     }));
   });
+
+  it('a failed replacement merges pendingError into the existing parserMetadata instead of overwriting it', async () => {
+    const previous = process.env.CORE_VERSIONING_ENABLED;
+    process.env.CORE_VERSIONING_ENABLED = '1';
+    try {
+      // mockReset (not just clearAllMocks): earlier tests in this file queue
+      // mockResolvedValueOnce implementations that would otherwise leak into
+      // the transaction's findUnique and make this test order-dependent.
+      mockPrisma.document.findUnique.mockReset().mockResolvedValue({
+        id: 'doc-1', version: 9, activeVersionId: 'ver-1',
+        parserMetadata: { engine: 'anydoc', pages: 12 },
+      });
+      mockPrisma.document.update.mockReset().mockResolvedValue({});
+      const service = new IngestionService({} as any, compiler as any, models as any);
+      await service.markFailed('doc-1', 'bad parse', 9);
+      expect(mockPrisma.document.update).toHaveBeenCalledWith(expect.objectContaining({
+        where: { id: 'doc-1' },
+        data: { parserMetadata: { engine: 'anydoc', pages: 12, pendingError: 'bad parse' } },
+      }));
+    } finally {
+      if (previous === undefined) delete process.env.CORE_VERSIONING_ENABLED;
+      else process.env.CORE_VERSIONING_ENABLED = previous;
+    }
+  });
 });

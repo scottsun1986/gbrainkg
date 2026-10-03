@@ -6,6 +6,22 @@
 
 生产环境采用与测试环境一致的**宿主机原生部署模式（Host-Native via Systemd）**，直接运行在 Linux 宿主机上，无需通过 Docker Compose 封装应用容器，提供极佳的性能、直观的日志与便捷的运维体验。
 
+## 演示环境（Demo）
+
+演示机与生产完全独立：`150.158.137.151`（ubuntu 用户，共享机上还有其他演示项目，占用 50000~50002）。
+
+- **对外入口**：`http://150.158.137.151:50003`（仅此一个端口；浏览器同源 `/api/*`、`/mcp/*` 由 Next.js rewrites 代理到回环 API）
+- **服务拓扑**：Web 50003（0.0.0.0）/ API 3202 / Parser 8100（均 systemd --user：`llmwiki-web` / `llmwiki-api` / `llmwiki-parser`，已 enable-linger）
+- **数据库**：本机 PG16（127.0.0.1:5432）`llmwiki` 库；pgvector 为源码编译 **0.8.7**（Ubuntu 24.04 apt 只有 0.6，缺 `hnsw.iterative_scan` 会导致迁移 20260920120000 失败）；角色与生产同构：`llmwiki`（BYPASSRLS + CREATEROLE + llmwiki_app ADMIN）迁移用、`llmwiki_app`（NOBYPASSRLS）运行时用
+- **Redis**：本机 6379，`REDIS_DB=3` 与其他演示项目隔离
+- **初始账号**：`admin`（初始密码见演示机 `~/gbrainkg/.secrets/admin_initial_password`）
+- **代码**：`~/gbrainkg`（工作区状态同步，含未提交修复；上游 GitHub 在该机克隆不稳定，用 `git bundle` / rsync 直传）
+- **升级**：本机 rsync 代码 → 演示机 `bash ~/demo-build.sh`（install → migrate → build）→ `systemctl --user restart llmwiki-api llmwiki-web`
+- **文档预览依赖**：API 宿主机需 `soffice`（LibreOffice 24.2，`--no-install-recommends` 安装 writer/calc/impress）+ `fonts-noto-cjk`。PPT「原版演示文稿预览」走 `pdf-preview` 端点服务端转 PDF（结果缓存 `converted_preview_vN.pdf`）；Word/Excel 由前端 `docx-preview`/`xlsx` 客户端渲染。**无需 OnlyOffice**：`preview-config`（OnlyOffice）端点目前没有任何前端调用，未部署 Document Server。
+- **模型配置（与生产同步，2026-10-02）**：`ModelProvider`/`ModelConfig` 整表自生产 inst1 导入（7 供应商 + 12 模型，llm=mimo-v2.6-flash / embedding=BAAI/bge-m3 / rerank=BAAI/bge-reranker-v2-m3，OCR 走 DB 内 ocr 供应商）；`apps/api/.env` 镜像生产 `~/.config/llmwiki/production.env` 的模型/检索/OCR 变量（含 `MODEL_CONFIG_KEY`、`AUTH_SECRET`、`PDF_PARSE_MODE=hybrid`、`OCR_PROVIDER=none`、`BGE_M3_*=false` 等），基础设施项（DB 连接、REDIS_DB=3、50003 域名、路径）保留演示专属，并发类按 2C/2G 折半（INGESTION/ENRICHMENT=4、COMPILER_QUEUE=2）。同步方法：生产 pg_dump 两表 → 演示库 TRUNCATE CASCADE 后导入；env 手工镜像。
+- **GBrain 引擎**：自生产整体搬迁 `~/.local/share/gbrain`（TS CLI on Bun，实际版本 0.60.25.0）+ `/usr/local/bin/bun` + `GBRAIN_HOME` 轻量状态（审计目录不搬）。演示库首次初始化 gbrain schema 需：postgres 超户预建 v35 的 `auto_enable_rls()` 函数与事件触发器并把函数 OWNER 转给 llmwiki → `PATH=$HOME/.local/bin:$PATH gbrain apply-migrations --yes` → **将 RLS 开启表集合对齐生产**（v35 回填会多开 83 张应用表导致 API 启动即崩，用生产的 `relrowsecurity=true` 表清单做差集 DISABLE）。备份：`~/llmwiki_pre_gbrain.dump`。
+- **注意**：该机 2C/2G+2G swap，`pnpm --filter web build` 需 `NODE_OPTIONS=--max-old-space-size=1408`；`llmwiki_app` 的新表权限靠 `ALTER DEFAULT PRIVILEGES FOR ROLE llmwiki` 兜底，全新库重装时先建角色再跑迁移
+
 ## 架构说明
 
 - **Web 前端 (`llmwiki-web.service`)**: Next.js 生产包，监听端口 `3200`（绑定 `0.0.0.0:3200`，局域网与本机均可访问）。
@@ -73,6 +89,13 @@
 
 所有的应用进程均通过 `systemd --user` 进行生命周期管理：
 
+同一实例只能由一个进程管理器启动 API。服务已由 systemd 管理时，使用该服务的
+`restart`，不要额外执行 `nohup node dist/main.js` 或 `pnpm start:prod`。
+重复进程会争抢端口；旧版本还会在启动失败前重写默认角色，触发授权版本变化，
+使问答返回 `Authorization changed; retry the request`。新版在初始化前检查端口，
+并跳过未变化的默认角色写入。诊断时同时查看监听 PID、服务 MainPID 和 NRestarts，
+确认三者一致且没有持续重启。生产操作仍须遵守项目的测试及明确发布授权门禁。
+
 ```bash
 # 查看服务运行状态
 systemctl --user status llmwiki-web.service llmwiki-api.service llmwiki-parser.service
@@ -128,6 +151,25 @@ bash scripts/rollback-release.sh --list --target=inst1
 
 回滚流程：按 manifest 回切代码（优先 `git checkout` 对应 SHA，否则从 `tree.tar.gz` 恢复）→ `pnpm install --frozen-lockfile` → 重启服务 → curl 健康检查。回滚失败非零退出。
 **健康检查失败不会自动回滚**（避免误伤）；脚本会打印上述回滚命令，由运维确认后手动执行。
+
+---
+
+## 文档预览转换服务（Office→PDF，2026-10 优化）
+
+PPT「原版演示文稿预览」等服务端 Office→PDF 转换由 `apps/api/src/ingestion/office-converter.ts` 驱动：
+**优先走常驻 unoserver（warm LibreOffice 监听，127.0.0.1:2003）**，二进制/监听不可用时自动回退到**每次独立 UserInstallation profile 的冷启动 soffice**（并发安全，代价 ~+350ms）。转换结果仍缓存为原件旁的 `converted_preview_vN.pdf`。
+
+- **选型结论**：引擎保持 LibreOffice（唯一高保真开源 PPTX 渲染器）；Gotenberg 只是它的 Docker 封装、Collabora/OnlyOffice 过重、pandoc/新兴原生引擎保真不足。改动点在驱动方式：冷启动（每请求 2-6s 的进程与 JVM 初始化）→ 常驻监听（实测中位 **544ms vs 1006ms**，约 1.9×；2C 演示机首转 2.0s，原为 5-15s 量级）。
+- **服务安装**（每台宿主机一次）：
+  ```bash
+  sudo apt-get install -y libreoffice-impress libreoffice-writer libreoffice-calc fonts-noto-cjk python3-uno
+  python3 -m venv --system-site-packages ~/.local/share/llmwiki/unoserver-venv   # 生产用 /opt/unoserver-venv
+  ~/.local/share/llmwiki/unoserver-venv/bin/pip install unoserver
+  sudo ln -sf <venv>/bin/{unoserver,unoconvert} /usr/local/bin/
+  # 用户级：systemctl --user enable --now llmwiki-unoserver  （单元：deploy/systemd/llmwiki-unoserver.service）
+  # 系统级（生产）：同单元装 /etc/systemd/system，WantedBy=multi-user.target
+  ```
+  常驻 soffice 空闲约 275MB RSS，单元 `MemoryMax=512M` 封顶；API 侧开关见 `apps/api/.env.example`（`OFFICE_PREVIEW_UNOSERVER`/`UNOSERVER_HOST/PORT/TIMEOUT`）。
 
 ---
 

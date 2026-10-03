@@ -1,15 +1,31 @@
 import { extractRelationFromQuery, surfaceFormsForRelation } from './relation-extractor';
 
 describe('relation-extractor', () => {
-  it('extracts generic relation words from queries', () => {
-    expect(extractRelationFromQuery('Who is the director of Blade Runner?')).toBe('director');
-    expect(extractRelationFromQuery('他的父亲是谁')).toBe('父亲');
-    expect(extractRelationFromQuery('what is the weather today')).toBeNull();
+  const original = process.env.RELATION_SURFACE_FORMS_JSON;
+  beforeEach(() => { delete process.env.RELATION_SURFACE_FORMS_JSON; });
+  afterEach(() => {
+    if (original === undefined) delete process.env.RELATION_SURFACE_FORMS_JSON;
+    else process.env.RELATION_SURFACE_FORMS_JSON = original;
   });
-
-  it('resolves surface forms including defaults + env extension', () => {
-    const forms = surfaceFormsForRelation('director');
-    expect(forms).toContain('director');
-    expect(forms).toContain('directed');
+  it.each([
+    ['Who is the director of Blade Runner?', 'director'],
+    ['他的父亲是谁', '父亲'],
+    ['What is the calibration custodian of Device Q?', 'calibration custodian'],
+    ["Who is Device Q's maintenance contractor?", 'maintenance contractor'],
+    ['这个项目的复核单位是什么', '复核单位'],
+    ['what is the weather today', null],
+    ['普通的问题没有关系词', null],
+  ])('extracts relation syntax without a subject dictionary: %s', (query, expected) => {
+    expect(extractRelationFromQuery(query)).toBe(expected);
+  });
+  it('does not inject unconfigured semantic aliases', () => {
+    expect(surfaceFormsForRelation('director')).toEqual(['director']);
+    expect(surfaceFormsForRelation('custodian')).toEqual(['custodian']);
+  });
+  it('uses explicit aliases and matches complete words', () => {
+    process.env.RELATION_SURFACE_FORMS_JSON = JSON.stringify({custodian:['held by']});
+    expect(extractRelationFromQuery('Which component is held by Unit Q?')).toBe('custodian');
+    expect(extractRelationFromQuery('Which component is withheld by Unit Q?')).toBeNull();
+    expect(surfaceFormsForRelation('custodian')).toEqual(['custodian','held by']);
   });
 });

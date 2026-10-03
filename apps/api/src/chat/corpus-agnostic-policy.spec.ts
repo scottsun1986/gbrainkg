@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import * as ts from 'typescript';
 
 /**
  * Policy guard for AGENTS.md §2: retrieval, semantic alignment and prompt
@@ -26,6 +27,10 @@ const BANNED_BUSINESS_TOKENS = [
   // sub-query planning towards one industry's corpus. Document-form nouns
   // (条例/规范/办法…) are generic and remain allowed.
   '无人机',
+  '息壤杯', '混成旅', '软研中心', '软件研发中心', 'AI谛听',
+  'EQ-0077', 'SUM-2026-5566', 'BIGDOC-VERIFY', 'EMP00077',
+  '^EMP\\d', 'husband|wife|spouse', '父亲|母亲',
+  'RETRIEVAL_BENCHMARK_PATTERNS',
 ];
 
 function sourceFiles(root: string, out: string[] = []): string[] {
@@ -47,11 +52,20 @@ function sourceFiles(root: string, out: string[] = []): string[] {
 describe('corpus-agnostic policy', () => {
   it('keeps business-scenario examples out of the API source', () => {
     const offenders: string[] = [];
-    for (const file of sourceFiles(__dirname)) {
+    for (const file of sourceFiles(join(__dirname, '..'))) {
       const content = readFileSync(file, 'utf8');
-      for (const token of BANNED_BUSINESS_TOKENS) {
-        if (content.includes(token)) offenders.push(`${file.split('/src/')[1]}: ${token}`);
-      }
+      const source = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true);
+      const visit = (node: ts.Node) => {
+        // Scan executable strings/regexes/prompts; comments and test fixtures are not rules.
+        const literal = ts.isStringLiteralLike(node) || ts.isTemplateHead(node)
+          || ts.isTemplateMiddle(node) || ts.isTemplateTail(node) ? node.text
+          : node.kind === ts.SyntaxKind.RegularExpressionLiteral ? node.getText(source) : '';
+        for (const token of BANNED_BUSINESS_TOKENS) {
+          if (literal.includes(token)) offenders.push(`${file.split('/src/')[1]}: ${token}`);
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(source);
     }
     expect(offenders).toEqual([]);
   });

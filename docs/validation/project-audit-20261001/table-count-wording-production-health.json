@@ -1,0 +1,63 @@
+{
+  "instances": [
+    {
+      "instance": "inst1",
+      "ready": {
+        "status": "ready",
+        "checks": {
+          "database": "ok",
+          "redis": "ok"
+        },
+        "apiReleaseFingerprint": "95d71d69010af385f5a0d63fc84ea73074470f71047534908bbdbe41bf74ffca",
+        "knowledgeProfile": {
+          "profile": "quality-first",
+          "authorization": true,
+          "immutableVersions": true,
+          "incrementalGraph": true,
+          "adaptiveRetrieval": true,
+          "embeddingRevisionKnown": false,
+          "embeddingPublicationPolicy": "fresh-per-version",
+          "sparse": false,
+          "maxSim": false,
+          "lateChunking": false
+        },
+        "timestamp": "2026-10-02T04:23:07.313Z"
+      },
+      "webBuildId": "CheB0D4eawteJcpYhA5KZ",
+      "publicHTTP": 200
+    },
+    {
+      "instance": "inst2",
+      "ready": {
+        "status": "ready",
+        "checks": {
+          "database": "ok",
+          "redis": "ok"
+        },
+        "apiReleaseFingerprint": "95d71d69010af385f5a0d63fc84ea73074470f71047534908bbdbe41bf74ffca",
+        "knowledgeProfile": {
+          "profile": "quality-first",
+          "authorization": true,
+          "immutableVersions": true,
+          "incrementalGraph": true,
+          "adaptiveRetrieval": true,
+          "embeddingRevisionKnown": false,
+          "embeddingPublicationPolicy": "fresh-per-version",
+          "sparse": false,
+          "maxSim": false,
+          "lateChunking": false
+        },
+        "timestamp": "2026-10-02T04:23:10.265Z"
+      },
+      "webBuildId": "CheB0D4eawteJcpYhA5KZ",
+      "publicHTTP": 200
+    }
+  ],
+  "services": [
+    "active",
+    "active",
+    "active",
+    "active",
+    "active"
+  ]
+}

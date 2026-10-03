@@ -1,0 +1,214 @@
+{
+  "api": "http://127.0.0.1:3202",
+  "test_kb": "系统测试-解析矩阵库",
+  "conflict_kb": null,
+  "started_by": "sota-suite",
+  "summary": {
+    "total": 25,
+    "passed": 25,
+    "failed": 0,
+    "skipped": 0
+  },
+  "cases": [
+    {
+      "id": "P0-01",
+      "category": "健康与认证",
+      "name": "/health 返回 200",
+      "status": "PASS",
+      "detail": "HTTP 200",
+      "latency_s": null
+    },
+    {
+      "id": "P0-02",
+      "category": "健康与认证",
+      "name": "无 Token 访问受保护接口 → 401",
+      "status": "PASS",
+      "detail": "",
+      "latency_s": null
+    },
+    {
+      "id": "P0-03",
+      "category": "健康与认证",
+      "name": "伪造 Token → 401/403",
+      "status": "PASS",
+      "detail": "",
+      "latency_s": null
+    },
+    {
+      "id": "P1-01",
+      "category": "语料与索引就绪",
+      "name": "锚点语料库存在且已发布文档 ≥10",
+      "status": "PASS",
+      "detail": "文档 32 篇",
+      "latency_s": null
+    },
+    {
+      "id": "P1-02",
+      "category": "语料与索引就绪",
+      "name": "分块向量嵌入覆盖率 ≥85%（语义就绪）",
+      "status": "PASS",
+      "detail": "覆盖率 100%（12732/12732）",
+      "latency_s": null
+    },
+    {
+      "id": "P2-01",
+      "category": "检索与问答",
+      "name": "条款精确-表格行：EQ-0077 巡检周期=30",
+      "status": "PASS",
+      "detail": "",
+      "latency_s": 22.9
+    },
+    {
+      "id": "P2-02",
+      "category": "检索与问答",
+      "name": "大文档尾部锚点：BIGDOC-VERIFY=7788",
+      "status": "PASS",
+      "detail": "",
+      "latency_s": 24.49
+    },
+    {
+      "id": "P2-03",
+      "category": "检索与问答",
+      "name": "多 Sheet xlsx 锚点：SUM-2026-5566",
+      "status": "PASS",
+      "detail": "",
+      "latency_s": 38.11
+    },
+    {
+      "id": "P2-04",
+      "category": "检索与问答",
+      "name": "超长文档首部锚点：天穹-2026 总预算=3.75亿",
+      "status": "PASS",
+      "detail": "",
+      "latency_s": 19.69
+    },
+    {
+      "id": "P2-05",
+      "category": "检索与问答",
+      "name": "全景列举：考勤手册全部章名",
+      "status": "PASS",
+      "detail": "",
+      "latency_s": 10.62
+    },
+    {
+      "id": "P3-01",
+      "category": "语义鸿沟与多源",
+      "name": "口语→术语：员工夏天几点上班 → 夏令时 08:30",
+      "status": "PASS",
+      "detail": "",
+      "latency_s": 39.45
+    },
+    {
+      "id": "P3-02",
+      "category": "语义鸿沟与多源",
+      "name": "多源冲突并列：两份考勤制度时间均呈现",
+      "status": "PASS",
+      "detail": "",
+      "latency_s": 41.18
+    },
+    {
+      "id": "P4-01",
+      "category": "拒答与反幻觉",
+      "name": "知识库外问题 → 标准拒答，不编造",
+      "status": "PASS",
+      "detail": "",
+      "latency_s": 40.66
+    },
+    {
+      "id": "P4-02",
+      "category": "拒答与反幻觉",
+      "name": "拒答时引用校验豁免（refusalExempt，无误导性告警）",
+      "status": "PASS",
+      "detail": "",
+      "latency_s": null
+    },
+    {
+      "id": "P5-01",
+      "category": "权限边界",
+      "name": "越权 kb_scope（不存在的库）→ 403",
+      "status": "PASS",
+      "detail": "",
+      "latency_s": null
+    },
+    {
+      "id": "P5-02",
+      "category": "权限边界",
+      "name": "无 Token 问答 → 401",
+      "status": "PASS",
+      "detail": "",
+      "latency_s": null
+    },
+    {
+      "id": "P6-01",
+      "category": "健壮性与安全",
+      "name": "SQL 注入样例 → 非 500",
+      "status": "PASS",
+      "detail": "",
+      "latency_s": null
+    },
+    {
+      "id": "P6-02",
+      "category": "健壮性与安全",
+      "name": "4 万字符超长问题 → 非 500",
+      "status": "PASS",
+      "detail": "",
+      "latency_s": null
+    },
+    {
+      "id": "P6-03",
+      "category": "健壮性与安全",
+      "name": "空问题 → 4xx 非 500",
+      "status": "PASS",
+      "detail": "",
+      "latency_s": null
+    },
+    {
+      "id": "P6-04",
+      "category": "健壮性与安全",
+      "name": "非法 UUID scope → 4xx 非 500",
+      "status": "PASS",
+      "detail": "",
+      "latency_s": null
+    },
+    {
+      "id": "P7-01",
+      "category": "知识图谱与运维",
+      "name": "知识图谱接口可用且首建 ≤60s",
+      "status": "PASS",
+      "detail": "首建 11.4s，documents=1000, relations=6432",
+      "latency_s": null
+    },
+    {
+      "id": "P7-02",
+      "category": "知识图谱与运维",
+      "name": "知识图谱二次访问走缓存 ≤3s",
+      "status": "PASS",
+      "detail": "缓存命中 0.04s",
+      "latency_s": null
+    },
+    {
+      "id": "P7-03",
+      "category": "知识图谱与运维",
+      "name": "OpenAPI 对外服务规范可访问",
+      "status": "PASS",
+      "detail": "OpenAPI 3.0.3 spec 200",
+      "latency_s": null
+    },
+    {
+      "id": "P8-01",
+      "category": "性能预算",
+      "name": "问答延迟预算 P50 ≤ PERF_BUDGET_S",
+      "status": "PASS",
+      "detail": "P50=31.3s / P95≈41.2s（n=8）",
+      "latency_s": null
+    },
+    {
+      "id": "P8-02",
+      "category": "性能预算",
+      "name": "引用契约：引用含 page_no/version，trace 含 citation_validation",
+      "status": "PASS",
+      "detail": "引用 1 条，契约完整",
+      "latency_s": 24.83
+    }
+  ]
+}

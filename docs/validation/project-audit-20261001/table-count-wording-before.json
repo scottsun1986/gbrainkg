@@ -1,0 +1,568 @@
+{
+  "answer": "另一支95分的数医星耀队长所属部门为政企客户部，不属于软件研发中心[1]。\n- 表格备注口径为“85分以上队伍视为推荐，不超过15个”[1]，与本问题的“超过90分”口径不同。",
+  "citations": [
+    {
+      "doc_title": "息壤杯团队打分表.xlsx",
+      "document_id": "302b830e-9944-4bd9-bb54-470de7d4edf6",
+      "score": 0.8941,
+      "page_no": 1,
+      "bbox": null,
+      "version": 1,
+      "version_conflict": null
+    }
+  ],
+  "traces": [
+    {
+      "id": "runtime_config",
+      "status": "running",
+      "summary": "读取平台数据库中的模型配置",
+      "details": null
+    },
+    {
+      "id": "runtime_config",
+      "status": "success",
+      "summary": "模型运行时配置已加载",
+      "details": null
+    },
+    {
+      "id": "permission_scope",
+      "status": "running",
+      "summary": "计算当前用户可读知识库及本次选择范围",
+      "details": null
+    },
+    {
+      "id": "permission_scope",
+      "status": "success",
+      "summary": "本次可检索 6 个知识库",
+      "details": {
+        "visibleCount": 6,
+        "selectedCount": 6,
+        "rejectedCount": 0,
+        "knowledgeBases": [
+          {
+            "id": "1ded0591-ef69-4083-b4db-e37c7531ba7d",
+            "name": "孙智强的笔记",
+            "type": "personal"
+          },
+          {
+            "id": "0173e892-595a-4f32-b2ec-d927ace28532",
+            "name": "软研中心知识库",
+            "type": "org"
+          },
+          {
+            "id": "4e856c91-a677-42d8-b9ee-5281c78a6fd3",
+            "name": "法律库",
+            "type": "industry"
+          },
+          {
+            "id": "2a3ec10c-3e33-4cc0-833b-045826ad9b9f",
+            "name": "测试行业库1",
+            "type": "industry"
+          },
+          {
+            "id": "877304ca-c5ea-4ec0-8bae-e21567b70b78",
+            "name": "根知识库",
+            "type": "org"
+          },
+          {
+            "id": "85d0744b-273c-4a20-a4f3-e0715fbc5d03",
+            "name": "南京电信知识库",
+            "type": "org"
+          }
+        ]
+      }
+    },
+    {
+      "id": "source_plan",
+      "status": "running",
+      "summary": "将业务权限范围映射为隔离的 GBrain Source",
+      "details": null
+    },
+    {
+      "id": "source_plan",
+      "status": "success",
+      "summary": "已选择 5 个原始知识 Source",
+      "details": {
+        "sourceKeys": [
+          "llmwiki-kb-1a8a44fe7e108df9",
+          "llmwiki-kb-502ebac1589d0a40",
+          "llmwiki-kb-6c5cdf402435f4e9",
+          "llmwiki-kb-ba4968262308c421",
+          "llmwiki-kb-e95b9bb1dfcd5f44"
+        ],
+        "scopeFingerprint": "707bea1e86bdaac8",
+        "aclEpoch": 6,
+        "knowledgeEpoch": 30
+      }
+    },
+    {
+      "id": "source_freshness",
+      "status": "running",
+      "summary": "核对业务文档与 GBrain 可检索页是否一致",
+      "details": null
+    },
+    {
+      "id": "source_freshness",
+      "status": "success",
+      "summary": "已核对 6 个 Source，索引新鲜",
+      "details": {
+        "checked": 6,
+        "rebuilt": 0,
+        "fresh": true,
+        "staleSources": [],
+        "sourceKeys": [
+          "llmwiki-kb-ba4968262308c421",
+          "llmwiki-kb-e95b9bb1dfcd5f44",
+          "llmwiki-kb-6c5cdf402435f4e9",
+          "llmwiki-kb-502ebac1589d0a40",
+          "llmwiki-kb-1a8a44fe7e108df9",
+          "llmwiki-kb-4ae1b61970d3b229"
+        ]
+      }
+    },
+    {
+      "id": "conversation_context",
+      "status": "running",
+      "summary": "读取同一会话的近期上下文",
+      "details": null
+    },
+    {
+      "id": "conversation_context",
+      "status": "success",
+      "summary": "已加载 0 条历史消息",
+      "details": {
+        "historyMessages": 0
+      }
+    },
+    {
+      "id": "query_rewrite",
+      "status": "running",
+      "summary": "结合历史指代生成独立检索问题",
+      "details": null
+    },
+    {
+      "id": "query_rewrite",
+      "status": "success",
+      "summary": "使用 query / 聚焦 模式",
+      "details": {
+        "rewrittenQuery": "息壤杯团队相关软件研发中心打分超过90的有几支队伍。",
+        "operation": "query",
+        "breadth": false,
+        "complexity": "simple",
+        "subQueries": [],
+        "expansions": [],
+        "hyde": false
+      }
+    },
+    {
+      "id": "personal_memory",
+      "status": "running",
+      "summary": "从当前用户私有 Source 加载相关长期记忆",
+      "details": null
+    },
+    {
+      "id": "personal_memory",
+      "status": "skipped",
+      "summary": "当前问题未请求个人记忆背景，优先执行授权知识检索",
+      "details": {
+        "matchedFacts": 0,
+        "reason": "not_memory_relevant"
+      }
+    },
+    {
+      "id": "scope_synthesis",
+      "status": "running",
+      "summary": null,
+      "details": null
+    },
+    {
+      "id": "scope_synthesis",
+      "status": "skipped",
+      "summary": "用户选择了部分知识库，不使用全范围综述",
+      "details": null
+    },
+    {
+      "id": "gbrain_retrieval",
+      "status": "running",
+      "summary": "执行向量、BM25、RRF、图谱信号与重排检索",
+      "details": {
+        "sourceCount": 5,
+        "operation": "query",
+        "breadth": false
+      }
+    },
+    {
+      "id": "gbrain_arm_policy",
+      "status": "skipped",
+      "summary": "GBrain 引擎臂按策略关闭（RETRIEVAL_ARM_POLICY=chunks_only），本次仅使用数据库分块召回",
+      "details": {
+        "policy": "chunks_only"
+      }
+    },
+    {
+      "id": "gbrain_retrieval",
+      "status": "success",
+      "summary": "GBrain 返回 26 个候选页面，初始语义证据置信度偏低，待扩检前置信度复核",
+      "details": {
+        "sourceCount": 5,
+        "operation": "query",
+        "breadth": false,
+        "candidateCount": 26,
+        "rerankedByGbrain": false,
+        "topEvidence": "### **（一）赛道设置**\n\n本次大赛以业务赛道为主线，鼓励跨班组组队参赛；赛道决定业务评委组别归属，用于分类评审、资产入库和评奖。大赛共设置四个业务赛道，覆盖中心主要业务环节。",
+        "topScore": 0.95,
+        "evidenceAssessment": {
+          "shouldEscalate": true,
+          "weak": true,
+          "evidence": "### **（一）赛道设置**\n\n本次大赛以业务赛道为主线，鼓励跨班组组队参赛；赛道决定业务评委组别归属，用于分类评审、资产入库和评奖。大赛共设置四个业务赛道，覆盖中心主要业务环节。",
+          "topScore": null,
+          "scoreFloor": 0.75,
+          "reason": "无经过验证的置信度，继续预算内检索"
+        },
+        "diagnostics": null
+      }
+    },
+    {
+      "id": "permission_guard",
+      "status": "running",
+      "summary": "按当前数据库权限和 Source 世代复核候选结果",
+      "details": null
+    },
+    {
+      "id": "permission_guard",
+      "status": "success",
+      "summary": "全部 26 个候选通过最终权限校验",
+      "details": {
+        "before": 26,
+        "after": 26,
+        "removed": 0
+      }
+    },
+    {
+      "id": "confidence_rerank",
+      "status": "running",
+      "summary": "先以交叉编码重排验证首轮弱语义候选",
+      "details": null
+    },
+    {
+      "id": "confidence_rerank",
+      "status": "success",
+      "summary": "首轮候选经交叉编码验证充分，跳过冗余扩检",
+      "details": {
+        "before": 26,
+        "after": 26,
+        "evidenceAssessment": {
+          "shouldEscalate": false,
+          "weak": true,
+          "evidence": "| 序号 | 团队名称 | 参赛赛道 | 参加方向 | 队长姓名 | 队长所属部门 | 最终得分 | 备注：85分以上队伍视为推荐，不超过15个 |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n| 001 | 溧水养老队 | 惠民产品创新赛道 | ai+健康与养老 | 王宇恒 | 溧水分公司 | 80 |  |\n| 002 | alter | 惠民产品创新赛道 | ai+教育与办公 | 顾天 | 秦淮区营销中心 | 85 |  |\n| 003 | 云端造物局 | 惠民产品创新赛道 | ai+文娱与生活 | 严程 | 江宁分公司 | 80 |  |\n| 004 | 古刹新智 | 惠民产品创新赛道 | ai+家居与社区 | 赵远鹏 | 软研中心混成旅 | 90 |  |\n| 005 | 好好好 | 惠民产品创新赛道 | ai+文娱与生活 | 曾庆栋 | 软研中心混成旅 | 80 |  |\n| 006 | 政务智网团队 | 惠民产品创新赛道 | ai+个体经营/客户运营 | 戴晓菡 | 网络操作维护中心 | 85 |  |\n| 007 | 智耦战队 | 惠民产品创新赛道 | ai+文娱与生活 | 赵佩一 | 校园营销服务中心 | 80 |  |\n| 008 | 忧郁蓝调 | 惠民产品创新赛道 | ai+文娱与生活 | 赵羿 | 校园营销服务中心 | 80 |  |\n| 009 | 慧议智创 | 惠民产品创新赛道 | ai+教育与办公 | 李焱 | 网络操作维护中心 | 85 |  |\n| 010 | 翼载千算 | 惠民产品创新赛道 | ai+健康与养老 | 刘姝含 | 网络操作维护中心 | 90 |  |\n| 011 | 三个通信匠 | 惠民产品创新赛道 | ai+自选开放场景 | 丁林森 | 六合分公司 | 80 |  |\n| 012 | 息焰驯火 | 惠民产品创新赛道 | ai+自选开放场景 | 文超 | 软研中心混成旅 | 80 |  |\n| 013 | 银龄智航队 | 惠民产品创新赛道 | ai+健康与养老 | 石怡杰 | 软研中心混成旅 | 90 |  |\n| 014 | 翼联智护 | 惠民产品创新赛道 | ai+健康与养老 | 叶啟 | 软研中心混成旅 | 80 |  |\n| 015 | 轻办公小队 | 惠民产品创新赛道 | ai+教育与办公 | 孟晋 | 软研中心混成旅 | 80 |  |\n| 016 | ai 惠企大师 千企智巡智维 | 惠民产品创新赛道 | ai+个体经营/客户运营 | 刘深 | 网络操作维护中心 | 90 |  |\n| 017 | ai谛听产品小组 | 惠民产品创新赛道 | ai+自选开放场景 | 叶孟宇 | 软研中心混成旅 | 95 |  |\n| 018 | 智审 | 惠民产品创新赛道 | ai+教育与办公 | 朱莹 | 软研中心混成旅 | 80 |  |\n| 019 | 天翼智配 | 惠民产品创新赛道 | ai+个体经营/客户运营 | 蔡昊 | 网络操作维护中心 | 85 |  |\n| 020 | 数医星耀 | 惠民产品创新赛道 | ai+健康与养老 | 任香如 | 政企客户部 | 95 |  |\n| 021 | 南京电信软研银龄智膳小组 | 惠民产品创新赛道 | ai+健康与养老 | 帅辰瀚 | 软研中心混成旅 | 85 |  |\n| 022 | 单枪匹马编码队 | 惠民产品创新赛道 | ai+自选开放场景 | 李少辉 | 软研中心混成旅 | 80 |  |\n| 023 | 南京电信loom团队 | 惠民产品创新赛道 | ai+自选开放场景 | 郝仁珽 | 软研中心混成旅 | 90 |  |\n| 024 | 周和顾 | 惠民产品创新赛道 | ai+教育与办公 | 周杨 | 软研中心混成旅 | 90 |  |\n| 025 | 低空领航队 | 惠民产品创新赛道 | ai+自选开放场景 | 吕思纯 | 软研中心混成旅 | 90 |  |\n| 026 | 新壤启阳 | 惠民产品创新赛道 | ai+文娱与生活 | 贺新固 | 软研中心混成旅 | 90 |  |\n| 027 | build | 惠民产品创新赛道 | ai+教育与办公 | 吴倩倩 | 高淳分公司 | 80 |  |\n| 天翼云盘：https://cloud.189.cn/t/amza32qenief （访问码：yr4j） |  |  |  |  |  |  |  |",
+          "topScore": null,
+          "reason": "重排已完成，置信度未知；保留候选并交由原文核验"
+        }
+      }
+    },
+    {
+      "id": "retrieval_escalation",
+      "status": "running",
+      "summary": null,
+      "details": null
+    },
+    {
+      "id": "retrieval_escalation",
+      "status": "skipped",
+      "summary": "重排已完成，置信度未知；保留候选并交由原文核验",
+      "details": {
+        "evidence": "| 序号 | 团队名称 | 参赛赛道 | 参加方向 | 队长姓名 | 队长所属部门 | 最终得分 | 备注：85分以上队伍视为推荐，不超过15个 |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n| 001 | 溧水养老队 | 惠民产品创新赛道 | ai+健康与养老 | 王宇恒 | 溧水分公司 | 80 |  |\n| 002 | alter | 惠民产品创新赛道 | ai+教育与办公 | 顾天 | 秦淮区营销中心 | 85 |  |\n| 003 | 云端造物局 | 惠民产品创新赛道 | ai+文娱与生活 | 严程 | 江宁分公司 | 80 |  |\n| 004 | 古刹新智 | 惠民产品创新赛道 | ai+家居与社区 | 赵远鹏 | 软研中心混成旅 | 90 |  |\n| 005 | 好好好 | 惠民产品创新赛道 | ai+文娱与生活 | 曾庆栋 | 软研中心混成旅 | 80 |  |\n| 006 | 政务智网团队 | 惠民产品创新赛道 | ai+个体经营/客户运营 | 戴晓菡 | 网络操作维护中心 | 85 |  |\n| 007 | 智耦战队 | 惠民产品创新赛道 | ai+文娱与生活 | 赵佩一 | 校园营销服务中心 | 80 |  |\n| 008 | 忧郁蓝调 | 惠民产品创新赛道 | ai+文娱与生活 | 赵羿 | 校园营销服务中心 | 80 |  |\n| 009 | 慧议智创 | 惠民产品创新赛道 | ai+教育与办公 | 李焱 | 网络操作维护中心 | 85 |  |\n| 010 | 翼载千算 | 惠民产品创新赛道 | ai+健康与养老 | 刘姝含 | 网络操作维护中心 | 90 |  |\n| 011 | 三个通信匠 | 惠民产品创新赛道 | ai+自选开放场景 | 丁林森 | 六合分公司 | 80 |  |\n| 012 | 息焰驯火 | 惠民产品创新赛道 | ai+自选开放场景 | 文超 | 软研中心混成旅 | 80 |  |\n| 013 | 银龄智航队 | 惠民产品创新赛道 | ai+健康与养老 | 石怡杰 | 软研中心混成旅 | 90 |  |\n| 014 | 翼联智护 | 惠民产品创新赛道 | ai+健康与养老 | 叶啟 | 软研中心混成旅 | 80 |  |\n| 015 | 轻办公小队 | 惠民产品创新赛道 | ai+教育与办公 | 孟晋 | 软研中心混成旅 | 80 |  |\n| 016 | ai 惠企大师 千企智巡智维 | 惠民产品创新赛道 | ai+个体经营/客户运营 | 刘深 | 网络操作维护中心 | 90 |  |\n| 017 | ai谛听产品小组 | 惠民产品创新赛道 | ai+自选开放场景 | 叶孟宇 | 软研中心混成旅 | 95 |  |\n| 018 | 智审 | 惠民产品创新赛道 | ai+教育与办公 | 朱莹 | 软研中心混成旅 | 80 |  |\n| 019 | 天翼智配 | 惠民产品创新赛道 | ai+个体经营/客户运营 | 蔡昊 | 网络操作维护中心 | 85 |  |\n| 020 | 数医星耀 | 惠民产品创新赛道 | ai+健康与养老 | 任香如 | 政企客户部 | 95 |  |\n| 021 | 南京电信软研银龄智膳小组 | 惠民产品创新赛道 | ai+健康与养老 | 帅辰瀚 | 软研中心混成旅 | 85 |  |\n| 022 | 单枪匹马编码队 | 惠民产品创新赛道 | ai+自选开放场景 | 李少辉 | 软研中心混成旅 | 80 |  |\n| 023 | 南京电信loom团队 | 惠民产品创新赛道 | ai+自选开放场景 | 郝仁珽 | 软研中心混成旅 | 90 |  |\n| 024 | 周和顾 | 惠民产品创新赛道 | ai+教育与办公 | 周杨 | 软研中心混成旅 | 90 |  |\n| 025 | 低空领航队 | 惠民产品创新赛道 | ai+自选开放场景 | 吕思纯 | 软研中心混成旅 | 90 |  |\n| 026 | 新壤启阳 | 惠民产品创新赛道 | ai+文娱与生活 | 贺新固 | 软研中心混成旅 | 90 |  |\n| 027 | build | 惠民产品创新赛道 | ai+教育与办公 | 吴倩倩 | 高淳分公司 | 80 |  |\n| 天翼云盘：https://cloud.189.cn/t/amza32qenief （访问码：yr4j） |  |  |  |  |  |  |  |",
+        "topScore": null
+      }
+    },
+    {
+      "id": "source_reconcile_retry",
+      "status": "running",
+      "summary": null,
+      "details": null
+    },
+    {
+      "id": "source_reconcile_retry",
+      "status": "skipped",
+      "summary": "首轮检索已有结果，无需重建重试",
+      "details": null
+    },
+    {
+      "id": "weknora_retrieval",
+      "status": "running",
+      "summary": null,
+      "details": null
+    },
+    {
+      "id": "weknora_retrieval",
+      "status": "skipped",
+      "summary": "WeKnora 外部检索未配置或处于禁用状态（保持纯净 GBrain 知识主源）",
+      "details": null
+    },
+    {
+      "id": "section_align",
+      "status": "running",
+      "summary": "按问题点名的小节/表角色调整候选排序",
+      "details": null
+    },
+    {
+      "id": "section_align",
+      "status": "success",
+      "summary": "已应用 section/table-role 对齐乘子",
+      "details": null
+    },
+    {
+      "id": "section_rescue",
+      "status": "running",
+      "summary": "同文档补拉未覆盖的问题点名小节",
+      "details": null
+    },
+    {
+      "id": "section_rescue",
+      "status": "success",
+      "summary": "候选池已覆盖问题小节，无需救援",
+      "details": null
+    },
+    {
+      "id": "rerank",
+      "status": "running",
+      "summary": "统一比较跨 Source 候选并执行相关性打分",
+      "details": null
+    },
+    {
+      "id": "rerank",
+      "status": "success",
+      "summary": "平台交叉编码重排完成（跨源统一分数尺度）",
+      "details": {
+        "before": 26,
+        "after": 26,
+        "reranked": true,
+        "platformApplied": true
+      }
+    },
+    {
+      "id": "graphrag_drift",
+      "status": "running",
+      "summary": null,
+      "details": null
+    },
+    {
+      "id": "graphrag_drift",
+      "status": "skipped",
+      "summary": "问题复杂度或证据状态无需启动 DRIFT",
+      "details": null
+    },
+    {
+      "id": "evidence_selection",
+      "status": "running",
+      "summary": "相关性阈值、组级去重与 token 预算的联合选择",
+      "details": null
+    },
+    {
+      "id": "top_rank_guarantee",
+      "status": "warning",
+      "summary": "检索前 5 名中有 3 篇文档被相关性地板剪掉，已恢复进上下文",
+      "details": {
+        "restored": 3,
+        "docs": [
+          "id:70a3e5b7-caca-41ef-86e6-baec817a86a5",
+          "id:068b1860-a7a9-4db5-acf2-a23325d2e0e7",
+          "id:5507260c-f278-4960-8224-1adb626d3f37"
+        ]
+      }
+    },
+    {
+      "id": "evidence_selection",
+      "status": "warning",
+      "summary": "已选择 4/26 条证据（组级去重 + token 预算）",
+      "details": {
+        "before": 26,
+        "after": 4,
+        "removed": 22,
+        "selection": {
+          "before": 8,
+          "after": 1,
+          "removed": 7,
+          "groups": 1,
+          "usedTokens": 1070,
+          "relevanceFloorRatio": 0.35,
+          "mmrLambda": 0.72
+        }
+      }
+    },
+    {
+      "id": "lazy_compile",
+      "status": "running",
+      "summary": "检查命中主题页是否存在待编译变更",
+      "details": null
+    },
+    {
+      "id": "lazy_compile",
+      "status": "success",
+      "summary": "命中主题页均无需即时重编译",
+      "details": {
+        "checked": 1,
+        "compiled": 0,
+        "injected": 0
+      }
+    },
+    {
+      "id": "version_conflict_check",
+      "status": "running",
+      "summary": "检测多版本并裁决现行有效标准",
+      "details": null
+    },
+    {
+      "id": "version_conflict_check",
+      "status": "warning",
+      "summary": "裁决 2 个文档的多版本冲突: 软件研发中心绩效管理办法.doc, 软件研发中心绩效管理办法 V2.doc",
+      "details": {
+        "conflictCount": 2,
+        "conflictTitles": [
+          "软件研发中心绩效管理办法.doc",
+          "软件研发中心绩效管理办法 V2.doc"
+        ]
+      }
+    },
+    {
+      "id": "answer_context",
+      "status": "running",
+      "summary": "从授权证据页组装可引用的回答上下文",
+      "details": null
+    },
+    {
+      "id": "answer_context",
+      "status": "success",
+      "summary": "已组装 4 条可引用证据",
+      "details": {
+        "citationCount": 4,
+        "contextChars": 6464,
+        "stitchedCount": 0,
+        "structuredEvidence": false,
+        "evidenceGroups": [
+          {
+            "kind": "subquery",
+            "label": "息壤杯团队相关软件研发中心打分超过90的有几支队伍",
+            "sourceIndexes": [
+              1,
+              2,
+              3,
+              4
+            ]
+          }
+        ],
+        "hardCapDropped": 0,
+        "hardCapTruncated": 0,
+        "protectedEvidenceCount": 1
+      }
+    },
+    {
+      "id": "retrieval_confidence",
+      "status": "warning",
+      "summary": "本次没有可用的重排分数（未配置重排模型或重排失败），拒答阈值只能作用于合成分，判定能力已降级",
+      "details": {
+        "evidenceCount": 4,
+        "maxSyntheticScore": 0,
+        "syntheticThreshold": 0.999,
+        "hasMeaningfulPreAnswer": true
+      }
+    },
+    {
+      "id": "retrieval_confidence",
+      "status": "warning",
+      "summary": "当前模型没有匹配的留出集校准参数，进入原文逐句核验，不使用合成分数决定拒答",
+      "details": {
+        "scoreCalibrated": false,
+        "evidenceCount": 4
+      }
+    },
+    {
+      "id": "llm_generation",
+      "status": "running",
+      "summary": "基于授权证据生成回答并要求逐项引用",
+      "details": null
+    },
+    {
+      "id": "grounding_gate",
+      "status": "running",
+      "summary": "对暂扣语句执行证据蕴含复核",
+      "details": null
+    },
+    {
+      "id": "grounding_gate",
+      "status": "warning",
+      "summary": "3 句因缺乏证据支持被拦截，未向用户展示",
+      "details": {
+        "verified": 2,
+        "held": 3,
+        "recovered": 0,
+        "dropped": 3,
+        "strict": true,
+        "providerError": false
+      }
+    },
+    {
+      "id": "citation_rebinding",
+      "status": "success",
+      "summary": "回答角标与证据一一对应",
+      "details": {
+        "reboundCitations": 0,
+        "evidencePool": 4
+      }
+    },
+    {
+      "id": "llm_generation",
+      "status": "success",
+      "summary": "大模型回答生成完成",
+      "details": {
+        "model": "mimo-v2.6-flash",
+        "tokenEstimate": 69,
+        "outputChars": 88,
+        "synthesizedRefusal": false,
+        "promptCacheHitTokens": 0,
+        "promptCacheMissTokens": 0,
+        "cacheHitRate": "0%"
+      }
+    },
+    {
+      "id": "citation_validation",
+      "status": "running",
+      "summary": "校验回答角标并绑定到原始文档预览",
+      "details": null
+    },
+    {
+      "id": "citation_validation",
+      "status": "success",
+      "summary": "回答引用 1 个原始证据页面",
+      "details": {
+        "candidateCitations": 4,
+        "referencedCitations": [
+          1
+        ],
+        "invalidMarkersRemoved": false,
+        "aclStripped": 0,
+        "semanticCoverage": {
+          "totalStatements": 2,
+          "groundedStatements": 2,
+          "coverageRatio": 1,
+          "refusalExempt": false
+        }
+      }
+    },
+    {
+      "id": "message_persistence",
+      "status": "running",
+      "summary": "正在保存回答、引用和处理链路",
+      "details": null
+    },
+    {
+      "id": "message_persistence",
+      "status": "success",
+      "summary": "回答、引用和处理链路已保存",
+      "details": null
+    }
+  ],
+  "latency_s": 34.31,
+  "status": 201,
+  "conversation_id": "db52ae4f-a6c5-4d6e-bf07-fe562ca4da7a"
+}

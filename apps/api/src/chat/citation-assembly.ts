@@ -24,6 +24,18 @@ import {
   stripInvalidCitationMarkers,
 } from "./retrieval-arms";
 
+/**
+ * Whether the pre-cache entailment gate runs. On by default because it only
+ * costs one batched fast-model call per cache write and the downside it guards
+ * is a poisoned entry replayed for the whole TTL; operators can disable it when
+ * the fast model is unavailable and lexical grounding is the only bar.
+ */
+function cacheEntailmentGateEnabled(): boolean {
+  const raw = String(process.env.CACHE_ENTAILMENT_GATE ?? '').trim().toLowerCase();
+  if (raw === '0' || raw === 'false' || raw === 'off') return false;
+  return true;
+}
+
 export interface CitationAssemblyDeps {
   logger: Logger;
   prisma?: any;
@@ -72,6 +84,23 @@ export function isRefusalShapedAnswer(fullAnswer: string, statements: string[]):
   if (!statements.some(isStrictRefusal)) return false;
   return statements.every(
     (s) => isStrictRefusal(s) || absenceClaim.test(s) || sourceExplanation.test(s.trim()) || filler(s),
+  );
+}
+
+/**
+ * Remove [n] markers whose citation was dropped by the independent ACL pass.
+ * Surviving markers keep their ORIGINAL indices, so only membership in
+ * survivingIndices decides: comparing against survivingIndices.size would
+ * wrongly strip a trailing citation whenever a middle one is removed
+ * (citations [1,2,3] with [2] ACL-dropped → [3] compared against size 2 and
+ * lost, leaving a surviving citation unreferenceable in the answer).
+ */
+export function stripMarkersOfDroppedCitations(
+  answer: string,
+  survivingIndices: Set<number>,
+): string {
+  return String(answer || '').replace(/\[(\d+)\]/g, (full, rawIndex) =>
+    survivingIndices.has(Number(rawIndex)) ? full : '',
   );
 }
 
@@ -953,16 +982,16 @@ export class CitationAssemblyService {
     });
     if (finalCitations.length < preAclCount) {
       const survivingIndices = new Set(finalCitations.map((f) => f.originalIndex));
-      safeAnswer = safeAnswer.replace(/\[(\d+)\]/g, (full, rawIndex) => {
-        const index = Number(rawIndex);
-        return index >= 1 && index <= survivingIndices.size && survivingIndices.has(index) ? full : '';
-      });
+      safeAnswer = stripMarkersOfDroppedCitations(safeAnswer, survivingIndices);
     }
 
     const statements = safeAnswer.split(/(?:\n+|[。！？])/).map(s => s.trim()).filter(s => s.length >= 5);
     const totalStatements = statements.length;
     let groundedStatements = 0;
     const ungroundedStatements: string[] = [];
+    // P1 质量-2 句级证据绑定：每个语句记录其引用的角标与证据块，供蕴含
+    // 判定、诊断工具与人工审核逐句回溯（span binding）。
+    const sentenceGrounding: Array<{ text: string; cites: number[] | null; chunkIds: string[]; supported: boolean }> = [];
     for (const stmt of statements) {
       const tags = stmt.match(/\[(\d+)\]/g) || [];
       const validTagIndices = tags
@@ -979,7 +1008,17 @@ export class CitationAssemblyService {
             return String(item?.citation?.context || item?.citation?.snippet || "");
           }).filter(Boolean)
         : finalCitations.map((item: any) => String(item.citation?.context || item.citation?.snippet || ""));
-      if (evidenceTexts.length > 0 && statementSupportedBy(stmt, evidenceTexts, hasValidTag)) {
+      const lexicallySupported = evidenceTexts.length > 0 && statementSupportedBy(stmt, evidenceTexts, hasValidTag);
+      const boundCitations = hasValidTag
+        ? validTagIndices.map((n) => finalCitations.find((f) => f.originalIndex === n)?.citation).filter(Boolean)
+        : [];
+      sentenceGrounding.push({
+        text: stmt,
+        cites: hasValidTag ? validTagIndices : null,
+        chunkIds: boundCitations.map((c: any) => String(c?.chunkId || c?.metadata?.blockId || '')).filter(Boolean),
+        supported: lexicallySupported,
+      });
+      if (lexicallySupported) {
         groundedStatements++;
       } else {
         ungroundedStatements.push(stmt);
@@ -1001,6 +1040,12 @@ export class CitationAssemblyService {
         .slice(0, 6000);
       const entailed = await this.judgeEntailment(ungroundedStatements, evidenceText);
       groundedStatements += entailed.size;
+      // 蕴含判定放行的语句在绑定表中标注为 supported（判定通道与词面通道分开）。
+      for (const entailedIndex of entailed) {
+        const text = ungroundedStatements[entailedIndex];
+        const binding = sentenceGrounding.find((g) => g.text === text);
+        if (binding) binding.supported = true;
+      }
     }
     let coverageRatio = totalStatements > 0 ? Number((groundedStatements / totalStatements).toFixed(2)) : 1.0;
     // A standard refusal makes no factual claims, so the absence of citation
@@ -1032,6 +1077,9 @@ export class CitationAssemblyService {
         invalidMarkersRemoved: safeAnswer !== fullAnswer,
         aclStripped: preAclCount - finalCitations.length,
         semanticCoverage,
+        // 句级绑定与未支撑语句清单（诊断三段导出与人工审核的输入）。
+        sentenceGrounding: sentenceGrounding.map((g) => ({ ...g, text: g.text.slice(0, 80) })),
+        unsupportedStatements: ungroundedStatements.map((s) => s.slice(0, 80)),
       },
     );
 
@@ -1106,6 +1154,61 @@ export class CitationAssemblyService {
         "Answer not cached: generated with private context (personal memory or prior conversation turns).",
       );
     }
+    // Entailment gate on the way INTO the cache.
+    //
+    // The coverage ratio above is a lexical proxy: statementSupportedBy accepts
+    // a sentence when its characters/Han bigrams overlap the cited evidence and
+    // its numeric claims appear there. A sentence can clear that bar while
+    // asserting something the evidence does not entail (the classic failure is
+    // a same-topic distractor quoted as if it answered the question). A cache
+    // entry then replays that ungrounded answer to every user in the same scope
+    // for the whole TTL, so the one place a fabricated claim must not survive
+    // is the write.
+    //
+    // The judge is best-effort and batched: all statements go to the fast model
+    // in one call, and a failure to reach the model is not treated as
+    // verification (it falls back to the lexical decision already made, so a
+    // model outage cannot silently bless a poisoned answer either way - it
+    // simply does not add the extra veto).
+    let entailmentVetoed = false;
+    let entailmentVerified = false;
+    if (
+      cacheEntailmentGateEnabled() &&
+      this.semanticCacheService &&
+      question &&
+      userScope?.fingerprint &&
+      fullAnswer.trim() &&
+      !refusalNotCacheable &&
+      !groundingNotCacheable &&
+      !privateContextNotCacheable &&
+      statements.length > 0
+    ) {
+      try {
+        // Evidence is the same pool the answer was allowed to cite - the union
+        // of selected citation texts, which is what the judge needs to decide
+        // entailment rather than mere topicality.
+        const evidenceText = finalCitations
+          .map((item: any) => String(item?.citation?.context || item?.citation?.snippet || ''))
+          .filter(Boolean)
+          .join('\n\n');
+        if (evidenceText.trim()) {
+          const supported = await this.judgeEntailment(statements, evidenceText);
+          const unsupportedCount = statements.length - supported.size;
+          entailmentVerified = supported.size > 0;
+          if (unsupportedCount > 0) {
+            entailmentVetoed = true;
+            this.logger.warn(
+              `Answer not cached: entailment judge rejected ${unsupportedCount}/${statements.length} statements.`,
+            );
+          }
+        }
+      } catch (err) {
+        this.logger.debug(
+          `Entailment gate skipped for cache write: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
     if (
       this.semanticCacheService &&
       question &&
@@ -1113,7 +1216,8 @@ export class CitationAssemblyService {
       fullAnswer.trim() &&
       !refusalNotCacheable &&
       !groundingNotCacheable &&
-      !privateContextNotCacheable
+      !privateContextNotCacheable &&
+      !entailmentVetoed
     ) {
       this.semanticCacheService.store(
         question,

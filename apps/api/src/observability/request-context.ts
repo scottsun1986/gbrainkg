@@ -35,6 +35,16 @@ export function getRequestContext(): RequestContext | undefined {
   return storage.getStore();
 }
 
+/**
+ * Run work with NO request context. Background kicks triggered from HTTP
+ * handlers (e.g. outbox dispatch) must drop the caller's identity before
+ * promoting themselves to a service principal — runAsService rejects any
+ * promotion while a non-service request context is active.
+ */
+export function runOutsideRequestContext<T>(fn: () => T): T {
+  return storage.exit(fn);
+}
+
 export function getRequestId(): string | undefined {
   return storage.getStore()?.requestId;
 }

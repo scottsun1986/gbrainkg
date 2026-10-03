@@ -19,14 +19,7 @@ const GENERIC_EXAMPLES = [
 ];
 
 export function loadCorpusConfig(env: NodeJS.ProcessEnv = process.env): CorpusAgnosticConfig {
-  let relation: Record<string, string[]> = {};
-  if (env.RELATION_SURFACE_FORMS_JSON) {
-    try {
-      relation = JSON.parse(env.RELATION_SURFACE_FORMS_JSON);
-    } catch {
-      relation = {};
-    }
-  }
+  const relation = resolveRelationSurfaceForms(env);
   return {
     enableLegalStructureBoost:
       String(env.ENABLE_LEGAL_STRUCTURE_BOOST ?? '1').toLowerCase() !== '0',
@@ -35,43 +28,18 @@ export function loadCorpusConfig(env: NodeJS.ProcessEnv = process.env): CorpusAg
   };
 }
 
-/**
- * 通用（非业务）关系词表：亲属/创作者/地点等多跳桥接常用关系。
- * 可通过 RELATION_SURFACE_FORMS_JSON 扩展或覆盖；禁止加入部署方业务词。
- */
-export const DEFAULT_RELATION_SURFACE_FORMS: Record<string, string[]> = {
-  director: ['director', 'directed', 'directs', 'direct'],
-  author: ['author', 'authored', 'writer', 'written', 'wrote'],
-  writer: ['writer', 'written', 'wrote', 'author'],
-  creator: ['creator', 'created', 'founded'],
-  founder: ['founder', 'founded'],
-  composer: ['composer', 'composed'],
-  producer: ['producer', 'produced'],
-  husband: ['husband', 'married', 'spouse'],
-  wife: ['wife', 'married', 'spouse'],
-  spouse: ['spouse', 'married', 'husband', 'wife'],
-  father: ['father', 'son of', 'daughter of'],
-  mother: ['mother', 'son of', 'daughter of'],
-  born: ['born', 'birth', 'birthplace'],
-  birthplace: ['born', 'birth', 'birthplace'],
-  died: ['died', 'death', 'buried'],
-  publisher: ['publisher', 'published by'],
-  employer: ['employer', 'employed by'],
-};
-
+/** Relation aliases are explicitly supplied by deployment configuration. */
 export function resolveRelationSurfaceForms(
   env: NodeJS.ProcessEnv = process.env,
 ): Record<string, string[]> {
-  const base = { ...DEFAULT_RELATION_SURFACE_FORMS };
-  if (env.RELATION_SURFACE_FORMS_JSON) {
-    try {
-      const extra = JSON.parse(env.RELATION_SURFACE_FORMS_JSON) as Record<string, string[]>;
-      for (const [k, v] of Object.entries(extra)) {
-        base[k] = Array.from(new Set([...(base[k] || []), ...v]));
-      }
-    } catch {
-      /* keep defaults */
-    }
-  }
-  return base;
+  if (!env.RELATION_SURFACE_FORMS_JSON) return {};
+  try {
+    const raw: unknown = JSON.parse(env.RELATION_SURFACE_FORMS_JSON);
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+    return Object.fromEntries(Object.entries(raw).slice(0, 100).flatMap(([key, value]) => {
+      if (!key.trim() || key.length > 80 || !Array.isArray(value)) return [];
+      const forms = [...new Set(value.filter((v): v is string => typeof v === 'string' && !!v.trim() && v.length <= 80).map(v => v.trim()))].slice(0, 64);
+      return forms.length ? [[key.trim().toLowerCase(), forms]] : [];
+    }));
+  } catch { return {}; }
 }

@@ -1,7 +1,7 @@
 "use client";
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { API_BASE_URL } from '@/lib/api';
-import { errorMessage, apiMessage, asArray, asRecord, str, bool } from '@/lib/errors';
+import { asArray, asRecord, str, bool } from '@/lib/errors';
 import { emitAdminDataUpdated } from '@/lib/app-events';
 import { appStore } from '@/lib/app-store';
 import type { AdminData, CurrentUser, KbInfo, OrgTreeNode, UserRow } from '@/types';
@@ -73,12 +73,36 @@ export function useAdminBootstrap(): {
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [dbData, setDbData] = useState<AdminData | null>(null);
 
+  const loadSequence = useRef(0);
+  const activeLoad = useRef<AbortController | null>(null);
+  useEffect(() => () => { activeLoad.current?.abort(); }, []);
+
   const loadAdminData = useCallback(async (token: string): Promise<CurrentUser | null> => {
+    const sequence = ++loadSequence.current;
+    activeLoad.current?.abort();
+    const controller = new AbortController();
+    activeLoad.current = controller;
+    const isCurrent = () => sequence === loadSequence.current && window.localStorage.getItem('llmwiki_token') === token;
     const headers = { Authorization: `Bearer ${token}` };
+    const fetchData = async (path: string, timeoutMs = 15_000) => {
+      const request = new AbortController();
+      const abort = () => request.abort();
+      controller.signal.addEventListener('abort', abort, { once: true });
+      if (controller.signal.aborted) request.abort();
+      const timer = window.setTimeout(abort, timeoutMs);
+      try {
+        const response = await fetch(`${API_BASE_URL}${path}`, { headers, signal: request.signal });
+        return { ok: response.ok, status: response.status, data: response.ok ? await response.json() : null };
+      } finally {
+        window.clearTimeout(timer);
+        controller.signal.removeEventListener('abort', abort);
+      }
+    };
     // 阶段一：轻量 session/bootstrap（所有用户可用）+ 会话列表并行拉取。
     // 普通用户不再先打注定 403 的 admin/data（服务端在拒绝前还要执行数个
     // 权限查询）；管理员的完整清单在阶段二异步补齐，不阻塞主壳渲染。
-    const applyBootstrap = async (d: AdminData, convRes: Response | null) => {
+    const applyBootstrap = async (d: AdminData) => {
+    if (!isCurrent()) return;
     appStore.CAPABILITIES = Array.isArray(d.capabilities) ? (d.capabilities as string[]) : [];
     appStore.KNOWLEDGE_BASES = mapKbs(asArray(d.kbs));
     appStore.USERS = mapUsers(asArray(d.users));
@@ -210,46 +234,59 @@ export function useAdminBootstrap(): {
       appStore.ORG_TREES = [];
       appStore.ORG_TREE = null;
     }
-    if (convRes && convRes.ok) {
-      appStore.CONVERSATIONS = await convRes.json().catch(() => []);
-    }
     setDbData(d);
     emitAdminDataUpdated({ orgTrees: appStore.ORG_TREES, orgTree: appStore.ORG_TREE });
     };
 
-    const [sessionRes, conversationsResponse] = await Promise.all([
-      fetch(`${API_BASE_URL}/api/v1/session/bootstrap`, { headers }).catch(() => null),
-      fetch(`${API_BASE_URL}/api/v1/conversations`, { headers }).catch(() => null),
-    ]);
+    // History is independent of session readiness. A stalled history request
+    // must not delay the composer, and a late response must not cross sessions.
+    void fetchData('/api/v1/conversations').then((response) => {
+      if (!isCurrent()) return;
+      if (!response.ok || !Array.isArray(response.data)) throw new Error('Conversation list unavailable');
+      appStore.CONVERSATIONS = response.data;
+      emitAdminDataUpdated({ orgTrees: appStore.ORG_TREES, orgTree: appStore.ORG_TREE });
+    }).catch(() => {
+      if (isCurrent() && !controller.signal.aborted) window.dispatchEvent(new CustomEvent('app-toast', { detail: '会话列表加载失败，可继续提问或刷新重试' }));
+    });
+    const sessionRes = await fetchData('/api/v1/session/bootstrap').catch(() => null);
+    if (!isCurrent()) return null;
+    if (!sessionRes?.ok && sessionRes?.status !== 404 && sessionRes?.status !== 405) {
+      throw Object.assign(new Error(sessionRes ? `API ${sessionRes.status}` : 'Session service unavailable'), { status: sessionRes?.status });
+    }
 
     if (sessionRes && sessionRes.ok) {
-      const session = asRecord(await sessionRes.json().catch(() => null));
+      const session = asRecord(sessionRes.data);
       const caps: string[] = Array.isArray(session?.capabilities) ? (session!.capabilities as unknown[]).map(String) : [];
       const maybeAdmin = ['*', 'org.read', 'org.user.read', 'kb.industry.read', 'role.read', 'audit.read', 'system.settings.read']
         .some((cap) => caps.includes(cap));
       await applyBootstrap({
         ...(session as unknown as AdminData),
         users: [], orgs: [], roles: [], grants: [], providers: [], models: [], audit: [], dream: null,
-      }, conversationsResponse);
+      });
       if (maybeAdmin) {
         // 阶段二：管理面全量清单异步补齐（不阻塞主壳首屏）。
-        const adminRes = await fetch(`${API_BASE_URL}/api/v1/admin/data`, { headers }).catch(() => null);
-        if (adminRes && adminRes.ok) {
-          await applyBootstrap((await adminRes.json()) as AdminData, null);
-        }
+        void (async () => {
+          const adminRes = await fetchData('/api/v1/admin/data', 30_000);
+          if (!adminRes.ok) throw new Error(`API ${adminRes.status}`);
+          await applyBootstrap(adminRes.data as AdminData);
+        })().catch(() => {
+          if (isCurrent()) window.dispatchEvent(new CustomEvent('app-toast', { detail: '管理数据加载失败，请刷新重试' }));
+        });
       }
       return (asRecord(session?.user) ? (session!.user as CurrentUser) : null);
     }
 
-    // session/bootstrap 不可用（旧版本后端等）时回退原 admin/data 路径。
-    const res = await fetch(`${API_BASE_URL}/api/v1/admin/data`, { headers });
+    // Only an absent legacy endpoint warrants the admin fallback. Transport
+    // failure or expired credentials should not trigger another expensive call.
+    const res = await fetchData('/api/v1/admin/data', 30_000);
+    if (!isCurrent()) return null;
     if (!res.ok) {
       const error = new Error(`API ${res.status}`) as Error & { status?: number };
       error.status = res.status;
       throw error;
     }
-    const fallback = (await res.json()) as AdminData;
-    await applyBootstrap(fallback, conversationsResponse);
+    const fallback = res.data as AdminData;
+    await applyBootstrap(fallback);
     return asRecord(fallback?.user) ? (fallback.user as CurrentUser) : null;
   }, []);
 

@@ -2,6 +2,9 @@
 
 import React, { useState } from 'react';
 import { Icon } from '@/components/common/Icon';
+import dynamic from 'next/dynamic';
+
+const LocalTotpQrCode = dynamic(() => import('./LocalTotpQrCode').then(module => module.LocalTotpQrCode), { ssr: false });
 
 export interface LoginScreenProps {
   onSubmit: (username: string, password: string) => void;
@@ -122,13 +125,7 @@ export function MfaSetupScreen({ secret, otpauthUri, onSubmit, onLogout, error, 
         </div>
         {otpauthUri && (
           <div style={{ textAlign: 'center', marginBottom: 14 }}>
-            <img
-              alt="TOTP QR"
-              width={168}
-              height={168}
-              style={{ borderRadius: 8, background: '#fff', padding: 6 }}
-              src={`https://api.qrserver.com/v1/create-qr-code/?size=168x168&data=${encodeURIComponent(otpauthUri)}`}
-            />
+            <LocalTotpQrCode key={otpauthUri} otpauthUri={otpauthUri} />
           </div>
         )}
         {secret && (

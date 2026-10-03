@@ -84,17 +84,16 @@ describe('corpus-agnostic decomposition (AGENTS.md §2)', () => {
     expect(docForm.length).toBeGreaterThan(0);
   });
 
-  it('never runs benchmark-shaped English decomposition unless the flag is set', () => {
-    const q = 'Which film has the director who died later, The More The Merrier or Sleep, My Love?';
-    const subs = service.decomposeComplexQuery(q);
-    // Default: at most the generic interrogative-stripped query — no per-item
-    // benchmark probes.
-    expect(subs.some((s) => s.includes('The More The Merrier') && s !== q.replace(/\?$/, ''))).toBe(false);
-    expect(subs.some((s) => s.includes('Sleep, My Love') && s !== q.replace(/\?$/, ''))).toBe(false);
+  it('does not invent chapter names for an unknown document', () => {
+    const keywords = service.extractSearchKeywords('列出《示例手册》所有章名');
+    for (const token of ['第一章', '第二章', '第三章', '总则', '罚则', '附则']) expect(keywords).not.toContain(token);
+    expect(service.decomposeComplexQuery('列出《示例手册》所有章名').some(q => q.includes('第一章 第二章'))).toBe(false);
+  });
 
+  it('uses the same generic English decomposition even if a legacy benchmark flag is set', () => {
+    const q = 'Which film has the director who died later, The More The Merrier or Sleep, My Love?';
+    const generic = service.decomposeComplexQuery(q);
     process.env.RETRIEVAL_BENCHMARK_PATTERNS = 'true';
-    const benchmarked = service.decomposeComplexQuery(q);
-    expect(benchmarked.some((s) => s.includes('The More The Merrier'))).toBe(true);
-    expect(benchmarked.some((s) => s.includes('Sleep, My Love'))).toBe(true);
+    expect(service.decomposeComplexQuery(q)).toEqual(generic);
   });
 });

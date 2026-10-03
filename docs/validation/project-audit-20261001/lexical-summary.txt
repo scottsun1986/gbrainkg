@@ -1,0 +1,15 @@
+Explicit isolated database: gbrain_core_opt_test
+
+PASS src/retrieval/lexical-index.integration.spec.ts (6.843 s)
+  full-corpus BM25 channel (integration)
+    ✓ ranks a rare-term chunk above boilerplate chunks (162 ms)
+    ✓ does not lose a relevant chunk that an ordered LIMIT would truncate (876 ms)
+    ✓ enforces ACL scope and the published gate inside the same statement (27 ms)
+    ✓ keeps postings, term statistics and the tokenizer exactly in step (649 ms)
+    ✓ re-indexing the same document leaves the statistics unchanged (25 ms)
+
+Test Suites: 1 passed, 1 total
+Tests:       5 passed, 5 total
+Snapshots:   0 total
+Time:        7.13 s
+Ran all test suites matching /src\/retrieval\/lexical-index.integration.spec.ts/i.

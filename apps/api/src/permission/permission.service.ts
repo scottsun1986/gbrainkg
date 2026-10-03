@@ -63,8 +63,20 @@ export class PermissionService implements OnModuleInit {
 
   private async ensureDefaultRoles() {
     for (const role of DEFAULT_ROLES) {
+      const where = 'code' in role ? { code: role.code as string } : { name: role.name };
+      const existing = await this.prisma.role.findUnique({ where });
+      // Statement-level authorization triggers also fire for identical updates.
+      // A second instance starting must not invalidate every in-flight answer.
+      if (existing && existing.description === role.description &&
+          existing.builtin === role.builtin &&
+          (!('code' in role) || existing.code === role.code) &&
+          Array.isArray(existing.permissions) &&
+          existing.permissions.length === role.permissions.length &&
+          existing.permissions.every((permission: string, index: number) => permission === role.permissions[index])) {
+        continue;
+      }
       await this.prisma.role.upsert({
-        where: 'code' in role ? { code: role.code as string } : { name: role.name },
+        where,
         create: {
           name: role.name,
           code: 'code' in role ? role.code as string : null,
@@ -85,7 +97,8 @@ export class PermissionService implements OnModuleInit {
     const legacyEmployeeRole = await this.prisma.role.findUnique({
       where: { name: "研发中心员工" },
     });
-    if (legacyEmployeeRole && !legacyEmployeeRole.builtin) {
+    if (legacyEmployeeRole && !legacyEmployeeRole.builtin &&
+        JSON.stringify(legacyEmployeeRole.permissions) !== JSON.stringify(BASE_USER_PERMISSIONS)) {
       await this.prisma.role.update({
         where: { id: legacyEmployeeRole.id },
         data: { permissions: BASE_USER_PERMISSIONS },
@@ -115,7 +128,10 @@ export class PermissionService implements OnModuleInit {
       select: { id: true },
       orderBy: { createdAt: "asc" },
     });
-    if (systemOwner) {
+    const ownerlessIndustryKb = systemOwner && await this.prisma.knowledgeBase.findFirst({
+      where: { type: "industry", ownerUserId: null }, select: { id: true },
+    });
+    if (systemOwner && ownerlessIndustryKb) {
       await this.prisma.knowledgeBase.updateMany({
         where: { type: "industry", ownerUserId: null },
         data: { ownerUserId: systemOwner.id },

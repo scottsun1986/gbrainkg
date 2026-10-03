@@ -6,8 +6,8 @@ Stage 0 (Ranking):   Independent retrieval ranking via POST /chat/search:
                      against expected_doc_titles)
 Stage 1 (End-to-End): Hit Rate@5, MRR@10, Context Recall, Context Precision
                      from the final chat citations
-Stage 2 (Generation): Keyword Coverage, Faithfulness (snippet match),
-                     Hallucination Detection
+Stage 2 (Generation): Keyword Coverage, Faithfulness (sentence-level
+                     groundedness), Hallucination Detection
 
 API failures are recorded as 0 scores and counted as failures in the summary
 (never skipped).
@@ -30,9 +30,13 @@ Usage:
 
     # Custom golden dataset
     pytest tests/evaluation/test_retrieval_quality.py --golden-file=my_dataset.json
+
+    # Real (judge-based) faithfulness instead of the substring proxy
+    EVAL_LLM_JUDGE=true pytest tests/evaluation/test_retrieval_quality.py -v
 """
 
 import os
+import re
 import json
 import math
 import time
@@ -259,6 +263,234 @@ def compute_ranking_metrics(
             "rank_mrr_10": mrr, "rank_ndcg_10": ndcg}
 
 
+# ── Faithfulness: sentence-level groundedness ─────────────────────
+#
+# Why this exists
+# ---------------
+# Faithfulness used to be `(# must_contain_snippets found verbatim in the
+# answer) / len(must_contain_snippets)`. On Chinese answers that collapses to
+# ~0 even when the answer is correct and fully grounded, because the model
+# paraphrases instead of copying the gold snippet: the 0.1125 in
+# results/latest_results.json measured wording, not grounding. That substring
+# rate is still reported, under its honest name `snippet_match_rate`, and
+# `faithfulness` is now either a judge-scored entailment ratio or None. A metric
+# that was not measured must never be reported as if it were.
+
+# Opt-in: the judge needs a live model route and spends tokens per answer, so
+# the suite must keep running fully offline by default.
+FAITHFULNESS_JUDGE_ENV = "EVAL_LLM_JUDGE"
+FAITHFULNESS_JUDGE_TIMEOUT = float(os.environ.get("EVAL_LLM_JUDGE_TIMEOUT", "60"))
+_API_ENV_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "apps", "api", ".env")
+_api_env_cache: dict[str, str] | None = None
+
+# Refusal language (shared with the no-answer path of stage 2). A refusal
+# asserts nothing about the corpus, so it has no claim to entail.
+REFUSAL_PHRASES = [
+    "未检索到", "未包含", "无法回答", "没有找到", "不包含",
+    "未找到", "资料中未", "当前知识库", "暂无", "无相关",
+]
+
+# Fenced code is masked before splitting: its `.`/`?` would otherwise shred a
+# sentence mid-block, and source code is not a factual claim about the corpus.
+_FENCE_RE = re.compile(r"```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)")
+
+# Sentence boundaries. CJK terminators split unconditionally; an ASCII period
+# only splits when followed by whitespace or end of text, which keeps decimals
+# ("3.5%"), versions ("v1.2.3") and dotted names ("example.com") intact.
+# Newlines end a unit too, so list items and table rows are judged separately.
+_SENTENCE_SPLIT_RE = re.compile(
+    r"(?<=[。！？])"
+    r"|(?<=[.!?])(?=\s|$)"
+    r"|\n+"
+)
+# A fragment must carry a letter or CJK character to be a claim; this drops
+# list markers ("1."), table separators ("|---|") and bare citations ("[2]").
+_CLAIM_CONTENT_RE = re.compile(r"[A-Za-z一-鿿]")
+
+
+def faithfulness_judge_enabled() -> bool:
+    """Read at call time so a test (or a sharded run) can toggle it per process."""
+    return os.environ.get(FAITHFULNESS_JUDGE_ENV, "").strip().lower() in ("1", "true", "yes")
+
+
+def _api_env_file_values() -> dict[str, str]:
+    """Parse apps/api/.env once, mirroring loadApiEnv() in llm-client.ts.
+
+    The judge must use the same route the runtime is configured with, and the
+    process environment wins over the file (as in llm-client.ts). The file is
+    only read when the judge is actually enabled.
+    """
+    global _api_env_cache
+    if _api_env_cache is not None:
+        return _api_env_cache
+    values: dict[str, str] = {}
+    line_re = re.compile(r"""^\s*([A-Z][A-Z0-9_]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^#]*))\s*$""")
+    try:
+        with open(_API_ENV_PATH, "r", encoding="utf-8") as f:
+            for line in f:
+                m = line_re.match(line.rstrip("\r\n"))
+                if not m:
+                    continue
+                value = m.group(2) if m.group(2) is not None else (
+                    m.group(3) if m.group(3) is not None else (m.group(4) or "").strip())
+                values[m.group(1)] = value
+    except OSError:
+        pass  # CI may provide the route through the environment instead.
+    _api_env_cache = values
+    return values
+
+
+def _judge_route() -> dict[str, Any] | None:
+    """Resolve the judge route exactly as llmConfig() in llm-client.ts does."""
+    file_env = _api_env_file_values()
+
+    def get(key: str) -> str:
+        return os.environ.get(key) or file_env.get(key) or ""
+
+    base_url = get("LLM_BASE_URL").rstrip("/")
+    api_key = get("DEEPSEEK_API_KEY") or get("LLM_API_KEY")
+    model = get("LLM_MODEL")
+    if not (base_url and api_key and model):
+        return None
+    return {"base_url": base_url, "model": model, "api_key": api_key}
+
+
+def strip_code_fences(text: str) -> str:
+    """Mask fenced code so a fence never contributes a sentence boundary."""
+    return _FENCE_RE.sub(" ", text)
+
+
+def split_sentences(text: str) -> list[str]:
+    """Split an answer into sentence-level claims for entailment scoring.
+
+    CJK terminators (。！？) and English (.!?) end a sentence; decimals and
+    versions do not, and nothing inside a code fence is split (or judged).
+    Fragments with no letter/CJK content are dropped: a list marker or a bare
+    citation carries no assertion, and counting it would inflate the
+    denominator.
+    """
+    if not text or not text.strip():
+        return []
+    sentences: list[str] = []
+    for part in _SENTENCE_SPLIT_RE.split(strip_code_fences(text)):
+        frag = (part or "").strip()
+        if frag and _CLAIM_CONTENT_RE.search(frag):
+            sentences.append(frag)
+    return sentences
+
+
+def has_refusal(answer: str) -> bool:
+    return any(p in answer for p in REFUSAL_PHRASES)
+
+
+def _citation_evidence(citations: list[dict], max_chars: int = 800, max_docs: int = 8) -> str:
+    """Numbered evidence text for the judge (same bounds as quality-gate.ts)."""
+    lines: list[str] = []
+    for c in citations or []:
+        if len(lines) >= max_docs:
+            break
+        if not isinstance(c, dict):
+            continue
+        tle = c.get("timeline_entry") if isinstance(c.get("timeline_entry"), dict) else {}
+        title = tle.get("doc_title") or c.get("doc_title") or c.get("docTitle") or c.get("title") or ""
+        snippet = str(tle.get("snippet") or c.get("snippet") or c.get("evidence") or "").strip()
+        if not snippet:
+            # A title alone cannot entail a claim; offering it would let the
+            # judge "support" sentences on document names.
+            continue
+        lines.append(f"[{len(lines) + 1}] 《{title or '未命名文档'}》 {snippet[:max_chars]}")
+    return "\n".join(lines)
+
+
+_JUDGE_SYSTEM = (
+    "You are an independent groundedness judge. For each numbered answer sentence, "
+    "decide whether it is entailed by the evidence snippets alone. Do not use outside "
+    "knowledge. Paraphrase, synonyms and different word order do NOT count against a "
+    "sentence; a fact, number or condition the evidence does not state does. "
+    'Reply in JSON only: {"verdicts": [true, false, ...]} with exactly one boolean per '
+    "sentence, in order."
+)
+
+
+def _parse_verdicts(reply: Any, expected: int) -> list[bool] | None:
+    """One boolean per sentence, or None.
+
+    The verdict table is recounted here instead of trusting a judge-computed
+    score. A table of the wrong length is rejected rather than scored, because
+    a short table would silently shrink the denominator.
+    """
+    if not isinstance(reply, dict) or "error" in reply:
+        return None
+    rows = reply.get("verdicts")
+    if not isinstance(rows, list) or len(rows) != expected:
+        return None
+    out: list[bool] = []
+    for row in rows:
+        if isinstance(row, dict):
+            row = row.get("entailed", row.get("supported"))
+        if not isinstance(row, bool):
+            return None
+        out.append(row)
+    return out
+
+
+def _load_judge_transport():
+    """Reuse query_llm_judge from the intl-benchmark suite (no third client).
+
+    Imported lazily: that module creates its reports dir and parses
+    RAGAS_KB_SCOPES at import time, which an offline run must not depend on.
+    """
+    import sys
+    bench_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "intl-benchmark")
+    if bench_dir not in sys.path:
+        sys.path.insert(0, bench_dir)
+    from answer_quality_heuristic_suite import query_llm_judge  # noqa: E402
+    return query_llm_judge
+
+
+def judge_faithfulness(
+    answer: str,
+    citations: list[dict],
+    *,
+    transport=None,
+) -> tuple[float | None, str]:
+    """Sentence-level groundedness: fraction of answer sentences entailed by
+    the evidence the system actually retrieved.
+
+    Returns (score, note). score is None whenever the judge did not produce a
+    usable verdict, so a judge outage surfaces as "not measured" instead of a
+    0.0 that would read as measured unfaithfulness. Scoring is against the
+    retrieved snippets, never the golden must_contain_snippets: grading against
+    gold text would reward copying it, not following the sources.
+    """
+    route = _judge_route()
+    if route is None:
+        return None, "no LLM route (LLM_BASE_URL / DEEPSEEK_API_KEY|LLM_API_KEY / LLM_MODEL)"
+    if has_refusal(answer):
+        return 1.0, "refusal: no claim to entail"
+    sentences = split_sentences(answer)
+    if not sentences:
+        return None, "no judgeable sentence"
+    evidence = _citation_evidence(citations)
+    if not evidence:
+        # Claims with no retrieved evidence are ungrounded by construction; this
+        # mirrors the no-citation branch of quality-gate.ts.
+        return 0.0, "no retrieved evidence"
+    numbered = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(sentences))
+    prompt = f"Evidence snippets:\n{evidence}\n\nAnswer sentences:\n{numbered}\n\nReturn the JSON verdicts."
+    try:
+        send = transport or _load_judge_transport()
+        reply = send(prompt, _JUDGE_SYSTEM, route["model"], route["base_url"], route["api_key"],
+                     timeout=FAITHFULNESS_JUDGE_TIMEOUT)
+    except Exception as e:  # transport, import or HTTP failure: unmeasured, not zero
+        return None, f"judge error: {e}"
+    verdicts = _parse_verdicts(reply, len(sentences))
+    if verdicts is None:
+        err = reply.get("error") if isinstance(reply, dict) else None
+        return None, f"judge error: {err}" if err else "judge reply unusable"
+    return sum(verdicts) / len(sentences), f"llm entailment {sum(verdicts)}/{len(sentences)}"
+
+
 # ── Metric calculators ────────────────────────────────────────────
 
 def compute_retrieval_metrics(
@@ -313,18 +545,37 @@ def compute_generation_metrics(
     cited_docs: list[str],
     forbidden_docs: list[str],
     is_no_answer: bool = False,
+    citations: list[dict] | None = None,
+    judge_enabled: bool | None = None,
+    judge_transport=None,
 ) -> dict[str, Any]:
-    """Stage 2: Generation-only quality metrics."""
+    """Stage 2: Generation-only quality metrics.
+
+    `faithfulness` is the judge-scored sentence-level groundedness, or None
+    when it was not measured (judge off, dry run, or judge outage);
+    `faithfulness_measured` says which. `snippet_match_rate` is the former
+    substring proxy, kept under its own name so trend data stays comparable.
+    """
+    if judge_enabled is None:
+        judge_enabled = faithfulness_judge_enabled()
+
     if is_no_answer:
         # For no-answer cases: answer should contain refusal language
-        refusal_phrases = [
-            "未检索到", "未包含", "无法回答", "没有找到", "不包含",
-            "未找到", "资料中未", "当前知识库", "暂无", "无相关",
-        ]
-        refused = any(p in answer for p in refusal_phrases)
+        refused = has_refusal(answer)
+        if judge_enabled:
+            # A correct refusal is fully faithful; any non-refusal on a question
+            # the corpus cannot answer is fabricated by definition (the same
+            # rule the quality-gate.ts judge prompt applies).
+            faith: float | None = 1.0 if refused else 0.0
+            note = "no-answer case: scored on refusal"
+        else:
+            faith, note = None, f"not measured ({FAITHFULNESS_JUDGE_ENV} off)"
         return {
             "keyword_hit_rate": 1.0 if refused else 0.0,
-            "faithfulness": 1.0 if refused else 0.0,
+            "snippet_match_rate": 1.0 if refused else 0.0,
+            "faithfulness": faith,
+            "faithfulness_measured": faith is not None,
+            "faithfulness_note": note,
             "hallucination": not refused,
             "hallucinated_docs": [],
         }
@@ -333,9 +584,16 @@ def compute_generation_metrics(
     kw_hits = sum(1 for kw in expected_keywords if kw in answer)
     kw_rate = kw_hits / max(len(expected_keywords), 1)
 
-    # Faithfulness (snippet match proxy)
+    # Snippet match rate: verbatim substring hits on gold snippets. Measures
+    # wording overlap, NOT grounding — never report it as faithfulness.
     snip_hits = sum(1 for s in must_contain if s in answer)
-    faith = snip_hits / max(len(must_contain), 1)
+    snippet_rate = snip_hits / max(len(must_contain), 1)
+
+    # Faithfulness: sentence-level entailment against the retrieved evidence.
+    if judge_enabled:
+        faith, note = judge_faithfulness(answer, citations or [], transport=judge_transport)
+    else:
+        faith, note = None, f"not measured ({FAITHFULNESS_JUDGE_ENV} off)"
 
     # Hallucination: cited a forbidden doc?
     halluc_docs = [fd for fd in forbidden_docs
@@ -343,7 +601,10 @@ def compute_generation_metrics(
 
     return {
         "keyword_hit_rate": kw_rate,
+        "snippet_match_rate": snippet_rate,
         "faithfulness": faith,
+        "faithfulness_measured": faith is not None,
+        "faithfulness_note": note,
         "hallucination": len(halluc_docs) > 0,
         "hallucinated_docs": halluc_docs,
     }
@@ -383,6 +644,9 @@ def test_quality(test_case, auth_token, api_base_url, eval_kb_scope,
         ranked_titles = list(test_case["expected_doc_titles"])
         answer = test_case["ground_truth_answer"]
         cited_docs = list(test_case["expected_doc_titles"])
+        # No retrieved evidence exists in a dry run, so groundedness cannot be
+        # measured; the judge is forced off below rather than scoring 0.0.
+        citations: list[dict] = []
         ttft = 0.0
         total_time = 0.0
     else:
@@ -400,11 +664,13 @@ def test_quality(test_case, auth_token, api_base_url, eval_kb_scope,
                                    test_case["query"])
             answer = result["answer"]
             cited_docs = result["cited_doc_titles"]
+            citations = result["citations"]
             ttft = result["ttft_sec"]
             total_time = result["total_sec"]
         except Exception as e:
             answer = ""
             cited_docs = []
+            citations = []
             ttft = None
             total_time = None
             chat_error = f"chat/completions: {e}"
@@ -423,7 +689,14 @@ def test_quality(test_case, auth_token, api_base_url, eval_kb_scope,
     if chat_error:
         retrieval = {"hit_rate_5": 0.0, "mrr_10": 0.0,
                      "context_recall": 0.0, "context_precision": 0.0}
-        generation = {"keyword_hit_rate": 0.0, "faithfulness": 0.0,
+        # API failures score 0 (never skipped). Faithfulness follows the same
+        # rule only when it is being measured at all; otherwise it stays None
+        # so an offline run never reports a groundedness number.
+        failed_faith = 0.0 if (faithfulness_judge_enabled() and not dry_run) else None
+        generation = {"keyword_hit_rate": 0.0, "snippet_match_rate": 0.0,
+                      "faithfulness": failed_faith,
+                      "faithfulness_measured": failed_faith is not None,
+                      "faithfulness_note": "chat API failure",
                       "hallucination": True, "hallucinated_docs": []}
     else:
         # Stage 1: End-to-end retrieval metrics
@@ -441,6 +714,8 @@ def test_quality(test_case, auth_token, api_base_url, eval_kb_scope,
             cited_docs=cited_docs,
             forbidden_docs=test_case.get("forbidden_doc_titles", []),
             is_no_answer=is_no_answer,
+            citations=citations,
+            judge_enabled=faithfulness_judge_enabled() and not dry_run,
         )
 
     api_error = search_error or chat_error
@@ -467,7 +742,10 @@ def test_quality(test_case, auth_token, api_base_url, eval_kb_scope,
         "context_precision": retrieval["context_precision"],
         # Stage 2
         "keyword_hit_rate": generation["keyword_hit_rate"],
+        "snippet_match_rate": generation["snippet_match_rate"],
         "faithfulness": generation["faithfulness"],
+        "faithfulness_measured": generation["faithfulness_measured"],
+        "faithfulness_note": generation["faithfulness_note"],
         "hallucination": generation["hallucination"],
         # Performance
         "ttft_sec": ttft,
@@ -552,6 +830,30 @@ def _compute_summary(results: list[dict]) -> dict:
         vals = [d[key] for d in data if isinstance(d.get(key), (int, float))]
         return sum(vals) / len(vals) if vals else 0.0
 
+    def faith_stats(data: list[dict]) -> dict[str, Any]:
+        """Faithfulness aggregates over *measured* rows only.
+
+        avg() maps "no values" to 0.0, which would turn an unmeasured run into a
+        measured 0% — so faithfulness is aggregated separately and is None when
+        no row was measured. Rows written before `faithfulness_measured` existed
+        carried the substring proxy in `faithfulness`; they count toward
+        `snippet_match_rate` (their true meaning), never toward faithfulness.
+        """
+        measured = [d["faithfulness"] for d in data
+                    if d.get("faithfulness_measured") is True
+                    and isinstance(d.get("faithfulness"), (int, float))]
+        snippet = [d["snippet_match_rate"] if "faithfulness_measured" in d else d.get("faithfulness")
+                   for d in data]
+        snippet = [v for v in snippet if isinstance(v, (int, float))]
+        return {
+            "faithfulness": sum(measured) / len(measured) if measured else None,
+            "faithfulness_measured": bool(measured),
+            # Fraction of cases the judge actually scored; < 1.0 means judge
+            # outages, and the faithfulness mean covers only the scored cases.
+            "faithfulness_coverage": len(measured) / len(data) if data else 0.0,
+            "snippet_match_rate": sum(snippet) / len(snippet) if snippet else 0.0,
+        }
+
     summary = {
         "overall": {
             "count": n,
@@ -567,7 +869,7 @@ def _compute_summary(results: list[dict]) -> dict:
             "context_precision": avg("context_precision", results),
             # Stage 2: generation
             "keyword_hit_rate": avg("keyword_hit_rate", results),
-            "faithfulness": avg("faithfulness", results),
+            **faith_stats(results),
             "hallucination_rate": sum(1 for r in results if r.get("hallucination")) / n,
             # API failures recorded as 0-score cases (must be 0 for the gate)
             "api_failure_count": sum(1 for r in results if r.get("failure")),
@@ -588,7 +890,7 @@ def _compute_summary(results: list[dict]) -> dict:
             "rank_ndcg_10": avg("rank_ndcg_10", cat_results),
             "hit_rate_5": avg("hit_rate_5", cat_results),
             "mrr_10": avg("mrr_10", cat_results),
-            "faithfulness": avg("faithfulness", cat_results),
+            **faith_stats(cat_results),
             "keyword_hit_rate": avg("keyword_hit_rate", cat_results),
         }
 

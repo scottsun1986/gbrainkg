@@ -37,10 +37,15 @@ describe('bridge entity extraction', () => {
   it('never returns the next sentence as part of an entity name', () => {
     const bridges = service.extractBridgeEntitiesFromEvidence(
       'The novel was written by Jane Austen. It was published in 1813.',
-      'author',
+      'written',
     );
     expect(bridges.some((b) => /Austen$/i.test(b))).toBe(true);
     expect(bridges.every((b) => !/It$/.test(b))).toBe(true);
+  });
+
+  it('extracts previously unseen relation labels from evidence', () => {
+    expect(service.extractBridgeEntitiesFromEvidence('The component was calibrated by Juniper Labs.', 'calibrated')).toContain('Juniper Labs');
+    expect(service.extractBridgeEntitiesFromEvidence('复核单位是北辰实验室。', '复核单位')).toContain('北辰实验室');
   });
 
   it('derives the relation word from the question in either inflection', () => {

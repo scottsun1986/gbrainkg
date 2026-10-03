@@ -1,0 +1,24 @@
+[
+  {
+    "case": "gbrain-auth-managed-api",
+    "doneSeconds": 28.743,
+    "errorEvents": [],
+    "revisionValues": [
+      "26291"
+    ],
+    "revisionSamples": 93,
+    "generationComplete": true,
+    "messagePersisted": true
+  },
+  {
+    "case": "gbrain-auth-managed-api-second",
+    "doneSeconds": 80.397,
+    "errorEvents": [],
+    "revisionValues": [
+      "26291"
+    ],
+    "revisionSamples": 272,
+    "generationComplete": true,
+    "messagePersisted": true
+  }
+]

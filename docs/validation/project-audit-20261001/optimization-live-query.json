@@ -1,0 +1,166 @@
+{
+  "questionClass": "document-content-with-citation",
+  "doneSeconds": 82.112,
+  "errors": [],
+  "revisionValues": [
+    "26291"
+  ],
+  "stages": [
+    {
+      "id": "runtime_config",
+      "status": "success",
+      "durationMs": 11
+    },
+    {
+      "id": "permission_scope",
+      "status": "success",
+      "durationMs": 29
+    },
+    {
+      "id": "source_plan",
+      "status": "success",
+      "durationMs": 3145
+    },
+    {
+      "id": "source_freshness",
+      "status": "success",
+      "durationMs": 3228
+    },
+    {
+      "id": "conversation_context",
+      "status": "success",
+      "durationMs": 40
+    },
+    {
+      "id": "query_rewrite",
+      "status": "success",
+      "durationMs": 8020
+    },
+    {
+      "id": "personal_memory",
+      "status": "skipped",
+      "durationMs": 0
+    },
+    {
+      "id": "scope_synthesis",
+      "status": "skipped",
+      "durationMs": 0
+    },
+    {
+      "id": "gbrain_arm_policy",
+      "status": "skipped",
+      "durationMs": 0
+    },
+    {
+      "id": "gbrain_retrieval",
+      "status": "success",
+      "durationMs": 29308
+    },
+    {
+      "id": "permission_guard",
+      "status": "warning",
+      "durationMs": 165
+    },
+    {
+      "id": "confidence_rerank",
+      "status": "success",
+      "durationMs": 782
+    },
+    {
+      "id": "retrieval_escalation",
+      "status": "skipped",
+      "durationMs": 0
+    },
+    {
+      "id": "source_reconcile_retry",
+      "status": "skipped",
+      "durationMs": 0
+    },
+    {
+      "id": "weknora_retrieval",
+      "status": "skipped",
+      "durationMs": 0
+    },
+    {
+      "id": "section_align",
+      "status": "success",
+      "durationMs": 0
+    },
+    {
+      "id": "section_rescue",
+      "status": "success",
+      "durationMs": 1
+    },
+    {
+      "id": "rerank",
+      "status": "success",
+      "durationMs": 581
+    },
+    {
+      "id": "graphrag_drift",
+      "status": "success",
+      "durationMs": 115
+    },
+    {
+      "id": "agentic_sufficiency_eval_1",
+      "status": "success",
+      "durationMs": 8172
+    },
+    {
+      "id": "top_rank_guarantee",
+      "status": "warning",
+      "durationMs": 0
+    },
+    {
+      "id": "evidence_selection",
+      "status": "warning",
+      "durationMs": 23
+    },
+    {
+      "id": "lazy_compile",
+      "status": "success",
+      "durationMs": 16
+    },
+    {
+      "id": "version_conflict_check",
+      "status": "success",
+      "durationMs": 29
+    },
+    {
+      "id": "answer_context",
+      "status": "success",
+      "durationMs": 6
+    },
+    {
+      "id": "retrieval_confidence",
+      "status": "warning",
+      "durationMs": 0
+    },
+    {
+      "id": "retrieval_confidence",
+      "status": "warning",
+      "durationMs": 0
+    },
+    {
+      "id": "citation_rebinding",
+      "status": "success",
+      "durationMs": 0
+    },
+    {
+      "id": "llm_generation",
+      "status": "success",
+      "durationMs": 21925
+    },
+    {
+      "id": "citation_validation",
+      "status": "success",
+      "durationMs": 6028
+    },
+    {
+      "id": "message_persistence",
+      "status": "success",
+      "durationMs": 220
+    }
+  ],
+  "measurementLimitation": "Single live request; no paired quality or latency claim. Revision sampler interval differs from the earlier run."
+}

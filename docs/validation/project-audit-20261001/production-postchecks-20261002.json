@@ -1,0 +1,67 @@
+{
+  "instances": [
+    {
+      "instance": "inst1",
+      "apiFingerprint": "26893ee5536d7aac16af0a2af749df80151abba5f8e1f76ee7e9c99f922cb423",
+      "webBuildId": "iI9RRfw_SBubCeiIS6OSa",
+      "publicHTTP": 200,
+      "unauthenticatedChatHTTP": 401,
+      "ready": {
+        "status": "ready",
+        "checks": {
+          "database": "ok",
+          "redis": "ok"
+        },
+        "apiReleaseFingerprint": "26893ee5536d7aac16af0a2af749df80151abba5f8e1f76ee7e9c99f922cb423",
+        "knowledgeProfile": {
+          "profile": "quality-first",
+          "authorization": true,
+          "immutableVersions": true,
+          "incrementalGraph": true,
+          "adaptiveRetrieval": true,
+          "embeddingRevisionKnown": false,
+          "embeddingPublicationPolicy": "fresh-per-version",
+          "sparse": false,
+          "maxSim": false,
+          "lateChunking": false
+        },
+        "timestamp": "2026-10-01T22:25:59.405Z"
+      }
+    },
+    {
+      "instance": "inst2",
+      "apiFingerprint": "26893ee5536d7aac16af0a2af749df80151abba5f8e1f76ee7e9c99f922cb423",
+      "webBuildId": "iI9RRfw_SBubCeiIS6OSa",
+      "publicHTTP": 200,
+      "unauthenticatedChatHTTP": 401,
+      "ready": {
+        "status": "ready",
+        "checks": {
+          "database": "ok",
+          "redis": "ok"
+        },
+        "apiReleaseFingerprint": "26893ee5536d7aac16af0a2af749df80151abba5f8e1f76ee7e9c99f922cb423",
+        "knowledgeProfile": {
+          "profile": "quality-first",
+          "authorization": true,
+          "immutableVersions": true,
+          "incrementalGraph": true,
+          "adaptiveRetrieval": true,
+          "embeddingRevisionKnown": false,
+          "embeddingPublicationPolicy": "fresh-per-version",
+          "sparse": false,
+          "maxSim": false,
+          "lateChunking": false
+        },
+        "timestamp": "2026-10-01T22:26:01.318Z"
+      }
+    }
+  ],
+  "services": [
+    "active",
+    "active",
+    "active",
+    "active",
+    "active"
+  ]
+}

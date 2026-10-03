@@ -58,6 +58,7 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
     queryText: string,
     scopeFingerprint: string,
     knowledgeEpoch: number,
+    queryEmbedding?: number[] | null,
   ): Promise<any | null> {
     if (!this.enabled) return null;
 
@@ -89,10 +90,20 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
         LIMIT 1
       `);
 
-      if (Array.isArray(results) && results.length > 0) {
-        const hit = (results as any[])[0];
+      let hit: any = Array.isArray(results) && results.length > 0 ? (results as any[])[0] : null;
+
+      // B-5: vector near-match. The exact queryText match above only serves
+      // byte-identical questions; reworded or near-synonymous questions all
+      // missed. Fall back to pgvector cosine over the persisted
+      // queryEmbedding column within the same scope fingerprint and knowledge
+      // epoch, above the configured similarity threshold.
+      if (!hit) {
+        hit = await this.lookupByVectorSimilarity(queryText, scopeFingerprint, knowledgeEpoch, queryEmbedding);
+      }
+
+      if (hit) {
         if (authorizationEnforced() && !await validateEvidenceDependencies(getRequestContext()?.userId || '', hit.dependencyManifest)) return null;
-        
+
         // Cache to L1 for subsequent instant zero-millisecond hits
         const localExpiry = Date.now() + this.ttlHours * 3600000;
         this.remember(l1Key, hit, hit.expiresAt
@@ -116,6 +127,48 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
     } catch (err) { rethrowAuthorizationFailure(err);
       this.logger.error(`Lookup error: ${err instanceof Error ? err.message : String(err)}`);
       recordFailopen('semantic_cache');
+      return null;
+    }
+  }
+
+  /**
+   * Vector near-match lookup (B-5). Uses the caller-supplied query embedding
+   * when retrieval already produced one; otherwise embeds the query lazily.
+   * Corpus-agnostic by construction: similarity is pure vector cosine inside
+   * the same scope/epoch bucket — no query rewriting, no synonym tables.
+   */
+  private async lookupByVectorSimilarity(
+    queryText: string,
+    scopeFingerprint: string,
+    knowledgeEpoch: number,
+    queryEmbedding?: number[] | null,
+  ): Promise<any | null> {
+    try {
+      let embedding = Array.isArray(queryEmbedding) && queryEmbedding.length
+        ? queryEmbedding
+        : null;
+      if (!embedding) {
+        if (!this.embeddingService?.isEnabled?.()) return null;
+        embedding = await this.embeddingService!.embedOne(queryText);
+      }
+      if (!embedding || !embedding.length) return null;
+      const vectorLiteral = `[${embedding.join(',')}]`;
+      const results = await withServiceContext(this.prisma, (tx) =>
+        tx.$queryRaw<any[]>`
+        SELECT id, "queryText", "responseContent", citations, "dependencyManifest", "processingTrace", "modelName", "expiresAt",
+               1 - ("queryEmbedding" <=> ${vectorLiteral}::vector) AS similarity
+        FROM "SemanticCache"
+        WHERE "scopeFingerprint" = ${scopeFingerprint}
+          AND "knowledgeEpoch" = ${knowledgeEpoch}
+          AND "queryEmbedding" IS NOT NULL
+          AND ("expiresAt" IS NULL OR "expiresAt" > NOW())
+          AND 1 - ("queryEmbedding" <=> ${vectorLiteral}::vector) >= ${this.similarityThreshold}
+        ORDER BY "queryEmbedding" <=> ${vectorLiteral}::vector ASC, "createdAt" DESC
+        LIMIT 1
+      `);
+      return Array.isArray(results) && results.length > 0 ? results[0] : null;
+    } catch (err) { rethrowAuthorizationFailure(err);
+      this.logger.warn(`Vector similarity cache lookup failed: ${err instanceof Error ? err.message : String(err)}`);
       return null;
     }
   }

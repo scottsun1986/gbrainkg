@@ -273,9 +273,19 @@ describe('AgenticRagService', () => {
       }
     });
 
-    it('fast-passes comparative query with zero LLM calls when both documents and entities are fully covered', async () => {
+    it('does not mark a complex reasoning chain sufficient on evaluator failure', async () => {
       const originalFetch = global.fetch;
-      const fetchMock = jest.fn();
+      (global as any).fetch = jest.fn().mockRejectedValue(new Error('timeout'));
+      try {
+        const res = await service.judgeRetrievalSufficiency('What is the calibration unit of Device Q?', 'Device Q uses Unit R. Calibration requirements are defined.', 1, {complexity:'multi_hop'});
+        expect(res.status).toBe('insufficient');
+        expect(res.missingAspects.length).toBeGreaterThan(0);
+      } finally {global.fetch=originalFetch;}
+    });
+
+    it('requires semantic verification when both documents and entities appear but actual values are missing', async () => {
+      const originalFetch = global.fetch;
+      const fetchMock = jest.fn().mockResolvedValue({ok:true,json:async()=>({choices:[{message:{content:JSON.stringify({status:'insufficient',missingAspects:['缺少实际参数值'],suggestedFollowUp:['量产实际参数'],confidence:0.9,evidenceQuote:''})}}]})});
       (global as any).fetch = fetchMock;
       try {
         const res = await service.judgeRetrievalSufficiency(
@@ -284,9 +294,9 @@ describe('AgenticRagService', () => {
           1,
           { complexity: 'comparative' },
         );
-        expect(res.status).toBe('sufficient');
-        expect(res.confidence).toBeGreaterThanOrEqual(0.9);
-        expect(fetchMock).not.toHaveBeenCalled();
+        expect(res.status).toBe('insufficient');
+        expect(res.missingAspects).toContain('缺少实际参数值');
+        expect(fetchMock).toHaveBeenCalledTimes(1);
       } finally {
         (global as any).fetch = originalFetch;
       }

@@ -10,6 +10,7 @@ import { requestIdMiddleware } from './observability/request-id.middleware';
 import { metricsMiddleware } from './observability/metrics.middleware';
 import { createLogger, resolveLogFormat } from './observability/json-logger';
 import { getPrismaClient } from './prisma';
+import { assertStartupPortAvailable } from './startup-port';
 // compression 是旧式 CJS 导出（无 default），tsconfig 未开启 esModuleInterop，
 // 默认导入在编译后会变成 undefined，这里显式按 require 语义引入。
 const compression = require('compression');
@@ -29,6 +30,8 @@ function loadLocalEnv() {
 
 async function bootstrap() {
   loadLocalEnv();
+  const port = Number(process.env.PORT || 3000);
+  await assertStartupPortAvailable(port);
   process.env.API_RELEASE_FINGERPRINT = compiledApiIdentity(__dirname);
   if (process.env.RLS_ENFORCE === '1') {
     if (process.env.LLMWIKI_FORCE_MIGRATOR_URL) {
@@ -113,7 +116,6 @@ async function bootstrap() {
   });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: false }));
 
-  const port = Number(process.env.PORT || 3000);
   const redisHost = process.env.REDIS_HOST || '127.0.0.1';
   const redisPort = Number(process.env.REDIS_PORT || 6379);
   const redisDb = Number(process.env.REDIS_DB || 0);
@@ -132,4 +134,7 @@ async function bootstrap() {
     'Bootstrap',
   );
 }
-bootstrap();
+bootstrap().catch((error: unknown) => {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+});

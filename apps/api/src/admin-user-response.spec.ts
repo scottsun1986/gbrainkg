@@ -51,7 +51,7 @@ describe('admin user responses', () => {
       { queueAccessReconciliation: jest.fn().mockResolvedValue(undefined), ensureUserBrainRepo: jest.fn().mockResolvedValue(undefined), invalidateUserScope: jest.fn().mockResolvedValue(undefined) } as any,
       {} as any,
       { log: jest.fn().mockResolvedValue(undefined) } as any,
-      { dispatchPending: jest.fn().mockResolvedValue(undefined) } as any,
+      { kickDispatch: jest.fn() } as any,
     );
   });
 
@@ -82,5 +82,77 @@ describe('admin user responses', () => {
     const result = await controller.disableUser({}, secretUser.id);
     expect(mockPrisma.user.update.mock.calls[0][0].select).toBeDefined();
     expectSafe(result.user);
+  });
+});
+
+describe('admin data permission matrix (kb.industry.read only)', () => {
+  const operator = {
+    ...secretUser,
+    id: 'operator', username: 'industry-reader', displayName: 'Industry Reader',
+    orgs: [{ orgNodeId: 'org-unrelated', orgNode: { id: 'org-unrelated' } }],
+  };
+  const stranger = {
+    ...secretUser, id: 'user-2', username: 'stranger', displayName: 'Stranger',
+    orgs: [{ orgNodeId: 'org-unrelated', orgNode: { id: 'org-unrelated' } }],
+  };
+
+  function buildIndustryOnlyController() {
+    return new AdminController(
+      {
+        isSystemAdmin: jest.fn().mockResolvedValue(false),
+        canManageUser: jest.fn().mockResolvedValue(false),
+        getCapabilities: jest.fn().mockResolvedValue(['kb.industry.read']),
+        getManagedOrgIds: jest.fn().mockResolvedValue(new Set()),
+        getVisibleKnowledgeBases: jest.fn().mockResolvedValue([]),
+        canManageKnowledgeBases: jest.fn().mockResolvedValue(new Map()),
+      } as any,
+      { userIdFromRequest: jest.fn().mockResolvedValue('operator'), hashPassword: jest.fn().mockReturnValue('hash'), invalidateUserStatus: jest.fn() } as any,
+      { queueAccessReconciliation: jest.fn().mockResolvedValue(undefined) } as any,
+      {} as any,
+      { log: jest.fn().mockResolvedValue(undefined) } as any,
+      { kickDispatch: jest.fn() } as any,
+    );
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    // Not a direct industry KB admin: capability kb.industry.read only.
+    mockPrisma.knowledgeBase.count.mockResolvedValue(0);
+    mockPrisma.orgNode.findMany.mockResolvedValue([
+      { id: 'org-industry', path: 'a', sort: 1 },
+      { id: 'org-unrelated', path: 'b', sort: 1 },
+    ]);
+    mockPrisma.knowledgeBase.findMany.mockResolvedValue([
+      {
+        id: 'kb-ind', type: 'industry', status: 'active', ownerUserId: 'operator',
+        orgNodeId: 'org-industry', admins: [], _count: { documents: 0 },
+      },
+    ]);
+    mockPrisma.user.findMany.mockResolvedValue([operator, stranger]);
+    mockPrisma.role.findMany.mockResolvedValue([
+      { id: 'role-1', name: 'Reader', permissions: [], _count: { users: 1 } },
+    ]);
+  });
+
+  it('returns only industry-linked org nodes, not the full org tree', async () => {
+    const data = await buildIndustryOnlyController().getAllData({} as any, '1', '20', '1', '0');
+    expect(data.orgs).toHaveLength(1);
+    expect(data.orgs[0].id).toBe('org-industry');
+  });
+
+  it('scopes the user directory to self (no org.read capability)', async () => {
+    const data = await buildIndustryOnlyController().getAllData({} as any, '1', '20', '1', '0');
+    expect(data.users).toHaveLength(1);
+    expect(data.users[0].id).toBe('operator');
+  });
+
+  it('returns an empty role list without role.read', async () => {
+    const data = await buildIndustryOnlyController().getAllData({} as any, '1', '20', '1', '0');
+    expect(data.roles).toEqual([]);
+  });
+
+  it('still exposes the managed industry KB so the industry console keeps working', async () => {
+    const data = await buildIndustryOnlyController().getAllData({} as any, '1', '20', '1', '0');
+    expect(data.managedIndustryKbs.some((kb: any) => kb.id === 'kb-ind')).toBe(true);
   });
 });

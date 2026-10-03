@@ -79,10 +79,10 @@ export class BrainScopeService {
     });
 
     // 绑定用户与 Scope
-    await db.brainScopeMember.upsert({
-      where: { scopeId_userId: { scopeId: scope.id, userId } },
-      create: { scopeId: scope.id, userId },
-      update: {},
+    // Empty-update ORM upserts can race on the composite key during first access.
+    await db.brainScopeMember.createMany({
+      data: [{ scopeId: scope.id, userId }],
+      skipDuplicates: true,
     });
 
     // 清理该用户在其他旧 Scope 中的成员关系

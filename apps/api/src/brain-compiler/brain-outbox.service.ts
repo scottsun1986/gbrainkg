@@ -3,6 +3,12 @@ import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/commo
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { getPrismaClient } from '../prisma';
+import { metricsService } from '../observability/metrics.service';
+import { runOutsideRequestContext } from '../observability/request-context';
+
+/** Retry budget before an outbox event is dead-lettered. */
+export const outboxMaxRetries = () =>
+  Math.max(1, Number(process.env.OUTBOX_MAX_RETRIES || 10));
 
 export type ChangeEventType =
   | 'doc_change'
@@ -43,6 +49,68 @@ export class BrainOutboxService implements OnModuleInit, OnModuleDestroy {
 
   async dispatchPending(): Promise<void> { return runAsService('outbox-dispatch', () => this.dispatchInternal()); }
 
+  /**
+   * Fire-and-forget dispatch kick for HTTP handlers. Awaiting dispatchPending
+   * inside a request handler fails identity promotion (runAsService refuses to
+   * promote a live request identity), so admin mutation endpoints must kick
+   * instead of awaiting. The 5s interval tick remains the correctness backstop.
+   */
+  kickDispatch(): void {
+    runOutsideRequestContext(() => {
+      void this.dispatchPending().catch((error) => {
+        this.logger.warn(
+          `Outbox kick dispatch failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+    });
+  }
+
+  /**
+   * Retry-exhausted events used to sit in `failed` forever: the dispatcher's
+   * `retryCount < max` filter silently stopped picking them up with no state,
+   * alert or recovery path. Transition them to an explicit `dead` state so
+   * admin telemetry surfaces them and admins can replay them once the
+   * underlying cause is fixed. `processing` is deliberately excluded: the
+   * owning worker may still be mid-flight and will set a terminal state.
+   */
+  private async deadLetterExhausted(): Promise<void> {
+    const max = outboxMaxRetries();
+    try {
+      const result = await this.prisma.brainChangeEvent.updateMany({
+        where: { status: { in: ['pending', 'failed'] }, retryCount: { gte: max } },
+        data: { status: 'dead' },
+      });
+      const dead = Number((result as any)?.count || 0);
+      if (dead > 0) {
+        metricsService.incOutboxDeadLetter(dead);
+        this.logger.error(
+          `Outbox dead-lettered ${dead} event(s) after ${max} retries. Inspect BrainChangeEvent status='dead' and replay after fixing the cause.`,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Outbox dead-letter sweep failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /**
+   * Replay a dead-lettered event: reset status/retryCount so the next
+   * dispatcher tick re-enqueues it. Returns null when the event is unknown or
+   * not dead-lettered (nothing to replay).
+   */
+  async replayDeadEvent(eventId: string): Promise<any | null> {
+    const event = await this.prisma.brainChangeEvent.findUnique({ where: { id: eventId } });
+    if (!event || event.status !== 'dead') return null;
+    const updated = await this.prisma.brainChangeEvent.update({
+      where: { id: eventId },
+      data: { status: 'pending', retryCount: 0 },
+    });
+    this.logger.log(`Outbox event ${eventId} replayed from dead-letter; dispatcher will re-enqueue.`);
+    this.kickDispatch();
+    return updated;
+  }
+
   private async dispatchInternal(): Promise<void> {
     if (this.dispatching) return;
     this.dispatching = true;
@@ -54,8 +122,9 @@ export class BrainOutboxService implements OnModuleInit, OnModuleDestroy {
           ? await queue.getJobCounts('waiting', 'delayed') : { waiting: 0, delayed: 0 }));
       let coreQueued = Number(counts[0].waiting || 0) + Number(counts[0].delayed || 0);
       let auxQueued = Number(counts[1].waiting || 0) + Number(counts[1].delayed || 0);
+      await this.deadLetterExhausted();
       const events = await this.prisma.brainChangeEvent.findMany({
-        where: { status: { in: ['pending', 'processing', 'failed'] }, retryCount: { lt: 10 } },
+        where: { status: { in: ['pending', 'processing', 'failed'] }, retryCount: { lt: outboxMaxRetries() } },
         orderBy: { id: 'asc' }, take: 100,
         ...(this.dispatchCursor ? { cursor: { id: this.dispatchCursor }, skip: 1 } : {}),
       });

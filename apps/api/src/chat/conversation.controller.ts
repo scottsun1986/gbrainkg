@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { getPrismaClient } from '../prisma';
 import { AuthService } from '../auth/auth.service';
 import { AuthGuard } from '../auth/auth.guard';
@@ -26,25 +26,41 @@ export class ConversationController {
   }
 
   @Get(':id')
-  async get(@Req() req: any, @Param('id') id: string) {
+  async get(@Req() req: any, @Param('id') id: string, @Query('limit') limitParam?: string, @Query('before') before?: string) {
     const userId = await this.authService.userIdFromRequest(req);
-    const conversation = await this.prisma.conversation.findFirst({ where: { id, userId }, include: { messages: { orderBy: { createdAt: 'asc' } } } });
+    // R-3: 会话消息改游标分页。默认窗口 200 条（现网会话长度内体验无变化），
+    // ?before=<messageId> 取该消息之后的下一窗口，不再一次拉回全部消息。
+    const limit = Math.max(1, Math.min(500, Number.parseInt(limitParam || '200', 10) || 200));
+    const conversation = await this.prisma.conversation.findFirst({ where: { id, userId } });
     if (!conversation) throw new NotFoundException('Conversation not found.');
+    const messages = await this.prisma.message.findMany({
+      where: { conversationId: id, ...(before ? {} : {}) },
+      orderBy: { createdAt: 'asc' },
+      ...(before
+        ? { cursor: { id: before }, skip: 1, take: limit }
+        : { take: limit }),
+    });
     if (authorizationEnforced()) {
       const checks = new Map<string, boolean>();
-      for (let index = 0; index < conversation.messages.length; index++) {
-        const message = conversation.messages[index];
+      for (let index = 0; index < messages.length; index++) {
+        const message: any = messages[index];
         if (message.role !== 'assistant') continue;
         const key = JSON.stringify(message.dependencyManifest);
         if (!checks.has(key)) checks.set(key, await validateEvidenceDependencies(userId, message.dependencyManifest));
-        if (!checks.get(key)) conversation.messages[index] = { ...message, content: '该回答的来源已失效或您已无权访问。', citationsSummary: null, processingTrace: null, dependencyManifest: null };
+        if (!checks.get(key)) messages[index] = { ...message, content: '该回答的来源已失效或您已无权访问。', citationsSummary: null, processingTrace: null, dependencyManifest: null } as any;
       }
     }
     // dependencyManifest 只服务端证据校验使用；trace JSON 可达百 KB/条，
     // 不下发给前端。
+    const totalMessages = await this.prisma.message.count({ where: { conversationId: id } });
+    const safeMessages = messages.map(({ dependencyManifest: _drop, ...message }: any) => message);
+    const lastLoaded = messages[messages.length - 1];
     return {
       ...conversation,
-      messages: conversation.messages.map(({ dependencyManifest: _drop, ...message }) => message),
+      messages: safeMessages,
+      // R-3: 翻页元数据（超长会话按 nextCursor 取下一窗口；老客户端可忽略）。
+      hasMore: Boolean(lastLoaded) && totalMessages > safeMessages.length + (before ? 0 : 0) && messages.length === limit,
+      nextCursor: lastLoaded?.id ?? null,
     };
   }
 

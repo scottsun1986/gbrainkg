@@ -1,0 +1,2675 @@
+{
+  "cases": [
+    {
+      "id": "P2-05",
+      "category": "检索与问答",
+      "name": "全景列举：考勤手册全部章名",
+      "status": "FAIL",
+      "detail": "missing=['第一章 总则', '第二章 工时制度与作息时间', '第三章 考勤方式与规范', '第四章 考勤异常认定与处理', '第五章 加班管理', '第六章 请假休假管理', '第七章 考勤统计与薪资核算', '第八章 附则'] answer=",
+      "latency_s": 0.2,
+      "scope": "all"
+    },
+    {
+      "id": "P3-02",
+      "category": "语义鸿沟与多源",
+      "name": "多源冲突并列：两份考勤制度时间均呈现",
+      "status": "PASS",
+      "detail": "",
+      "latency_s": 82.46,
+      "scope": "all"
+    },
+    {
+      "id": "P3-02",
+      "category": "语义鸿沟与多源",
+      "name": "多源冲突并列：两份考勤制度时间均呈现",
+      "status": "PASS",
+      "detail": "",
+      "latency_s": 36.4,
+      "scope": "南京分公司知识库"
+    },
+    {
+      "id": "P3-01",
+      "category": "语义鸿沟与多源",
+      "name": "口语→术语：员工夏天几点上班 → 夏令时 08:30",
+      "status": "PASS",
+      "detail": "",
+      "latency_s": 42.27,
+      "scope": "all"
+    }
+  ],
+  "queries": [
+    {
+      "question": "请列出《企业考勤管理制度详细手册》的全部章名",
+      "scope": null,
+      "answer": "",
+      "citations": [],
+      "traces": [
+        {
+          "id": "runtime_config",
+          "status": "running",
+          "summary": "读取平台数据库中的模型配置",
+          "details": null
+        },
+        {
+          "id": "runtime_config",
+          "status": "success",
+          "summary": "模型运行时配置已加载",
+          "details": null
+        },
+        {
+          "id": "permission_scope",
+          "status": "running",
+          "summary": "计算当前用户可读知识库及本次选择范围",
+          "details": null
+        },
+        {
+          "id": "permission_scope",
+          "status": "success",
+          "summary": "本次可检索 56 个知识库",
+          "details": {
+            "visibleCount": 56,
+            "selectedCount": 56,
+            "rejectedCount": 0,
+            "knowledgeBases": [
+              {
+                "id": "37beb976-d60c-42c0-863a-6dec64e51131",
+                "name": "公开基准-BEIR-SciFact-EN",
+                "type": "personal"
+              },
+              {
+                "id": "54a995b6-52d4-49be-ac33-1ee568445866",
+                "name": "公开基准-BEIR-SciFact-EN",
+                "type": "personal"
+              },
+              {
+                "id": "15dfe64c-d456-45ad-beee-23f0317ddbb9",
+                "name": "合规部知识库",
+                "type": "org"
+              },
+              {
+                "id": "4d2381ff-91c3-4b96-a032-44ec685f82fd",
+                "name": "研发中心知识库",
+                "type": "org"
+              },
+              {
+                "id": "2ee7a75f-5705-493f-af10-e37e5c5c953b",
+                "name": "集团总部知识库",
+                "type": "org"
+              },
+              {
+                "id": "b95c7ee5-8a0e-4534-9822-243f9581c537",
+                "name": "测试理论库",
+                "type": "industry"
+              },
+              {
+                "id": "08edf353-d2f6-4b2d-b5d8-508582ecb579",
+                "name": "E2ESCORE-43175e44-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "43467356-3c21-4be0-ad73-4a4e08c5d87f",
+                "name": "E2ESCORE-ce637033-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "9f90bc48-1b1b-40cb-a27c-36c8a1b5a57b",
+                "name": "E2ESCORE-a2a090c8-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "fcfa44cf-6963-45eb-8eff-87fde56c5e6d",
+                "name": "云中台知识库",
+                "type": "org"
+              },
+              {
+                "id": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+                "name": "系统测试-解析矩阵库",
+                "type": "personal"
+              },
+              {
+                "id": "cb9f2142-94c9-456c-bcbc-abdbc9f7a7b5",
+                "name": "E2ESCORE-7e44179f-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "dbd65f9e-6d50-43ce-88be-77274091284d",
+                "name": "公开基准CMRC2018-RAG",
+                "type": "personal"
+              },
+              {
+                "id": "e432d838-9369-4e10-8970-f5c00e7b2449",
+                "name": "系统测试-回归库v2",
+                "type": "personal"
+              },
+              {
+                "id": "81efc3c4-e48c-4e24-8653-43bb0b5f20db",
+                "name": "南京分公司知识库",
+                "type": "org"
+              },
+              {
+                "id": "bb2bfcb1-240f-4d01-bbe5-38eff1248962",
+                "name": "开发组知识库",
+                "type": "org"
+              },
+              {
+                "id": "4674f607-1564-4f38-aa87-8fac60227c65",
+                "name": "公司法律人库",
+                "type": "industry"
+              },
+              {
+                "id": "228dd0a5-e412-40fa-933f-46b6585797a9",
+                "name": "软研中心知识库",
+                "type": "org"
+              },
+              {
+                "id": "8c189e38-3b84-4b67-ac0f-214035af2327",
+                "name": "富化修复验证库",
+                "type": "personal"
+              },
+              {
+                "id": "eb0dfea7-29b9-4566-ba7a-c20f3b76ae2d",
+                "name": "公开基准-HotpotQA-EN",
+                "type": "personal"
+              },
+              {
+                "id": "83bd0133-643b-4a02-978a-f0015f7aac0c",
+                "name": "公开基准-2WikiMultiHopQA-EN",
+                "type": "personal"
+              },
+              {
+                "id": "c6b50c14-f357-45aa-a3ae-34ae58d2258f",
+                "name": "公开基准-MuSiQue-EN",
+                "type": "personal"
+              },
+              {
+                "id": "7eab7862-7480-435f-bdb4-3958750a77ae",
+                "name": "E2E-DBG-KB2",
+                "type": "personal"
+              },
+              {
+                "id": "00e0ebba-335a-4d9f-9935-0a954beebc38",
+                "name": "E2ESCORE-56c4cdca-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "25e5b504-1b5c-4801-96a6-511f53b8a158",
+                "name": "E2ESCORE-a3a720e0-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "f5ff0749-ee0f-44b8-ba6a-8beeb109e0e3",
+                "name": "E2ESCORE-c7432c82-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "50a62fc2-de2f-4dfb-b70e-1b714d4db1b7",
+                "name": "E2ESCORE-2afcdb13-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "a91e284d-1ea6-4d3f-b744-10097e50baac",
+                "name": "E2ESCORE-f1949282-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "5623bcc7-5738-4cc1-9ff7-a625cf17da3f",
+                "name": "E2ESCORE-148246e2-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "0c687eac-6597-47bd-9c7a-e6b7c0c06825",
+                "name": "E2ESCORE-ef4eb406-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "db64b10e-bc45-4c6e-8a14-3758601c4420",
+                "name": "E2E-UPLOAD-PROBE3",
+                "type": "personal"
+              },
+              {
+                "id": "0e1cfc9f-97d4-49b4-9e6f-26921a6d9e38",
+                "name": "__probe_after_revert__",
+                "type": "personal"
+              },
+              {
+                "id": "f13c099f-7783-463e-a923-89fafd241d10",
+                "name": "E2ESCORE-8d8f58a0-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "c5f43da2-fc8c-41a9-9747-078319e84a6d",
+                "name": "SciFact concurrency validation 20260927",
+                "type": "industry"
+              },
+              {
+                "id": "277a0b00-3ab7-40e9-8864-b7013108c175",
+                "name": "unlimited-kb-validation-20260927",
+                "type": "personal"
+              },
+              {
+                "id": "28555888-ff7e-42bf-8832-27bfa30ce0d7",
+                "name": "SciFact 300 concurrency 20260927",
+                "type": "personal"
+              },
+              {
+                "id": "8613a8db-1ab8-4d68-9177-ef40f0edc366",
+                "name": "公开基准-2WikiMultiHopQA-EN-300docs-seed42-2097f903ac3e",
+                "type": "personal"
+              },
+              {
+                "id": "4e72751f-e826-4b81-9140-67488d1a33f5",
+                "name": "公开基准-HotpotQA-EN-300docs-seed42-1503dff30414",
+                "type": "personal"
+              },
+              {
+                "id": "3f5ef9e4-635f-451b-9b2a-a9a80a44e77b",
+                "name": "公开基准-MuSiQue-EN-300docs-seed42-25af5a411204",
+                "type": "personal"
+              },
+              {
+                "id": "0b5c5e78-69ce-4a61-9d77-1044e73ff8ad",
+                "name": "E2ESCORE-569c26ca-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "8262f8dd-7912-4bc7-b01e-a6f5110994c7",
+                "name": "E2ESCORE-82892b86-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "b4714d85-a81d-4a9a-b155-a244162e5667",
+                "name": "SOTA10-HOTPOT",
+                "type": "personal"
+              },
+              {
+                "id": "9831b9ad-e439-45ff-b532-70b012c7dde5",
+                "name": "SOTA10-2WIKI",
+                "type": "personal"
+              },
+              {
+                "id": "97a0584d-4516-4411-a6e4-8cb68fc50889",
+                "name": "SOTA10-MUSIQUE",
+                "type": "personal"
+              },
+              {
+                "id": "fcb71c28-e1b7-40e7-ba3d-c4f4d9263a9f",
+                "name": "SOTA10-SQUAD",
+                "type": "personal"
+              },
+              {
+                "id": "47c7113c-3ceb-4cec-bf95-97ba1aaece31",
+                "name": "SOTA10-SCIFACT",
+                "type": "personal"
+              },
+              {
+                "id": "9a6c4571-ed59-4491-91da-c178409c89e6",
+                "name": "SOTA10-NFCORPUS",
+                "type": "personal"
+              },
+              {
+                "id": "c5bf8ddf-5815-4c49-a8d3-81950a1980cf",
+                "name": "SOTA10-FIQA",
+                "type": "personal"
+              },
+              {
+                "id": "742c231e-043a-40a9-bb36-27aeb78639f4",
+                "name": "SOTA10-ARGUANA",
+                "type": "personal"
+              },
+              {
+                "id": "eab22f1d-fba8-4644-a028-45790399da5b",
+                "name": "SOTA10-RGB-main",
+                "type": "personal"
+              }
+            ]
+          }
+        },
+        {
+          "id": "source_plan",
+          "status": "running",
+          "summary": "将业务权限范围映射为隔离的 GBrain Source",
+          "details": null
+        },
+        {
+          "id": "request_failure",
+          "status": "failed",
+          "summary": "问答处理失败：\nInvalid `prisma.brainScopeMember.upsert()` invocation:\n\n\nUnique constraint failed on the fields: (`scopeId`,`userId`)",
+          "details": null
+        },
+        {
+          "id": "message_persistence",
+          "status": "running",
+          "summary": "正在保存回答、引用和处理链路",
+          "details": null
+        },
+        {
+          "id": "message_persistence",
+          "status": "success",
+          "summary": "回答、引用和处理链路已保存",
+          "details": null
+        }
+      ],
+      "latency_s": 0.2,
+      "status": 201,
+      "conversation_id": "a95cdfe4-e7ca-41be-acca-7cb5f23c903d"
+    },
+    {
+      "question": "员工考勤的时间是什么",
+      "scope": null,
+      "answer": "- **南京分公司知识库《企业考勤制度手册V2》**（版本V2.0，2026年9月1日生效）：周一至周五，每天8小时——上午 09:00-12:00，下午 13:00-18:00，午休 12:00-13:00（1小时）；员工上下班均需打卡，每天2次[1]。\n- **南京分公司知识库《企业考勤管理制度详细手册》**：实行夏令时与冬令时两套作息——夏令时（5月1日-9月30日）上午 08:30-12:00、下午 13:30-18:00；冬令时（10月1日-4月30日）上午 08:30-12:00、下午 13:00-17:30；每周工作5天、每天8小时、每周不超过40小时[2]。\n**差异说明：**\nV2.0 手册生效日期为 2026年9月1日，详细手册生效日期为\"XXXX年X月X日\"（未确定），且两者均规定\"与之前相关规定冲突以本制度为准\"，但资料中没有明确证据证明详细手册已被 V2.0 取代或二者替代关系，适用关系待人力资源部确认[1][2]。",
+      "citations": [
+        {
+          "doc_title": "企业考勤制度手册V2.docx",
+          "document_id": "5d0b2fda-ce6a-43c6-b883-98a293d20d8a",
+          "score": 0.8701,
+          "page_no": 1,
+          "bbox": null,
+          "version": 1,
+          "version_conflict": null
+        },
+        {
+          "doc_title": "企业考勤管理制度详细手册.doc",
+          "document_id": "c9c9505b-fd0a-4b93-add7-8b7e92d20942",
+          "score": 0.841,
+          "page_no": 1,
+          "bbox": null,
+          "version": 1,
+          "version_conflict": null
+        }
+      ],
+      "traces": [
+        {
+          "id": "runtime_config",
+          "status": "running",
+          "summary": "读取平台数据库中的模型配置",
+          "details": null
+        },
+        {
+          "id": "runtime_config",
+          "status": "success",
+          "summary": "模型运行时配置已加载",
+          "details": null
+        },
+        {
+          "id": "permission_scope",
+          "status": "running",
+          "summary": "计算当前用户可读知识库及本次选择范围",
+          "details": null
+        },
+        {
+          "id": "permission_scope",
+          "status": "success",
+          "summary": "本次可检索 56 个知识库",
+          "details": {
+            "visibleCount": 56,
+            "selectedCount": 56,
+            "rejectedCount": 0,
+            "knowledgeBases": [
+              {
+                "id": "37beb976-d60c-42c0-863a-6dec64e51131",
+                "name": "公开基准-BEIR-SciFact-EN",
+                "type": "personal"
+              },
+              {
+                "id": "54a995b6-52d4-49be-ac33-1ee568445866",
+                "name": "公开基准-BEIR-SciFact-EN",
+                "type": "personal"
+              },
+              {
+                "id": "15dfe64c-d456-45ad-beee-23f0317ddbb9",
+                "name": "合规部知识库",
+                "type": "org"
+              },
+              {
+                "id": "4d2381ff-91c3-4b96-a032-44ec685f82fd",
+                "name": "研发中心知识库",
+                "type": "org"
+              },
+              {
+                "id": "2ee7a75f-5705-493f-af10-e37e5c5c953b",
+                "name": "集团总部知识库",
+                "type": "org"
+              },
+              {
+                "id": "b95c7ee5-8a0e-4534-9822-243f9581c537",
+                "name": "测试理论库",
+                "type": "industry"
+              },
+              {
+                "id": "08edf353-d2f6-4b2d-b5d8-508582ecb579",
+                "name": "E2ESCORE-43175e44-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "43467356-3c21-4be0-ad73-4a4e08c5d87f",
+                "name": "E2ESCORE-ce637033-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "9f90bc48-1b1b-40cb-a27c-36c8a1b5a57b",
+                "name": "E2ESCORE-a2a090c8-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "fcfa44cf-6963-45eb-8eff-87fde56c5e6d",
+                "name": "云中台知识库",
+                "type": "org"
+              },
+              {
+                "id": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+                "name": "系统测试-解析矩阵库",
+                "type": "personal"
+              },
+              {
+                "id": "cb9f2142-94c9-456c-bcbc-abdbc9f7a7b5",
+                "name": "E2ESCORE-7e44179f-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "dbd65f9e-6d50-43ce-88be-77274091284d",
+                "name": "公开基准CMRC2018-RAG",
+                "type": "personal"
+              },
+              {
+                "id": "e432d838-9369-4e10-8970-f5c00e7b2449",
+                "name": "系统测试-回归库v2",
+                "type": "personal"
+              },
+              {
+                "id": "81efc3c4-e48c-4e24-8653-43bb0b5f20db",
+                "name": "南京分公司知识库",
+                "type": "org"
+              },
+              {
+                "id": "bb2bfcb1-240f-4d01-bbe5-38eff1248962",
+                "name": "开发组知识库",
+                "type": "org"
+              },
+              {
+                "id": "4674f607-1564-4f38-aa87-8fac60227c65",
+                "name": "公司法律人库",
+                "type": "industry"
+              },
+              {
+                "id": "228dd0a5-e412-40fa-933f-46b6585797a9",
+                "name": "软研中心知识库",
+                "type": "org"
+              },
+              {
+                "id": "8c189e38-3b84-4b67-ac0f-214035af2327",
+                "name": "富化修复验证库",
+                "type": "personal"
+              },
+              {
+                "id": "eb0dfea7-29b9-4566-ba7a-c20f3b76ae2d",
+                "name": "公开基准-HotpotQA-EN",
+                "type": "personal"
+              },
+              {
+                "id": "83bd0133-643b-4a02-978a-f0015f7aac0c",
+                "name": "公开基准-2WikiMultiHopQA-EN",
+                "type": "personal"
+              },
+              {
+                "id": "c6b50c14-f357-45aa-a3ae-34ae58d2258f",
+                "name": "公开基准-MuSiQue-EN",
+                "type": "personal"
+              },
+              {
+                "id": "7eab7862-7480-435f-bdb4-3958750a77ae",
+                "name": "E2E-DBG-KB2",
+                "type": "personal"
+              },
+              {
+                "id": "00e0ebba-335a-4d9f-9935-0a954beebc38",
+                "name": "E2ESCORE-56c4cdca-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "25e5b504-1b5c-4801-96a6-511f53b8a158",
+                "name": "E2ESCORE-a3a720e0-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "f5ff0749-ee0f-44b8-ba6a-8beeb109e0e3",
+                "name": "E2ESCORE-c7432c82-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "50a62fc2-de2f-4dfb-b70e-1b714d4db1b7",
+                "name": "E2ESCORE-2afcdb13-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "a91e284d-1ea6-4d3f-b744-10097e50baac",
+                "name": "E2ESCORE-f1949282-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "5623bcc7-5738-4cc1-9ff7-a625cf17da3f",
+                "name": "E2ESCORE-148246e2-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "0c687eac-6597-47bd-9c7a-e6b7c0c06825",
+                "name": "E2ESCORE-ef4eb406-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "db64b10e-bc45-4c6e-8a14-3758601c4420",
+                "name": "E2E-UPLOAD-PROBE3",
+                "type": "personal"
+              },
+              {
+                "id": "0e1cfc9f-97d4-49b4-9e6f-26921a6d9e38",
+                "name": "__probe_after_revert__",
+                "type": "personal"
+              },
+              {
+                "id": "f13c099f-7783-463e-a923-89fafd241d10",
+                "name": "E2ESCORE-8d8f58a0-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "c5f43da2-fc8c-41a9-9747-078319e84a6d",
+                "name": "SciFact concurrency validation 20260927",
+                "type": "industry"
+              },
+              {
+                "id": "277a0b00-3ab7-40e9-8864-b7013108c175",
+                "name": "unlimited-kb-validation-20260927",
+                "type": "personal"
+              },
+              {
+                "id": "28555888-ff7e-42bf-8832-27bfa30ce0d7",
+                "name": "SciFact 300 concurrency 20260927",
+                "type": "personal"
+              },
+              {
+                "id": "8613a8db-1ab8-4d68-9177-ef40f0edc366",
+                "name": "公开基准-2WikiMultiHopQA-EN-300docs-seed42-2097f903ac3e",
+                "type": "personal"
+              },
+              {
+                "id": "4e72751f-e826-4b81-9140-67488d1a33f5",
+                "name": "公开基准-HotpotQA-EN-300docs-seed42-1503dff30414",
+                "type": "personal"
+              },
+              {
+                "id": "3f5ef9e4-635f-451b-9b2a-a9a80a44e77b",
+                "name": "公开基准-MuSiQue-EN-300docs-seed42-25af5a411204",
+                "type": "personal"
+              },
+              {
+                "id": "0b5c5e78-69ce-4a61-9d77-1044e73ff8ad",
+                "name": "E2ESCORE-569c26ca-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "8262f8dd-7912-4bc7-b01e-a6f5110994c7",
+                "name": "E2ESCORE-82892b86-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "b4714d85-a81d-4a9a-b155-a244162e5667",
+                "name": "SOTA10-HOTPOT",
+                "type": "personal"
+              },
+              {
+                "id": "9831b9ad-e439-45ff-b532-70b012c7dde5",
+                "name": "SOTA10-2WIKI",
+                "type": "personal"
+              },
+              {
+                "id": "97a0584d-4516-4411-a6e4-8cb68fc50889",
+                "name": "SOTA10-MUSIQUE",
+                "type": "personal"
+              },
+              {
+                "id": "fcb71c28-e1b7-40e7-ba3d-c4f4d9263a9f",
+                "name": "SOTA10-SQUAD",
+                "type": "personal"
+              },
+              {
+                "id": "47c7113c-3ceb-4cec-bf95-97ba1aaece31",
+                "name": "SOTA10-SCIFACT",
+                "type": "personal"
+              },
+              {
+                "id": "9a6c4571-ed59-4491-91da-c178409c89e6",
+                "name": "SOTA10-NFCORPUS",
+                "type": "personal"
+              },
+              {
+                "id": "c5bf8ddf-5815-4c49-a8d3-81950a1980cf",
+                "name": "SOTA10-FIQA",
+                "type": "personal"
+              },
+              {
+                "id": "742c231e-043a-40a9-bb36-27aeb78639f4",
+                "name": "SOTA10-ARGUANA",
+                "type": "personal"
+              },
+              {
+                "id": "eab22f1d-fba8-4644-a028-45790399da5b",
+                "name": "SOTA10-RGB-main",
+                "type": "personal"
+              }
+            ]
+          }
+        },
+        {
+          "id": "source_plan",
+          "status": "running",
+          "summary": "将业务权限范围映射为隔离的 GBrain Source",
+          "details": null
+        },
+        {
+          "id": "source_plan",
+          "status": "success",
+          "summary": "已选择 49 个原始知识 Source",
+          "details": {
+            "sourceKeys": [
+              "llmwiki-kb-03bdf8f3ef9a5ab4",
+              "llmwiki-kb-04ac819715746ac1",
+              "llmwiki-kb-0758d5290b0f044c",
+              "llmwiki-kb-12c66a4fbeffd0d5",
+              "llmwiki-kb-169133c1dc331f16",
+              "llmwiki-kb-181775eca63cd645",
+              "llmwiki-kb-198b9ca7de330c52",
+              "llmwiki-kb-19c8967775972af7",
+              "llmwiki-kb-1b010e76be4d4419",
+              "llmwiki-kb-1c741739760bed3e",
+              "llmwiki-kb-2378905af0125587",
+              "llmwiki-kb-34f5a3ea6430d48b",
+              "llmwiki-kb-3621d31cbf2b5661",
+              "llmwiki-kb-40a95584299d596f",
+              "llmwiki-kb-440e2859a6f7e6c8",
+              "llmwiki-kb-4af164315469689b",
+              "llmwiki-kb-4c6cbfe3660303f7",
+              "llmwiki-kb-4ce25a33baf97f18",
+              "llmwiki-kb-5240368f6cce9d25",
+              "llmwiki-kb-538a2a4ff48a5c75",
+              "llmwiki-kb-572c4955a00d080b",
+              "llmwiki-kb-68766b7eae00cbfe",
+              "llmwiki-kb-734065e62cece987",
+              "llmwiki-kb-7551ee83aa9f675b",
+              "llmwiki-kb-7e4693fc84787231",
+              "llmwiki-kb-80028ce01c3c9645",
+              "llmwiki-kb-80e25a2ea6d0daa0",
+              "llmwiki-kb-92a816c7f5799d43",
+              "llmwiki-kb-92a9083491285d11",
+              "llmwiki-kb-95c6b63a266ce390",
+              "llmwiki-kb-9e6fb7821b8dab7e",
+              "llmwiki-kb-a491ce00713a8d89",
+              "llmwiki-kb-a4c8f01027c3d369",
+              "llmwiki-kb-b03fe9a625beea2c",
+              "llmwiki-kb-b33b98f702ea7071",
+              "llmwiki-kb-b85958240e84d90a",
+              "llmwiki-kb-bca2ab390350b455",
+              "llmwiki-kb-bcce90cdff7c598e",
+              "llmwiki-kb-cbd688b2c218da56",
+              "llmwiki-kb-d8f61fe32381ac06",
+              "llmwiki-kb-dc9e96ee0508df8a",
+              "llmwiki-kb-deaf562228b4b39a",
+              "llmwiki-kb-e21cd11e2216e0d8",
+              "llmwiki-kb-e260ad135b161d49",
+              "llmwiki-kb-e4c2a53e18b59e1b",
+              "llmwiki-kb-e9e94007ad55efc3",
+              "llmwiki-kb-ef0076d0e561161b",
+              "llmwiki-kb-f1882d462d1283b0",
+              "llmwiki-kb-fdc4d54bf198eb78"
+            ],
+            "scopeFingerprint": "f07801db8812211c",
+            "aclEpoch": 1,
+            "knowledgeEpoch": 1
+          }
+        },
+        {
+          "id": "source_freshness",
+          "status": "running",
+          "summary": "核对业务文档与 GBrain 可检索页是否一致",
+          "details": null
+        },
+        {
+          "id": "source_freshness",
+          "status": "warning",
+          "summary": "部分 Source 待对账，已触发后台对账并继续执行检索",
+          "details": {
+            "checked": 56,
+            "rebuilt": 0,
+            "staleSources": [
+              "llmwiki-kb-e4c2a53e18b59e1b"
+            ]
+          }
+        },
+        {
+          "id": "conversation_context",
+          "status": "running",
+          "summary": "读取同一会话的近期上下文",
+          "details": null
+        },
+        {
+          "id": "conversation_context",
+          "status": "success",
+          "summary": "已加载 0 条历史消息",
+          "details": {
+            "historyMessages": 0
+          }
+        },
+        {
+          "id": "query_rewrite",
+          "status": "running",
+          "summary": "结合历史指代生成独立检索问题",
+          "details": null
+        },
+        {
+          "id": "query_rewrite",
+          "status": "success",
+          "summary": "使用 query / 聚焦 模式",
+          "details": {
+            "rewrittenQuery": "员工考勤的时间是什么",
+            "operation": "query",
+            "breadth": false,
+            "complexity": "simple",
+            "subQueries": [],
+            "expansions": [],
+            "hyde": false
+          }
+        },
+        {
+          "id": "personal_memory",
+          "status": "running",
+          "summary": "从当前用户私有 Source 加载相关长期记忆",
+          "details": null
+        },
+        {
+          "id": "personal_memory",
+          "status": "skipped",
+          "summary": "当前问题未请求个人记忆背景，优先执行授权知识检索",
+          "details": {
+            "matchedFacts": 0,
+            "reason": "not_memory_relevant"
+          }
+        },
+        {
+          "id": "scope_synthesis",
+          "status": "running",
+          "summary": null,
+          "details": null
+        },
+        {
+          "id": "scope_synthesis",
+          "status": "skipped",
+          "summary": "用户选择了部分知识库，不使用全范围综述",
+          "details": null
+        },
+        {
+          "id": "gbrain_retrieval",
+          "status": "running",
+          "summary": "执行向量、BM25、RRF、图谱信号与重排检索",
+          "details": {
+            "sourceCount": 49,
+            "operation": "query",
+            "breadth": false
+          }
+        },
+        {
+          "id": "gbrain_arm_policy",
+          "status": "skipped",
+          "summary": "GBrain 引擎臂按策略关闭（RETRIEVAL_ARM_POLICY=chunks_only），本次仅使用数据库分块召回",
+          "details": {
+            "policy": "chunks_only"
+          }
+        },
+        {
+          "id": "gbrain_retrieval",
+          "status": "success",
+          "summary": "GBrain 返回 79 个候选页面，初始语义证据置信度偏低，待扩检前置信度复核",
+          "details": {
+            "sourceCount": 49,
+            "operation": "query",
+            "breadth": false,
+            "candidateCount": 79,
+            "rerankedByGbrain": false,
+            "topEvidence": "这是一份综合性的《企业考勤管理制度详细手册》，内容参考了多家企业和机构的现行规\n定以及法律合规要点，你可根据公司实际情况（如工时制、假期类型、处罚尺度）进行\n调整后发布实施。\n\n---",
+            "topScore": 0.95,
+            "evidenceAssessment": {
+              "shouldEscalate": true,
+              "weak": true,
+              "evidence": "这是一份综合性的《企业考勤管理制度详细手册》，内容参考了多家企业和机构的现行规\n定以及法律合规要点，你可根据公司实际情况（如工时制、假期类型、处罚尺度）进行\n调整后发布实施。\n\n---",
+              "topScore": null,
+              "scoreFloor": 0.75,
+              "reason": "无经过验证的置信度，继续预算内检索"
+            },
+            "diagnostics": null
+          }
+        },
+        {
+          "id": "permission_guard",
+          "status": "running",
+          "summary": "按当前数据库权限和 Source 世代复核候选结果",
+          "details": null
+        },
+        {
+          "id": "permission_guard",
+          "status": "success",
+          "summary": "全部 79 个候选通过最终权限校验",
+          "details": {
+            "before": 79,
+            "after": 79,
+            "removed": 0
+          }
+        },
+        {
+          "id": "confidence_rerank",
+          "status": "running",
+          "summary": "先以交叉编码重排验证首轮弱语义候选",
+          "details": null
+        },
+        {
+          "id": "confidence_rerank",
+          "status": "success",
+          "summary": "首轮候选经交叉编码验证充分，跳过冗余扩检",
+          "details": {
+            "before": 79,
+            "after": 79,
+            "evidenceAssessment": {
+              "shouldEscalate": false,
+              "weak": true,
+              "evidence": "\\# 企业考勤制度手册\n\n\\*\\*版本号：\\** v2.0\n\n\\*\\*生效日期：\\** 2026年9月1日\n\n\\*\\*适用范围：\\** 公司全体员工\n\n\\## 第一章 总则与核心理念\n\n\\*\\*1.1 目的\\**\n\n本制度旨在规范员工出勤管理，维护良好的工作秩序，同时借鉴行业领先实践，在保障业务高效运转与尊重员工生活需求之间寻求平衡。我们坚信，面对面的协作是激发创新和解决复杂问题的核心，因此本制度鼓励员工更多地回归办公室，共享团队协作的氛围。\n\n\\*\\*1.2 适用范围\\**\n\n本制度适用于公司全体正式员工。因岗位性质特殊（如数据中心运维、现场服务等）需执行特殊工时制的员工，由人力资源部另行规定。\n\n\\## 第二章 工作时间与考勤方式\n\n\\*\\*2.1 标准工时制\\**\n\n1\\.  \\*\\*工作时间：\\** 周一至周五，每天8小时。\n\n\\- 上午：09:00 - 12:00\n\n\\- 下午：13:00 - 18:00\n\n\\- 午休：12:00 - 13:00（1小时）\n\n2\\.  \\*\\*打卡制度：\\** 员工上下班均需打卡（指纹/人脸/手机端），作为考勤记录的唯一依据。一天需打卡两次（上班打卡、下班打卡）。\n\n\\*\\*2.2 混合办公模式\\**\n\n公司实行混合办公制度，即“3+2”工作模式：\n\n\\- \\*\\*办公室工作日（3天）：\\** 员工每周需至少到办公室工作三天。具体哪天由团队负责人根据团队协作需求协商确定。此举旨在强化团队凝聚力与即时沟通效率。\n\n\\- \\*\\*居家办公日（2天）：\\** 员工每周可享有两天在家或其他私人空间办公的灵活安排。此安排无需额外申请，但需确保工作时间在线，通讯畅通。\n\n\\## 第三章 “随地办公”政策\n\n为进一步满足员工在旅行或特殊时期的办公需求，公司设立“随地办公”额度。\\*\\*该政策不同于上述混合办公模式下的居家办公，特指在非居住地、非公司所在城市的异地短期办公。\\**\n\n\\*\\*3.1 额度管理\\**\n\n1\\.  \\*\\*总额度：\\** 每位员工每年享有\\*\\*4周\\**的“随地办公”额度。\n\n2\\.  \\*\\*计算规则（关键变化）：\\** \\*\\*按整周扣除\\*\\*。无论员工在标准工作周内申请了1天还是5天的“随地办公”，均视为消耗\\*\\*1整周\\**的额度。\n\n\\- \\*示例：* 若员工周一至周三在外地办公（共3天），系统将扣除1周的wfa额度。\n\n3\\.  \\*\\*使用建议：\\** 鉴于上述规则，建议员工在申请“随地办公”时，尽可能以\\*\\*整周（周一至周五）\\** 为单位进行规划，以最大化利用该福利。\n\n\\*\\*3.2 使用限制\\**\n\n1\\.  \\*\\*适用场景：\\** “随地办公”旨在支持员工在跨城市旅行、回乡探亲等非日常场景下保持工作连续性。不得用于在\\*\\*本人居住地或办公室附近\\**进行常规办公。\n\n2\\.  \\*\\*地域与合规：\\** “随地办公”期间，\\*\\*不得\\**在其他州、省或国家的google办公室办公，以避免跨境工作的法律及税务风险。若跨时区工作，需适应当地办公时间。\n\n3\\.  \\*\\*排他性：\\** 已被豁免混合办公要求的特殊岗位员工不适用此政策。\n\n\\*\\*3.3 违规处理\\**\n\n违反“随地办公”政策，例如虚报办公地点或未经审批异地办公，将视情节轻重给予警告、取消当年度wfa额度，直至纪律处分或解雇。\n\n\\## 第四章 请假与特殊考勤\n\n\\*\\*4.1 请假流程\\**\n\n1\\.  \\*\\*事前申请：\\** 所有请假（包括年假、病假、事假等）均需提前在oa系统中提交申请，并经直接上级审批。\n\n2\\.  \\*\\*最小单位：\\** 请假以\\*\\*小时\\**为最小计算单位。\n\n\\*\\*4.2 缺勤定义与处理\\**\n\n1\\.  \\*\\*迟到/早退：\\** 无故迟到或早退超过30分钟，视为旷工半日；超过2小时，视为旷工一日。\n\n2\\.  \\*\\*旷工：\\** 包括但不限于：未经批准擅自缺勤；请假未获批即离岗；考勤异常（如未打卡且未提交说明）经核实为无故缺勤。连续旷工3日或全年累计旷工5日者，公司有权解除劳动合同。\n\n\\## 第五章 附则\n\n1\\.  \\*\\*解释权：\\** 本制度由人力资源部负责解释和修订。\n\n2\\.  \\*\\*冲突处理：\\** 本制度如与之前发布的相关规定有冲突，以本制度为准。\n\n3\\.  \\*\\*生效日期：\\** 本制度自发布之日起生效。\n\n\\---\n\n\\*\\*hr备注：\\**\n\n\\- 本手册最核心的设计是\\*\\*将混合办公（3+2）与异地办公（wfa）做了切割\\**。混合办公是常态化的通勤选择，wfa则是年度配额制福利。\n\n\\- 参考google的收紧策略，\\*\\*按整周扣除wfa额度的规则\\**是为了引导员工将异地办公用于长时间的差旅或",
+              "topScore": null,
+              "reason": "重排已完成，置信度未知；保留候选并交由原文核验"
+            }
+          }
+        },
+        {
+          "id": "retrieval_escalation",
+          "status": "running",
+          "summary": null,
+          "details": null
+        },
+        {
+          "id": "retrieval_escalation",
+          "status": "skipped",
+          "summary": "重排已完成，置信度未知；保留候选并交由原文核验",
+          "details": {
+            "evidence": "\\# 企业考勤制度手册\n\n\\*\\*版本号：\\** v2.0\n\n\\*\\*生效日期：\\** 2026年9月1日\n\n\\*\\*适用范围：\\** 公司全体员工\n\n\\## 第一章 总则与核心理念\n\n\\*\\*1.1 目的\\**\n\n本制度旨在规范员工出勤管理，维护良好的工作秩序，同时借鉴行业领先实践，在保障业务高效运转与尊重员工生活需求之间寻求平衡。我们坚信，面对面的协作是激发创新和解决复杂问题的核心，因此本制度鼓励员工更多地回归办公室，共享团队协作的氛围。\n\n\\*\\*1.2 适用范围\\**\n\n本制度适用于公司全体正式员工。因岗位性质特殊（如数据中心运维、现场服务等）需执行特殊工时制的员工，由人力资源部另行规定。\n\n\\## 第二章 工作时间与考勤方式\n\n\\*\\*2.1 标准工时制\\**\n\n1\\.  \\*\\*工作时间：\\** 周一至周五，每天8小时。\n\n\\- 上午：09:00 - 12:00\n\n\\- 下午：13:00 - 18:00\n\n\\- 午休：12:00 - 13:00（1小时）\n\n2\\.  \\*\\*打卡制度：\\** 员工上下班均需打卡（指纹/人脸/手机端），作为考勤记录的唯一依据。一天需打卡两次（上班打卡、下班打卡）。\n\n\\*\\*2.2 混合办公模式\\**\n\n公司实行混合办公制度，即“3+2”工作模式：\n\n\\- \\*\\*办公室工作日（3天）：\\** 员工每周需至少到办公室工作三天。具体哪天由团队负责人根据团队协作需求协商确定。此举旨在强化团队凝聚力与即时沟通效率。\n\n\\- \\*\\*居家办公日（2天）：\\** 员工每周可享有两天在家或其他私人空间办公的灵活安排。此安排无需额外申请，但需确保工作时间在线，通讯畅通。\n\n\\## 第三章 “随地办公”政策\n\n为进一步满足员工在旅行或特殊时期的办公需求，公司设立“随地办公”额度。\\*\\*该政策不同于上述混合办公模式下的居家办公，特指在非居住地、非公司所在城市的异地短期办公。\\**\n\n\\*\\*3.1 额度管理\\**\n\n1\\.  \\*\\*总额度：\\** 每位员工每年享有\\*\\*4周\\**的“随地办公”额度。\n\n2\\.  \\*\\*计算规则（关键变化）：\\** \\*\\*按整周扣除\\*\\*。无论员工在标准工作周内申请了1天还是5天的“随地办公”，均视为消耗\\*\\*1整周\\**的额度。\n\n\\- \\*示例：* 若员工周一至周三在外地办公（共3天），系统将扣除1周的wfa额度。\n\n3\\.  \\*\\*使用建议：\\** 鉴于上述规则，建议员工在申请“随地办公”时，尽可能以\\*\\*整周（周一至周五）\\** 为单位进行规划，以最大化利用该福利。\n\n\\*\\*3.2 使用限制\\**\n\n1\\.  \\*\\*适用场景：\\** “随地办公”旨在支持员工在跨城市旅行、回乡探亲等非日常场景下保持工作连续性。不得用于在\\*\\*本人居住地或办公室附近\\**进行常规办公。\n\n2\\.  \\*\\*地域与合规：\\** “随地办公”期间，\\*\\*不得\\**在其他州、省或国家的google办公室办公，以避免跨境工作的法律及税务风险。若跨时区工作，需适应当地办公时间。\n\n3\\.  \\*\\*排他性：\\** 已被豁免混合办公要求的特殊岗位员工不适用此政策。\n\n\\*\\*3.3 违规处理\\**\n\n违反“随地办公”政策，例如虚报办公地点或未经审批异地办公，将视情节轻重给予警告、取消当年度wfa额度，直至纪律处分或解雇。\n\n\\## 第四章 请假与特殊考勤\n\n\\*\\*4.1 请假流程\\**\n\n1\\.  \\*\\*事前申请：\\** 所有请假（包括年假、病假、事假等）均需提前在oa系统中提交申请，并经直接上级审批。\n\n2\\.  \\*\\*最小单位：\\** 请假以\\*\\*小时\\**为最小计算单位。\n\n\\*\\*4.2 缺勤定义与处理\\**\n\n1\\.  \\*\\*迟到/早退：\\** 无故迟到或早退超过30分钟，视为旷工半日；超过2小时，视为旷工一日。\n\n2\\.  \\*\\*旷工：\\** 包括但不限于：未经批准擅自缺勤；请假未获批即离岗；考勤异常（如未打卡且未提交说明）经核实为无故缺勤。连续旷工3日或全年累计旷工5日者，公司有权解除劳动合同。\n\n\\## 第五章 附则\n\n1\\.  \\*\\*解释权：\\** 本制度由人力资源部负责解释和修订。\n\n2\\.  \\*\\*冲突处理：\\** 本制度如与之前发布的相关规定有冲突，以本制度为准。\n\n3\\.  \\*\\*生效日期：\\** 本制度自发布之日起生效。\n\n\\---\n\n\\*\\*hr备注：\\**\n\n\\- 本手册最核心的设计是\\*\\*将混合办公（3+2）与异地办公（wfa）做了切割\\**。混合办公是常态化的通勤选择，wfa则是年度配额制福利。\n\n\\- 参考google的收紧策略，\\*\\*按整周扣除wfa额度的规则\\**是为了引导员工将异地办公用于长时间的差旅或",
+            "topScore": null
+          }
+        },
+        {
+          "id": "source_reconcile_retry",
+          "status": "running",
+          "summary": null,
+          "details": null
+        },
+        {
+          "id": "source_reconcile_retry",
+          "status": "skipped",
+          "summary": "首轮检索已有结果，无需重建重试",
+          "details": null
+        },
+        {
+          "id": "weknora_retrieval",
+          "status": "running",
+          "summary": null,
+          "details": null
+        },
+        {
+          "id": "weknora_retrieval",
+          "status": "skipped",
+          "summary": "WeKnora 外部检索未配置或处于禁用状态（保持纯净 GBrain 知识主源）",
+          "details": null
+        },
+        {
+          "id": "section_align",
+          "status": "running",
+          "summary": "按问题点名的小节/表角色调整候选排序",
+          "details": null
+        },
+        {
+          "id": "section_align",
+          "status": "success",
+          "summary": "已应用 section/table-role 对齐乘子",
+          "details": null
+        },
+        {
+          "id": "section_rescue",
+          "status": "running",
+          "summary": "同文档补拉未覆盖的问题点名小节",
+          "details": null
+        },
+        {
+          "id": "section_rescue",
+          "status": "success",
+          "summary": "候选池已覆盖问题小节，无需救援",
+          "details": null
+        },
+        {
+          "id": "rerank",
+          "status": "running",
+          "summary": "统一比较跨 Source 候选并执行相关性打分",
+          "details": null
+        },
+        {
+          "id": "rerank",
+          "status": "success",
+          "summary": "平台交叉编码重排完成（跨源统一分数尺度）",
+          "details": {
+            "before": 79,
+            "after": 52,
+            "reranked": true,
+            "platformApplied": true
+          }
+        },
+        {
+          "id": "graphrag_drift",
+          "status": "running",
+          "summary": null,
+          "details": null
+        },
+        {
+          "id": "graphrag_drift",
+          "status": "skipped",
+          "summary": "问题复杂度或证据状态无需启动 DRIFT",
+          "details": null
+        },
+        {
+          "id": "agentic_sufficiency_eval_1",
+          "status": "running",
+          "summary": "评估当前证据链是否足以严谨完整回答复杂问题",
+          "details": null
+        },
+        {
+          "id": "agentic_sufficiency_eval_1",
+          "status": "success",
+          "summary": "证据充分性裁决通过 (置信度 60%)：判别模型响应超时或异常，复杂查询未确认事实充分",
+          "details": {
+            "hop": 1,
+            "status": "sufficient",
+            "confidence": 0.6,
+            "reasoning": "判别模型响应超时或异常，复杂查询未确认事实充分",
+            "missingAspects": [],
+            "suggestedFollowUp": []
+          }
+        },
+        {
+          "id": "evidence_selection",
+          "status": "running",
+          "summary": "相关性阈值、组级去重与 token 预算的联合选择",
+          "details": null
+        },
+        {
+          "id": "top_rank_guarantee",
+          "status": "warning",
+          "summary": "检索前 12 名中有 7 篇文档被相关性地板剪掉，已恢复进上下文",
+          "details": {
+            "restored": 7,
+            "docs": [
+              "id:5d0b2fda-ce6a-43c6-b883-98a293d20d8a",
+              "id:050892ea-4971-4a6d-a6b7-bd5ca88e13e3",
+              "id:e326a930-7855-4365-aaf7-83b1b86780fc",
+              "id:3c4e6068-3ba3-40d8-b11f-3e9112874438",
+              "id:bd914e77-d407-4fed-bc19-f75f4b770d49",
+              "id:241b01ba-1848-4e26-b383-737026432d5d",
+              "id:398abc28-d006-48a6-b1e7-9fd30a37ba58"
+            ]
+          }
+        },
+        {
+          "id": "evidence_selection",
+          "status": "warning",
+          "summary": "已选择 9/52 条证据（组级去重 + token 预算）",
+          "details": {
+            "before": 52,
+            "after": 9,
+            "removed": 43,
+            "selection": {
+              "before": 31,
+              "after": 2,
+              "removed": 29,
+              "groups": 2,
+              "usedTokens": 5024,
+              "relevanceFloorRatio": 0.2,
+              "mmrLambda": 0.72
+            }
+          }
+        },
+        {
+          "id": "lazy_compile",
+          "status": "running",
+          "summary": "检查命中主题页是否存在待编译变更",
+          "details": null
+        },
+        {
+          "id": "lazy_compile",
+          "status": "success",
+          "summary": "命中主题页均无需即时重编译",
+          "details": {
+            "checked": 2,
+            "compiled": 0,
+            "injected": 0
+          }
+        },
+        {
+          "id": "version_conflict_check",
+          "status": "running",
+          "summary": "检测多版本并裁决现行有效标准",
+          "details": null
+        },
+        {
+          "id": "version_conflict_check",
+          "status": "warning",
+          "summary": "裁决 1 个文档的多版本冲突: 合规管理办法.doc",
+          "details": {
+            "conflictCount": 1,
+            "conflictTitles": [
+              "合规管理办法.doc"
+            ]
+          }
+        },
+        {
+          "id": "answer_context",
+          "status": "running",
+          "summary": "从授权证据页组装可引用的回答上下文",
+          "details": null
+        },
+        {
+          "id": "answer_context",
+          "status": "success",
+          "summary": "已组装 7 条可引用证据",
+          "details": {
+            "citationCount": 7,
+            "contextChars": 7147,
+            "stitchedCount": 0,
+            "structuredEvidence": false,
+            "evidenceGroups": [
+              {
+                "kind": "direct",
+                "label": "direct",
+                "sourceIndexes": [
+                  3,
+                  7
+                ]
+              },
+              {
+                "kind": "subquery",
+                "label": "员工考勤的时间",
+                "sourceIndexes": [
+                  1,
+                  2
+                ]
+              },
+              {
+                "kind": "subquery",
+                "label": "中华人民共和国劳动法",
+                "sourceIndexes": [
+                  4
+                ]
+              },
+              {
+                "kind": "subquery",
+                "label": "出差申请\n单",
+                "sourceIndexes": [
+                  5,
+                  6
+                ]
+              }
+            ],
+            "hardCapDropped": 2,
+            "hardCapTruncated": 0,
+            "protectedEvidenceCount": 4
+          }
+        },
+        {
+          "id": "retrieval_confidence",
+          "status": "warning",
+          "summary": "本次没有可用的重排分数（未配置重排模型或重排失败），拒答阈值只能作用于合成分，判定能力已降级",
+          "details": {
+            "evidenceCount": 7,
+            "maxSyntheticScore": 0,
+            "syntheticThreshold": 0.999,
+            "hasMeaningfulPreAnswer": true
+          }
+        },
+        {
+          "id": "retrieval_confidence",
+          "status": "warning",
+          "summary": "当前模型没有匹配的留出集校准参数，进入原文逐句核验，不使用合成分数决定拒答",
+          "details": {
+            "scoreCalibrated": false,
+            "evidenceCount": 7
+          }
+        },
+        {
+          "id": "llm_generation",
+          "status": "running",
+          "summary": "基于授权证据生成回答并要求逐项引用",
+          "details": null
+        },
+        {
+          "id": "grounding_gate",
+          "status": "running",
+          "summary": "对暂扣语句执行证据蕴含复核",
+          "details": null
+        },
+        {
+          "id": "grounding_gate",
+          "status": "warning",
+          "summary": "8 句因缺乏证据支持被拦截，未向用户展示",
+          "details": {
+            "verified": 8,
+            "held": 8,
+            "recovered": 0,
+            "dropped": 8,
+            "strict": true,
+            "providerError": false
+          }
+        },
+        {
+          "id": "citation_rebinding",
+          "status": "success",
+          "summary": "回答角标与证据一一对应",
+          "details": {
+            "reboundCitations": 0,
+            "evidencePool": 7
+          }
+        },
+        {
+          "id": "llm_generation",
+          "status": "success",
+          "summary": "大模型回答生成完成",
+          "details": {
+            "model": "mimo-v2.5",
+            "tokenEstimate": 270,
+            "outputChars": 427,
+            "synthesizedRefusal": false,
+            "promptCacheHitTokens": 0,
+            "promptCacheMissTokens": 0,
+            "cacheHitRate": "0%"
+          }
+        },
+        {
+          "id": "citation_validation",
+          "status": "running",
+          "summary": "校验回答角标并绑定到原始文档预览",
+          "details": null
+        },
+        {
+          "id": "citation_validation",
+          "status": "success",
+          "summary": "回答引用 2 个原始证据页面",
+          "details": {
+            "candidateCitations": 7,
+            "referencedCitations": [
+              1,
+              2
+            ],
+            "invalidMarkersRemoved": false,
+            "aclStripped": 0,
+            "semanticCoverage": {
+              "totalStatements": 4,
+              "groundedStatements": 3,
+              "coverageRatio": 0.75,
+              "refusalExempt": false
+            }
+          }
+        },
+        {
+          "id": "message_persistence",
+          "status": "running",
+          "summary": "正在保存回答、引用和处理链路",
+          "details": null
+        },
+        {
+          "id": "message_persistence",
+          "status": "success",
+          "summary": "回答、引用和处理链路已保存",
+          "details": null
+        }
+      ],
+      "latency_s": 82.46,
+      "status": 201,
+      "conversation_id": "4be80464-b2f9-4bee-934e-fb65db1a2015"
+    },
+    {
+      "question": "员工考勤的时间是什么",
+      "scope": [
+        "81efc3c4-e48c-4e24-8653-43bb0b5f20db"
+      ],
+      "answer": "**来源 1《企业考勤制度手册 V2》**（生效日期 2026年9月1日，适用于公司全体员工）：标准工时制为周一至周五，每天8小时——上午 09:00–12:00，下午 13:00–18:00，午休 12:00–13:00（1小时）[1]。员工上下班均需打卡（指纹/人脸/手机端），每天需打卡两次[1]。**来源 2《企业考勤管理制度详细手册》**：标准工时制适用于行政、后勤、技术及一般管理岗位，每周工作5天、每天8小时、每周不超过40小时，并区分令时作息[2]：\n- 夏令时（5月1日–9月30日）：上午 08:30–12:00，下午 13:30–18:00[2]\n- 冬令时（10月1日–4月30日）：上午 08:30–12:00，下午 13:00–17:30[2]\n此外，来源 2 还规定了不定时工作制（适用于高层管理、外勤销售、市场拓展等人员，需按规定报考勤备且经劳动行政部门审批后不支付加班费）和综合计算工时制（适用于生产一线、安保等需连续作业或受季节影响的岗位）[2]。",
+      "citations": [
+        {
+          "doc_title": "企业考勤制度手册V2.docx",
+          "document_id": "5d0b2fda-ce6a-43c6-b883-98a293d20d8a",
+          "score": 0.8699,
+          "page_no": 1,
+          "bbox": null,
+          "version": 1,
+          "version_conflict": null
+        },
+        {
+          "doc_title": "企业考勤管理制度详细手册.doc",
+          "document_id": "c9c9505b-fd0a-4b93-add7-8b7e92d20942",
+          "score": 0.8415,
+          "page_no": 1,
+          "bbox": null,
+          "version": 1,
+          "version_conflict": null
+        }
+      ],
+      "traces": [
+        {
+          "id": "runtime_config",
+          "status": "running",
+          "summary": "读取平台数据库中的模型配置",
+          "details": null
+        },
+        {
+          "id": "runtime_config",
+          "status": "success",
+          "summary": "模型运行时配置已加载",
+          "details": null
+        },
+        {
+          "id": "permission_scope",
+          "status": "running",
+          "summary": "计算当前用户可读知识库及本次选择范围",
+          "details": null
+        },
+        {
+          "id": "permission_scope",
+          "status": "success",
+          "summary": "本次可检索 1 个知识库",
+          "details": {
+            "visibleCount": 56,
+            "selectedCount": 1,
+            "rejectedCount": 0,
+            "knowledgeBases": [
+              {
+                "id": "81efc3c4-e48c-4e24-8653-43bb0b5f20db",
+                "name": "南京分公司知识库",
+                "type": "org"
+              }
+            ]
+          }
+        },
+        {
+          "id": "source_plan",
+          "status": "running",
+          "summary": "将业务权限范围映射为隔离的 GBrain Source",
+          "details": null
+        },
+        {
+          "id": "source_plan",
+          "status": "success",
+          "summary": "已选择 1 个原始知识 Source",
+          "details": {
+            "sourceKeys": [
+              "llmwiki-kb-734065e62cece987"
+            ],
+            "scopeFingerprint": "f07801db8812211c",
+            "aclEpoch": 1,
+            "knowledgeEpoch": 2
+          }
+        },
+        {
+          "id": "source_freshness",
+          "status": "running",
+          "summary": "核对业务文档与 GBrain 可检索页是否一致",
+          "details": null
+        },
+        {
+          "id": "source_freshness",
+          "status": "success",
+          "summary": "已核对 1 个 Source，索引新鲜",
+          "details": {
+            "checked": 1,
+            "rebuilt": 0,
+            "fresh": true,
+            "staleSources": [],
+            "sourceKeys": [
+              "llmwiki-kb-734065e62cece987"
+            ]
+          }
+        },
+        {
+          "id": "conversation_context",
+          "status": "running",
+          "summary": "读取同一会话的近期上下文",
+          "details": null
+        },
+        {
+          "id": "conversation_context",
+          "status": "success",
+          "summary": "已加载 0 条历史消息",
+          "details": {
+            "historyMessages": 0
+          }
+        },
+        {
+          "id": "query_rewrite",
+          "status": "running",
+          "summary": "结合历史指代生成独立检索问题",
+          "details": null
+        },
+        {
+          "id": "query_rewrite",
+          "status": "success",
+          "summary": "使用 query / 聚焦 模式",
+          "details": {
+            "rewrittenQuery": "员工考勤的时间是什么",
+            "operation": "query",
+            "breadth": false,
+            "complexity": "simple",
+            "subQueries": [],
+            "expansions": [],
+            "hyde": false
+          }
+        },
+        {
+          "id": "personal_memory",
+          "status": "running",
+          "summary": "从当前用户私有 Source 加载相关长期记忆",
+          "details": null
+        },
+        {
+          "id": "personal_memory",
+          "status": "skipped",
+          "summary": "当前问题未请求个人记忆背景，优先执行授权知识检索",
+          "details": {
+            "matchedFacts": 0,
+            "reason": "not_memory_relevant"
+          }
+        },
+        {
+          "id": "scope_synthesis",
+          "status": "running",
+          "summary": null,
+          "details": null
+        },
+        {
+          "id": "scope_synthesis",
+          "status": "skipped",
+          "summary": "用户选择了部分知识库，不使用全范围综述",
+          "details": null
+        },
+        {
+          "id": "gbrain_retrieval",
+          "status": "running",
+          "summary": "执行向量、BM25、RRF、图谱信号与重排检索",
+          "details": {
+            "sourceCount": 1,
+            "operation": "query",
+            "breadth": false
+          }
+        },
+        {
+          "id": "gbrain_arm_policy",
+          "status": "skipped",
+          "summary": "GBrain 引擎臂按策略关闭（RETRIEVAL_ARM_POLICY=chunks_only），本次仅使用数据库分块召回",
+          "details": {
+            "policy": "chunks_only"
+          }
+        },
+        {
+          "id": "gbrain_retrieval",
+          "status": "success",
+          "summary": "GBrain 返回 6 个候选页面，初始语义证据置信度偏低，待扩检前置信度复核",
+          "details": {
+            "sourceCount": 1,
+            "operation": "query",
+            "breadth": false,
+            "candidateCount": 6,
+            "rerankedByGbrain": false,
+            "topEvidence": "\\# 企业考勤制度手册\n\n\\*\\*版本号：\\** V2.0\n\n\\*\\*生效日期：\\** 2026年9月1日\n\n\\*\\*适用范围：\\** 公司全体员工\n\n\\## 第一章 总则与核心理念\n\n\\*\\*1.1 目的\\**\n\n本制度旨在规范员工出勤管理，维护良好的工作秩序，同时借鉴行业领先实践，在保障业务高效运转与尊重员工生活需求之间寻求平衡。我们坚信，面对面的协作是激发创新和解决复杂问题的核心，因此本制度鼓励员工更多地回归办公室，共享团队协作的氛围。\n\n\\*\\*1.2 适用范围\\**\n\n本制度适用于公司全体正式员工。因岗位性质特殊（如数据中心运维、现场服务等）需执行特殊工时制的员工，由人力资源部另行规定。\n\n\\## 第二章 工作时间与考勤方式\n\n\\*\\*2.1 标准工时制\\**\n\n1\\.  \\*\\*工作时间：\\** 周一至周五，每天8小时。\n\n\\- 上午：09:00 - 12:00\n\n\\- 下午：13:00 - 18:00\n\n\\- 午休：12:00 - 13:00（1小时）\n\n2\\.  \\*\\*打卡制度：\\** 员工上下班均需打卡（指纹/人脸/手机端），作为考勤记录的唯一依据。一天需打卡两次（上班打卡、下班打卡）。\n\n\\*\\*2.2 混合办公模式\\**\n\n公司实行混合办公制度，即“3+2”工作模式：\n\n\\- \\*\\*办公室工作日（3天）：\\** 员工每周需至少到办公室工作三天。具体哪天由团队负责人根据团队协作需求协商确定。此举旨在强化团队凝聚力与即时沟通效率。\n\n\\- \\*\\*居家办公日（2天）：\\** 员工每周可享有两天在家或其他私人空间办公的灵活安排。此安排无需额外申请，但需确保工作时间在线，通讯畅通。\n\n\\## 第三章 “随地办公”政策\n\n为进一步满足员工在旅行或特殊时期的办公需求，公司设立“随地办公”额度。\\*\\*该政策不同于上述混合办公模式下的居家办公，特指在非居住地、非公司所在城市的异地短期办公。\\**\n\n\\*\\*3.1 额度管理\\**\n\n1\\.  \\*\\*总额度：\\** 每位员工每年享有\\*\\*4周\\**的“随地办公”额度。\n\n2\\.  \\*\\*计算规则（关键变化）：\\** \\*\\*按整周扣除\\*\\*。无论员工在标准工作周内申请了1天还是5天的“随地办公”，均视为消耗\\*\\*1整周\\**的额度。\n\n\\- \\*示例：* 若员工周一至周三在外地办公（共3天），系统将扣除1周的WFA额度。\n\n3\\.  \\*\\*使用建议：\\** 鉴于上述规则，建议员工在申请“随地办公”时，尽可能以\\*\\*整周（周一至周五）\\** 为单位进行规划，以最大化利用该福利。\n\n\\*\\*3.2 使用限制\\**\n\n1\\.  \\*\\*适用场景：\\** “随地办公”旨在支持员工在跨城市旅行、回乡探亲等非日常场景下保持工作连续性。不得用于在\\*\\*本人居住地或办公室附近\\**进行常规办公。\n\n2\\.  \\*\\*地域与合规：\\** “随地办公”期间，\\*\\*不得\\**在其他州、省或国家的Google办公室办公，以避免跨境工作的法律及税务风险。若跨时区工作，需适应当地办公时间。\n\n3\\.  \\*\\*排他性：\\** 已被豁免混合办公要求的特殊岗位员工不适用此政策。\n\n\\*\\*3.3 违规处理\\**\n\n违反“随地办公”政策，例如虚报办公地点或未经审批异地办公，将视情节轻重给予警告、取消当年度WFA额度，直至纪律处分或解雇。\n\n\\## 第四章 请假与特殊考勤\n\n\\*\\*4.1 请假流程\\**\n\n1\\.  \\*\\*事前申请：\\** 所有请假（包括年假、病假、事假等）均需提前在OA系统中提交申请，并经直接上级审批。\n\n2\\.  \\*\\*最小单位：\\** 请假以\\*\\*小时\\**为最小计算单位。\n\n\\*\\*4.2 缺勤定义与处理\\**\n\n1\\.  \\*\\*迟到/早退：\\** 无故迟到或早退超过30分钟，视为旷工半日；超过2小时，视为旷工一日。\n\n2\\.  \\*\\*旷工：\\** 包括但不限于：未经批准擅自缺勤；请假未获批即离岗；考勤异常（如未打卡且未提交说明）经核实为无故缺勤。连续旷工3日或全年累计旷工5日者，公司有权解除劳动合同。\n\n\\## 第五章 附则\n\n1\\.  \\*\\*解释权：\\** 本制度由人力资源部负责解释和修订。\n\n2\\.  \\*\\*冲突处理：\\** 本制度如与之前发布的相关规定有冲突，以本制度为准。\n\n3\\.  \\*\\*生效日期：\\** 本制度自发布之日起生效。\n\n\\---\n\n\\*\\*HR备注：\\**\n\n\\- 本手册最核心的设计是\\*\\*将混合办公（3+2）与异地办公（WFA）做了切割\\**。混合办公是常态化的通勤选择，WFA则是年度配额制福利。\n\n\\- 参考Google的收紧策略，\\*\\*按整周扣除WFA额度的规则\\**是为了引导员工将异地办公用于长时间的差旅或",
+            "topScore": 0.95,
+            "evidenceAssessment": {
+              "shouldEscalate": true,
+              "weak": true,
+              "evidence": "\\# 企业考勤制度手册\n\n\\*\\*版本号：\\** v2.0\n\n\\*\\*生效日期：\\** 2026年9月1日\n\n\\*\\*适用范围：\\** 公司全体员工\n\n\\## 第一章 总则与核心理念\n\n\\*\\*1.1 目的\\**\n\n本制度旨在规范员工出勤管理，维护良好的工作秩序，同时借鉴行业领先实践，在保障业务高效运转与尊重员工生活需求之间寻求平衡。我们坚信，面对面的协作是激发创新和解决复杂问题的核心，因此本制度鼓励员工更多地回归办公室，共享团队协作的氛围。\n\n\\*\\*1.2 适用范围\\**\n\n本制度适用于公司全体正式员工。因岗位性质特殊（如数据中心运维、现场服务等）需执行特殊工时制的员工，由人力资源部另行规定。\n\n\\## 第二章 工作时间与考勤方式\n\n\\*\\*2.1 标准工时制\\**\n\n1\\.  \\*\\*工作时间：\\** 周一至周五，每天8小时。\n\n\\- 上午：09:00 - 12:00\n\n\\- 下午：13:00 - 18:00\n\n\\- 午休：12:00 - 13:00（1小时）\n\n2\\.  \\*\\*打卡制度：\\** 员工上下班均需打卡（指纹/人脸/手机端），作为考勤记录的唯一依据。一天需打卡两次（上班打卡、下班打卡）。\n\n\\*\\*2.2 混合办公模式\\**\n\n公司实行混合办公制度，即“3+2”工作模式：\n\n\\- \\*\\*办公室工作日（3天）：\\** 员工每周需至少到办公室工作三天。具体哪天由团队负责人根据团队协作需求协商确定。此举旨在强化团队凝聚力与即时沟通效率。\n\n\\- \\*\\*居家办公日（2天）：\\** 员工每周可享有两天在家或其他私人空间办公的灵活安排。此安排无需额外申请，但需确保工作时间在线，通讯畅通。\n\n\\## 第三章 “随地办公”政策\n\n为进一步满足员工在旅行或特殊时期的办公需求，公司设立“随地办公”额度。\\*\\*该政策不同于上述混合办公模式下的居家办公，特指在非居住地、非公司所在城市的异地短期办公。\\**\n\n\\*\\*3.1 额度管理\\**\n\n1\\.  \\*\\*总额度：\\** 每位员工每年享有\\*\\*4周\\**的“随地办公”额度。\n\n2\\.  \\*\\*计算规则（关键变化）：\\** \\*\\*按整周扣除\\*\\*。无论员工在标准工作周内申请了1天还是5天的“随地办公”，均视为消耗\\*\\*1整周\\**的额度。\n\n\\- \\*示例：* 若员工周一至周三在外地办公（共3天），系统将扣除1周的wfa额度。\n\n3\\.  \\*\\*使用建议：\\** 鉴于上述规则，建议员工在申请“随地办公”时，尽可能以\\*\\*整周（周一至周五）\\** 为单位进行规划，以最大化利用该福利。\n\n\\*\\*3.2 使用限制\\**\n\n1\\.  \\*\\*适用场景：\\** “随地办公”旨在支持员工在跨城市旅行、回乡探亲等非日常场景下保持工作连续性。不得用于在\\*\\*本人居住地或办公室附近\\**进行常规办公。\n\n2\\.  \\*\\*地域与合规：\\** “随地办公”期间，\\*\\*不得\\**在其他州、省或国家的google办公室办公，以避免跨境工作的法律及税务风险。若跨时区工作，需适应当地办公时间。\n\n3\\.  \\*\\*排他性：\\** 已被豁免混合办公要求的特殊岗位员工不适用此政策。\n\n\\*\\*3.3 违规处理\\**\n\n违反“随地办公”政策，例如虚报办公地点或未经审批异地办公，将视情节轻重给予警告、取消当年度wfa额度，直至纪律处分或解雇。\n\n\\## 第四章 请假与特殊考勤\n\n\\*\\*4.1 请假流程\\**\n\n1\\.  \\*\\*事前申请：\\** 所有请假（包括年假、病假、事假等）均需提前在oa系统中提交申请，并经直接上级审批。\n\n2\\.  \\*\\*最小单位：\\** 请假以\\*\\*小时\\**为最小计算单位。\n\n\\*\\*4.2 缺勤定义与处理\\**\n\n1\\.  \\*\\*迟到/早退：\\** 无故迟到或早退超过30分钟，视为旷工半日；超过2小时，视为旷工一日。\n\n2\\.  \\*\\*旷工：\\** 包括但不限于：未经批准擅自缺勤；请假未获批即离岗；考勤异常（如未打卡且未提交说明）经核实为无故缺勤。连续旷工3日或全年累计旷工5日者，公司有权解除劳动合同。\n\n\\## 第五章 附则\n\n1\\.  \\*\\*解释权：\\** 本制度由人力资源部负责解释和修订。\n\n2\\.  \\*\\*冲突处理：\\** 本制度如与之前发布的相关规定有冲突，以本制度为准。\n\n3\\.  \\*\\*生效日期：\\** 本制度自发布之日起生效。\n\n\\---\n\n\\*\\*hr备注：\\**\n\n\\- 本手册最核心的设计是\\*\\*将混合办公（3+2）与异地办公（wfa）做了切割\\**。混合办公是常态化的通勤选择，wfa则是年度配额制福利。\n\n\\- 参考google的收紧策略，\\*\\*按整周扣除wfa额度的规则\\**是为了引导员工将异地办公用于长时间的差旅或",
+              "topScore": null,
+              "scoreFloor": 0.75,
+              "reason": "无经过验证的置信度，继续预算内检索"
+            },
+            "diagnostics": null
+          }
+        },
+        {
+          "id": "permission_guard",
+          "status": "running",
+          "summary": "按当前数据库权限和 Source 世代复核候选结果",
+          "details": null
+        },
+        {
+          "id": "permission_guard",
+          "status": "success",
+          "summary": "全部 6 个候选通过最终权限校验",
+          "details": {
+            "before": 6,
+            "after": 6,
+            "removed": 0
+          }
+        },
+        {
+          "id": "confidence_rerank",
+          "status": "running",
+          "summary": "先以交叉编码重排验证首轮弱语义候选",
+          "details": null
+        },
+        {
+          "id": "confidence_rerank",
+          "status": "success",
+          "summary": "首轮候选经交叉编码验证充分，跳过冗余扩检",
+          "details": {
+            "before": 6,
+            "after": 6,
+            "evidenceAssessment": {
+              "shouldEscalate": false,
+              "weak": true,
+              "evidence": "\\# 企业考勤制度手册\n\n\\*\\*版本号：\\** v2.0\n\n\\*\\*生效日期：\\** 2026年9月1日\n\n\\*\\*适用范围：\\** 公司全体员工\n\n\\## 第一章 总则与核心理念\n\n\\*\\*1.1 目的\\**\n\n本制度旨在规范员工出勤管理，维护良好的工作秩序，同时借鉴行业领先实践，在保障业务高效运转与尊重员工生活需求之间寻求平衡。我们坚信，面对面的协作是激发创新和解决复杂问题的核心，因此本制度鼓励员工更多地回归办公室，共享团队协作的氛围。\n\n\\*\\*1.2 适用范围\\**\n\n本制度适用于公司全体正式员工。因岗位性质特殊（如数据中心运维、现场服务等）需执行特殊工时制的员工，由人力资源部另行规定。\n\n\\## 第二章 工作时间与考勤方式\n\n\\*\\*2.1 标准工时制\\**\n\n1\\.  \\*\\*工作时间：\\** 周一至周五，每天8小时。\n\n\\- 上午：09:00 - 12:00\n\n\\- 下午：13:00 - 18:00\n\n\\- 午休：12:00 - 13:00（1小时）\n\n2\\.  \\*\\*打卡制度：\\** 员工上下班均需打卡（指纹/人脸/手机端），作为考勤记录的唯一依据。一天需打卡两次（上班打卡、下班打卡）。\n\n\\*\\*2.2 混合办公模式\\**\n\n公司实行混合办公制度，即“3+2”工作模式：\n\n\\- \\*\\*办公室工作日（3天）：\\** 员工每周需至少到办公室工作三天。具体哪天由团队负责人根据团队协作需求协商确定。此举旨在强化团队凝聚力与即时沟通效率。\n\n\\- \\*\\*居家办公日（2天）：\\** 员工每周可享有两天在家或其他私人空间办公的灵活安排。此安排无需额外申请，但需确保工作时间在线，通讯畅通。\n\n\\## 第三章 “随地办公”政策\n\n为进一步满足员工在旅行或特殊时期的办公需求，公司设立“随地办公”额度。\\*\\*该政策不同于上述混合办公模式下的居家办公，特指在非居住地、非公司所在城市的异地短期办公。\\**\n\n\\*\\*3.1 额度管理\\**\n\n1\\.  \\*\\*总额度：\\** 每位员工每年享有\\*\\*4周\\**的“随地办公”额度。\n\n2\\.  \\*\\*计算规则（关键变化）：\\** \\*\\*按整周扣除\\*\\*。无论员工在标准工作周内申请了1天还是5天的“随地办公”，均视为消耗\\*\\*1整周\\**的额度。\n\n\\- \\*示例：* 若员工周一至周三在外地办公（共3天），系统将扣除1周的wfa额度。\n\n3\\.  \\*\\*使用建议：\\** 鉴于上述规则，建议员工在申请“随地办公”时，尽可能以\\*\\*整周（周一至周五）\\** 为单位进行规划，以最大化利用该福利。\n\n\\*\\*3.2 使用限制\\**\n\n1\\.  \\*\\*适用场景：\\** “随地办公”旨在支持员工在跨城市旅行、回乡探亲等非日常场景下保持工作连续性。不得用于在\\*\\*本人居住地或办公室附近\\**进行常规办公。\n\n2\\.  \\*\\*地域与合规：\\** “随地办公”期间，\\*\\*不得\\**在其他州、省或国家的google办公室办公，以避免跨境工作的法律及税务风险。若跨时区工作，需适应当地办公时间。\n\n3\\.  \\*\\*排他性：\\** 已被豁免混合办公要求的特殊岗位员工不适用此政策。\n\n\\*\\*3.3 违规处理\\**\n\n违反“随地办公”政策，例如虚报办公地点或未经审批异地办公，将视情节轻重给予警告、取消当年度wfa额度，直至纪律处分或解雇。\n\n\\## 第四章 请假与特殊考勤\n\n\\*\\*4.1 请假流程\\**\n\n1\\.  \\*\\*事前申请：\\** 所有请假（包括年假、病假、事假等）均需提前在oa系统中提交申请，并经直接上级审批。\n\n2\\.  \\*\\*最小单位：\\** 请假以\\*\\*小时\\**为最小计算单位。\n\n\\*\\*4.2 缺勤定义与处理\\**\n\n1\\.  \\*\\*迟到/早退：\\** 无故迟到或早退超过30分钟，视为旷工半日；超过2小时，视为旷工一日。\n\n2\\.  \\*\\*旷工：\\** 包括但不限于：未经批准擅自缺勤；请假未获批即离岗；考勤异常（如未打卡且未提交说明）经核实为无故缺勤。连续旷工3日或全年累计旷工5日者，公司有权解除劳动合同。\n\n\\## 第五章 附则\n\n1\\.  \\*\\*解释权：\\** 本制度由人力资源部负责解释和修订。\n\n2\\.  \\*\\*冲突处理：\\** 本制度如与之前发布的相关规定有冲突，以本制度为准。\n\n3\\.  \\*\\*生效日期：\\** 本制度自发布之日起生效。\n\n\\---\n\n\\*\\*hr备注：\\**\n\n\\- 本手册最核心的设计是\\*\\*将混合办公（3+2）与异地办公（wfa）做了切割\\**。混合办公是常态化的通勤选择，wfa则是年度配额制福利。\n\n\\- 参考google的收紧策略，\\*\\*按整周扣除wfa额度的规则\\**是为了引导员工将异地办公用于长时间的差旅或",
+              "topScore": null,
+              "reason": "重排已完成，置信度未知；保留候选并交由原文核验"
+            }
+          }
+        },
+        {
+          "id": "retrieval_escalation",
+          "status": "running",
+          "summary": null,
+          "details": null
+        },
+        {
+          "id": "retrieval_escalation",
+          "status": "skipped",
+          "summary": "重排已完成，置信度未知；保留候选并交由原文核验",
+          "details": {
+            "evidence": "\\# 企业考勤制度手册\n\n\\*\\*版本号：\\** v2.0\n\n\\*\\*生效日期：\\** 2026年9月1日\n\n\\*\\*适用范围：\\** 公司全体员工\n\n\\## 第一章 总则与核心理念\n\n\\*\\*1.1 目的\\**\n\n本制度旨在规范员工出勤管理，维护良好的工作秩序，同时借鉴行业领先实践，在保障业务高效运转与尊重员工生活需求之间寻求平衡。我们坚信，面对面的协作是激发创新和解决复杂问题的核心，因此本制度鼓励员工更多地回归办公室，共享团队协作的氛围。\n\n\\*\\*1.2 适用范围\\**\n\n本制度适用于公司全体正式员工。因岗位性质特殊（如数据中心运维、现场服务等）需执行特殊工时制的员工，由人力资源部另行规定。\n\n\\## 第二章 工作时间与考勤方式\n\n\\*\\*2.1 标准工时制\\**\n\n1\\.  \\*\\*工作时间：\\** 周一至周五，每天8小时。\n\n\\- 上午：09:00 - 12:00\n\n\\- 下午：13:00 - 18:00\n\n\\- 午休：12:00 - 13:00（1小时）\n\n2\\.  \\*\\*打卡制度：\\** 员工上下班均需打卡（指纹/人脸/手机端），作为考勤记录的唯一依据。一天需打卡两次（上班打卡、下班打卡）。\n\n\\*\\*2.2 混合办公模式\\**\n\n公司实行混合办公制度，即“3+2”工作模式：\n\n\\- \\*\\*办公室工作日（3天）：\\** 员工每周需至少到办公室工作三天。具体哪天由团队负责人根据团队协作需求协商确定。此举旨在强化团队凝聚力与即时沟通效率。\n\n\\- \\*\\*居家办公日（2天）：\\** 员工每周可享有两天在家或其他私人空间办公的灵活安排。此安排无需额外申请，但需确保工作时间在线，通讯畅通。\n\n\\## 第三章 “随地办公”政策\n\n为进一步满足员工在旅行或特殊时期的办公需求，公司设立“随地办公”额度。\\*\\*该政策不同于上述混合办公模式下的居家办公，特指在非居住地、非公司所在城市的异地短期办公。\\**\n\n\\*\\*3.1 额度管理\\**\n\n1\\.  \\*\\*总额度：\\** 每位员工每年享有\\*\\*4周\\**的“随地办公”额度。\n\n2\\.  \\*\\*计算规则（关键变化）：\\** \\*\\*按整周扣除\\*\\*。无论员工在标准工作周内申请了1天还是5天的“随地办公”，均视为消耗\\*\\*1整周\\**的额度。\n\n\\- \\*示例：* 若员工周一至周三在外地办公（共3天），系统将扣除1周的wfa额度。\n\n3\\.  \\*\\*使用建议：\\** 鉴于上述规则，建议员工在申请“随地办公”时，尽可能以\\*\\*整周（周一至周五）\\** 为单位进行规划，以最大化利用该福利。\n\n\\*\\*3.2 使用限制\\**\n\n1\\.  \\*\\*适用场景：\\** “随地办公”旨在支持员工在跨城市旅行、回乡探亲等非日常场景下保持工作连续性。不得用于在\\*\\*本人居住地或办公室附近\\**进行常规办公。\n\n2\\.  \\*\\*地域与合规：\\** “随地办公”期间，\\*\\*不得\\**在其他州、省或国家的google办公室办公，以避免跨境工作的法律及税务风险。若跨时区工作，需适应当地办公时间。\n\n3\\.  \\*\\*排他性：\\** 已被豁免混合办公要求的特殊岗位员工不适用此政策。\n\n\\*\\*3.3 违规处理\\**\n\n违反“随地办公”政策，例如虚报办公地点或未经审批异地办公，将视情节轻重给予警告、取消当年度wfa额度，直至纪律处分或解雇。\n\n\\## 第四章 请假与特殊考勤\n\n\\*\\*4.1 请假流程\\**\n\n1\\.  \\*\\*事前申请：\\** 所有请假（包括年假、病假、事假等）均需提前在oa系统中提交申请，并经直接上级审批。\n\n2\\.  \\*\\*最小单位：\\** 请假以\\*\\*小时\\**为最小计算单位。\n\n\\*\\*4.2 缺勤定义与处理\\**\n\n1\\.  \\*\\*迟到/早退：\\** 无故迟到或早退超过30分钟，视为旷工半日；超过2小时，视为旷工一日。\n\n2\\.  \\*\\*旷工：\\** 包括但不限于：未经批准擅自缺勤；请假未获批即离岗；考勤异常（如未打卡且未提交说明）经核实为无故缺勤。连续旷工3日或全年累计旷工5日者，公司有权解除劳动合同。\n\n\\## 第五章 附则\n\n1\\.  \\*\\*解释权：\\** 本制度由人力资源部负责解释和修订。\n\n2\\.  \\*\\*冲突处理：\\** 本制度如与之前发布的相关规定有冲突，以本制度为准。\n\n3\\.  \\*\\*生效日期：\\** 本制度自发布之日起生效。\n\n\\---\n\n\\*\\*hr备注：\\**\n\n\\- 本手册最核心的设计是\\*\\*将混合办公（3+2）与异地办公（wfa）做了切割\\**。混合办公是常态化的通勤选择，wfa则是年度配额制福利。\n\n\\- 参考google的收紧策略，\\*\\*按整周扣除wfa额度的规则\\**是为了引导员工将异地办公用于长时间的差旅或",
+            "topScore": null
+          }
+        },
+        {
+          "id": "source_reconcile_retry",
+          "status": "running",
+          "summary": null,
+          "details": null
+        },
+        {
+          "id": "source_reconcile_retry",
+          "status": "skipped",
+          "summary": "首轮检索已有结果，无需重建重试",
+          "details": null
+        },
+        {
+          "id": "weknora_retrieval",
+          "status": "running",
+          "summary": null,
+          "details": null
+        },
+        {
+          "id": "weknora_retrieval",
+          "status": "skipped",
+          "summary": "WeKnora 外部检索未配置或处于禁用状态（保持纯净 GBrain 知识主源）",
+          "details": null
+        },
+        {
+          "id": "section_align",
+          "status": "running",
+          "summary": "按问题点名的小节/表角色调整候选排序",
+          "details": null
+        },
+        {
+          "id": "section_align",
+          "status": "success",
+          "summary": "已应用 section/table-role 对齐乘子",
+          "details": null
+        },
+        {
+          "id": "section_rescue",
+          "status": "running",
+          "summary": "同文档补拉未覆盖的问题点名小节",
+          "details": null
+        },
+        {
+          "id": "section_rescue",
+          "status": "success",
+          "summary": "候选池已覆盖问题小节，无需救援",
+          "details": null
+        },
+        {
+          "id": "rerank",
+          "status": "running",
+          "summary": "统一比较跨 Source 候选并执行相关性打分",
+          "details": null
+        },
+        {
+          "id": "rerank",
+          "status": "success",
+          "summary": "平台交叉编码重排完成（跨源统一分数尺度）",
+          "details": {
+            "before": 6,
+            "after": 2,
+            "reranked": true,
+            "platformApplied": true
+          }
+        },
+        {
+          "id": "graphrag_drift",
+          "status": "running",
+          "summary": null,
+          "details": null
+        },
+        {
+          "id": "graphrag_drift",
+          "status": "skipped",
+          "summary": "问题复杂度或证据状态无需启动 DRIFT",
+          "details": null
+        },
+        {
+          "id": "agentic_sufficiency_eval_1",
+          "status": "running",
+          "summary": "评估当前证据链是否足以严谨完整回答复杂问题",
+          "details": null
+        },
+        {
+          "id": "agentic_sufficiency_eval_1",
+          "status": "success",
+          "summary": "证据充分性裁决通过 (置信度 80%)：当前检索证据已充分覆盖问题要点",
+          "details": {
+            "hop": 1,
+            "status": "sufficient",
+            "confidence": 0.8,
+            "reasoning": "当前检索证据已充分覆盖问题要点",
+            "missingAspects": [],
+            "suggestedFollowUp": []
+          }
+        },
+        {
+          "id": "evidence_selection",
+          "status": "running",
+          "summary": "相关性阈值、组级去重与 token 预算的联合选择",
+          "details": null
+        },
+        {
+          "id": "evidence_selection",
+          "status": "success",
+          "summary": "已选择 2/2 条证据（组级去重 + token 预算）",
+          "details": {
+            "before": 2,
+            "after": 2,
+            "removed": 0,
+            "selection": {
+              "before": 2,
+              "after": 2,
+              "removed": 0,
+              "groups": 2,
+              "usedTokens": 3993,
+              "relevanceFloorRatio": 0.2,
+              "mmrLambda": 0.72
+            }
+          }
+        },
+        {
+          "id": "lazy_compile",
+          "status": "running",
+          "summary": "检查命中主题页是否存在待编译变更",
+          "details": null
+        },
+        {
+          "id": "lazy_compile",
+          "status": "success",
+          "summary": "命中主题页均无需即时重编译",
+          "details": {
+            "checked": 2,
+            "compiled": 0,
+            "injected": 0
+          }
+        },
+        {
+          "id": "version_conflict_check",
+          "status": "running",
+          "summary": "检测多版本并裁决现行有效标准",
+          "details": null
+        },
+        {
+          "id": "version_conflict_check",
+          "status": "success",
+          "summary": "命中文档版本均一致，未检测到多版本冲突",
+          "details": {
+            "conflictCount": 0,
+            "conflictTitles": []
+          }
+        },
+        {
+          "id": "answer_context",
+          "status": "running",
+          "summary": "从授权证据页组装可引用的回答上下文",
+          "details": null
+        },
+        {
+          "id": "answer_context",
+          "status": "success",
+          "summary": "已组装 2 条可引用证据",
+          "details": {
+            "citationCount": 2,
+            "contextChars": 5885,
+            "stitchedCount": 0,
+            "structuredEvidence": false,
+            "evidenceGroups": [
+              {
+                "kind": "subquery",
+                "label": "员工考勤的时间",
+                "sourceIndexes": [
+                  1,
+                  2
+                ]
+              }
+            ],
+            "hardCapDropped": 0,
+            "hardCapTruncated": 0,
+            "protectedEvidenceCount": 1
+          }
+        },
+        {
+          "id": "retrieval_confidence",
+          "status": "warning",
+          "summary": "本次没有可用的重排分数（未配置重排模型或重排失败），拒答阈值只能作用于合成分，判定能力已降级",
+          "details": {
+            "evidenceCount": 2,
+            "maxSyntheticScore": 0,
+            "syntheticThreshold": 0.999,
+            "hasMeaningfulPreAnswer": true
+          }
+        },
+        {
+          "id": "retrieval_confidence",
+          "status": "warning",
+          "summary": "当前模型没有匹配的留出集校准参数，进入原文逐句核验，不使用合成分数决定拒答",
+          "details": {
+            "scoreCalibrated": false,
+            "evidenceCount": 2
+          }
+        },
+        {
+          "id": "llm_generation",
+          "status": "running",
+          "summary": "基于授权证据生成回答并要求逐项引用",
+          "details": null
+        },
+        {
+          "id": "grounding_gate",
+          "status": "running",
+          "summary": "对暂扣语句执行证据蕴含复核",
+          "details": null
+        },
+        {
+          "id": "grounding_gate",
+          "status": "warning",
+          "summary": "4 句因缺乏证据支持被拦截，未向用户展示",
+          "details": {
+            "verified": 6,
+            "held": 4,
+            "recovered": 0,
+            "dropped": 4,
+            "strict": true,
+            "providerError": false
+          }
+        },
+        {
+          "id": "citation_rebinding",
+          "status": "success",
+          "summary": "回答角标与证据一一对应",
+          "details": {
+            "reboundCitations": 0,
+            "evidencePool": 2
+          }
+        },
+        {
+          "id": "llm_generation",
+          "status": "success",
+          "summary": "大模型回答生成完成",
+          "details": {
+            "model": "mimo-v2.5",
+            "tokenEstimate": 293,
+            "outputChars": 442,
+            "synthesizedRefusal": false,
+            "promptCacheHitTokens": 0,
+            "promptCacheMissTokens": 0,
+            "cacheHitRate": "0%"
+          }
+        },
+        {
+          "id": "citation_validation",
+          "status": "running",
+          "summary": "校验回答角标并绑定到原始文档预览",
+          "details": null
+        },
+        {
+          "id": "citation_validation",
+          "status": "success",
+          "summary": "回答引用 2 个原始证据页面",
+          "details": {
+            "candidateCitations": 2,
+            "referencedCitations": [
+              1,
+              2
+            ],
+            "invalidMarkersRemoved": false,
+            "aclStripped": 0,
+            "semanticCoverage": {
+              "totalStatements": 6,
+              "groundedStatements": 6,
+              "coverageRatio": 1,
+              "refusalExempt": false
+            }
+          }
+        },
+        {
+          "id": "message_persistence",
+          "status": "running",
+          "summary": "正在保存回答、引用和处理链路",
+          "details": null
+        },
+        {
+          "id": "message_persistence",
+          "status": "success",
+          "summary": "回答、引用和处理链路已保存",
+          "details": null
+        }
+      ],
+      "latency_s": 36.4,
+      "status": 201,
+      "conversation_id": "9ac426bb-5db7-4dfb-ac00-1df396381661"
+    },
+    {
+      "question": "员工夏天几点上班",
+      "scope": null,
+      "answer": "**夏天上午 08:30 上班**（夏令时 5月1日–9月30日）[1]。**集团总部知识库《企业考勤管理制度详细手册》**规定，标准工时制每周工作5天、每天8小时、每周不超过40小时；夏令时（5月1日–9月30日）作息为上午 08:30–12:00，下午 13:30–18:00，冬令时（10月1日–4月30日）作息为上午 08:30–12:00，下午 13:00–17:30 [1]。\n需注意，另一知识库中存在不同版本的考勤规定，与上文不是同一套制度：",
+      "citations": [
+        {
+          "doc_title": "企业考勤管理制度详细手册.doc",
+          "document_id": "25cb8464-f9dd-442f-b016-cacbd68ca430",
+          "score": 0.4533739686012268,
+          "page_no": "3-7",
+          "bbox": null,
+          "version": 1,
+          "version_conflict": null
+        }
+      ],
+      "traces": [
+        {
+          "id": "runtime_config",
+          "status": "running",
+          "summary": "读取平台数据库中的模型配置",
+          "details": null
+        },
+        {
+          "id": "runtime_config",
+          "status": "success",
+          "summary": "模型运行时配置已加载",
+          "details": null
+        },
+        {
+          "id": "permission_scope",
+          "status": "running",
+          "summary": "计算当前用户可读知识库及本次选择范围",
+          "details": null
+        },
+        {
+          "id": "permission_scope",
+          "status": "success",
+          "summary": "本次可检索 56 个知识库",
+          "details": {
+            "visibleCount": 56,
+            "selectedCount": 56,
+            "rejectedCount": 0,
+            "knowledgeBases": [
+              {
+                "id": "37beb976-d60c-42c0-863a-6dec64e51131",
+                "name": "公开基准-BEIR-SciFact-EN",
+                "type": "personal"
+              },
+              {
+                "id": "54a995b6-52d4-49be-ac33-1ee568445866",
+                "name": "公开基准-BEIR-SciFact-EN",
+                "type": "personal"
+              },
+              {
+                "id": "15dfe64c-d456-45ad-beee-23f0317ddbb9",
+                "name": "合规部知识库",
+                "type": "org"
+              },
+              {
+                "id": "4d2381ff-91c3-4b96-a032-44ec685f82fd",
+                "name": "研发中心知识库",
+                "type": "org"
+              },
+              {
+                "id": "2ee7a75f-5705-493f-af10-e37e5c5c953b",
+                "name": "集团总部知识库",
+                "type": "org"
+              },
+              {
+                "id": "b95c7ee5-8a0e-4534-9822-243f9581c537",
+                "name": "测试理论库",
+                "type": "industry"
+              },
+              {
+                "id": "08edf353-d2f6-4b2d-b5d8-508582ecb579",
+                "name": "E2ESCORE-43175e44-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "43467356-3c21-4be0-ad73-4a4e08c5d87f",
+                "name": "E2ESCORE-ce637033-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "9f90bc48-1b1b-40cb-a27c-36c8a1b5a57b",
+                "name": "E2ESCORE-a2a090c8-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "fcfa44cf-6963-45eb-8eff-87fde56c5e6d",
+                "name": "云中台知识库",
+                "type": "org"
+              },
+              {
+                "id": "ae01630a-7445-4b9b-8c11-8f24cefc043c",
+                "name": "系统测试-解析矩阵库",
+                "type": "personal"
+              },
+              {
+                "id": "cb9f2142-94c9-456c-bcbc-abdbc9f7a7b5",
+                "name": "E2ESCORE-7e44179f-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "dbd65f9e-6d50-43ce-88be-77274091284d",
+                "name": "公开基准CMRC2018-RAG",
+                "type": "personal"
+              },
+              {
+                "id": "e432d838-9369-4e10-8970-f5c00e7b2449",
+                "name": "系统测试-回归库v2",
+                "type": "personal"
+              },
+              {
+                "id": "81efc3c4-e48c-4e24-8653-43bb0b5f20db",
+                "name": "南京分公司知识库",
+                "type": "org"
+              },
+              {
+                "id": "bb2bfcb1-240f-4d01-bbe5-38eff1248962",
+                "name": "开发组知识库",
+                "type": "org"
+              },
+              {
+                "id": "4674f607-1564-4f38-aa87-8fac60227c65",
+                "name": "公司法律人库",
+                "type": "industry"
+              },
+              {
+                "id": "228dd0a5-e412-40fa-933f-46b6585797a9",
+                "name": "软研中心知识库",
+                "type": "org"
+              },
+              {
+                "id": "8c189e38-3b84-4b67-ac0f-214035af2327",
+                "name": "富化修复验证库",
+                "type": "personal"
+              },
+              {
+                "id": "eb0dfea7-29b9-4566-ba7a-c20f3b76ae2d",
+                "name": "公开基准-HotpotQA-EN",
+                "type": "personal"
+              },
+              {
+                "id": "83bd0133-643b-4a02-978a-f0015f7aac0c",
+                "name": "公开基准-2WikiMultiHopQA-EN",
+                "type": "personal"
+              },
+              {
+                "id": "c6b50c14-f357-45aa-a3ae-34ae58d2258f",
+                "name": "公开基准-MuSiQue-EN",
+                "type": "personal"
+              },
+              {
+                "id": "7eab7862-7480-435f-bdb4-3958750a77ae",
+                "name": "E2E-DBG-KB2",
+                "type": "personal"
+              },
+              {
+                "id": "00e0ebba-335a-4d9f-9935-0a954beebc38",
+                "name": "E2ESCORE-56c4cdca-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "25e5b504-1b5c-4801-96a6-511f53b8a158",
+                "name": "E2ESCORE-a3a720e0-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "f5ff0749-ee0f-44b8-ba6a-8beeb109e0e3",
+                "name": "E2ESCORE-c7432c82-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "50a62fc2-de2f-4dfb-b70e-1b714d4db1b7",
+                "name": "E2ESCORE-2afcdb13-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "a91e284d-1ea6-4d3f-b744-10097e50baac",
+                "name": "E2ESCORE-f1949282-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "5623bcc7-5738-4cc1-9ff7-a625cf17da3f",
+                "name": "E2ESCORE-148246e2-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "0c687eac-6597-47bd-9c7a-e6b7c0c06825",
+                "name": "E2ESCORE-ef4eb406-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "db64b10e-bc45-4c6e-8a14-3758601c4420",
+                "name": "E2E-UPLOAD-PROBE3",
+                "type": "personal"
+              },
+              {
+                "id": "0e1cfc9f-97d4-49b4-9e6f-26921a6d9e38",
+                "name": "__probe_after_revert__",
+                "type": "personal"
+              },
+              {
+                "id": "f13c099f-7783-463e-a923-89fafd241d10",
+                "name": "E2ESCORE-8d8f58a0-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "c5f43da2-fc8c-41a9-9747-078319e84a6d",
+                "name": "SciFact concurrency validation 20260927",
+                "type": "industry"
+              },
+              {
+                "id": "277a0b00-3ab7-40e9-8864-b7013108c175",
+                "name": "unlimited-kb-validation-20260927",
+                "type": "personal"
+              },
+              {
+                "id": "28555888-ff7e-42bf-8832-27bfa30ce0d7",
+                "name": "SciFact 300 concurrency 20260927",
+                "type": "personal"
+              },
+              {
+                "id": "8613a8db-1ab8-4d68-9177-ef40f0edc366",
+                "name": "公开基准-2WikiMultiHopQA-EN-300docs-seed42-2097f903ac3e",
+                "type": "personal"
+              },
+              {
+                "id": "4e72751f-e826-4b81-9140-67488d1a33f5",
+                "name": "公开基准-HotpotQA-EN-300docs-seed42-1503dff30414",
+                "type": "personal"
+              },
+              {
+                "id": "3f5ef9e4-635f-451b-9b2a-a9a80a44e77b",
+                "name": "公开基准-MuSiQue-EN-300docs-seed42-25af5a411204",
+                "type": "personal"
+              },
+              {
+                "id": "0b5c5e78-69ce-4a61-9d77-1044e73ff8ad",
+                "name": "E2ESCORE-569c26ca-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "8262f8dd-7912-4bc7-b01e-a6f5110994c7",
+                "name": "E2ESCORE-82892b86-综合语料库",
+                "type": "personal"
+              },
+              {
+                "id": "b4714d85-a81d-4a9a-b155-a244162e5667",
+                "name": "SOTA10-HOTPOT",
+                "type": "personal"
+              },
+              {
+                "id": "9831b9ad-e439-45ff-b532-70b012c7dde5",
+                "name": "SOTA10-2WIKI",
+                "type": "personal"
+              },
+              {
+                "id": "97a0584d-4516-4411-a6e4-8cb68fc50889",
+                "name": "SOTA10-MUSIQUE",
+                "type": "personal"
+              },
+              {
+                "id": "fcb71c28-e1b7-40e7-ba3d-c4f4d9263a9f",
+                "name": "SOTA10-SQUAD",
+                "type": "personal"
+              },
+              {
+                "id": "47c7113c-3ceb-4cec-bf95-97ba1aaece31",
+                "name": "SOTA10-SCIFACT",
+                "type": "personal"
+              },
+              {
+                "id": "9a6c4571-ed59-4491-91da-c178409c89e6",
+                "name": "SOTA10-NFCORPUS",
+                "type": "personal"
+              },
+              {
+                "id": "c5bf8ddf-5815-4c49-a8d3-81950a1980cf",
+                "name": "SOTA10-FIQA",
+                "type": "personal"
+              },
+              {
+                "id": "742c231e-043a-40a9-bb36-27aeb78639f4",
+                "name": "SOTA10-ARGUANA",
+                "type": "personal"
+              },
+              {
+                "id": "eab22f1d-fba8-4644-a028-45790399da5b",
+                "name": "SOTA10-RGB-main",
+                "type": "personal"
+              }
+            ]
+          }
+        },
+        {
+          "id": "source_plan",
+          "status": "running",
+          "summary": "将业务权限范围映射为隔离的 GBrain Source",
+          "details": null
+        },
+        {
+          "id": "source_plan",
+          "status": "success",
+          "summary": "已选择 49 个原始知识 Source",
+          "details": {
+            "sourceKeys": [
+              "llmwiki-kb-03bdf8f3ef9a5ab4",
+              "llmwiki-kb-04ac819715746ac1",
+              "llmwiki-kb-0758d5290b0f044c",
+              "llmwiki-kb-12c66a4fbeffd0d5",
+              "llmwiki-kb-169133c1dc331f16",
+              "llmwiki-kb-181775eca63cd645",
+              "llmwiki-kb-198b9ca7de330c52",
+              "llmwiki-kb-19c8967775972af7",
+              "llmwiki-kb-1b010e76be4d4419",
+              "llmwiki-kb-1c741739760bed3e",
+              "llmwiki-kb-2378905af0125587",
+              "llmwiki-kb-34f5a3ea6430d48b",
+              "llmwiki-kb-3621d31cbf2b5661",
+              "llmwiki-kb-40a95584299d596f",
+              "llmwiki-kb-440e2859a6f7e6c8",
+              "llmwiki-kb-4af164315469689b",
+              "llmwiki-kb-4c6cbfe3660303f7",
+              "llmwiki-kb-4ce25a33baf97f18",
+              "llmwiki-kb-5240368f6cce9d25",
+              "llmwiki-kb-538a2a4ff48a5c75",
+              "llmwiki-kb-572c4955a00d080b",
+              "llmwiki-kb-68766b7eae00cbfe",
+              "llmwiki-kb-734065e62cece987",
+              "llmwiki-kb-7551ee83aa9f675b",
+              "llmwiki-kb-7e4693fc84787231",
+              "llmwiki-kb-80028ce01c3c9645",
+              "llmwiki-kb-80e25a2ea6d0daa0",
+              "llmwiki-kb-92a816c7f5799d43",
+              "llmwiki-kb-92a9083491285d11",
+              "llmwiki-kb-95c6b63a266ce390",
+              "llmwiki-kb-9e6fb7821b8dab7e",
+              "llmwiki-kb-a491ce00713a8d89",
+              "llmwiki-kb-a4c8f01027c3d369",
+              "llmwiki-kb-b03fe9a625beea2c",
+              "llmwiki-kb-b33b98f702ea7071",
+              "llmwiki-kb-b85958240e84d90a",
+              "llmwiki-kb-bca2ab390350b455",
+              "llmwiki-kb-bcce90cdff7c598e",
+              "llmwiki-kb-cbd688b2c218da56",
+              "llmwiki-kb-d8f61fe32381ac06",
+              "llmwiki-kb-dc9e96ee0508df8a",
+              "llmwiki-kb-deaf562228b4b39a",
+              "llmwiki-kb-e21cd11e2216e0d8",
+              "llmwiki-kb-e260ad135b161d49",
+              "llmwiki-kb-e4c2a53e18b59e1b",
+              "llmwiki-kb-e9e94007ad55efc3",
+              "llmwiki-kb-ef0076d0e561161b",
+              "llmwiki-kb-f1882d462d1283b0",
+              "llmwiki-kb-fdc4d54bf198eb78"
+            ],
+            "scopeFingerprint": "f07801db8812211c",
+            "aclEpoch": 1,
+            "knowledgeEpoch": 2
+          }
+        },
+        {
+          "id": "source_freshness",
+          "status": "running",
+          "summary": "核对业务文档与 GBrain 可检索页是否一致",
+          "details": null
+        },
+        {
+          "id": "source_freshness",
+          "status": "success",
+          "summary": "已核对 56 个 Source，索引新鲜",
+          "details": {
+            "checked": 56,
+            "rebuilt": 0,
+            "fresh": true,
+            "staleSources": [],
+            "sourceKeys": [
+              "llmwiki-kb-7e7fef040e362137",
+              "llmwiki-kb-fdc4d54bf198eb78",
+              "llmwiki-kb-68766b7eae00cbfe",
+              "llmwiki-kb-dc9e96ee0508df8a",
+              "llmwiki-kb-92a816c7f5799d43",
+              "llmwiki-kb-e21cd11e2216e0d8",
+              "llmwiki-kb-df9589ffe9d5a69a",
+              "llmwiki-kb-198b9ca7de330c52",
+              "llmwiki-kb-1c741739760bed3e",
+              "llmwiki-kb-19c8967775972af7",
+              "llmwiki-kb-03bdf8f3ef9a5ab4",
+              "llmwiki-kb-92a9083491285d11",
+              "llmwiki-kb-b03fe9a625beea2c",
+              "llmwiki-kb-5240368f6cce9d25",
+              "llmwiki-kb-734065e62cece987",
+              "llmwiki-kb-9e6fb7821b8dab7e",
+              "llmwiki-kb-2378905af0125587",
+              "llmwiki-kb-0758d5290b0f044c",
+              "llmwiki-kb-12c66a4fbeffd0d5",
+              "llmwiki-kb-440e2859a6f7e6c8",
+              "llmwiki-kb-bcce90cdff7c598e",
+              "llmwiki-kb-bca2ab390350b455",
+              "llmwiki-kb-95c6b63a266ce390",
+              "llmwiki-kb-e260ad135b161d49",
+              "llmwiki-kb-deaf562228b4b39a",
+              "llmwiki-kb-4af164315469689b",
+              "llmwiki-kb-f1882d462d1283b0",
+              "llmwiki-kb-a4c8f01027c3d369",
+              "llmwiki-kb-7551ee83aa9f675b",
+              "llmwiki-kb-ef0076d0e561161b",
+              "llmwiki-kb-681266ea141817c0",
+              "llmwiki-kb-1eb5b86e8b75f81d",
+              "llmwiki-kb-169133c1dc331f16",
+              "llmwiki-kb-34f5a3ea6430d48b",
+              "llmwiki-kb-da58b7fa23e7d8a8",
+              "llmwiki-kb-572c4955a00d080b",
+              "llmwiki-kb-cbd688b2c218da56",
+              "llmwiki-kb-1b010e76be4d4419",
+              "llmwiki-kb-181775eca63cd645",
+              "llmwiki-kb-80e25a2ea6d0daa0",
+              "llmwiki-kb-d8f61fe32381ac06",
+              "llmwiki-kb-3621d31cbf2b5661",
+              "llmwiki-kb-538a2a4ff48a5c75",
+              "llmwiki-kb-80028ce01c3c9645",
+              "llmwiki-kb-a491ce00713a8d89",
+              "llmwiki-kb-40a95584299d596f",
+              "llmwiki-kb-b85958240e84d90a",
+              "llmwiki-kb-04ac819715746ac1",
+              "llmwiki-kb-4c6cbfe3660303f7",
+              "llmwiki-kb-7e4693fc84787231"
+            ]
+          }
+        },
+        {
+          "id": "conversation_context",
+          "status": "running",
+          "summary": "读取同一会话的近期上下文",
+          "details": null
+        },
+        {
+          "id": "conversation_context",
+          "status": "success",
+          "summary": "已加载 0 条历史消息",
+          "details": {
+            "historyMessages": 0
+          }
+        },
+        {
+          "id": "query_rewrite",
+          "status": "running",
+          "summary": "结合历史指代生成独立检索问题",
+          "details": null
+        },
+        {
+          "id": "query_rewrite",
+          "status": "success",
+          "summary": "使用 query / 聚焦 模式",
+          "details": {
+            "rewrittenQuery": "员工夏天几点上班",
+            "operation": "query",
+            "breadth": false,
+            "complexity": "simple",
+            "subQueries": [],
+            "expansions": [],
+            "hyde": false
+          }
+        },
+        {
+          "id": "personal_memory",
+          "status": "running",
+          "summary": "从当前用户私有 Source 加载相关长期记忆",
+          "details": null
+        },
+        {
+          "id": "personal_memory",
+          "status": "skipped",
+          "summary": "当前问题未请求个人记忆背景，优先执行授权知识检索",
+          "details": {
+            "matchedFacts": 0,
+            "reason": "not_memory_relevant"
+          }
+        },
+        {
+          "id": "scope_synthesis",
+          "status": "running",
+          "summary": null,
+          "details": null
+        },
+        {
+          "id": "scope_synthesis",
+          "status": "skipped",
+          "summary": "用户选择了部分知识库，不使用全范围综述",
+          "details": null
+        },
+        {
+          "id": "gbrain_retrieval",
+          "status": "running",
+          "summary": "执行向量、BM25、RRF、图谱信号与重排检索",
+          "details": {
+            "sourceCount": 49,
+            "operation": "query",
+            "breadth": false
+          }
+        },
+        {
+          "id": "gbrain_arm_policy",
+          "status": "skipped",
+          "summary": "GBrain 引擎臂按策略关闭（RETRIEVAL_ARM_POLICY=chunks_only），本次仅使用数据库分块召回",
+          "details": {
+            "policy": "chunks_only"
+          }
+        },
+        {
+          "id": "gbrain_retrieval",
+          "status": "success",
+          "summary": "GBrain 返回 25 个候选页面，初始语义证据置信度偏低，待扩检前置信度复核",
+          "details": {
+            "sourceCount": 49,
+            "operation": "query",
+            "breadth": false,
+            "candidateCount": 25,
+            "rerankedByGbrain": false,
+            "topEvidence": "## 第三章 考勤方式与规范\n\n**第七条 打卡制度**\n1.\n**打卡方式**：公司实行电子考勤（指纹/人脸识别/手机定位打卡）。员工上下班均需\n在指定设备或系统上打卡记录，每日共计2次（上班、下班）。\n2.\n**打卡要求**：员工必须本人打卡，严禁代打卡或委托他人打卡。一经发现，双方均按\n严重违纪处理，当天按旷工论处。\n3.\n**午休管理**：午休时间不计入工作时间，无需打卡，但需确保在规定的下午上班时间\n前返回岗位。\n\n**第八条 异常考勤处理**\n1.\n**忘打卡**：因个人疏忽忘记打卡的，应在**当日或次日内**填写《考勤异常说明单》，\n由部门主管签字确认后交人力资源部备案。\n2.\n**因公外出/出差**：员工因公外出或出差无法打卡的，须提前在OA系统提交《出差申请\n单》或外出登记，经批准后方可外出，否则按旷工处理。\n3.\n**补签限制**：每月忘打卡补签次数原则上不得超过**3次**，超出部分按迟到/早退处\n理。",
+            "topScore": 0.95,
+            "evidenceAssessment": {
+              "shouldEscalate": true,
+              "weak": true,
+              "evidence": "## 第三章 考勤方式与规范\n\n**第七条 打卡制度**\n1.\n**打卡方式**：公司实行电子考勤（指纹/人脸识别/手机定位打卡）。员工上下班均需\n在指定设备或系统上打卡记录，每日共计2次（上班、下班）。\n2.\n**打卡要求**：员工必须本人打卡，严禁代打卡或委托他人打卡。一经发现，双方均按\n严重违纪处理，当天按旷工论处。\n3.\n**午休管理**：午休时间不计入工作时间，无需打卡，但需确保在规定的下午上班时间\n前返回岗位。\n\n**第八条 异常考勤处理**\n1.\n**忘打卡**：因个人疏忽忘记打卡的，应在**当日或次日内**填写《考勤异常说明单》，\n由部门主管签字确认后交人力资源部备案。\n2.\n**因公外出/出差**：员工因公外出或出差无法打卡的，须提前在oa系统提交《出差申请\n单》或外出登记，经批准后方可外出，否则按旷工处理。\n3.\n**补签限制**：每月忘打卡补签次数原则上不得超过**3次**，超出部分按迟到/早退处\n理。",
+              "topScore": null,
+              "scoreFloor": 0.75,
+              "reason": "无经过验证的置信度，继续预算内检索"
+            },
+            "diagnostics": null
+          }
+        },
+        {
+          "id": "permission_guard",
+          "status": "running",
+          "summary": "按当前数据库权限和 Source 世代复核候选结果",
+          "details": null
+        },
+        {
+          "id": "permission_guard",
+          "status": "success",
+          "summary": "全部 25 个候选通过最终权限校验",
+          "details": {
+            "before": 25,
+            "after": 25,
+            "removed": 0
+          }
+        },
+        {
+          "id": "confidence_rerank",
+          "status": "running",
+          "summary": "先以交叉编码重排验证首轮弱语义候选",
+          "details": null
+        },
+        {
+          "id": "confidence_rerank",
+          "status": "success",
+          "summary": "首轮候选经交叉编码验证充分，跳过冗余扩检",
+          "details": {
+            "before": 25,
+            "after": 25,
+            "evidenceAssessment": {
+              "shouldEscalate": false,
+              "weak": true,
+              "evidence": "## 第二章 工时制度与作息时间\n\n根据国家规定及公司岗位性质，实行以下三种工时制度：\n\n**第四条 标准工时制**\n适用于行政、后勤、技术及一般管理岗位。\n1.  **工作时间**：每周工作5天，每天工作8小时，每周不超过40小时。\n2.  **作息安排**：\n     -  **夏令时（5月1日-9月30日）**：上午  08:30  -  12:00，下午  13:30   -\n18:00。\n     -  **冬令时（10月1日-4月30日）**：上午  08:30  -  12:00，下午  13:00  -\n17:30。\n\n**第五条 不定时工作制**\n适用于高层管理人员、外勤销售、市场拓展等因工作性质无法按标准时间衡量的人员。\n此类人员需按规定进行考勤报备，但公司不支付加班费（需经劳动行政部门审批）。\n\n**第六条 综合计算工时制**\n适用于因工作性质需连续作业或受季节影响的岗位（如生产一线、安保等）。以周、月\n、季或年为周期综合计算工作时间，平均工作时间应与法定标准工作时间基本相同。\n\n",
+              "topScore": null,
+              "reason": "重排已完成，置信度未知；保留候选并交由原文核验"
+            }
+          }
+        },
+        {
+          "id": "retrieval_escalation",
+          "status": "running",
+          "summary": null,
+          "details": null
+        },
+        {
+          "id": "retrieval_escalation",
+          "status": "skipped",
+          "summary": "重排已完成，置信度未知；保留候选并交由原文核验",
+          "details": {
+            "evidence": "## 第二章 工时制度与作息时间\n\n根据国家规定及公司岗位性质，实行以下三种工时制度：\n\n**第四条 标准工时制**\n适用于行政、后勤、技术及一般管理岗位。\n1.  **工作时间**：每周工作5天，每天工作8小时，每周不超过40小时。\n2.  **作息安排**：\n     -  **夏令时（5月1日-9月30日）**：上午  08:30  -  12:00，下午  13:30   -\n18:00。\n     -  **冬令时（10月1日-4月30日）**：上午  08:30  -  12:00，下午  13:00  -\n17:30。\n\n**第五条 不定时工作制**\n适用于高层管理人员、外勤销售、市场拓展等因工作性质无法按标准时间衡量的人员。\n此类人员需按规定进行考勤报备，但公司不支付加班费（需经劳动行政部门审批）。\n\n**第六条 综合计算工时制**\n适用于因工作性质需连续作业或受季节影响的岗位（如生产一线、安保等）。以周、月\n、季或年为周期综合计算工作时间，平均工作时间应与法定标准工作时间基本相同。\n\n",
+            "topScore": null
+          }
+        },
+        {
+          "id": "source_reconcile_retry",
+          "status": "running",
+          "summary": null,
+          "details": null
+        },
+        {
+          "id": "source_reconcile_retry",
+          "status": "skipped",
+          "summary": "首轮检索已有结果，无需重建重试",
+          "details": null
+        },
+        {
+          "id": "weknora_retrieval",
+          "status": "running",
+          "summary": null,
+          "details": null
+        },
+        {
+          "id": "weknora_retrieval",
+          "status": "skipped",
+          "summary": "WeKnora 外部检索未配置或处于禁用状态（保持纯净 GBrain 知识主源）",
+          "details": null
+        },
+        {
+          "id": "section_align",
+          "status": "running",
+          "summary": "按问题点名的小节/表角色调整候选排序",
+          "details": null
+        },
+        {
+          "id": "section_align",
+          "status": "success",
+          "summary": "已应用 section/table-role 对齐乘子",
+          "details": null
+        },
+        {
+          "id": "section_rescue",
+          "status": "running",
+          "summary": "同文档补拉未覆盖的问题点名小节",
+          "details": null
+        },
+        {
+          "id": "section_rescue",
+          "status": "success",
+          "summary": "候选池已覆盖问题小节，无需救援",
+          "details": null
+        },
+        {
+          "id": "rerank",
+          "status": "running",
+          "summary": "统一比较跨 Source 候选并执行相关性打分",
+          "details": null
+        },
+        {
+          "id": "rerank",
+          "status": "success",
+          "summary": "平台交叉编码重排完成（跨源统一分数尺度）",
+          "details": {
+            "before": 25,
+            "after": 25,
+            "reranked": true,
+            "platformApplied": true
+          }
+        },
+        {
+          "id": "graphrag_drift",
+          "status": "running",
+          "summary": null,
+          "details": null
+        },
+        {
+          "id": "graphrag_drift",
+          "status": "skipped",
+          "summary": "问题复杂度或证据状态无需启动 DRIFT",
+          "details": null
+        },
+        {
+          "id": "evidence_selection",
+          "status": "running",
+          "summary": "相关性阈值、组级去重与 token 预算的联合选择",
+          "details": null
+        },
+        {
+          "id": "top_rank_guarantee",
+          "status": "warning",
+          "summary": "检索前 12 名中有 9 篇文档被相关性地板剪掉，已恢复进上下文",
+          "details": {
+            "restored": 9,
+            "docs": [
+              "id:e326a930-7855-4365-aaf7-83b1b86780fc",
+              "id:4aafed64-6329-4faf-984e-23fb1299644a",
+              "id:6e0bc1ff-207e-4327-ba38-5f96c367cafb",
+              "id:61274950-792c-45a0-a140-fe33135f245b",
+              "id:4d3e0342-9c89-4537-aaed-b69fc4789c02",
+              "id:ca826f44-d313-4ad0-b491-f88650159dca",
+              "id:3a901796-c62c-4ccf-be63-06984212efc8",
+              "id:398abc28-d006-48a6-b1e7-9fd30a37ba58",
+              "id:bd914e77-d407-4fed-bc19-f75f4b770d49"
+            ]
+          }
+        },
+        {
+          "id": "evidence_selection",
+          "status": "warning",
+          "summary": "已选择 10/25 条证据（组级去重 + token 预算）",
+          "details": {
+            "before": 25,
+            "after": 10,
+            "removed": 15,
+            "selection": {
+              "before": 12,
+              "after": 1,
+              "removed": 11,
+              "groups": 1,
+              "usedTokens": 1538,
+              "relevanceFloorRatio": 0.2,
+              "mmrLambda": 0.72
+            }
+          }
+        },
+        {
+          "id": "lazy_compile",
+          "status": "running",
+          "summary": "检查命中主题页是否存在待编译变更",
+          "details": null
+        },
+        {
+          "id": "lazy_compile",
+          "status": "success",
+          "summary": "命中主题页均无需即时重编译",
+          "details": {
+            "checked": 1,
+            "compiled": 0,
+            "injected": 0
+          }
+        },
+        {
+          "id": "version_conflict_check",
+          "status": "running",
+          "summary": "检测多版本并裁决现行有效标准",
+          "details": null
+        },
+        {
+          "id": "version_conflict_check",
+          "status": "warning",
+          "summary": "裁决 1 个文档的多版本冲突: 合规管理办法.doc",
+          "details": {
+            "conflictCount": 1,
+            "conflictTitles": [
+              "合规管理办法.doc"
+            ]
+          }
+        },
+        {
+          "id": "answer_context",
+          "status": "running",
+          "summary": "从授权证据页组装可引用的回答上下文",
+          "details": null
+        },
+        {
+          "id": "answer_context",
+          "status": "success",
+          "summary": "已组装 10 条可引用证据",
+          "details": {
+            "citationCount": 10,
+            "contextChars": 6334,
+            "stitchedCount": 0,
+            "structuredEvidence": false,
+            "evidenceGroups": [
+              {
+                "kind": "direct",
+                "label": "direct",
+                "sourceIndexes": [
+                  1,
+                  2,
+                  3,
+                  4,
+                  5,
+                  6,
+                  7,
+                  8,
+                  9,
+                  10
+                ]
+              }
+            ],
+            "hardCapDropped": 0,
+            "hardCapTruncated": 0,
+            "protectedEvidenceCount": 1
+          }
+        },
+        {
+          "id": "retrieval_confidence",
+          "status": "warning",
+          "summary": "本次没有可用的重排分数（未配置重排模型或重排失败），拒答阈值只能作用于合成分，判定能力已降级",
+          "details": {
+            "evidenceCount": 10,
+            "maxSyntheticScore": 0,
+            "syntheticThreshold": 0.999,
+            "hasMeaningfulPreAnswer": true
+          }
+        },
+        {
+          "id": "retrieval_confidence",
+          "status": "warning",
+          "summary": "当前模型没有匹配的留出集校准参数，进入原文逐句核验，不使用合成分数决定拒答",
+          "details": {
+            "scoreCalibrated": false,
+            "evidenceCount": 10
+          }
+        },
+        {
+          "id": "llm_generation",
+          "status": "running",
+          "summary": "基于授权证据生成回答并要求逐项引用",
+          "details": null
+        },
+        {
+          "id": "grounding_gate",
+          "status": "running",
+          "summary": "对暂扣语句执行证据蕴含复核",
+          "details": null
+        },
+        {
+          "id": "grounding_gate",
+          "status": "warning",
+          "summary": "4 句因缺乏证据支持被拦截，未向用户展示",
+          "details": {
+            "verified": 4,
+            "held": 4,
+            "recovered": 0,
+            "dropped": 4,
+            "strict": true,
+            "providerError": false
+          }
+        },
+        {
+          "id": "citation_rebinding",
+          "status": "success",
+          "summary": "回答角标与证据一一对应",
+          "details": {
+            "reboundCitations": 0,
+            "evidencePool": 10
+          }
+        },
+        {
+          "id": "llm_generation",
+          "status": "success",
+          "summary": "大模型回答生成完成",
+          "details": {
+            "model": "mimo-v2.5",
+            "tokenEstimate": 143,
+            "outputChars": 228,
+            "synthesizedRefusal": false,
+            "promptCacheHitTokens": 0,
+            "promptCacheMissTokens": 0,
+            "cacheHitRate": "0%"
+          }
+        },
+        {
+          "id": "citation_validation",
+          "status": "running",
+          "summary": "校验回答角标并绑定到原始文档预览",
+          "details": null
+        },
+        {
+          "id": "citation_validation",
+          "status": "success",
+          "summary": "回答引用 1 个原始证据页面",
+          "details": {
+            "candidateCitations": 10,
+            "referencedCitations": [
+              1
+            ],
+            "invalidMarkersRemoved": false,
+            "aclStripped": 0,
+            "semanticCoverage": {
+              "totalStatements": 3,
+              "groundedStatements": 2,
+              "coverageRatio": 0.67,
+              "refusalExempt": false
+            }
+          }
+        },
+        {
+          "id": "message_persistence",
+          "status": "running",
+          "summary": "正在保存回答、引用和处理链路",
+          "details": null
+        },
+        {
+          "id": "message_persistence",
+          "status": "success",
+          "summary": "回答、引用和处理链路已保存",
+          "details": null
+        }
+      ],
+      "latency_s": 42.27,
+      "status": 201,
+      "conversation_id": "07211cd3-6a32-4e48-bcc3-4a3858a3e279"
+    }
+  ]
+}

@@ -1,12 +1,16 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { PermissionService } from "./permission.service";
+import { BASE_USER_PERMISSIONS, DEFAULT_ROLES } from './permissions';
 
 // Mock PrismaClient
 const mockPrisma: any = {
   knowledgeBase: {
     findMany: jest.fn(),
     findFirst: jest.fn(),
+    updateMany: jest.fn(),
   },
+  role: { findUnique: jest.fn(), upsert: jest.fn(), update: jest.fn() },
+  user: { findMany: jest.fn(), findFirst: jest.fn() },
   userOrg: {
     findMany: jest.fn(),
   },
@@ -52,6 +56,28 @@ describe("PermissionService", () => {
     mockPrisma.userRole.findMany.mockResolvedValue([]);
     mockPrisma.orgAdmin.findMany.mockResolvedValue([]);
     mockPrisma.kbAdmin.findMany.mockResolvedValue([]);
+  });
+
+  it('does not rewrite unchanged defaults or issue an empty owner backfill on startup', async () => {
+    mockPrisma.role.findUnique.mockImplementation(async ({ where }: any) => {
+      if (where.name === '研发中心员工') return { id: 'legacy', builtin: false, permissions: BASE_USER_PERMISSIONS };
+      return DEFAULT_ROLES.find((role) => where.code ? ('code' in role && role.code === where.code) : role.name === where.name);
+    });
+    mockPrisma.user.findMany.mockResolvedValue([]);
+    mockPrisma.user.findFirst.mockResolvedValue({ id: 'admin' });
+    mockPrisma.knowledgeBase.findFirst.mockResolvedValue(null);
+    await service.onModuleInit();
+    expect(mockPrisma.role.upsert).not.toHaveBeenCalled();
+    expect(mockPrisma.role.update).not.toHaveBeenCalled();
+    expect(mockPrisma.knowledgeBase.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('repairs changed defaults rather than suppressing real authorization changes', async () => {
+    mockPrisma.role.findUnique.mockResolvedValue(null);
+    mockPrisma.user.findMany.mockResolvedValue([]);
+    mockPrisma.user.findFirst.mockResolvedValue(null);
+    await service.onModuleInit();
+    expect(mockPrisma.role.upsert).toHaveBeenCalledTimes(DEFAULT_ROLES.length);
   });
 
   it("keeps visibility helper queries on the supplied transaction", async () => {

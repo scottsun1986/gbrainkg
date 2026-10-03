@@ -12,28 +12,28 @@ const mockPrisma = {
 jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => mockPrisma) }));
 
 describe('admin outbox transaction boundaries', () => {
-  const dispatchPending = jest.fn();
+  const kickDispatch = jest.fn();
   const queueAccessReconciliation = jest.fn().mockResolvedValue(undefined);
   const controller = new AdminController(
     { canManageUser: async () => true, canGrantIndustryKb: async () => true } as any,
     { userIdFromRequest: async () => 'admin', invalidateUserStatus: () => {} } as any,
     { queueAccessReconciliation } as any, {} as any,
     { log: jest.fn().mockResolvedValue(undefined) } as any,
-    { dispatchPending } as any,
+    { kickDispatch } as any,
   );
   beforeEach(() => { jest.clearAllMocks(); mockTx.brainChangeEvent.create.mockReset(); });
 
-  it.each(['disableUser', 'deleteGrant'] as const)('%s writes event inside transaction before dispatch', async method => {
+  it.each(['disableUser', 'deleteGrant'] as const)('%s writes event inside transaction before dispatch kick', async method => {
     await controller[method]({}, method === 'disableUser' ? 'user-1' : 'grant-1');
     expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
     expect(mockTx.brainChangeEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'perm_revoke', status: 'pending' }) }));
-    expect(dispatchPending).toHaveBeenCalledTimes(1);
-    expect(mockTx.brainChangeEvent.create.mock.invocationCallOrder[0]).toBeLessThan(dispatchPending.mock.invocationCallOrder[0]);
+    expect(kickDispatch).toHaveBeenCalledTimes(1);
+    expect(mockTx.brainChangeEvent.create.mock.invocationCallOrder[0]).toBeLessThan(kickDispatch.mock.invocationCallOrder[0]);
   });
   it.each(['disableUser', 'deleteGrant'] as const)('%s does not dispatch an event from a rejected transaction', async method => {
     mockTx.brainChangeEvent.create.mockRejectedValue(new Error('event write failure'));
     await expect(controller[method]({}, 'fixture')).rejects.toThrow('event write failure');
-    expect(dispatchPending).not.toHaveBeenCalled();
+    expect(kickDispatch).not.toHaveBeenCalled();
     expect(queueAccessReconciliation).not.toHaveBeenCalled();
   });
 });

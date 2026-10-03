@@ -1,6 +1,29 @@
 import { createHash } from 'node:crypto';
 
 export interface RawTable { id: string; headers: string[]; rows: Array<{ cells: string[]; charStart: number; charEnd: number }> }
+
+/**
+ * Cell-level coordinates for one table row: the absolute character span of
+ * each cell in the source Markdown. Cell boundaries are unescaped, non-code
+ * pipes — the same rule the splitter in `cells()` uses.
+ */
+export function cellSpans(markdown: string, row: { cells: string[]; charStart: number; charEnd: number }): Array<{ column: number; charStart: number; charEnd: number }> {
+  const spans: Array<{ column: number; charStart: number; charEnd: number }> = [];
+  let column = 0, cellStart = -1, escaped = false, code = false, sawPipe = false;
+  for (let i = row.charStart; i < row.charEnd; i++) {
+    const char = markdown[i];
+    if (escaped) { escaped = false; continue; }
+    if (char === '\\') { escaped = true; continue; }
+    if (char === '`') code = !code;
+    if (char === '|' && !code) {
+      if (!sawPipe) { sawPipe = true; cellStart = i + 1; continue; } // leading border
+      spans.push({ column, charStart: cellStart, charEnd: i });
+      column += 1; cellStart = i + 1;
+    }
+  }
+  if (cellStart >= 0 && column < row.cells.length) spans.push({ column, charStart: cellStart, charEnd: row.charEnd });
+  return spans.slice(0, row.cells.length);
+}
 function cells(line: string): string[] {
   const values: string[] = []; let value = '', escaped = false, code = false;
   for (const char of line.trim().replace(/^\|/, '').replace(/\|$/, '')) {
