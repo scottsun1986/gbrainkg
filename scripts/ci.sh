@@ -50,6 +50,14 @@ warn_skip() {
 }
 
 run "Prisma client generate" pnpm --filter database exec prisma generate --schema=prisma/schema.prisma
+# Typecheck and lint before the unit layers. This script is the only gate
+# deploy-prod.sh runs, and it previously executed neither: `test:api` is a bare
+# jest run, so a type error or an ESLint violation could reach production as long
+# as the specs happened to pass (ts-jest transpiles per file and does not
+# typecheck the project). ci.yml already ran tsc separately; this closes the
+# divergence between the two paths.
+run "API typecheck" pnpm --filter api exec tsc --noEmit
+run "API lint" pnpm --filter api lint
 run "API unit tests" pnpm run test:api
 run "Parser worker tests" pnpm run test:parser
 run "GBrain adapter contract tests" pnpm run test:adapter

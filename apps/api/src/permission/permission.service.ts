@@ -26,6 +26,7 @@ export class PermissionService implements OnModuleInit {
   private readonly systemAdminCache = new Map<string, { expiresAt: number; value: boolean }>();
   private readonly rolePermissionsCache = new Map<string, { expiresAt: number; value: Set<string> }>();
   private readonly managedOrgIdsCache = new Map<string, { expiresAt: number; value: Set<string> }>();
+  private readonly visibleKbsCache = new Map<string, { expiresAt: number; value: string[] }>();
   private orgNodeListCache: { expiresAt: number; nodes: { id: string; parentId: string | null }[] } | null = null;
 
   invalidatePermissionCaches(userId?: string): void {
@@ -33,11 +34,13 @@ export class PermissionService implements OnModuleInit {
       this.systemAdminCache.delete(userId);
       this.rolePermissionsCache.delete(userId);
       this.managedOrgIdsCache.delete(userId);
+      this.visibleKbsCache.delete(userId);
       return;
     }
     this.systemAdminCache.clear();
     this.rolePermissionsCache.clear();
     this.managedOrgIdsCache.clear();
+    this.visibleKbsCache.clear();
     this.orgNodeListCache = null;
   }
 
@@ -470,13 +473,35 @@ export class PermissionService implements OnModuleInit {
    * visible_kbs = 个人库 ∪ 组织库继承 ∪ 行业库ACL
    */
   async getVisibleKnowledgeBases(userId: string): Promise<string[]> {
+    // One question triggers this 5+ times: the answer path itself, the
+    // rerank-hop authorization, the citation ACL check and the search filter
+    // each recompute it, and every call runs getUserOrgIds plus four KB
+    // queries inside its own RLS transaction. The result only changes when a
+    // role/org/grant changes, and every such entry point already calls
+    // invalidatePermissionCaches, so the same short TTL the other caches use
+    // is enough to collapse a request's repeats to a single computation.
+    const cached = this.visibleKbsCache.get(userId);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+
     // Visibility computation must see KnowledgeBase rows; under RLS a pooled
     // connection without GUC context fail-closes and returns [] -> 404 on
     // document lists. Run the ACL computation under the service context and
     // keep the application-level filters below as the authorization source.
-    return withServiceContext(this.prisma, (db) =>
+    const value = await withServiceContext(this.prisma, (db) =>
       this.computeVisibleKnowledgeBases(db as any, userId),
     );
+    if (PermissionService.PERM_TTL_MS > 0) {
+      this.visibleKbsCache.set(userId, {
+        expiresAt: Date.now() + PermissionService.PERM_TTL_MS,
+        value,
+      });
+      // Bound the map: an idle deployment must not accumulate one entry per
+      // user seen since boot.
+      while (this.visibleKbsCache.size > 5000) {
+        this.visibleKbsCache.delete(this.visibleKbsCache.keys().next().value!);
+      }
+    }
+    return value;
   }
 
   private async computeVisibleKnowledgeBases(prisma: any, userId: string): Promise<string[]> {

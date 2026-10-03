@@ -383,10 +383,50 @@ export function isStructuralHeadingLine(sentence: string): boolean {
   }
   if (t.length > 40) return false;
   if (/[。．.!！?？;；]$/.test(t)) return false;
+  if (isPlainTextHeading(t)) return true;
   return /^\*\*?\s*[一二三四五六七八九十\d]+\s*[、.．]/.test(t)
     || /^#{1,6}\s+\S/.test(t)
     || /^\*\*[^*]{2,40}\*\*$/.test(t)
     || /^[（(【\[]?\s*[一二三四五六七八九十\d]+\s*[)）】\]]?\s*[\u4e00-\u9fffA-Za-z]{0,28}$/.test(t);
+}
+
+/** Section-type tails: a heading ends by naming the section, not by stating a rule. */
+const HEADING_TAIL = /(?:处理|方式|流程|标准|规定|说明|依据|界定|认定|渠道|条件|范围|要求|职责|步骤|环节|情形|问题|解答|清单|目录|要点|总结|结论|附录|注意|建议|方案|措施|办法|机制|原则|目标|背景|概述|适用|对象|期限|时点|节点|口径|误区|案例|示例|对比|差异|影响|风险|保障|资源|成本|效益|模板|总则|细则|附则|正文|引言|前言|序言|答疑|问答|结语|声明)$/;
+/** Limit wording: turns an ordinal line into a rule statement, not a heading. */
+const HEADING_RULE_LIMIT = /(?:以上|以下|以内|超过|不足|不满|未满|达到|视为|每次|每月|每日|累计|扣发|扣除|扣款|罚款|不予|不得)/;
+/** Predicates that state what happens to someone: a claim, never a heading. */
+const HEADING_PREDICATE = /(?:扣|罚|补|奖|停|辞|退|缴|报|批|审|签|归档|提交|申请|登记|打卡|考勤|核算|计算|折算|执行|需要|应当|必须|可以|禁止|允许)/;
+
+/**
+ * Plain-text section heading (no bold, no '#').
+ *
+ * Models routinely emit "一、考勤迟到处理流程" or "2. 处理方式" with no markup. The
+ * previous matcher required the line to be a *single* short phrase, so a heading
+ * whose subject is more than one token ("一、迟到一小时的处理") fell through to the
+ * grounding gate, was held for lacking evidence, and — since headings are
+ * navigation rather than claims — was recovered at the END of the answer. That is
+ * the reported "标题跑到最后" misplacement.
+ *
+ * The discriminator is what the line *is*: a heading names a section, a claim
+ * states a rule. A rule shows up as limit wording ("一、迟到一小时以上…"), a
+ * predicate applied to a person ("一、迟到者扣除…") or a quantity; a heading ends
+ * on a section-type noun. Single-token headings ("一、总则") are allowed because
+ * the ordinal plus short nominal phrase cannot carry a rule.
+ */
+function isPlainTextHeading(t: string): boolean {
+  const matched = /^[（(【\[]?\s*[一二三四五六七八九十百千零两\d]{1,3}\s*[、.．)）】\]]\s*(.*)$/.exec(t);
+  if (!matched) return false;
+  const rest = String(matched[1] || '').trim();
+  if (rest.length < 2 || rest.length > 40) return false;
+  // Punctuation ends a sentence; a colon introduces a payload and belongs to the
+  // colon arms above, which already decided this line is not a heading.
+  if (/[。．.!！?？;；:：]$/.test(rest) || /[：:]/.test(t)) return false;
+  if (HEADING_TAIL.test(rest) && !HEADING_RULE_LIMIT.test(rest)) return true;
+  if (HEADING_RULE_LIMIT.test(rest)) return false;
+  if (HEADING_PREDICATE.test(rest)) return false;
+  // A heading's only number is its own ordinal.
+  if (/[0-9０-９]/.test(rest)) return false;
+  return true;
 }
 
 /**

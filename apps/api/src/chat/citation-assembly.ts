@@ -449,7 +449,13 @@ export class CitationAssemblyService {
           const diff = rank(b) - rank(a);
           if (diff !== 0) return diff;
         }
-        return b.best - a.best;
+        if (b.best !== a.best) return b.best - a.best;
+        // Deterministic tie-break. Equal `best` scores previously ordered by Map
+        // insertion, which differs between two identical queries when an arm
+        // returns inside its timeout on one run and not the other. The evidence
+        // block sits after the static instructions in the prompt, so an unstable
+        // order invalidates prompt prefix caching for that whole block.
+        return String(a.key).localeCompare(String(b.key));
       });
 
     const tokenize = (text: string): Set<string> =>

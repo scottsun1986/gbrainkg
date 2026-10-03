@@ -1805,7 +1805,15 @@ export class RetrievalArmsService {
             return (a.chunk.ord || 0) - (b.chunk.ord || 0);
           }
         }
-        return b.score - a.score;
+        // Final tie-break on (ord, chunkId). Two arms can return identical
+        // scores, and `Array.prototype.sort` is only stable within one input
+        // order: when an arm times out on one run but not the next, the same
+        // query produced a different evidence order, which defeats prompt
+        // prefix caching for the whole evidence block.
+        if (b.score !== a.score) return b.score - a.score;
+        const ordDiff = (a.chunk.ord || 0) - (b.chunk.ord || 0);
+        if (ordDiff !== 0) return ordDiff;
+        return String(a.chunk.id || '').localeCompare(String(b.chunk.id || ''));
       });
 
       const distinctScored = distinctRankedPassages(scored, item => String(item.chunk.content || ""));

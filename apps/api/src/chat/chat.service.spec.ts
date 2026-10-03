@@ -1457,6 +1457,34 @@ describe("isStrongNameEntity", () => {
 });
 
 describe('isStructuralHeadingLine', () => {
+  /**
+   * Plain-text headings (no bold, no '#') were classified as claims, held by the
+   * grounding gate for lacking evidence, and recovered at the END of the answer.
+   * That is the reported "标题跑到最后/错位" symptom: a section heading is
+   * navigation, not a claim, so it must never be gated on evidence.
+   */
+  it('recognises plain-text section headings the model emits without markup', () => {
+    expect(isStructuralHeadingLine('一、迟到一小时的处理')).toBe(true);
+    expect(isStructuralHeadingLine('二、处理方式')).toBe(true);
+    expect(isStructuralHeadingLine('三、常见问题与解答')).toBe(true);
+    expect(isStructuralHeadingLine('2. 处理方式')).toBe(true);
+    expect(isStructuralHeadingLine('一、总则')).toBe(true);
+    expect(isStructuralHeadingLine('四、责任认定与申诉渠道')).toBe(true);
+  });
+
+  it('does not mistake an ordinal-led rule statement for a heading', () => {
+    // Limit wording, a predicate applied to someone, or a quantity makes the
+    // line a claim, which must still face the evidence gate.
+    expect(isStructuralHeadingLine('二、迟到一小时以上的处理')).toBe(false);
+    expect(isStructuralHeadingLine('一、迟到一小时以内')).toBe(false);
+    expect(isStructuralHeadingLine('一、迟到一小时的扣款标准为50元')).toBe(false);
+    expect(isStructuralHeadingLine('1. 员工迟到1小时，扣除当日工资的50%')).toBe(false);
+    expect(isStructuralHeadingLine('二、超过30分钟视为迟到')).toBe(false);
+    expect(isStructuralHeadingLine('1、月累计迟到三次以上扣发当月绩效')).toBe(false);
+    expect(isStructuralHeadingLine('（一）迟到一小时以内扣款10元')).toBe(false);
+    expect(isStructuralHeadingLine('二、迟到一小时的扣款标准')).toBe(false);
+  });
+
   it('recognises the production heading shapes that were held and re-appended', () => {
     expect(isStructuralHeadingLine('**一、技能生态的三类技能来源**')).toBe(true);
     expect(isStructuralHeadingLine('**三、技能接入与创建**\n')).toBe(true);

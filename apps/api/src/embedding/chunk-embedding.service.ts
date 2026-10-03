@@ -165,12 +165,29 @@ export class ChunkEmbeddingService {
                 ON CONFLICT ("chunkId", "tokenId") DO UPDATE SET weight = EXCLUDED.weight
               `;
             }
+            // Reuse the dense vector this same request already paid for.
+            // The hybrid endpoint returns dense alongside sparse/multi-vector
+            // (return_dense: true) over the identical indexable text, and the
+            // dense arm stores the same vector from a second call. When a chunk
+            // still lacks a vector (the embedding pass failed, or this document
+            // was indexed before the dense route was configured), writing the
+            // dense half here removes a whole second embedding pass per chunk
+            // instead of discarding it. Only fills a gap: an existing vector is
+            // never overwritten, so the two paths cannot disagree.
+            const denseLiteral = representation.dense && representation.dense.length
+              ? `[${representation.dense.join(',')}]`
+              : null;
             await (tx as any).$executeRaw`
               UPDATE "Chunk"
               SET multi_vector = ${representation.multiVector ? JSON.stringify(representation.multiVector) : null}::jsonb,
                   late_context = false,
                   hybrid_indexed = ${Boolean(sparseRows.length)},
                   hybrid_fingerprint = ${fingerprint},
+                  embedding = COALESCE(
+                    embedding,
+                    CASE WHEN ${denseLiteral}::text IS NULL THEN NULL ELSE ${denseLiteral}::text::vector END
+                  ),
+                  embedding_fingerprint = COALESCE(embedding_fingerprint, CASE WHEN ${denseLiteral}::text IS NULL THEN NULL ELSE ${fingerprint}::text END),
                   metadata = jsonb_set(
                     jsonb_set(COALESCE(metadata, '{}'::jsonb), '{canonical_block,retrieval,sparse}',
                       ${sparseRows.length > 0 ? 'true' : 'false'}::jsonb, true),
