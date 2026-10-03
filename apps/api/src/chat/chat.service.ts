@@ -161,6 +161,43 @@ export function smartTruncateChunkText(rawText: string, maxChunkLen: number): st
   return `${candidateSlice.trimEnd()}...[内容超出篇幅限制截断]`;
 }
 
+/**
+ * Head+tail truncation: keep the beginning AND the end of an oversized chunk.
+ *
+ * A head-only cut is wrong for exactly the chunks that matter most. Documents
+ * put their summary at the end: a 2000-row assessment table ends with a「## 汇总」
+ * sheet whose row carries the anchor value (P2-03, SUM-2026-5566). Cutting from
+ * the head removes the entire summary sheet, so the anchor never reaches the
+ * model and the question is refused even though the evidence was selected and
+ * cited. The end of a section is where conclusions, totals and identifiers
+ * live; the middle is repeated detail.
+ *
+ * The tail is kept as whole lines so table rows are never split, and the
+ * truncation marker states that the middle was elided.
+ */
+export function truncateKeepingHeadAndTail(
+  rawText: string,
+  maxChunkLen: number,
+  marker = '... [中间内容超出篇幅限制截断] ...',
+): string {
+  const text = String(rawText || '');
+  if (!text || text.length <= maxChunkLen) return text;
+  if (maxChunkLen <= marker.length + 40) return smartTruncateChunkText(text, maxChunkLen);
+
+  // Reserve at least a third of the allowance for the tail, bounded so a long
+  // head is still the dominant part.
+  const tailBudget = Math.max(200, Math.min(Math.floor(maxChunkLen * 0.45), maxChunkLen - marker.length - 20));
+  const headBudget = Math.max(80, maxChunkLen - marker.length - tailBudget);
+  const headRaw = text.slice(0, headBudget);
+  // Trim the head to a line boundary so no table row or paragraph is cut in half.
+  const headCut = headRaw.lastIndexOf('\n');
+  const head = headCut >= Math.floor(headBudget * 0.6) ? headRaw.slice(0, headCut) : headRaw;
+  const tailRaw = text.slice(-tailBudget);
+  const tailStart = tailRaw.indexOf('\n');
+  const tail = tailStart >= 0 && tailStart < Math.floor(tailRaw.length * 0.3) ? tailRaw.slice(tailStart + 1) : tailRaw;
+  return `${head.trimEnd()}\n${marker}\n${tail.trimStart()}`;
+}
+
 /** Fit a chunk to a token allowance without cutting through table rows when possible. */
 export function truncateChunkToTokenBudget(
   rawText: string,
@@ -168,15 +205,15 @@ export function truncateChunkToTokenBudget(
   maxChunkChars = Number(process.env.CHAT_CHUNK_MAX_CHARS || 6000),
 ): string {
   const text = String(rawText || '');
-  const charBounded = smartTruncateChunkText(text, maxChunkChars);
+  const charBounded = truncateKeepingHeadAndTail(text, maxChunkChars);
   if (estimateTokens(charBounded) <= tokenBudget) return charBounded;
 
   let low = 1;
   let high = Math.min(maxChunkChars, text.length);
-  let best = smartTruncateChunkText(text, 1);
+  let best = truncateKeepingHeadAndTail(text, 1);
   while (low <= high) {
     const middle = Math.floor((low + high) / 2);
-    const candidate = smartTruncateChunkText(text, middle);
+    const candidate = truncateKeepingHeadAndTail(text, middle);
     if (estimateTokens(candidate) <= tokenBudget) {
       best = candidate;
       low = middle + 1;
@@ -4529,7 +4566,7 @@ export class ChatService {
             // to one chunk's cap would silently drop the later sections.
             const content = Number(cit.mergedChunkCount) > 1
               ? rawText
-              : smartTruncateChunkText(rawText, maxChunkLen);
+              : truncateKeepingHeadAndTail(rawText, maxChunkLen);
             const truthTag = cit.isCompiledTruth
               ? (isEnglishQuery ? " [Compiled Truth / 编译真理]" : " 【编译真理·高优先】")
               : (cit.isCompiledDerived
