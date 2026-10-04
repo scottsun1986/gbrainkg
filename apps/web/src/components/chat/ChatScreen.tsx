@@ -157,7 +157,10 @@ export function ChatScreen(){
   const viewedConvIdRef = useRef<string | null>(null);
   useEffect(() => { viewedConvIdRef.current = activeConv; }, [activeConv]);
   useEffect(() => { streamConvIdRef.current = streamConvId; }, [streamConvId]);
-  const viewingStream = streaming && activeConv === streamConvId;
+  // 新建会话时 activeConv 与 streamConvId 同为 null，二者相等只是巧合，不能当作
+  // “正在看这条流”；ownsConversation 显式区分二者是否真的指向同一个会话。
+  const [ownsConversation, setOwnsConversation] = useState(false);
+  const viewingStream = streaming && ownsConversation && activeConv !== null && activeConv === streamConvId;
   const allSel = selected.length === visibleKbs.length;
   const scopeLabel = allSel ? '我可见的全部' : (selected.length === 0 ? '未选择任何库' : `已选 ${selected.length} 库`);
 
@@ -288,7 +291,7 @@ export function ChatScreen(){
             flushAssistant(false);
             setStreamConvId(data.conversation_id);
             setConversationList(list => [{ id: data.conversation_id, title: userMsg.slice(0, 120), createdAt: new Date().toISOString() }, ...list.filter(item => item.id !== data.conversation_id)]);
-            if (viewingStreamConv()) { setActiveConv(data.conversation_id); viewedConvIdRef.current = data.conversation_id; }
+            if (viewingStreamConv()) { setActiveConv(data.conversation_id); viewedConvIdRef.current = data.conversation_id; setOwnsConversation(true); }
           } else if (data.type === 'citation') {
             flushAssistant(false);
             if (!viewingStreamConv()) return;
@@ -412,6 +415,7 @@ export function ChatScreen(){
     const text = (preset ?? input).trim();
     if(!text || viewingStream || selected.length===0) return;
     setStreamConvId(activeConv);
+    setOwnsConversation(activeConv !== null);
     setMessages(ms=>[...ms, {role:'user', text}, {role:'ai', text:'', done:false, trace:[]}]);
     setInput('');
     setActiveCite(null);
@@ -426,7 +430,7 @@ export function ChatScreen(){
     setConvLoading(false);
     // 只清空视图，不中止正在生成的答案：streamConvIdRef 仍指向它的会话，
     // 用户从列表切回该会话时会接着看到流式内容。
-    setMessages([]); setActiveCite(null); setCitations([]); setActiveConv(null); viewedConvIdRef.current = null; setInput('');
+    setMessages([]); setActiveCite(null); setCitations([]); setActiveConv(null); viewedConvIdRef.current = null; setOwnsConversation(false); setInput('');
     if(taRef.current){ taRef.current.style.height = 'auto'; taRef.current.focus(); }
   };
 
@@ -487,6 +491,7 @@ export function ChatScreen(){
       startTransition(() => {
         setActiveConv(id);
         viewedConvIdRef.current = id;
+        setOwnsConversation(true);
         setMessages(mapped);
         setCitations(allCitations);
       });
@@ -512,7 +517,7 @@ export function ChatScreen(){
     const id = conv?.id;
     if (!id) return;
     const next = new Set(hiddenConvs); next.add(id); setHiddenConvs(next);
-    if (activeConv === id) { setMessages([]); setActiveConv(null); setCitations([]); }
+    if (activeConv === id) { setMessages([]); setActiveConv(null); setCitations([]); viewedConvIdRef.current = null; setOwnsConversation(false); }
     const onUndo = () => { const r = new Set(hiddenConvs); r.delete(id); setHiddenConvs(r); };
     const evt = new CustomEvent('app-undoable', { detail: { message: `已隐藏会话：${(conv.title || '未命名').slice(0, 20)}`, undoLabel: '撤销', undo: onUndo } });
     window.dispatchEvent(evt);
