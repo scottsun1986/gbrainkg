@@ -137,4 +137,24 @@ describe('splitLeadingHeading', () => {
   it('returns null when there is no heading to recover', () => {
     expect(splitLeadingHeading('两份文件内容一致，第三条均规定 08:30[2][4]。')).toBeNull();
   });
+
+  /**
+   * A bare bold phrase mid-sentence reads as a heading on its own, so without a
+   * stand-alone check the recovery tore emphasis off as navigation and split
+   * the sentence — production: "…视为旷工**半日**；**超过2小时**的，视为旷工**1日**"
+   * rendered as a line break right after "超过2小时".
+   */
+  it('does not treat bold emphasis inside a clause as a heading', () => {
+    expect(splitLeadingHeading('迟到**超过30分钟**不足2小时的，视为旷工**半日**；**超过2小时**的，视为旷工**1日**；')).toBeNull();
+    expect(splitLeadingHeading('现行版本为 **V3.0**，弹性打卡 09:00 至 10:00[3]。')).toBeNull();
+  });
+
+  it('still recovers a source heading whose prose follows on the same line', () => {
+    // The anchor parenthetical names the library and is what makes this a
+    // heading rather than a claim, so same-line prose does not disqualify it.
+    const h = '**来源 1《企业考勤制度手册》（集团总部知识库）**';
+    const split = splitLeadingHeading(h + '该手册提到员工上下班均需打卡[3]。');
+    expect(split!.heading).toBe(h);
+    expect(split!.rest).toBe('该手册提到员工上下班均需打卡[3]。');
+  });
 });

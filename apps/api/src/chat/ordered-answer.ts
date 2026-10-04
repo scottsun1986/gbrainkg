@@ -345,8 +345,8 @@ export function splitLeadingHeading(input: string): { heading: string; rest: str
     // No length cap: a knowledge-base parenthetical can name two libraries and
     // run well past 24 chars, and capping it split the heading from its own
     // qualifier, leaving the qualifier to be gated as a claim.
-    const tail = /^\s*[（(【\[][^（()【】\[\]]{0,120}[)）】\]]/.exec(input.slice(afterMarker));
-    const cut = tail ? afterMarker + tail[0].length : afterMarker;
+    const anchor = /^\s*[（(【\[][^（()【】\[\]]{0,120}[)）】\]]/.exec(input.slice(afterMarker));
+    const cut = anchor ? afterMarker + anchor[0].length : afterMarker;
     if (cut <= 0 || cut >= input.length) continue;
     const head = input.slice(0, cut).trim();
     if (!head || head.length > 120) continue;
@@ -354,7 +354,22 @@ export function splitLeadingHeading(input: string): { heading: string; rest: str
     // heading on its own. Anything else was prose that merely contains a "**".
     if ((head.match(/\*\*/g) || []).length % 2 !== 0) continue;
     if (!isStructuralHeadingLine(head)) continue;
-    return { heading: head, rest: input.slice(cut) };
+    // A heading stands alone. When the same clause merely continues on the same
+    // line, the bold run was emphasis inside a sentence — "…视为旷工**半日**；
+    // **超过2小时**的，视为旷工**1日**" — and tearing it off both orphaned the
+    // clause it belonged to and split the sentence across a line break
+    // (production: the answer broke right after "超过2小时"). Require the tail
+    // to open a new block: end of text, a line break, or a bullet/heading.
+    //
+    // An anchor parenthetical is the exception: "**来源 1《…》**（集团总部知识库）该手册…"
+    // is a heading whose document and library qualifiers are followed by its
+    // own prose on the same line, and the qualifier is what identifies it as
+    // one — without that the whole line reads as a claim. The qualifier may sit
+    // just after the closing marker or just inside it, so accept either.
+    const rest = input.slice(cut);
+    const anchored = Boolean(anchor) || /[（(【\[][^（()【】\[\]]{0,120}[)）】\]]\s*\*\*$/.test(head);
+    if (rest.trim() && !/^\s*(?:\n|[-*•]\s|\d{1,2}\s*[.、)]|#{1,6}\s)/.test(rest) && !anchored) continue;
+    return { heading: head, rest };
   }
   return null;
 }

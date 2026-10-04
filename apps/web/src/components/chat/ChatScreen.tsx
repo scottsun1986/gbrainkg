@@ -106,7 +106,6 @@ export function ChatScreen(){
   const [messages, setMessages] = useState<ChatMessage[]>([]);   // {role:'user'|'ai', text, done}
   // 每条流各持一份控制器与收尾函数，按会话 id（或草稿键）索引，可并发。
   // 单例版本只能容纳一条流：第二条流的启动信号与第一条相同，被 React 丢弃。
-  const [stageLabel, setStageLabel] = useState<string | null>(null);
   const [activeCite, setActiveCite] = useState<number | null>(null);
   const [activeConv, setActiveConv] = useState<string | null>(null);
   const [conversationList, setConversationList] = useState<ConversationSummary[]>(appStore.CONVERSATIONS);
@@ -164,6 +163,8 @@ export function ChatScreen(){
   const syncRuns = () => setRunningIds(runningConversationIds(runsRef.current));
   /** Pollers to tear down on unmount / logout. */
   const pollersRef = useRef(new Set<() => void>());
+  /** Runs that completed while another conversation was on screen. */
+  const pendingAnswersRef = useRef(new Map<string, string>());
 
   // 当前视图归属：activeConv 非空时看它；为空时看持有这个空视图的草稿流。
   const [viewKey, setViewKey] = useState<string | null>(null);
@@ -172,6 +173,14 @@ export function ChatScreen(){
   // 仅当“正在查看的会话”仍在生成回答时，输入框才进入生成态。
   // 停留在别的会话时，输入框保持可用，便于直接继续提问。
   const viewingStream = viewKey !== null && runningIds.includes(viewKey);
+  // Stage text is derived from the registry rather than stored once: a single
+  // value belonged to whichever conversation the user last looked at, so
+  // switching away dropped the progress indicator of the conversation that was
+  // still generating (production: the stage nodes vanished on navigate).
+  const stageLabel = useMemo(
+    () => (viewKey ? labelForRun(runsRef.current.get(viewKey)) : null),
+    [viewKey, runningIds],
+  );
   const allSel = selected.length === visibleKbs.length;
   const scopeLabel = allSel ? '我可见的全部' : (selected.length === 0 ? '未选择任何库' : `已选 ${selected.length} 库`);
 
@@ -284,28 +293,30 @@ export function ChatScreen(){
               if (!poll.ok) { schedule(4000); return; }
               const state = await poll.json() as RunPollResult;
               if (cancelled) return;
-              if (ownsView()) setStageLabel(labelForRun(state) ?? null);
               runsRef.current.set(assigned, {
                 runId: state.runId, conversationId: assigned, status: state.status, stage: state.stage,
               });
               if (!isTerminal(state.status)) { syncRuns(); schedule(1500); return; }
               runsRef.current.delete(assigned);
               syncRuns();
-              if (state.status === 'failed') {
-                if (ownsView()) {
-                  setStageLabel(null);
+              if (ownsView()) {
+                if (state.status === 'failed') {
                   const reason = state.errorMessage || '问答未成功完成。';
                   setMessages(ms => ms.map((m, i) => i === ms.length - 1 && m.role === 'ai' ? { ...m, text: reason, done: true } : m));
+                } else {
+                  setMessages(ms => ms.map((m, i) => i === ms.length - 1 && m.role === 'ai'
+                    ? { ...m, text: state.answer ?? '', done: true, id: state.messageId, trace: mapTraceNodes(state.trace) }
+                    : m));
+                  setCitations(collectRunCitations(state));
                 }
                 return;
               }
-              if (ownsView()) {
-                setStageLabel(null);
-                setMessages(ms => ms.map((m, i) => i === ms.length - 1 && m.role === 'ai'
-                  ? { ...m, text: state.answer ?? '', done: true, id: state.messageId, trace: mapTraceNodes(state.trace) }
-                  : m));
-                setCitations(collectRunCitations(state));
-              }
+              // Finished while the user was reading another conversation. The
+              // answer is persisted, so record it for the view: opening this
+              // conversation later must show the completed answer rather than
+              // the empty "ai" placeholder left behind when the question was
+              // asked. Reload only if that view is still showing this turn.
+              if (state.status === 'completed') pendingAnswersRef.current.set(assigned, state.messageId || '');
             } catch { if (!cancelled) schedule(4000); }
           }, delay);
         };
@@ -314,7 +325,6 @@ export function ChatScreen(){
         if (cancelled) return;
         const text = `大模型请求失败：${errorMessage(err) || '未知错误'}`;
         if (ownsView()) {
-          setStageLabel(null);
           setMessages(ms => ms.map((m, i) => i === ms.length - 1 && m.role === 'ai' ? { ...m, text, done: true } : m));
         }
         stop();
@@ -359,7 +369,6 @@ export function ChatScreen(){
     for (const stop of pollersRef.current) stop();
     void fetch(`${API_BASE_URL}/api/v1/chat/runs/${run.runId}/cancel`, { method: 'POST', headers: apiHeaders() })
       .catch(() => { /* the run's own deadline still bounds it */ });
-    setStageLabel(null);
     setMessages(ms => ms.map((m, i) => i === ms.length - 1 && m.role === 'ai' ? { ...m, done: true } : m));
   };
   const scrollToBottom = () => {
@@ -388,7 +397,7 @@ export function ChatScreen(){
     // 只清空视图，不中止正在生成的答案：那些流仍留在注册表里按会话 id 继续跑，
     // 用户从列表切回该会话时会接着看到流式内容。新草稿流接管空视图。
     setMessages([]); setActiveCite(null); setCitations([]); setActiveConv(null);
-    viewKeyRef.current = null; setViewKey(null); setStageLabel(null);
+    viewKeyRef.current = null; setViewKey(null);
     setInput('');
     if(taRef.current){ taRef.current.style.height = 'auto'; taRef.current.focus(); }
   };
@@ -445,6 +454,9 @@ export function ChatScreen(){
       if (!response.ok) throw new Error('会话加载失败');
       const conversation = await response.json();
       if (seq !== openSeqRef.current) return;
+      // A run that finished while the user was elsewhere has already been
+      // persisted, so the reload above picks it up; drop the marker.
+      pendingAnswersRef.current.delete(id);
       const mapped = mapConversationMessages(conversation);
       const allCitations = collectConversationCitations(conversation);
       // Urgent on purpose. Under startTransition this never committed while a
@@ -476,7 +488,7 @@ export function ChatScreen(){
     const id = conv?.id;
     if (!id) return;
     const next = new Set(hiddenConvs); next.add(id); setHiddenConvs(next);
-    if (activeConv === id) { setMessages([]); setActiveConv(null); setCitations([]); viewKeyRef.current = null; setViewKey(null); setStageLabel(null); }
+    if (activeConv === id) { setMessages([]); setActiveConv(null); setCitations([]); viewKeyRef.current = null; setViewKey(null); }
     const onUndo = () => { const r = new Set(hiddenConvs); r.delete(id); setHiddenConvs(r); };
     const evt = new CustomEvent('app-undoable', { detail: { message: `已隐藏会话：${(conv.title || '未命名').slice(0, 20)}`, undoLabel: '撤销', undo: onUndo } });
     window.dispatchEvent(evt);
