@@ -58,6 +58,24 @@ describe('knowledge-graph snapshot cache', () => {
     expect(ctrl.graphCache.get('a')!.expiresAt).toBe(expiresAt);
   });
 
+  it('serves an expired snapshot as a cache hit and marks it stale', async () => {
+    const ctrl = build();
+    const key = '1000|40|kb-1'; // limit | maxChunksPerDoc | visible KB ids
+    seed(ctrl, key);
+    // Age the snapshot past its TTL: the next read must take the
+    // stale-while-revalidate path rather than rebuilding inline.
+    ctrl.graphCache.get(key)!.expiresAt = Date.now() - 1;
+    const started = Date.now();
+    const out: any = await ctrl.getGraph({ headers: {} }, '1000');
+    expect(Date.now() - started).toBeLessThan(50);
+    // The payload came from the snapshot, so `cached` must be true. Reporting
+    // false made a sub-50ms response indistinguishable from a full rebuild and
+    // failed SOTA E2E P7-02 whenever the suite ran longer than the cache TTL.
+    expect(out.cached).toBe(true);
+    expect(out.stale).toBe(true);
+    expect(out.snapshotAgeSeconds).toBeGreaterThanOrEqual(0);
+  });
+
   it('keeps a caller fresh snapshot after 40 other scopes are cached', async () => {
     const ctrl = build();
     const scopes: string[][] = [['kb-1']];

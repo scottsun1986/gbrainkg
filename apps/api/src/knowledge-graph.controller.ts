@@ -107,9 +107,13 @@ export class KnowledgeGraphController {
       // Stale-while-revalidate: serve the last snapshot of this exact scope
       // instantly and refresh in the background (single-flight per scope).
       this.scheduleRebuild(cacheKey, userId, visibleKbIds, limit, maxChunksPerDoc);
+      // Served from the snapshot, so `cached` is true — freshness is carried by
+      // `stale`, not by denying the hit. Reporting `cached: false` here made a
+      // 0.01 s snapshot response look like a full rebuild, which is what failed
+      // SOTA E2E P7-02 whenever the suite outlived the cache TTL.
       return {
         ...cached.payload,
-        cached: false,
+        cached: true,
         stale: true,
         snapshotAgeSeconds: Math.max(0, Math.round((Date.now() - cached.storedAt) / 1000)),
       };

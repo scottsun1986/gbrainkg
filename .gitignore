@@ -65,3 +65,8 @@ docs/test-reports/visual-audit/r2/
 # misc local artifacts
 docs/video/分析.zip
 bun.lock
+
+# stray tsc output from one-off scripts run without --outDir
+apps/api/perf-probe.js
+apps/api/perf-probe.d.ts
+apps/api/perf-probe.js.map
