@@ -8,6 +8,7 @@ import { ContextMenu } from '@/components/common/ContextMenu';
 import { API_BASE_URL, apiHeaders } from '@/lib/api';
 import { appStore } from '@/lib/app-store';
 import { errorMessage, asRecord, str } from '@/lib/errors';
+import { registerRun, rekeyRun, runOwnsView, unregisterRun, type StreamRunLike } from '@/lib/stream-registry';
 import { emitToast } from '@/lib/app-events';
 import { AnswerMarkdown } from './AnswerMarkdown';
 import type {
@@ -40,6 +41,8 @@ interface ConversationMessagePayload {
   citationsSummary?: ConversationCitationPayload[];
 }
 interface ConversationPayload { messages?: ConversationMessagePayload[] }
+
+type StreamRun = StreamRunLike;
 
 function mapCitation(cite: ConversationCitationPayload, messageId: string | undefined, index: number): Citation {
   const entry = cite.timeline_entry;
@@ -90,13 +93,8 @@ export function ChatScreen(){
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);   // {role:'user'|'ai', text, done}
-  // `streaming` is UI state about the stream that owns the ANSWER; `streamConvId`
-  // is which conversation that answer belongs to. Keeping them separate is what
-  // lets the user browse other conversations while an answer is still generating:
-  // every write below is gated on "am I still looking at the streaming
-  // conversation", so switching away parks the stream instead of aborting it, and
-  // switching back to it resumes rendering the deltas where it left off.
-  const [streaming, setStreaming] = useState(false);
+  // 每条流各持一份控制器与收尾函数，按会话 id（或草稿键）索引，可并发。
+  // 单例版本只能容纳一条流：第二条流的启动信号与第一条相同，被 React 丢弃。
   const [stageLabel, setStageLabel] = useState<string | null>(null);
   const [activeCite, setActiveCite] = useState<number | null>(null);
   const [activeConv, setActiveConv] = useState<string | null>(null);
@@ -140,27 +138,30 @@ export function ChatScreen(){
   const [hiddenConvs, setHiddenConvs] = useState<Set<string>>(() => new Set<string>());
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const streamController = useRef<AbortController | null>(null);
-  const finishStream = useRef<(() => void) | null>(null);
   const openSeqRef = useRef(0);
-  /** 打开时其答案仍在生成的会话：生成结束后补拉一次落库结果。 */
-  const resumeConvIdRef = useRef<string | null>(null);
-  /** 补拉重载的请求序号，避免慢响应覆盖用户之后的选择。 */
-  const resumeSeqRef = useRef(0);
+  /**
+   * 每个会话一条独立的流。新建会话时服务端还没分配 id，先用客户端序号做临时
+   * 键，收到 `conversation` 事件后重键为真实 id。
+   *
+   * 之前这里是单例 `streaming` 布尔 + `[streaming]` 依赖的 effect：第二条流
+   * 的 `setStreaming(true)` 在已经是 true 时被 React 丢弃，effect 不重跑，
+   * fetch 根本没发出——用户表现为「后面新建的会话没进列表，丢了」。
+   */
+  const runsRef = useRef(new Map<string, StreamRun>());
+  const runSeqRef = useRef(0);
+  const [runKeys, setRunKeys] = useState<string[]>([]);
+  /** 尚未拿到服务端 id 的新会话流：它拥有当前空视图，离开即失去归属。 */
+  const draftRunKeyRef = useRef<string | null>(null);
+  const syncRuns = () => setRunKeys([...runsRef.current.keys()]);
 
+  // 当前视图归属：activeConv 非空时看它；为空时看持有这个空视图的草稿流。
+  const [viewKey, setViewKey] = useState<string | null>(null);
+  const viewKeyRef = useRef<string | null>(null);
+  const [viewOwnsStream, setViewOwnsStream] = useState(false);
+  useEffect(() => { viewKeyRef.current = viewKey; }, [viewKey]);
   // 仅当“正在查看的会话”正是流式输出所属会话时，编辑器才进入流式态。
   // 停留在别的会话时，输入框保持可用，便于直接继续提问。
-  // 两个 ref 只是 state 的镜像，供流的异步回调读取“当前值”；state 仍是唯一真相，
-  // 镜像在 effect 里同步（不在 render 里写 ref）。
-  const [streamConvId, setStreamConvId] = useState<string | null>(null);
-  const streamConvIdRef = useRef<string | null>(null);
-  const viewedConvIdRef = useRef<string | null>(null);
-  useEffect(() => { viewedConvIdRef.current = activeConv; }, [activeConv]);
-  useEffect(() => { streamConvIdRef.current = streamConvId; }, [streamConvId]);
-  // 新建会话时 activeConv 与 streamConvId 同为 null，二者相等只是巧合，不能当作
-  // “正在看这条流”；ownsConversation 显式区分二者是否真的指向同一个会话。
-  const [ownsConversation, setOwnsConversation] = useState(false);
-  const viewingStream = streaming && ownsConversation && activeConv !== null && activeConv === streamConvId;
+  const viewingStream = viewOwnsStream && runKeys.includes(viewKey ?? '');
   const allSel = selected.length === visibleKbs.length;
   const scopeLabel = allSel ? '我可见的全部' : (selected.length === 0 ? '未选择任何库' : `已选 ${selected.length} 库`);
 
@@ -194,19 +195,35 @@ export function ChatScreen(){
     return () => window.removeEventListener('app-new-chat', onNew);
   }, []);
 
-  useEffect(() => {
-    if (!streaming) return;
-    let active = true;
+  /**
+   * 启动一条流。返回它在注册表中的键：已有会话用会话 id，新会话用临时键
+   * `draft:<n>`，收到 `conversation` 事件后重键为真实 id。
+   *
+   * 所有写入都以「当前视图是否归属本流」为前提，因此并发的多条流互不干扰：
+   * 用户在 A 生成时切到 B 提问，两条流各自更新自己的会话列表项与消息。
+   */
+  const startRun = useCallback((opts: {
+    convId: string | null;
+    text: string;
+    kbScope: string[];
+  }) => {
+    const seq = ++runSeqRef.current;
     const controller = new AbortController();
-    streamController.current = controller;
-    // The conversation this stream writes into: null until the server assigns
-    // one for a brand-new chat. Every state write below is gated on the user
-    // still viewing it, so browsing elsewhere neither aborts the stream nor
-    // leaks this answer's text into another conversation's view.
-    const viewingStreamConv = () => viewedConvIdRef.current === streamConvIdRef.current;
+    let convId = opts.convId;
+    let currentKey = opts.convId ?? '';
+    let active = true;
+    let accumulatedText = "";
+    let streamError = "";
+    let streamFinished = false;
+    let buffer = '';
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+    const accumulatedTextRef = { current: "" };
+
+    // 本流是否仍拥有当前视图。新会话在拿到 id 前由草稿键代表当前空视图。
+    const ownsView = () => runOwnsView(viewKeyRef.current, draftRunKeyRef.current, convId, currentKey);
 
     const updateAssistant = (text: string, done: boolean) => {
-      if (!active || !viewingStreamConv()) return;
+      if (!active || !ownsView()) return;
       setMessages(ms => {
         const cp = [...ms];
         const last = cp[cp.length - 1];
@@ -221,25 +238,36 @@ export function ChatScreen(){
     // 流式渲染缓冲：SSE 每个 delta 直接 setState 会让长回答以每 token 一次
     // 全列表重渲染（叠加 O(n²) 的答案重解析）。以 ~50ms 合并刷新， citation/
     // trace/done 等结构化事件到达时立即冲刷，保证顺序与最终一致性。
-    let flushTimer: ReturnType<typeof setTimeout> | null = null;
-    const accumulatedTextRef = { current: "" };
     const flushAssistant = (done = false) => {
       if (flushTimer !== null) { clearTimeout(flushTimer); flushTimer = null; }
       updateAssistant(accumulatedTextRef.current, done);
     };
-    finishStream.current = () => flushAssistant(true);
     const scheduleAssistantFlush = () => {
       if (flushTimer !== null) return;
       flushTimer = setTimeout(() => { flushTimer = null; updateAssistant(accumulatedTextRef.current, false); }, 50);
     };
 
+    const run: StreamRun = { convId, controller, flush: flushAssistant, title: opts.text };
+    const registered = registerRun(runsRef.current, seq, run);
+    currentKey = registered.key;
+    if (registered.draft) draftRunKeyRef.current = currentKey;
+    syncRuns();
+    setViewOwnsStream(true);
+
+    // 重键：草稿流拿到真实 id 后，从注册表换键。
+    const rekey = (assigned: string) => {
+      if (!rekeyRun(runsRef.current, currentKey, assigned)) return;
+      convId = assigned;
+      currentKey = assigned;
+      syncRuns();
+    };
+
     (async () => {
       try {
-        const userMsg = messages[messages.length - 2]?.text || "";
         const res = await fetch(`${API_BASE_URL}/api/v1/chat/completions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...apiHeaders() },
-          body: JSON.stringify({ message: userMsg, kb_scope: selected, conversation_id: activeConv || undefined }),
+          body: JSON.stringify({ message: opts.text, kb_scope: opts.kbScope, conversation_id: convId || undefined }),
           signal: controller.signal,
         });
 
@@ -255,10 +283,6 @@ export function ChatScreen(){
         const reader = res.body?.getReader();
         if (!reader) throw new Error("服务器未返回有效的流式响应");
         const decoder = new TextDecoder('utf-8');
-        let accumulatedText = "";
-        let streamError = "";
-        let buffer = '';
-        let streamFinished = false;
 
         const consumeLine = (line: string) => {
           const trimmed = line.trim();
@@ -280,21 +304,26 @@ export function ChatScreen(){
             flushAssistant(false);
           } else if (data.type === 'stage') {
             // 真实阶段进度（retrieving → reranking → generating → verifying）
+            if (!ownsView()) return;
             const STAGE_LABELS: Record<string, string> = {
               retrieving: '检索证据', reranking: '重排验证', generating: '生成回答', verifying: '证据核验',
             };
             setStageLabel(STAGE_LABELS[data.stage] || data.detail || null);
           } else if (data.type === 'error') {
             streamError = String(data.content || '问答服务返回错误');
-            if (!accumulatedText && viewingStreamConv()) { accumulatedTextRef.current = streamError; flushAssistant(false); }
+            if (!accumulatedText && ownsView()) { accumulatedTextRef.current = streamError; flushAssistant(false); }
           } else if (data.type === 'conversation') {
             flushAssistant(false);
-            setStreamConvId(data.conversation_id);
-            setConversationList(list => [{ id: data.conversation_id, title: userMsg.slice(0, 120), createdAt: new Date().toISOString() }, ...list.filter(item => item.id !== data.conversation_id)]);
-            if (viewingStreamConv()) { setActiveConv(data.conversation_id); viewedConvIdRef.current = data.conversation_id; setOwnsConversation(true); }
+            const assigned = String(data.conversation_id);
+            // 视图可能仍停在本流的草稿键上：移交归属，别让 ownsView 失效。
+            if (draftRunKeyRef.current === currentKey) draftRunKeyRef.current = assigned;
+            if (viewKeyRef.current === currentKey) { setViewKey(assigned); viewKeyRef.current = assigned; }
+            if (ownsView()) setActiveConv(assigned);
+            rekey(assigned);
+            setConversationList(list => [{ id: assigned, title: opts.text.slice(0, 120), createdAt: new Date().toISOString() }, ...list.filter(item => item.id !== assigned)]);
           } else if (data.type === 'citation') {
             flushAssistant(false);
-            if (!viewingStreamConv()) return;
+            if (!ownsView()) return;
             const citation = { id: `${data.index}-${data.topic_slug}`, citationIndex: Number(data.index), title: data.timeline_entry?.doc_title || data.topic_slug || '知识主题', kb: data.timeline_entry?.source_kb, documentId: data.timeline_entry?.document_id, kbName: data.timeline_entry?.kb_name || data.timeline_entry?.source_kb || '知识库', truth: '—', evidences: 1, lastUpdate: '刚刚', snippet: data.timeline_entry?.snippet || '', path: data.topic_slug, pageNo: data.timeline_entry?.page_no, bbox: data.timeline_entry?.bbox };
             setCitations(items => [...items, citation]);
             setMessages(items => {
@@ -305,7 +334,7 @@ export function ChatScreen(){
             });
           } else if (data.type === 'trace' && data.node?.id) {
             flushAssistant(false);
-            if (!viewingStreamConv()) return;
+            if (!ownsView()) return;
             setMessages(items => {
               const next = [...items];
               const lastIndex = next.map(item => item.role).lastIndexOf('ai');
@@ -319,7 +348,7 @@ export function ChatScreen(){
               return next;
             });
           } else if (data.type === 'done') {
-            if (typeof data.message_id === 'string' && viewingStreamConv()) {
+            if (typeof data.message_id === 'string' && ownsView()) {
               setMessages(items => items.map((item, index) => index === items.length - 1 && item.role === 'ai' ? { ...item, id: data.message_id } : item));
             }
             streamFinished = true;
@@ -337,45 +366,49 @@ export function ChatScreen(){
         buffer += decoder.decode();
         if (buffer.trim()) consumeLine(buffer);
         accumulatedTextRef.current = accumulatedText || streamError;
-        if (viewingStreamConv()) flushAssistant(true);
-        if (active) {
-          setStreaming(false); setStageLabel(null);
-          // 用户中途切走又切回来的会话：这一轮答案从未在浏览器渲染过，
-          // 生成结束后补拉一次已落库的消息，让视图回到完整状态。
-          const resumeId = resumeConvIdRef.current;
-          resumeConvIdRef.current = null;
-          if (resumeId && viewedConvIdRef.current === resumeId) {
-            const resumeSeq = ++resumeSeqRef.current;
-            void (async () => {
-              try {
-                const res = await fetch(`${API_BASE_URL}/api/v1/conversations/${resumeId}`, { headers: apiHeaders() });
-                if (!res.ok || resumeSeq !== resumeSeqRef.current) return;
-                const conv = (await res.json()) as ConversationPayload;
-                if (resumeSeq !== resumeSeqRef.current || viewedConvIdRef.current !== resumeId) return;
-                startTransition(() => {
-                  setMessages(mapConversationMessages(conv));
-                  setCitations(collectConversationCitations(conv));
-                });
-              } catch { /* 生成尚未落库：保持当前视图，不打断用户 */ }
-            })();
-          }
+        if (ownsView()) flushAssistant(true);
+        if (ownsView()) setStageLabel(null);
+        // 用户中途切走又切回来的会话：这一轮答案从未在浏览器渲染过，
+        // 生成结束后补拉一次已落库的消息，让视图回到完整状态。
+        const resumeId = convId;
+        if (resumeId && !ownsView() && viewKeyRef.current === resumeId) {
+          void (async () => {
+            try {
+              const res = await fetch(`${API_BASE_URL}/api/v1/conversations/${resumeId}`, { headers: apiHeaders() });
+              if (!res.ok) return;
+              const conv = (await res.json()) as ConversationPayload;
+              if (viewKeyRef.current !== resumeId) return;
+              startTransition(() => {
+                setMessages(mapConversationMessages(conv));
+                setCitations(collectConversationCitations(conv));
+              });
+            } catch { /* 生成尚未落库：保持当前视图，不打断用户 */ }
+          })();
         }
       } catch (err) {
         const isAbort = errorMessage(err) === 'AbortError' || (err as { name?: string })?.name === 'AbortError';
         if (isAbort) {
           // 用户主动停止：保留已生成的部分文本并标记完成。
-          if (viewingStreamConv()) flushAssistant(true);
+          if (ownsView()) flushAssistant(true);
         } else if (active) {
-          if (viewingStreamConv()) {
+          if (ownsView()) {
             accumulatedTextRef.current = "大模型请求失败：" + (errorMessage(err) || '未知错误');
             flushAssistant(true);
+            setStageLabel(null);
           }
-          setStreaming(false); setStageLabel(null);
         }
+      } finally {
+        active = false;
+        if (flushTimer !== null) clearTimeout(flushTimer);
+        // 只摘除本流；其余并发流不受影响（单例版本在这里会误清空全部状态）。
+        unregisterRun(runsRef.current, currentKey, run);
+        if (draftRunKeyRef.current === currentKey) draftRunKeyRef.current = null;
+        syncRuns();
+        if (ownsView()) setViewOwnsStream(false);
       }
     })();
-    return () => { active = false; streamController.current = null; finishStream.current = null; if (flushTimer !== null) clearTimeout(flushTimer); controller.abort(); };
-  }, [streaming]);
+    return registered.key;
+  }, []);
 
   // 流式期间自动滚底（除非用户主动上滑）
   useEffect(()=>{
@@ -383,6 +416,12 @@ export function ChatScreen(){
     const el = scrollRef.current;
     if(el) el.scrollTop = el.scrollHeight;
   },[messages, autoStick]);
+
+  // 卸载时中止所有仍在跑的流：并发之后不再有单例 effect 的 cleanup 兜底。
+  useEffect(() => () => {
+    for (const run of runsRef.current.values()) run.controller.abort();
+    runsRef.current.clear();
+  }, []);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -398,11 +437,10 @@ export function ChatScreen(){
   const stopStream = () => {
     // 只停止当前会话自己的生成：切到别的会话时，停止按钮根本不出现，
     // 也不应能中止那边仍在进行的回答。
-    if (!viewingStream) return;
-    // Complete the visible answer before effect cleanup disables late flushes.
-    finishStream.current?.();
-    streamController.current?.abort();
-    setStreaming(false);
+    if (!viewingStream || viewKey === null) return;
+    // Complete the visible answer before aborting so partial text is kept.
+    runsRef.current.get(viewKey)?.flush(true);
+    runsRef.current.get(viewKey)?.controller.abort();
   };
   const scrollToBottom = () => {
     const el = scrollRef.current;
@@ -414,23 +452,24 @@ export function ChatScreen(){
   const send = (preset?: string)=>{
     const text = (preset ?? input).trim();
     if(!text || viewingStream || selected.length===0) return;
-    setStreamConvId(activeConv);
-    setOwnsConversation(activeConv !== null);
+    // 同一会话已有回答在生成时不重复提交；其他会话的并发流互不影响。
     setMessages(ms=>[...ms, {role:'user', text}, {role:'ai', text:'', done:false, trace:[]}]);
     setInput('');
     setActiveCite(null);
     setCitations([]);
     setAutoStick(true);
-    setStreaming(true);
     if(taRef.current) taRef.current.style.height = 'auto';
+    startRun({ convId: activeConv, text, kbScope: selected });
   };
 
   const newChat = ()=>{
     ++openSeqRef.current;
     setConvLoading(false);
-    // 只清空视图，不中止正在生成的答案：streamConvIdRef 仍指向它的会话，
-    // 用户从列表切回该会话时会接着看到流式内容。
-    setMessages([]); setActiveCite(null); setCitations([]); setActiveConv(null); viewedConvIdRef.current = null; setOwnsConversation(false); setInput('');
+    // 只清空视图，不中止正在生成的答案：那些流仍留在注册表里按会话 id 继续跑，
+    // 用户从列表切回该会话时会接着看到流式内容。新草稿流接管空视图。
+    setMessages([]); setActiveCite(null); setCitations([]); setActiveConv(null);
+    viewKeyRef.current = null; setViewKey(null); setViewOwnsStream(false); setStageLabel(null);
+    setInput('');
     if(taRef.current){ taRef.current.style.height = 'auto'; taRef.current.focus(); }
   };
 
@@ -490,15 +529,15 @@ export function ChatScreen(){
       const allCitations = collectConversationCitations(conversation);
       startTransition(() => {
         setActiveConv(id);
-        viewedConvIdRef.current = id;
-        setOwnsConversation(true);
+        viewKeyRef.current = id; setViewKey(id);
+        setViewOwnsStream(runsRef.current.has(id));
         setMessages(mapped);
         setCitations(allCitations);
       });
       // 切回仍在生成的会话：浏览器离开期间没收到 delta，磁盘上这一轮要等
       // 生成结束才落库。标记为待补拉，由流结束回调统一重载（见下），
       // 而不是在这里定时轮询 —— 固定延迟在快慢两种机器上都会猜错。
-      if (id === streamConvIdRef.current) resumeConvIdRef.current = id;
+      if (runsRef.current.has(id)) setViewOwnsStream(true);
     } catch (error) {
       if (seq === openSeqRef.current) window.dispatchEvent(new CustomEvent('app-toast', {detail: errorMessage(error) || '会话加载失败'}));
     } finally {
@@ -517,7 +556,7 @@ export function ChatScreen(){
     const id = conv?.id;
     if (!id) return;
     const next = new Set(hiddenConvs); next.add(id); setHiddenConvs(next);
-    if (activeConv === id) { setMessages([]); setActiveConv(null); setCitations([]); viewedConvIdRef.current = null; setOwnsConversation(false); }
+    if (activeConv === id) { setMessages([]); setActiveConv(null); setCitations([]); viewKeyRef.current = null; setViewKey(null); setViewOwnsStream(false); setStageLabel(null); }
     const onUndo = () => { const r = new Set(hiddenConvs); r.delete(id); setHiddenConvs(r); };
     const evt = new CustomEvent('app-undoable', { detail: { message: `已隐藏会话：${(conv.title || '未命名').slice(0, 20)}`, undoLabel: '撤销', undo: onUndo } });
     window.dispatchEvent(evt);
@@ -680,7 +719,7 @@ export function ChatScreen(){
           {!autoStick && messages.length > 0 && (
             <button type="button" className="scroll-to-bottom" onClick={scrollToBottom} title="回到底部">
               <span>↓ 回到底部</span>
-              {streaming && <span className="streaming-dot" />}
+              {viewingStream && <span className="streaming-dot" />}
             </button>
           )}
           <div className="chat-inner">
