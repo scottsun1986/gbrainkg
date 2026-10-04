@@ -367,7 +367,17 @@ export class CitationAssemblyService {
       typeof c?.sectionGroup === "string" && c.sectionGroup ? c.sectionGroup : `__single_${index}`;
     const groups = new Map<
       string,
-      { members: any[]; best: number; repText: string; isSummary: boolean; isSpreadsheetOrTable: boolean }
+      {
+        members: any[];
+        best: number;
+        bestMember: any;
+        bestMemberScore: number;
+        summaryMember: any;
+        summaryMemberScore: number;
+        repText: string;
+        isSummary: boolean;
+        isSpreadsheetOrTable: boolean;
+      }
     >();
     citations.forEach((c: any, index: any) => {
       const key = groupKeyOf(c, index);
@@ -403,12 +413,28 @@ export class CitationAssemblyService {
       const entry = groups.get(key) || {
         members: [],
         best: -Infinity,
+        bestMember: null,
+        bestMemberScore: -Infinity,
+        // Highest-scoring member whose own role is summary-role, kept
+        // separately so a summary-question can prefer it even when a detail
+        // row of the same section group scores marginally higher.
+        summaryMember: null,
+        summaryMemberScore: -Infinity,
         repText: "",
         isSummary: false,
         isSpreadsheetOrTable: false,
       };
       entry.members.push(c);
-      entry.best = Math.max(entry.best, norm(rawScore(c)));
+      const memberScore = rawScore(c);
+      if (memberScore > entry.bestMemberScore) {
+        entry.bestMemberScore = memberScore;
+        entry.bestMember = c;
+      }
+      if (isSummaryItem && memberScore > entry.summaryMemberScore) {
+        entry.summaryMemberScore = memberScore;
+        entry.summaryMember = c;
+      }
+      entry.best = Math.max(entry.best, norm(memberScore));
       if (isSummaryItem) entry.isSummary = true;
       if (isTableItem) entry.isSpreadsheetOrTable = true;
       if (!entry.repText) entry.repText = String(c.context || c.snippet || c.docTitle || c.topic || "").slice(0, 400);
@@ -490,9 +516,10 @@ export class CitationAssemblyService {
       for (const g of summaryGroups) {
         const tokens = tokenize(g.repText);
         const docId = docIdOf(g);
-        selected.push(g.members[0]);
+        const representative = g.summaryMember || g.bestMember || g.members[0];
+        selected.push(representative);
         selectedSets.push({ tokens, docId, isSummary: true });
-        usedTokens += costOf(g.members[0]);
+        usedTokens += costOf(representative);
         docCounts.set(docId, (docCounts.get(docId) || 0) + 1);
         const idx = pool.indexOf(g);
         if (idx >= 0) pool.splice(idx, 1);
@@ -546,7 +573,16 @@ export class CitationAssemblyService {
       const groupTokens = group.members.reduce((sum, m) => sum + costOf(m), 0);
       // Token budget: the first (best) group always fits; later groups must fit.
       if (selected.length > 0 && usedTokens + groupTokens > opts.tokenBudget) break;
-      for (const m of group.members) selected.push(m);
+      // Every member of the group reaches the model, so the group's
+      // representative must lead: the prompt renders sources in this order and
+      // the first one is the passage a summary question is answered from.
+      const representative = (wantsSummarySection ? group.summaryMember : null)
+        || group.bestMember
+        || group.members[0];
+      for (const m of group.members) {
+        if (m !== representative) selected.push(m);
+      }
+      selected.push(representative);
       const dId = docIdOf(group);
       selectedSets.push({
         tokens: tokenize(group.repText),
@@ -627,7 +663,12 @@ export class CitationAssemblyService {
         if (usedTokens + groupTokens > opts.tokenBudget * 1.2) {
           // Guaranteed per-hop representation: if the whole group exceeds budget,
           // still inject at least the top chunk so this reasoning hop is never starved
-          const topMember = bestGroup.members[0];
+          // Same rule as the summary path: inject the group's best-scoring
+          // member (or its summary-role member), never merely its first chunk,
+          // which is an arbitrary position inside the section region.
+          const topMember = (wantsSummarySection
+            ? bestGroup.summaryMember || bestGroup.bestMember
+            : bestGroup.bestMember) || bestGroup.members[0];
           if (topMember && !selectedIds.has(topMember.id || `${topMember.docId}:${topMember.ord}`)) {
             selected.push(topMember);
             selectedIds.add(topMember.id || `${topMember.docId}:${topMember.ord}`);

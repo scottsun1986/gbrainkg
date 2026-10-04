@@ -90,8 +90,14 @@ export class KnowledgeGraphController {
     // snapshot can never leak another scope's nodes.
     const cacheKey = `${limit}|${maxChunksPerDoc}|${[...visibleKbIds].sort().join(',')}`;
     const cacheTtlMs = Math.max(0, Number(process.env.KG_CACHE_TTL_MS || 300_000));
-    const cached = this.graphCache.get(cacheKey);
-    if (this.graphCache.size > 32) this.graphCache.clear();
+    // LRU eviction, not a wholesale clear. The cache key includes the caller's
+    // visible-KB set, so a fleet of users with different scopes fills it fast;
+    // clearing every snapshot when it crossed the cap threw away scopes that
+    // were still fresh, and the caller's own next request rebuilt from scratch
+    // (SOTA E2E P7-02: a fresh snapshot was reported `cached: false` 0.02s
+    // after it was built).
+    this.evictOldestGraphSnapshot();
+    const cached = this.touchGraphSnapshot(cacheKey);
 
     if (cached && cached.expiresAt > Date.now() && !forceFresh) {
       return { ...cached.payload, cached: true };
@@ -121,6 +127,30 @@ export class KnowledgeGraphController {
     }
 
     return this.buildGraph(cacheKey, cacheTtlMs, userId, visibleKbIds, limit, maxChunksPerDoc);
+  }
+
+  /** Drop the least recently used snapshot once the cache is over capacity. */
+  /**
+   * Read a snapshot and mark it most recently used. Insertion order is the LRU
+   * order, so re-inserting the entry moves it to the end without touching
+   * `expiresAt`: a read must not keep a stale snapshot alive forever.
+   */
+  private touchGraphSnapshot(cacheKey: string) {
+    const cached = this.graphCache.get(cacheKey);
+    if (cached) {
+      this.graphCache.delete(cacheKey);
+      this.graphCache.set(cacheKey, cached);
+    }
+    return cached;
+  }
+
+  private evictOldestGraphSnapshot(): void {
+    const capacity = Math.max(1, Number(process.env.KG_CACHE_MAX_SNAPSHOTS || 64));
+    while (this.graphCache.size > capacity) {
+      const oldest = this.graphCache.keys().next();
+      if (oldest.done) break;
+      this.graphCache.delete(oldest.value);
+    }
   }
 
   private scheduleRebuild(
@@ -315,12 +345,14 @@ export class KnowledgeGraphController {
       scope: { userId, visibleKnowledgeBases: visibleKbIds.length, onlyPublished: true },
     };
     if (cacheTtlMs > 0) {
+      // Insert last so the freshly built snapshot is the most recent, then evict.
       this.graphCache.set(cacheKey, {
         expiresAt: Date.now() + cacheTtlMs,
         storedAt: Date.now(),
         fingerprint: createHash('sha256').update(`${nodes.size}|${edges.size}`).digest('hex'),
         payload,
       });
+      this.evictOldestGraphSnapshot();
     }
     return payload;
   }
