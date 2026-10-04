@@ -513,6 +513,15 @@ ul,ol{list-style:none}
 .conv-item.active{background:var(--surface-2);color:var(--ink);font-weight:500;box-shadow:inset 2px 0 0 var(--evidence)}
 .conv-item .conv-title{font-weight:inherit;color:inherit;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .conv-item .conv-time{font-size:10.5px;color:var(--ink-4);font-weight:400}
+/* Running indicator: the row becomes a two-column grid so the spinner sits at
+   the far right of the first row, beside the title, without a third stacked
+   line that would shift the whole list while answers generate. */
+.conv-item.running{display:grid;grid-template-columns:1fr auto;grid-template-areas:"title run" "time time";column-gap:8px}
+.conv-item.running .conv-title{grid-area:title}
+.conv-item.running .conv-time{grid-area:time}
+.conv-run{grid-area:run;align-self:start;display:inline-flex;align-items:center;gap:4px;margin-top:2px}
+.conv-run .spinner{width:9px;height:9px;border-width:1.5px}
+.conv-run-label{font-size:10px;color:var(--ink-4);font-weight:400;white-space:nowrap}
 .conv-empty{padding:18px 14px;text-align:center;color:var(--ink-4);font-size:11.5px}
 .conv-more{display:block;width:calc(100% - 28px);margin:2px 14px 10px;padding:6px 0;border:1px dashed var(--line);border-radius:8px;background:transparent;color:var(--ink-4);font-size:11.5px;font-family:inherit;cursor:pointer}
 .conv-more:hover:not(:disabled){color:var(--ink-2);border-color:var(--ink-4)}
@@ -741,6 +750,10 @@ ul,ol{list-style:none}
   transition:transform .12s;
 }
 .scroll-to-bottom:hover{transform:translateY(-1px)}
+/* Standalone rule: the stage-label and conversation-loading pills render a bare
+   <span class="streaming-dot">, which matched only the .scroll-to-bottom
+   descendant rule below and so drew as a 0x0 invisible element. */
+.streaming-dot{width:7px;height:7px;border-radius:50%;background:var(--evidence);animation:pulse 1.2s ease-in-out infinite;flex:0 0 auto}
 .scroll-to-bottom .streaming-dot{width:7px;height:7px;border-radius:50%;background:var(--evidence);animation:pulse 1.2s ease-in-out infinite}
 
 /* Citation panel (drawer, default collapsed) */

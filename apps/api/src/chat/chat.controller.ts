@@ -14,6 +14,7 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { ChatService } from "./chat.service";
+import { ChatRunService } from "./chat-run.service";
 import { Observable } from "rxjs";
 import { Response } from "express";
 import { AuthService } from "../auth/auth.service";
@@ -31,6 +32,7 @@ export class ChatController {
   constructor(
     private readonly chatService: ChatService,
     private readonly authService: AuthService,
+    private readonly chatRunService: ChatRunService,
   ) {}
 
   private readonly prisma = getPrismaClient();
@@ -135,13 +137,31 @@ export class ChatController {
       },
     });
 
-    response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-    response.setHeader("Cache-Control", "no-cache, no-transform");
-    response.setHeader("Connection", "keep-alive");
-    response.flushHeaders?.();
-    response.write(
-      `data: ${JSON.stringify({ type: "conversation", conversation_id: conversation.id })}\n\n`,
-    );
+    const requestStartedAt = Date.now();
+    // Non-streaming callers get a run id up front and poll it; streaming callers
+    // never see one. Empty string means "no run", which is what keeps the
+    // finalize path free of run bookkeeping for the SSE case.
+    let runId = "";
+
+    // Non-streaming mode: answer the POST immediately with a run id and let the
+    // client poll. The pipeline below is unchanged — it still runs through the
+    // same observable and the same finalize that persists the message — this
+    // only changes who receives the bytes and when.
+    const wantsJson = body?.stream === false
+      || String(req.headers?.accept || '').includes('application/json');
+
+    if (wantsJson) {
+      const run = await this.chatRunService.start(conversation.id, userId);
+      runId = run.runId;
+    } else {
+      response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+      response.setHeader("Cache-Control", "no-cache, no-transform");
+      response.setHeader("Connection", "keep-alive");
+      response.flushHeaders?.();
+      response.write(
+        `data: ${JSON.stringify({ type: "conversation", conversation_id: conversation.id })}\n\n`,
+      );
+    }
 
     let authorizationSnapshot: AuthorizationSnapshot | undefined;
     const stream$: Observable<MessageEvent> =
@@ -150,9 +170,13 @@ export class ChatController {
         normalizedMessage,
         kb_scope,
         conversation.id,
-        { onAuthorization: snapshot => { authorizationSnapshot = snapshot; } },
+        {
+          onAuthorization: snapshot => { authorizationSnapshot = snapshot; },
+          // Empty for SSE callers; set for the non-streaming run so stage
+          // progress is recorded on the row the client polls.
+          runId: runId || undefined,
+        },
       );
-    const requestStartedAt = Date.now();
     let answer = "";
     let errorContent = "";
     let traceId = "";
@@ -229,13 +253,19 @@ export class ChatController {
             where: { id: created.id },
             data: { processingTrace: [...traceNodes.values()] },
           });
+          // A poll only learns the answer exists once the row does, so the run
+          // is closed here rather than on `complete`: closing earlier would let
+          // a client fetch a message that is not written yet.
+          if (runId && messageId && !errorContent) await this.chatRunService.complete(runId, messageId);
         } catch (error: any) {
           console.error("Failed to persist assistant message:", error);
           upsertPersistenceTrace(
             "failed",
             `保存失败：${String(error?.message || error || "未知错误").slice(0, 300)}`,
           );
+          if (runId) await this.chatRunService.fail(runId, `保存失败：${String(error?.message || error).slice(0, 300)}`);
         } finally {
+          if (runId && errorContent && !messageId) await this.chatRunService.fail(runId, errorContent);
           writeEvent({
             type: "done",
             message_id: messageId,
@@ -243,6 +273,12 @@ export class ChatController {
             latency_ms: Date.now() - requestStartedAt,
             trace_id: traceId,
           });
+          if (runId) {
+            // The POST already returned; the client learns the outcome by
+            // polling the run. Nothing more to write on this response.
+            if (!response.writableEnded && !response.destroyed) response.end();
+            return;
+          }
           if (strictOutput && !errorContent && authorizationSnapshot) {
             try {
               await withStrictOutputPermit(userId, authorizationSnapshot, async () => {
@@ -266,8 +302,10 @@ export class ChatController {
     };
     const subscription = stream$.subscribe({
       next: (event) => {
-        if (response.writableEnded) return;
         const data: any = event.data;
+        // Accumulate unconditionally: a non-streaming run has already sent its
+        // 201 and closed the response, but the pipeline still has to collect
+        // the answer that finalize persists. Only the wire write is conditional.
         if (data?.type === "delta") answer += String(data.content || "");
         if (data?.type === "citation") citations.push(data);
         if (data?.type === "error") errorContent = String(data.content || "问答处理失败");
@@ -280,10 +318,12 @@ export class ChatController {
           dependencyManifest = data.dependency_manifest || null;
           return;
         }
-        writeEvent(event.data);
+        if (!response.writableEnded) writeEvent(event.data);
       },
       error: (error) => {
-        if (response.writableEnded) return;
+        // A non-streaming run's response is already closed, but the failure
+        // still has to be recorded on the run and persisted as the answer.
+        if (response.writableEnded && !runId) return;
         if (error?.getStatus?.() === 403 || error?.getStatus?.() === 503) {
           answer = ''; citations.length = 0; traceNodes.clear(); dependencyManifest = null;
         }
@@ -315,6 +355,37 @@ export class ChatController {
         void finalize();
       },
     });
+    if (runId) {
+      // 201 + the run: the answer itself is fetched from GET /chat/runs/:runId
+      // once it reports completed, so this response carries only identity.
+      response.status(201).json({ conversationId: conversation.id, runId, status: "running" });
+      // Do not tie the run to this response: closing it would abort generation
+      // through the observable teardown, and the client is expected to navigate
+      // away long before the answer is ready.
+      return;
+    }
     req.on("close", () => subscription.unsubscribe());
+  }
+
+  /**
+   * Poll a non-streaming run. Returns the stage while it is in flight and, once
+   * completed, the full answer with its citations and trace — the same payload
+   * the SSE stream would have delivered, minus the per-token frames.
+   */
+  @Get("runs/:runId")
+  async getRun(@Req() req: any, @Param("runId") runId: string) {
+    const userId = await this.authService.userIdFromRequest(req);
+    return this.chatRunService.get(userId, runId);
+  }
+
+  /** Best-effort cancel. Only the instance that started the run can abort it. */
+  @Post("runs/:runId/cancel")
+  async cancelRun(@Req() req: any, @Param("runId") runId: string) {
+    const userId = await this.authService.userIdFromRequest(req);
+    // Read first: an unknown or foreign run must 404 rather than report success.
+    await this.chatRunService.get(userId, runId);
+    const aborted = this.chatRunService.cancel(runId);
+    if (aborted) await this.chatRunService.fail(runId, '用户已停止生成。');
+    return { runId, cancelled: aborted };
   }
 }

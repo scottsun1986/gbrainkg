@@ -2,6 +2,7 @@ import { TableEvidenceService } from '../retrieval/table-evidence.service';
 import { countDocumentNeedle, countDocumentTitleTerms, countDocumentTitleMatches, countSchema, executeCount, normalizeCountPlan, cachedCountPlan, rememberCountPlan } from './table-count';
 import { evidenceIdentity, distinctRankedPassages } from './evidence-identity';
 import { StreamDeadline } from './stream-deadline';
+import { ChatRunService } from './chat-run.service';
 import { outlineDocumentTitle, normalizeDocumentTitle, renderDocumentOutline } from './document-outline';
 import { OrderedAnswer, tidyVerifiedAnswer, answerSentenceBoundary, isStructuralHeadingLine, isTableSyntaxLine, isBlockLevelStart } from './ordered-answer';
 import { alignSiblingEditionChunks, normalizeFamilyTitle } from './version-sibling-evidence';
@@ -497,6 +498,7 @@ export class ChatService {
     @Optional() private readonly lexicalIndexService?: LexicalIndexService,
     @Optional() private readonly hybridRetrievalService?: HybridRetrievalService,
     @Optional() private readonly shadowRetrievalService?: ShadowRetrievalService,
+    @Optional() private readonly chatRunService?: ChatRunService,
   ) {
     this.gbrain = gbrainAdapter ?? getSharedBrainRepoAdapter();
     this.documentAclService = new DocumentAclService(this.permissionService);
@@ -1022,7 +1024,11 @@ export class ChatService {
     question: string,
     requestedKbScope?: string[],
     conversationId?: string,
-    options?: { onAuthorization?: (snapshot: import('../permission/authorization-revision').AuthorizationSnapshot) => void },
+    options?: {
+      onAuthorization?: (snapshot: import('../permission/authorization-revision').AuthorizationSnapshot) => void;
+      /** Non-streaming run to record stage progress on. */
+      runId?: string;
+    },
   ): Promise<Observable<MessageEvent>> {
     return new Observable((subscriber: Subscriber<MessageEvent>) => {
       const cancellation = new AbortController();
@@ -1058,6 +1064,7 @@ export class ChatService {
         guarded,
         trace,
         cancellation.signal,
+        options?.runId,
       ).catch((err) => {
         if (cancellation.signal.aborted || subscriber.closed) return;
         // AbortError is thrown when the GBrain hard-timeout fires (typically
@@ -1837,10 +1844,20 @@ export class ChatService {
     subscriber: Subscriber<MessageEvent>,
     trace: ChatTraceRecorder,
     signal?: AbortSignal,
+    /** Set for non-streaming runs so stage progress is pollable. */
+    runId?: string,
   ) {
     const retrievalStartedAt = Date.now();
     // 阶段进度事件（前端实时状态行）+ TTFT 指标。strict 输出契约下仅用于指标。
-    const stageReporter = new StageReporter({ subscriber, strictOutput: strictOutputEnabled() });
+    const stageReporter = new StageReporter({
+      subscriber,
+      strictOutput: strictOutputEnabled(),
+      // Non-streaming callers poll the run row for progress; without this the
+      // run would sit at "queued" for the whole turn.
+      onStage: runId && this.chatRunService
+        ? (stage) => { void this.chatRunService!.setStage(runId, stage); }
+        : undefined,
+    });
     const answerStreamer = new IncrementalAnswerStreamer({
       subscriber,
       enabled: incrementalStreamingEnabled(),

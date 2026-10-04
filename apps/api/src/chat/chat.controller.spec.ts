@@ -22,7 +22,11 @@ describe('Chat completion message identity', () => {
         { data: { type: 'done', total_tokens: 3 } },
       )),
     };
-    const controller = new ChatController(service as any, { userIdFromRequest: async () => 'user-1' } as any);
+    const controller = new ChatController(
+      service as any,
+      { userIdFromRequest: async () => 'user-1' } as any,
+      { start: jest.fn(), complete: jest.fn(), fail: jest.fn() } as any,
+    );
     const events: any[] = [];
     let resolveEnd!: () => void;
     const ended = new Promise<void>(resolve => { resolveEnd = resolve; });

@@ -404,8 +404,32 @@ model Conversation {
 
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   messages  Message[]
+  runs      ChatRun[]
 
   @@index([userId])
+}
+
+// One non-streaming question/answer run. The answer is fetched once the run
+// completes; while it is in flight the client polls this row for `stage`, and
+// the sidebar marks the conversation as still waiting on an answer.
+//
+// State lives in Postgres rather than process memory so a poll that lands on
+// the other instance still sees the run (production runs inst1 + inst2).
+model ChatRun {
+  id             String    @id @default(uuid()) @db.Uuid
+  conversationId String    @db.Uuid
+  userId         String    @db.Uuid
+  messageId      String?   @db.Uuid  // set once the assistant message is persisted
+  status         String    @default("running")  // running/completed/failed
+  stage          String    @default("queued")   // queued/retrieving/reranking/generating/verifying/persisting
+  errorMessage   String?
+  startedAt      DateTime  @default(now())
+  completedAt    DateTime?
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status, startedAt])
+  @@index([conversationId, startedAt])
 }
 
 model Message {

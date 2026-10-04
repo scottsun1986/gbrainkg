@@ -11,6 +11,11 @@ export interface StageReporterDeps {
   startedAt?: number;
   /** KNOWLEDGE_STRICT_OUTPUT=1 keeps the buffered one-shot contract. */
   strictOutput?: boolean;
+  /**
+   * Records the stage on the persisted chat run so a polling client can show
+   * progress without an open stream. Optional: the SSE path has no run.
+   */
+  onStage?: (stage: ChatStage) => void;
 }
 
 /**
@@ -23,6 +28,7 @@ export class StageReporter {
   private readonly subscriber: Subscriber<MessageEvent>;
   private readonly startedAt: number;
   private readonly strictOutput: boolean;
+  private readonly onStage?: (stage: ChatStage) => void;
   private firstTextAt: number | null = null;
   /** Stages already timed, so a repeated transition (retry paths) counts once. */
   private readonly timedStages = new Set<ChatStage>();
@@ -31,6 +37,7 @@ export class StageReporter {
     this.subscriber = deps.subscriber;
     this.startedAt = deps.startedAt ?? Date.now();
     this.strictOutput = deps.strictOutput ?? false;
+    this.onStage = deps.onStage;
   }
 
   emit(stage: ChatStage, detail?: string): void {
@@ -43,6 +50,9 @@ export class StageReporter {
       this.timedStages.add(stage);
       metricsService.observeChatStage(stage, elapsed);
     }
+    // Report every transition, not just the first: a retry path can re-enter a
+    // stage and the client should see it move backwards rather than stall.
+    try { this.onStage?.(stage); } catch { /* progress is advisory */ }
     try {
       this.subscriber.next({
         data: { type: 'stage', stage, detail: detail ?? null, elapsed_ms: elapsed },

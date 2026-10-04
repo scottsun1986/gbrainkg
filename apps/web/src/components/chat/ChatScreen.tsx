@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useRef, useCallback, useMemo, memo, startTransition } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
 import dynamic from 'next/dynamic';
 import { Icon } from '@/components/common/Icon';
 import { TypeBadge, TYPE_BADGE } from '@/components/common/TypeBadge';
@@ -8,7 +8,10 @@ import { ContextMenu } from '@/components/common/ContextMenu';
 import { API_BASE_URL, apiHeaders } from '@/lib/api';
 import { appStore } from '@/lib/app-store';
 import { errorMessage, asRecord, str } from '@/lib/errors';
-import { registerRun, rekeyRun, runOwnsView, unregisterRun, type StreamRunLike } from '@/lib/stream-registry';
+import {
+  applyPoll, isTerminal, labelForRun, runningConversationIds,
+  type RunPollResult, type RunState,
+} from '@/lib/stream-registry';
 import { emitToast } from '@/lib/app-events';
 import { AnswerMarkdown } from './AnswerMarkdown';
 import type {
@@ -41,8 +44,6 @@ interface ConversationMessagePayload {
   citationsSummary?: ConversationCitationPayload[];
 }
 interface ConversationPayload { messages?: ConversationMessagePayload[] }
-
-type StreamRun = StreamRunLike;
 
 function mapCitation(cite: ConversationCitationPayload, messageId: string | undefined, index: number): Citation {
   const entry = cite.timeline_entry;
@@ -77,6 +78,16 @@ function mapConversationMessages(conversation: ConversationPayload): ChatMessage
       sources: message.role === 'assistant' ? cites.map((cite, index) => mapCitation(cite, message.id, index)) : [],
     };
   });
+}
+
+/** Run payloads carry the same citation shape the SSE stream used to send. */
+function collectRunCitations(run: RunPollResult): Citation[] {
+  const list = Array.isArray(run.citations) ? run.citations as ConversationCitationPayload[] : [];
+  return list.map((entry, index) => mapCitation(entry, run.messageId, index));
+}
+
+function mapTraceNodes(trace: unknown): TraceNode[] {
+  return Array.isArray(trace) ? trace as TraceNode[] : [];
 }
 
 function collectConversationCitations(conversation: ConversationPayload): Citation[] {
@@ -140,28 +151,27 @@ export function ChatScreen(){
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const openSeqRef = useRef(0);
   /**
-   * 每个会话一条独立的流。新建会话时服务端还没分配 id，先用客户端序号做临时
-   * 键，收到 `conversation` 事件后重键为真实 id。
+   * 每个会话一条独立的问答运行，按会话 id 登记。新会话在服务端分配 id 前，
+   * 先用客户端序号做临时键，拿到 conversationId 后并入。
    *
    * 之前这里是单例 `streaming` 布尔 + `[streaming]` 依赖的 effect：第二条流
    * 的 `setStreaming(true)` 在已经是 true 时被 React 丢弃，effect 不重跑，
    * fetch 根本没发出——用户表现为「后面新建的会话没进列表，丢了」。
    */
-  const runsRef = useRef(new Map<string, StreamRun>());
+  const runsRef = useRef(new Map<string, RunState>());
   const runSeqRef = useRef(0);
-  const [runKeys, setRunKeys] = useState<string[]>([]);
-  /** 尚未拿到服务端 id 的新会话流：它拥有当前空视图，离开即失去归属。 */
-  const draftRunKeyRef = useRef<string | null>(null);
-  const syncRuns = () => setRunKeys([...runsRef.current.keys()]);
+  const [runningIds, setRunningIds] = useState<string[]>([]);
+  const syncRuns = () => setRunningIds(runningConversationIds(runsRef.current));
+  /** Pollers to tear down on unmount / logout. */
+  const pollersRef = useRef(new Set<() => void>());
 
   // 当前视图归属：activeConv 非空时看它；为空时看持有这个空视图的草稿流。
   const [viewKey, setViewKey] = useState<string | null>(null);
   const viewKeyRef = useRef<string | null>(null);
-  const [viewOwnsStream, setViewOwnsStream] = useState(false);
   useEffect(() => { viewKeyRef.current = viewKey; }, [viewKey]);
-  // 仅当“正在查看的会话”正是流式输出所属会话时，编辑器才进入流式态。
+  // 仅当“正在查看的会话”仍在生成回答时，输入框才进入生成态。
   // 停留在别的会话时，输入框保持可用，便于直接继续提问。
-  const viewingStream = viewOwnsStream && runKeys.includes(viewKey ?? '');
+  const viewingStream = viewKey !== null && runningIds.includes(viewKey);
   const allSel = selected.length === visibleKbs.length;
   const scopeLabel = allSel ? '我可见的全部' : (selected.length === 0 ? '未选择任何库' : `已选 ${selected.length} 库`);
 
@@ -196,218 +206,121 @@ export function ChatScreen(){
   }, []);
 
   /**
-   * 启动一条流。返回它在注册表中的键：已有会话用会话 id，新会话用临时键
-   * `draft:<n>`，收到 `conversation` 事件后重键为真实 id。
+   * Ask a question. The server answers with a run id immediately and does the
+   * work behind the request's back; we then poll for stage progress until the
+   * run completes, at which point the whole answer arrives in that payload.
    *
-   * 所有写入都以「当前视图是否归属本流」为前提，因此并发的多条流互不干扰：
-   * 用户在 A 生成时切到 B 提问，两条流各自更新自己的会话列表项与消息。
+   * Nothing here holds a stream open, so several conversations can be in flight
+   * at once and switching away from one never disturbs it.
    */
   const startRun = useCallback((opts: {
     convId: string | null;
     text: string;
     kbScope: string[];
   }) => {
-    const seq = ++runSeqRef.current;
-    const controller = new AbortController();
+    const draftKey = `draft:${++runSeqRef.current}`;
     let convId = opts.convId;
-    let currentKey = opts.convId ?? '';
-    let active = true;
-    let accumulatedText = "";
-    let streamError = "";
-    let streamFinished = false;
-    let buffer = '';
-    let flushTimer: ReturnType<typeof setTimeout> | null = null;
-    const accumulatedTextRef = { current: "" };
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
 
-    // 本流是否仍拥有当前视图。新会话在拿到 id 前由草稿键代表当前空视图。
-    const ownsView = () => runOwnsView(viewKeyRef.current, draftRunKeyRef.current, convId, currentKey);
+    const ownsView = () => convId === null
+      ? viewKeyRef.current === null || viewKeyRef.current === draftKey
+      : viewKeyRef.current === convId;
 
-    const updateAssistant = (text: string, done: boolean) => {
-      if (!active || !ownsView()) return;
-      setMessages(ms => {
-        const cp = [...ms];
-        const last = cp[cp.length - 1];
-        // 用户可能在流结束的同时点击了“新对话”，避免迟到的网络事件
-        // 覆盖新状态或访问不存在的消息。
-        if (!last || last.role !== 'ai') return ms;
-        cp[cp.length - 1] = { ...last, text, done };
-        return cp;
-      });
-    };
-
-    // 流式渲染缓冲：SSE 每个 delta 直接 setState 会让长回答以每 token 一次
-    // 全列表重渲染（叠加 O(n²) 的答案重解析）。以 ~50ms 合并刷新， citation/
-    // trace/done 等结构化事件到达时立即冲刷，保证顺序与最终一致性。
-    const flushAssistant = (done = false) => {
-      if (flushTimer !== null) { clearTimeout(flushTimer); flushTimer = null; }
-      updateAssistant(accumulatedTextRef.current, done);
-    };
-    const scheduleAssistantFlush = () => {
-      if (flushTimer !== null) return;
-      flushTimer = setTimeout(() => { flushTimer = null; updateAssistant(accumulatedTextRef.current, false); }, 50);
-    };
-
-    const run: StreamRun = { convId, controller, flush: flushAssistant, title: opts.text };
-    const registered = registerRun(runsRef.current, seq, run);
-    currentKey = registered.key;
-    if (registered.draft) draftRunKeyRef.current = currentKey;
-    syncRuns();
-    setViewOwnsStream(true);
-
-    // 重键：草稿流拿到真实 id 后，从注册表换键。
-    const rekey = (assigned: string) => {
-      if (!rekeyRun(runsRef.current, currentKey, assigned)) return;
-      convId = assigned;
-      currentKey = assigned;
+    const put = (next: RunState) => {
+      runsRef.current.set(convId ?? draftKey, next);
       syncRuns();
     };
+    put({ runId: '', conversationId: convId ?? draftKey, status: 'running', stage: 'queued' });
+    if (viewKeyRef.current === null) { setViewKey(draftKey); viewKeyRef.current = draftKey; }
 
-    (async () => {
+    const stop = () => {
+      cancelled = true;
+      if (timer !== null) clearTimeout(timer);
+      pollersRef.current.delete(stop);
+      if (runsRef.current.get(convId ?? draftKey)?.status === 'running') {
+        runsRef.current.delete(convId ?? draftKey);
+        syncRuns();
+      }
+    };
+    pollersRef.current.add(stop);
+
+    void (async () => {
       try {
         const res = await fetch(`${API_BASE_URL}/api/v1/chat/completions`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...apiHeaders() },
-          body: JSON.stringify({ message: opts.text, kb_scope: opts.kbScope, conversation_id: convId || undefined }),
-          signal: controller.signal,
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...apiHeaders() },
+          body: JSON.stringify({ message: opts.text, kb_scope: opts.kbScope, conversation_id: opts.convId || undefined }),
         });
-
         if (!res.ok) {
           let detail = `API Error (${res.status})`;
-          try {
-            const payload = await res.json();
-            detail = payload?.message || payload?.error || detail;
-          } catch (e) {}
+          try { const payload = await res.json(); detail = payload?.message || payload?.error || detail; } catch { /* keep status text */ }
           throw new Error(detail);
         }
-
-        const reader = res.body?.getReader();
-        if (!reader) throw new Error("服务器未返回有效的流式响应");
-        const decoder = new TextDecoder('utf-8');
-
-        const consumeLine = (line: string) => {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith('data: ')) return;
-          const payload = trimmed.slice(6).trim();
-          if (!payload || payload === '[DONE]') return;
-          const data = JSON.parse(payload);
-          if (data.type === 'delta') {
-            accumulatedText += String(data.content || '');
-            accumulatedTextRef.current = accumulatedText;
-            scheduleAssistantFlush();
-          } else if (data.type === 'replace') {
-            // The grounding gate runs after sentences are streamed and can drop
-            // or reinsert them. The server sends the authoritative post-gate text
-            // as `replace`; replacing (not appending) keeps section order and
-            // completeness identical to the stored message.
-            accumulatedText = String(data.content || '');
-            accumulatedTextRef.current = accumulatedText;
-            flushAssistant(false);
-          } else if (data.type === 'stage') {
-            // 真实阶段进度（retrieving → reranking → generating → verifying）
-            if (!ownsView()) return;
-            const STAGE_LABELS: Record<string, string> = {
-              retrieving: '检索证据', reranking: '重排验证', generating: '生成回答', verifying: '证据核验',
-            };
-            setStageLabel(STAGE_LABELS[data.stage] || data.detail || null);
-          } else if (data.type === 'error') {
-            streamError = String(data.content || '问答服务返回错误');
-            if (!accumulatedText && ownsView()) { accumulatedTextRef.current = streamError; flushAssistant(false); }
-          } else if (data.type === 'conversation') {
-            flushAssistant(false);
-            const assigned = String(data.conversation_id);
-            // 视图可能仍停在本流的草稿键上：移交归属，别让 ownsView 失效。
-            if (draftRunKeyRef.current === currentKey) draftRunKeyRef.current = assigned;
-            if (viewKeyRef.current === currentKey) { setViewKey(assigned); viewKeyRef.current = assigned; }
-            if (ownsView()) setActiveConv(assigned);
-            rekey(assigned);
-            setConversationList(list => [{ id: assigned, title: opts.text.slice(0, 120), createdAt: new Date().toISOString() }, ...list.filter(item => item.id !== assigned)]);
-          } else if (data.type === 'citation') {
-            flushAssistant(false);
-            if (!ownsView()) return;
-            const citation = { id: `${data.index}-${data.topic_slug}`, citationIndex: Number(data.index), title: data.timeline_entry?.doc_title || data.topic_slug || '知识主题', kb: data.timeline_entry?.source_kb, documentId: data.timeline_entry?.document_id, kbName: data.timeline_entry?.kb_name || data.timeline_entry?.source_kb || '知识库', truth: '—', evidences: 1, lastUpdate: '刚刚', snippet: data.timeline_entry?.snippet || '', path: data.topic_slug, pageNo: data.timeline_entry?.page_no, bbox: data.timeline_entry?.bbox };
-            setCitations(items => [...items, citation]);
-            setMessages(items => {
-              const next = [...items];
-              const lastIndex = next.map(item => item.role).lastIndexOf('ai');
-              if (lastIndex >= 0) next[lastIndex] = { ...next[lastIndex], sources: [...(next[lastIndex].sources || []), citation] };
-              return next;
-            });
-          } else if (data.type === 'trace' && data.node?.id) {
-            flushAssistant(false);
-            if (!ownsView()) return;
-            setMessages(items => {
-              const next = [...items];
-              const lastIndex = next.map(item => item.role).lastIndexOf('ai');
-              if (lastIndex < 0) return items;
-              const current = next[lastIndex];
-              const trace = Array.isArray(current.trace) ? [...current.trace] : [];
-              const nodeIndex = trace.findIndex(node => node.id === data.node.id);
-              if (nodeIndex >= 0) trace[nodeIndex] = data.node;
-              else trace.push(data.node);
-              next[lastIndex] = { ...current, trace, traceId: data.trace_id || current.traceId };
-              return next;
-            });
-          } else if (data.type === 'done') {
-            if (typeof data.message_id === 'string' && ownsView()) {
-              setMessages(items => items.map((item, index) => index === items.length - 1 && item.role === 'ai' ? { ...item, id: data.message_id } : item));
-            }
-            streamFinished = true;
-          }
-        };
-
-        while (!streamFinished) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-          for (const line of lines) consumeLine(line);
+        const started = await res.json() as { conversationId: string; runId: string };
+        if (cancelled) return;
+        const assigned = started.conversationId;
+        // Rekey the draft placeholder now that the server has an id for it.
+        if (convId === null) {
+          runsRef.current.delete(draftKey);
+          convId = assigned;
+          if (viewKeyRef.current === draftKey) { setViewKey(assigned); viewKeyRef.current = assigned; }
+          if (viewKeyRef.current === null) { setViewKey(assigned); viewKeyRef.current = assigned; }
         }
-        buffer += decoder.decode();
-        if (buffer.trim()) consumeLine(buffer);
-        accumulatedTextRef.current = accumulatedText || streamError;
-        if (ownsView()) flushAssistant(true);
-        if (ownsView()) setStageLabel(null);
-        // 用户中途切走又切回来的会话：这一轮答案从未在浏览器渲染过，
-        // 生成结束后补拉一次已落库的消息，让视图回到完整状态。
-        const resumeId = convId;
-        if (resumeId && !ownsView() && viewKeyRef.current === resumeId) {
-          void (async () => {
+        setConversationList(list => list.some(item => item.id === assigned)
+          ? list
+          : [{ id: assigned, title: opts.text.slice(0, 120), createdAt: new Date().toISOString() }, ...list]);
+        put({ runId: started.runId, conversationId: assigned, status: 'running', stage: 'queued' });
+        setActiveConv(assigned);
+        viewKeyRef.current = assigned; setViewKey(assigned);
+
+        // Recursive setTimeout with a cancel flag rather than setInterval:
+        // a poll that overruns must not queue a second one behind it.
+        const schedule = (delay: number) => {
+          timer = setTimeout(async () => {
+            if (cancelled) return;
             try {
-              const res = await fetch(`${API_BASE_URL}/api/v1/conversations/${resumeId}`, { headers: apiHeaders() });
-              if (!res.ok) return;
-              const conv = (await res.json()) as ConversationPayload;
-              if (viewKeyRef.current !== resumeId) return;
-              startTransition(() => {
-                setMessages(mapConversationMessages(conv));
-                setCitations(collectConversationCitations(conv));
+              const poll = await fetch(`${API_BASE_URL}/api/v1/chat/runs/${started.runId}`, { headers: apiHeaders() });
+              if (!poll.ok) { schedule(4000); return; }
+              const state = await poll.json() as RunPollResult;
+              if (cancelled) return;
+              if (ownsView()) setStageLabel(labelForRun(state) ?? null);
+              runsRef.current.set(assigned, {
+                runId: state.runId, conversationId: assigned, status: state.status, stage: state.stage,
               });
-            } catch { /* 生成尚未落库：保持当前视图，不打断用户 */ }
-          })();
-        }
+              if (!isTerminal(state.status)) { syncRuns(); schedule(1500); return; }
+              runsRef.current.delete(assigned);
+              syncRuns();
+              if (state.status === 'failed') {
+                if (ownsView()) {
+                  setStageLabel(null);
+                  const reason = state.errorMessage || '问答未成功完成。';
+                  setMessages(ms => ms.map((m, i) => i === ms.length - 1 && m.role === 'ai' ? { ...m, text: reason, done: true } : m));
+                }
+                return;
+              }
+              if (ownsView()) {
+                setStageLabel(null);
+                setMessages(ms => ms.map((m, i) => i === ms.length - 1 && m.role === 'ai'
+                  ? { ...m, text: state.answer ?? '', done: true, id: state.messageId, trace: mapTraceNodes(state.trace) }
+                  : m));
+                setCitations(collectRunCitations(state));
+              }
+            } catch { if (!cancelled) schedule(4000); }
+          }, delay);
+        };
+        schedule(600);
       } catch (err) {
-        const isAbort = errorMessage(err) === 'AbortError' || (err as { name?: string })?.name === 'AbortError';
-        if (isAbort) {
-          // 用户主动停止：保留已生成的部分文本并标记完成。
-          if (ownsView()) flushAssistant(true);
-        } else if (active) {
-          if (ownsView()) {
-            accumulatedTextRef.current = "大模型请求失败：" + (errorMessage(err) || '未知错误');
-            flushAssistant(true);
-            setStageLabel(null);
-          }
+        if (cancelled) return;
+        const text = `大模型请求失败：${errorMessage(err) || '未知错误'}`;
+        if (ownsView()) {
+          setStageLabel(null);
+          setMessages(ms => ms.map((m, i) => i === ms.length - 1 && m.role === 'ai' ? { ...m, text, done: true } : m));
         }
-      } finally {
-        active = false;
-        if (flushTimer !== null) clearTimeout(flushTimer);
-        // 只摘除本流；其余并发流不受影响（单例版本在这里会误清空全部状态）。
-        unregisterRun(runsRef.current, currentKey, run);
-        if (draftRunKeyRef.current === currentKey) draftRunKeyRef.current = null;
-        syncRuns();
-        if (ownsView()) setViewOwnsStream(false);
+        stop();
       }
     })();
-    return registered.key;
+    return draftKey;
   }, []);
 
   // 流式期间自动滚底（除非用户主动上滑）
@@ -417,9 +330,10 @@ export function ChatScreen(){
     if(el) el.scrollTop = el.scrollHeight;
   },[messages, autoStick]);
 
-  // 卸载时中止所有仍在跑的流：并发之后不再有单例 effect 的 cleanup 兜底。
+  // 卸载时停掉所有轮询器：否则 detached 的定时器会继续写已卸载组件的状态。
   useEffect(() => () => {
-    for (const run of runsRef.current.values()) run.controller.abort();
+    for (const stop of pollersRef.current) stop();
+    pollersRef.current.clear();
     runsRef.current.clear();
   }, []);
 
@@ -438,9 +352,15 @@ export function ChatScreen(){
     // 只停止当前会话自己的生成：切到别的会话时，停止按钮根本不出现，
     // 也不应能中止那边仍在进行的回答。
     if (!viewingStream || viewKey === null) return;
-    // Complete the visible answer before aborting so partial text is kept.
-    runsRef.current.get(viewKey)?.flush(true);
-    runsRef.current.get(viewKey)?.controller.abort();
+    const run = runsRef.current.get(viewKey);
+    if (!run) return;
+    // Stop polling first, then ask the server to abandon the run. The server
+    // call is best-effort: only the instance that started the run can abort it.
+    for (const stop of pollersRef.current) stop();
+    void fetch(`${API_BASE_URL}/api/v1/chat/runs/${run.runId}/cancel`, { method: 'POST', headers: apiHeaders() })
+      .catch(() => { /* the run's own deadline still bounds it */ });
+    setStageLabel(null);
+    setMessages(ms => ms.map((m, i) => i === ms.length - 1 && m.role === 'ai' ? { ...m, done: true } : m));
   };
   const scrollToBottom = () => {
     const el = scrollRef.current;
@@ -468,7 +388,7 @@ export function ChatScreen(){
     // 只清空视图，不中止正在生成的答案：那些流仍留在注册表里按会话 id 继续跑，
     // 用户从列表切回该会话时会接着看到流式内容。新草稿流接管空视图。
     setMessages([]); setActiveCite(null); setCitations([]); setActiveConv(null);
-    viewKeyRef.current = null; setViewKey(null); setViewOwnsStream(false); setStageLabel(null);
+    viewKeyRef.current = null; setViewKey(null); setStageLabel(null);
     setInput('');
     if(taRef.current){ taRef.current.style.height = 'auto'; taRef.current.focus(); }
   };
@@ -527,17 +447,17 @@ export function ChatScreen(){
       if (seq !== openSeqRef.current) return;
       const mapped = mapConversationMessages(conversation);
       const allCitations = collectConversationCitations(conversation);
-      startTransition(() => {
-        setActiveConv(id);
-        viewKeyRef.current = id; setViewKey(id);
-        setViewOwnsStream(runsRef.current.has(id));
-        setMessages(mapped);
-        setCitations(allCitations);
-      });
-      // 切回仍在生成的会话：浏览器离开期间没收到 delta，磁盘上这一轮要等
-      // 生成结束才落库。标记为待补拉，由流结束回调统一重载（见下），
-      // 而不是在这里定时轮询 —— 固定延迟在快慢两种机器上都会猜错。
-      if (runsRef.current.has(id)) setViewOwnsStream(true);
+      // Urgent on purpose. Under startTransition this never committed while a
+      // run was streaming (the high-frequency trace/citation setMessages calls
+      // starve the transition), so clicking a history entry did nothing while
+      // "new chat" — which is not in a transition — worked fine.
+      setActiveConv(id);
+      viewKeyRef.current = id; setViewKey(id);
+      setMessages(mapped);
+      setCitations(allCitations);
+      // 切回仍在生成的会话：这一轮的答案还没落库，等 run 完成时轮询会把它
+      // 写进当前视图；此处不需要（也不能）用固定延迟预拉 —— 在快慢两种机器
+      // 上都会猜错。
     } catch (error) {
       if (seq === openSeqRef.current) window.dispatchEvent(new CustomEvent('app-toast', {detail: errorMessage(error) || '会话加载失败'}));
     } finally {
@@ -556,7 +476,7 @@ export function ChatScreen(){
     const id = conv?.id;
     if (!id) return;
     const next = new Set(hiddenConvs); next.add(id); setHiddenConvs(next);
-    if (activeConv === id) { setMessages([]); setActiveConv(null); setCitations([]); viewKeyRef.current = null; setViewKey(null); setViewOwnsStream(false); setStageLabel(null); }
+    if (activeConv === id) { setMessages([]); setActiveConv(null); setCitations([]); viewKeyRef.current = null; setViewKey(null); setStageLabel(null); }
     const onUndo = () => { const r = new Set(hiddenConvs); r.delete(id); setHiddenConvs(r); };
     const evt = new CustomEvent('app-undoable', { detail: { message: `已隐藏会话：${(conv.title || '未命名').slice(0, 20)}`, undoLabel: '撤销', undo: onUndo } });
     window.dispatchEvent(evt);
@@ -603,6 +523,16 @@ export function ChatScreen(){
 
   // 会话分组按列表/搜索/隐藏集合记忆化：输入框打字等高频重渲染不再
   // 重复做 O(n) 的日期分组过滤。
+  /** 会话 id → 当前阶段文案，供侧栏行内图标使用。 */
+  const runLabelByConv = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const id of runningIds) {
+      const label = labelForRun(runsRef.current.get(id));
+      if (label) map.set(id, label);
+    }
+    return map;
+  }, [runningIds]);
+
   const convGroups = useMemo(() => {
     const q = convSearch.trim().toLowerCase();
     const visibleList = conversationList.filter((c) => !hiddenConvs.has(c.id));
@@ -675,8 +605,14 @@ export function ChatScreen(){
                 {!isCollapsed && (
                   <div className="conv-group-items">
                     {g.items.map((c) => (
-                      <div key={c.id} className={`conv-item ${activeConv===c.id?'active':''}`} onClick={()=>{ openConversation(c.id); setConvOpen(false); }} onContextMenu={(e) => showConvMenu(e, c)}>
+                      <div key={c.id} className={`conv-item ${activeConv===c.id?'active':''} ${runLabelByConv.get(c.id)?'running':''}`} onClick={()=>{ openConversation(c.id); setConvOpen(false); }} onContextMenu={(e) => showConvMenu(e, c)}>
                         <span className="conv-title">{c.title || '未命名会话'}</span>
+                        {runLabelByConv.get(c.id) && (
+                          <span className="conv-run" title={`正在生成回答：${runLabelByConv.get(c.id)}`}>
+                            <span className="spinner" aria-hidden="true" />
+                            <span className="conv-run-label">{runLabelByConv.get(c.id)}</span>
+                          </span>
+                        )}
                         <span className="conv-time">{c.createdAt ? new Date(c.createdAt).toLocaleDateString('zh-CN') : ''}</span>
                       </div>
                     ))}
