@@ -20,6 +20,8 @@ import type {
 export interface AppStore {
   KNOWLEDGE_BASES: KbInfo[];
   CONVERSATIONS: ConversationSummary[];
+  /** Older pages of the conversation list, loaded on demand by the sidebar. */
+  CONVERSATIONS_META: { nextCursor: string | null; hasMore: boolean };
   CITATIONS: unknown[];
   DOCS: unknown[];
   ORG_TREE: OrgTreeNode | null;
@@ -40,6 +42,7 @@ export interface AppStore {
 export const appStore: AppStore = {
   KNOWLEDGE_BASES: [],
   CONVERSATIONS: [],
+  CONVERSATIONS_META: { nextCursor: null, hasMore: false },
   CITATIONS: [],
   DOCS: [],
   ORG_TREE: null,

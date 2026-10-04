@@ -4,7 +4,7 @@ import { API_BASE_URL } from '@/lib/api';
 import { asArray, asRecord, str, bool } from '@/lib/errors';
 import { emitAdminDataUpdated } from '@/lib/app-events';
 import { appStore } from '@/lib/app-store';
-import type { AdminData, CurrentUser, KbInfo, OrgTreeNode, UserRow } from '@/types';
+import type { AdminData, ConversationSummary, CurrentUser, KbInfo, OrgTreeNode, UserRow } from '@/types';
 
 function mapKbs(raw: unknown[]): KbInfo[] {
   return raw.map((item) => {
@@ -240,10 +240,18 @@ export function useAdminBootstrap(): {
 
     // History is independent of session readiness. A stalled history request
     // must not delay the composer, and a late response must not cross sessions.
-    void fetchData('/api/v1/conversations').then((response) => {
+    // Only the first page is loaded here: the sidebar fetches older pages on
+    // demand, so first paint no longer carries every conversation the user ever
+    // had.
+    void fetchData('/api/v1/conversations?paginated=1&limit=30').then((response) => {
       if (!isCurrent()) return;
-      if (!response.ok || !Array.isArray(response.data)) throw new Error('Conversation list unavailable');
-      appStore.CONVERSATIONS = response.data;
+      const page = response.ok ? asRecord(response.data) : null;
+      if (!page || !Array.isArray(page.items)) throw new Error('Conversation list unavailable');
+      appStore.CONVERSATIONS = page.items as ConversationSummary[];
+      appStore.CONVERSATIONS_META = {
+        nextCursor: typeof page.nextCursor === 'string' ? page.nextCursor : null,
+        hasMore: page.hasMore === true,
+      };
       emitAdminDataUpdated({ orgTrees: appStore.ORG_TREES, orgTree: appStore.ORG_TREE });
     }).catch(() => {
       if (isCurrent() && !controller.signal.aborted) window.dispatchEvent(new CustomEvent('app-toast', { detail: '会话列表加载失败，可继续提问或刷新重试' }));

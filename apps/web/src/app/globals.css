@@ -514,6 +514,9 @@ ul,ol{list-style:none}
 .conv-item .conv-title{font-weight:inherit;color:inherit;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .conv-item .conv-time{font-size:10.5px;color:var(--ink-4);font-weight:400}
 .conv-empty{padding:18px 14px;text-align:center;color:var(--ink-4);font-size:11.5px}
+.conv-more{display:block;width:calc(100% - 28px);margin:2px 14px 10px;padding:6px 0;border:1px dashed var(--line);border-radius:8px;background:transparent;color:var(--ink-4);font-size:11.5px;font-family:inherit;cursor:pointer}
+.conv-more:hover:not(:disabled){color:var(--ink-2);border-color:var(--ink-4)}
+.conv-more:disabled{opacity:.6;cursor:default}
 .new-chat{
   margin:8px 16px 12px;padding:8px 11px;border:1px dashed var(--line);
   border-radius:7px;color:var(--ink-3);font-size:12.5px;display:flex;align-items:center;gap:6px;

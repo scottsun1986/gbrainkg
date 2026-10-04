@@ -13,16 +13,59 @@ export class ConversationController {
   constructor(private readonly authService: AuthService) {}
 
   @Get()
-  async list(@Req() req: any) {
+  async list(
+    @Req() req: any,
+    @Query('limit') limitParam?: string,
+    @Query('before') before?: string,
+    @Query('paginated') paginated?: string,
+  ) {
     const userId = await this.authService.userIdFromRequest(req);
     // 列表只回给侧栏/命令面板用的三个字段；kbScope 等 JSON 列在百级会话下
     // 会让登录首屏的并行 bootstrap 载荷无谓膨胀。
-    return this.prisma.conversation.findMany({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-      take: 100,
+    //
+    // 游标分页：首屏只取一页（默认 30），更早的会话由侧栏“加载更早会话”
+    // 按需取。`?paginated=1` 返回 {items,nextCursor,hasMore}；不带该参数的
+    // 旧客户端仍拿到裸数组，行为不变。
+    const limit = Math.max(1, Math.min(200, Number.parseInt(limitParam || '30', 10) || 30));
+    // Keyset 分页而非 offset：createdAt 不唯一，Prisma 的 cursor 要求唯一字段，
+    // 这里改为先按 id 定位锚点行，再用 (createdAt, id) 严格小于锚点推进，
+    // 长列表翻页不漏行也不重复，且复用现有 @@index([userId])。
+    let anchor: { createdAt: Date; id: string } | null = null;
+    if (before) {
+      anchor = await this.prisma.conversation.findFirst({
+        where: { id: before, userId },
+        select: { createdAt: true, id: true },
+      });
+      if (!anchor) {
+        const empty = { items: [], nextCursor: null, hasMore: false };
+        if (paginated === undefined) return [];
+        return empty;
+      }
+    }
+    const rows = await this.prisma.conversation.findMany({
+      where: {
+        userId,
+        ...(anchor
+          ? {
+              OR: [
+                { createdAt: { lt: anchor.createdAt } },
+                { createdAt: anchor.createdAt, id: { lt: anchor.id } },
+              ],
+            }
+          : {}),
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
       select: { id: true, title: true, createdAt: true },
     });
+    const page = rows.slice(0, limit);
+    const last = page[page.length - 1];
+    if (paginated === undefined) return page;
+    return {
+      items: page,
+      nextCursor: page.length === limit && last ? last.id : null,
+      hasMore: rows.length > limit,
+    };
   }
 
   @Get(':id')
@@ -51,9 +94,10 @@ export class ConversationController {
       }
     }
     // dependencyManifest 只服务端证据校验使用；trace JSON 可达百 KB/条，
-    // 不下发给前端。
+    // 且只有展开“调用链”时才需要。列表接口按需用
+    // GET /conversations/:conversationId/messages/:messageId/trace 单条拉取。
     const totalMessages = await this.prisma.message.count({ where: { conversationId: id } });
-    const safeMessages = messages.map(({ dependencyManifest: _drop, ...message }: any) => message);
+    const safeMessages = messages.map(({ dependencyManifest: _drop, processingTrace: _traceDrop, ...message }: any) => message);
     const lastLoaded = messages[messages.length - 1];
     return {
       ...conversation,

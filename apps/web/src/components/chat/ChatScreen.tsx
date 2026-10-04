@@ -19,12 +19,83 @@ const OnlinePreviewModal = dynamic(() => import('@/components/preview/UniversalD
 
 interface CtxMenuState { x: number; y: number; items: CtxMenuItem[] }
 
+interface ConversationCitationPayload {
+  index?: number;
+  topic_slug?: string;
+  timeline_entry?: {
+    doc_title?: string;
+    source_kb?: string;
+    document_id?: string;
+    kb_name?: string;
+    snippet?: string;
+    page_no?: number | string;
+    bbox?: Citation['bbox'];
+  };
+}
+interface ConversationMessagePayload {
+  id?: string;
+  role?: string;
+  content?: string;
+  createdAt?: string;
+  citationsSummary?: ConversationCitationPayload[];
+}
+interface ConversationPayload { messages?: ConversationMessagePayload[] }
+
+function mapCitation(cite: ConversationCitationPayload, messageId: string | undefined, index: number): Citation {
+  const entry = cite.timeline_entry;
+  return {
+    id: `${messageId ?? 'm'}-${index}`,
+    citationIndex: Number(cite.index || index + 1),
+    title: entry?.doc_title || cite.topic_slug || '知识主题',
+    kb: entry?.source_kb ?? '',
+    documentId: entry?.document_id ?? '',
+    kbName: entry?.kb_name || entry?.source_kb || '知识库',
+    truth: '—',
+    evidences: 1,
+    lastUpdate: '',
+    snippet: entry?.snippet || '',
+    path: cite.topic_slug ?? '',
+    pageNo: entry?.page_no,
+    bbox: entry?.bbox,
+  };
+}
+
+/** 会话消息 → 视图模型。trace 一律留空：processingTrace 不再随会话列表
+ *  下发（单条可达百 KB），调用链改为展开 TraceDetails 时按需拉取。 */
+function mapConversationMessages(conversation: ConversationPayload): ChatMessage[] {
+  return (conversation.messages || []).map((message) => {
+    const cites = Array.isArray(message.citationsSummary) ? message.citationsSummary : [];
+    return {
+      id: message.id,
+      role: message.role === 'assistant' ? 'ai' : 'user',
+      text: String(message.content ?? ''),
+      done: true,
+      trace: [],
+      sources: message.role === 'assistant' ? cites.map((cite, index) => mapCitation(cite, message.id, index)) : [],
+    };
+  });
+}
+
+function collectConversationCitations(conversation: ConversationPayload): Citation[] {
+  return (conversation.messages || []).flatMap((message) =>
+    Array.isArray(message.citationsSummary)
+      ? message.citationsSummary.map((cite, index) => mapCitation(cite, message.id, index))
+      : [],
+  );
+}
+
 export function ChatScreen(){
   const visibleKbs = appStore.KNOWLEDGE_BASES;
   const [selected, setSelected] = useState<string[]>([]);
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);   // {role:'user'|'ai', text, done}
+  // `streaming` is UI state about the stream that owns the ANSWER; `streamConvId`
+  // is which conversation that answer belongs to. Keeping them separate is what
+  // lets the user browse other conversations while an answer is still generating:
+  // every write below is gated on "am I still looking at the streaming
+  // conversation", so switching away parks the stream instead of aborting it, and
+  // switching back to it resumes rendering the deltas where it left off.
   const [streaming, setStreaming] = useState(false);
   const [stageLabel, setStageLabel] = useState<string | null>(null);
   const [activeCite, setActiveCite] = useState<number | null>(null);
@@ -32,6 +103,26 @@ export function ChatScreen(){
   const [conversationList, setConversationList] = useState<ConversationSummary[]>(appStore.CONVERSATIONS);
   const [convOpen, setConvOpen] = useState(false);
   const [convSearch, setConvSearch] = useState('');
+  // 侧栏只加载首页（30 条），更早的会话按需翻页。
+  const [convMore, setConvMore] = useState(() => appStore.CONVERSATIONS_META?.hasMore ?? false);
+  const [convCursor, setConvCursor] = useState<string | null>(() => appStore.CONVERSATIONS_META?.nextCursor ?? null);
+  const [convMoreLoading, setConvMoreLoading] = useState(false);
+  const loadMoreConversations = useCallback(async () => {
+    if (convMoreLoading || !convMore || !convCursor) return;
+    setConvMoreLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/conversations?paginated=1&limit=30&before=${encodeURIComponent(convCursor)}`, { headers: apiHeaders() });
+      if (!res.ok) return;
+      const page = (await res.json()) as { items?: ConversationSummary[]; nextCursor?: string | null; hasMore?: boolean };
+      const items = Array.isArray(page?.items) ? page.items : [];
+      setConversationList(prev => {
+        const seen = new Set(prev.map(c => c.id));
+        return [...prev, ...items.filter(c => !seen.has(c.id))];
+      });
+      setConvMore(page?.hasMore === true);
+      setConvCursor(typeof page?.nextCursor === 'string' ? page.nextCursor : null);
+    } catch {} finally { setConvMoreLoading(false); }
+  }, [convMore, convCursor, convMoreLoading]);
   const [collapsedGroups, setCollapsedGroups] = useState(() => ({
     '近 7 天': true,
     '30 天内': true,
@@ -52,7 +143,21 @@ export function ChatScreen(){
   const streamController = useRef<AbortController | null>(null);
   const finishStream = useRef<(() => void) | null>(null);
   const openSeqRef = useRef(0);
+  /** 打开时其答案仍在生成的会话：生成结束后补拉一次落库结果。 */
+  const resumeConvIdRef = useRef<string | null>(null);
+  /** 补拉重载的请求序号，避免慢响应覆盖用户之后的选择。 */
+  const resumeSeqRef = useRef(0);
 
+  // 仅当“正在查看的会话”正是流式输出所属会话时，编辑器才进入流式态。
+  // 停留在别的会话时，输入框保持可用，便于直接继续提问。
+  // 两个 ref 只是 state 的镜像，供流的异步回调读取“当前值”；state 仍是唯一真相，
+  // 镜像在 effect 里同步（不在 render 里写 ref）。
+  const [streamConvId, setStreamConvId] = useState<string | null>(null);
+  const streamConvIdRef = useRef<string | null>(null);
+  const viewedConvIdRef = useRef<string | null>(null);
+  useEffect(() => { viewedConvIdRef.current = activeConv; }, [activeConv]);
+  useEffect(() => { streamConvIdRef.current = streamConvId; }, [streamConvId]);
+  const viewingStream = streaming && activeConv === streamConvId;
   const allSel = selected.length === visibleKbs.length;
   const scopeLabel = allSel ? '我可见的全部' : (selected.length === 0 ? '未选择任何库' : `已选 ${selected.length} 库`);
 
@@ -71,7 +176,11 @@ export function ChatScreen(){
   }, [visibleKbs]);
 
   useEffect(() => {
-    const refresh = () => setConversationList([...appStore.CONVERSATIONS]);
+    const refresh = () => {
+      setConversationList([...appStore.CONVERSATIONS]);
+      setConvMore(appStore.CONVERSATIONS_META?.hasMore ?? false);
+      setConvCursor(appStore.CONVERSATIONS_META?.nextCursor ?? null);
+    };
     window.addEventListener('app-admin-data-updated', refresh);
     return () => window.removeEventListener('app-admin-data-updated', refresh);
   }, []);
@@ -87,9 +196,14 @@ export function ChatScreen(){
     let active = true;
     const controller = new AbortController();
     streamController.current = controller;
+    // The conversation this stream writes into: null until the server assigns
+    // one for a brand-new chat. Every state write below is gated on the user
+    // still viewing it, so browsing elsewhere neither aborts the stream nor
+    // leaks this answer's text into another conversation's view.
+    const viewingStreamConv = () => viewedConvIdRef.current === streamConvIdRef.current;
 
     const updateAssistant = (text: string, done: boolean) => {
-      if (!active) return;
+      if (!active || !viewingStreamConv()) return;
       setMessages(ms => {
         const cp = [...ms];
         const last = cp[cp.length - 1];
@@ -169,13 +283,15 @@ export function ChatScreen(){
             setStageLabel(STAGE_LABELS[data.stage] || data.detail || null);
           } else if (data.type === 'error') {
             streamError = String(data.content || '问答服务返回错误');
-            if (!accumulatedText) { accumulatedTextRef.current = streamError; flushAssistant(false); }
+            if (!accumulatedText && viewingStreamConv()) { accumulatedTextRef.current = streamError; flushAssistant(false); }
           } else if (data.type === 'conversation') {
             flushAssistant(false);
-            setActiveConv(data.conversation_id);
+            setStreamConvId(data.conversation_id);
             setConversationList(list => [{ id: data.conversation_id, title: userMsg.slice(0, 120), createdAt: new Date().toISOString() }, ...list.filter(item => item.id !== data.conversation_id)]);
+            if (viewingStreamConv()) { setActiveConv(data.conversation_id); viewedConvIdRef.current = data.conversation_id; }
           } else if (data.type === 'citation') {
             flushAssistant(false);
+            if (!viewingStreamConv()) return;
             const citation = { id: `${data.index}-${data.topic_slug}`, citationIndex: Number(data.index), title: data.timeline_entry?.doc_title || data.topic_slug || '知识主题', kb: data.timeline_entry?.source_kb, documentId: data.timeline_entry?.document_id, kbName: data.timeline_entry?.kb_name || data.timeline_entry?.source_kb || '知识库', truth: '—', evidences: 1, lastUpdate: '刚刚', snippet: data.timeline_entry?.snippet || '', path: data.topic_slug, pageNo: data.timeline_entry?.page_no, bbox: data.timeline_entry?.bbox };
             setCitations(items => [...items, citation]);
             setMessages(items => {
@@ -186,6 +302,7 @@ export function ChatScreen(){
             });
           } else if (data.type === 'trace' && data.node?.id) {
             flushAssistant(false);
+            if (!viewingStreamConv()) return;
             setMessages(items => {
               const next = [...items];
               const lastIndex = next.map(item => item.role).lastIndexOf('ai');
@@ -199,7 +316,7 @@ export function ChatScreen(){
               return next;
             });
           } else if (data.type === 'done') {
-            if (typeof data.message_id === 'string') {
+            if (typeof data.message_id === 'string' && viewingStreamConv()) {
               setMessages(items => items.map((item, index) => index === items.length - 1 && item.role === 'ai' ? { ...item, id: data.message_id } : item));
             }
             streamFinished = true;
@@ -217,16 +334,39 @@ export function ChatScreen(){
         buffer += decoder.decode();
         if (buffer.trim()) consumeLine(buffer);
         accumulatedTextRef.current = accumulatedText || streamError;
-        flushAssistant(true);
-        if (active) { setStreaming(false); setStageLabel(null); }
+        if (viewingStreamConv()) flushAssistant(true);
+        if (active) {
+          setStreaming(false); setStageLabel(null);
+          // 用户中途切走又切回来的会话：这一轮答案从未在浏览器渲染过，
+          // 生成结束后补拉一次已落库的消息，让视图回到完整状态。
+          const resumeId = resumeConvIdRef.current;
+          resumeConvIdRef.current = null;
+          if (resumeId && viewedConvIdRef.current === resumeId) {
+            const resumeSeq = ++resumeSeqRef.current;
+            void (async () => {
+              try {
+                const res = await fetch(`${API_BASE_URL}/api/v1/conversations/${resumeId}`, { headers: apiHeaders() });
+                if (!res.ok || resumeSeq !== resumeSeqRef.current) return;
+                const conv = (await res.json()) as ConversationPayload;
+                if (resumeSeq !== resumeSeqRef.current || viewedConvIdRef.current !== resumeId) return;
+                startTransition(() => {
+                  setMessages(mapConversationMessages(conv));
+                  setCitations(collectConversationCitations(conv));
+                });
+              } catch { /* 生成尚未落库：保持当前视图，不打断用户 */ }
+            })();
+          }
+        }
       } catch (err) {
         const isAbort = errorMessage(err) === 'AbortError' || (err as { name?: string })?.name === 'AbortError';
         if (isAbort) {
           // 用户主动停止：保留已生成的部分文本并标记完成。
-          flushAssistant(true);
+          if (viewingStreamConv()) flushAssistant(true);
         } else if (active) {
-          accumulatedTextRef.current = "大模型请求失败：" + (errorMessage(err) || '未知错误');
-          flushAssistant(true);
+          if (viewingStreamConv()) {
+            accumulatedTextRef.current = "大模型请求失败：" + (errorMessage(err) || '未知错误');
+            flushAssistant(true);
+          }
           setStreaming(false); setStageLabel(null);
         }
       }
@@ -253,6 +393,9 @@ export function ChatScreen(){
   }, []);
 
   const stopStream = () => {
+    // 只停止当前会话自己的生成：切到别的会话时，停止按钮根本不出现，
+    // 也不应能中止那边仍在进行的回答。
+    if (!viewingStream) return;
     // Complete the visible answer before effect cleanup disables late flushes.
     finishStream.current?.();
     streamController.current?.abort();
@@ -267,7 +410,8 @@ export function ChatScreen(){
 
   const send = (preset?: string)=>{
     const text = (preset ?? input).trim();
-    if(!text || streaming || selected.length===0) return;
+    if(!text || viewingStream || selected.length===0) return;
+    setStreamConvId(activeConv);
     setMessages(ms=>[...ms, {role:'user', text}, {role:'ai', text:'', done:false, trace:[]}]);
     setInput('');
     setActiveCite(null);
@@ -280,7 +424,9 @@ export function ChatScreen(){
   const newChat = ()=>{
     ++openSeqRef.current;
     setConvLoading(false);
-    setMessages([]); setStreaming(false); setActiveCite(null); setCitations([]); setActiveConv(null); setInput('');
+    // 只清空视图，不中止正在生成的答案：streamConvIdRef 仍指向它的会话，
+    // 用户从列表切回该会话时会接着看到流式内容。
+    setMessages([]); setActiveCite(null); setCitations([]); setActiveConv(null); viewedConvIdRef.current = null; setInput('');
     if(taRef.current){ taRef.current.style.height = 'auto'; taRef.current.focus(); }
   };
 
@@ -327,7 +473,7 @@ export function ChatScreen(){
   }, [previewCitation]);
 
   const openConversation = useCallback(async (id: string) => {
-    if (streaming || !id) return;
+    if (!id) return;
     // 连续点击不同会话时只应用最后一次响应，避免慢响应覆盖新选择。
     const seq = ++openSeqRef.current;
     setConvLoading(true);
@@ -336,28 +482,24 @@ export function ChatScreen(){
       if (!response.ok) throw new Error('会话加载失败');
       const conversation = await response.json();
       if (seq !== openSeqRef.current) return;
-      const mapped = (conversation.messages || []).map((message: any) => ({
-        id: message.id as string | undefined,
-        role: message.role === 'assistant' ? 'ai' : 'user',
-        text: message.content,
-        done: true,
-        trace: message.role === 'assistant' && Array.isArray(message.processingTrace) ? message.processingTrace : [],
-        sources: message.role === 'assistant' && Array.isArray(message.citationsSummary) ? message.citationsSummary.map((cite: any, index: number) => ({ id: `${message.id}-${index}`, citationIndex: Number(cite.index || index + 1), title: cite.timeline_entry?.doc_title || cite.topic_slug || '知识主题', kb: cite.timeline_entry?.source_kb, documentId: cite.timeline_entry?.document_id, kbName: cite.timeline_entry?.kb_name || cite.timeline_entry?.source_kb || '知识库', truth: '—', evidences: 1, lastUpdate: new Date(message.createdAt).toLocaleString('zh-CN'), snippet: cite.timeline_entry?.snippet || '', path: cite.topic_slug, pageNo: cite.timeline_entry?.page_no, bbox: cite.timeline_entry?.bbox })) : [],
-      }));
-      const allCitations = (conversation.messages || []).flatMap((message: any) => Array.isArray(message.citationsSummary) ? message.citationsSummary.map((cite: any, index: number) => ({ id: `${message.id}-${index}`, citationIndex: Number(cite.index || index + 1), title: cite.timeline_entry?.doc_title || cite.topic_slug || '知识主题', kb: cite.timeline_entry?.source_kb, documentId: cite.timeline_entry?.document_id, kbName: cite.timeline_entry?.kb_name || cite.timeline_entry?.source_kb || '知识库', truth: '—', evidences: 1, lastUpdate: new Date(message.createdAt).toLocaleString('zh-CN'), snippet: cite.timeline_entry?.snippet || '', pageNo: cite.timeline_entry?.page_no, bbox: cite.timeline_entry?.bbox })) : []);
-      // 长会话整列表渲染放进 transition：期间用户输入/滚动仍可中断，
-      // 避免切换会话时的整帧卡死。
+      const mapped = mapConversationMessages(conversation);
+      const allCitations = collectConversationCitations(conversation);
       startTransition(() => {
         setActiveConv(id);
+        viewedConvIdRef.current = id;
         setMessages(mapped);
         setCitations(allCitations);
       });
+      // 切回仍在生成的会话：浏览器离开期间没收到 delta，磁盘上这一轮要等
+      // 生成结束才落库。标记为待补拉，由流结束回调统一重载（见下），
+      // 而不是在这里定时轮询 —— 固定延迟在快慢两种机器上都会猜错。
+      if (id === streamConvIdRef.current) resumeConvIdRef.current = id;
     } catch (error) {
       if (seq === openSeqRef.current) window.dispatchEvent(new CustomEvent('app-toast', {detail: errorMessage(error) || '会话加载失败'}));
     } finally {
       if (seq === openSeqRef.current) setConvLoading(false);
     }
-  }, [streaming]);
+  }, []);
 
   // 命令面板跨屏打开会话：订阅最新的 openConversation，保证流式期间守卫生效。
   useEffect(() => {
@@ -499,6 +641,11 @@ export function ChatScreen(){
               </div>
             );
           })}
+          {convMore && !convSearch.trim() && (
+            <button type="button" className="conv-more" onClick={loadMoreConversations} disabled={convMoreLoading}>
+              {convMoreLoading ? '加载中…' : '加载更早的会话'}
+            </button>
+          )}
         </div>
         <div className="new-chat" onClick={()=>{ newChat(); setConvOpen(false); }} title="开始一段新对话 (⌘N)">
           <Icon name="plus" size={12}/> 新建会话
@@ -512,7 +659,7 @@ export function ChatScreen(){
             会话加载中…
           </div>
         )}
-        {streaming && stageLabel && (
+        {viewingStream && stageLabel && (
           <div style={{ position: 'absolute', top: convLoading ? 48 : 12, right: 20, zIndex: 6, display: 'flex', alignItems: 'center', gap: 6, padding: '4px 12px', borderRadius: 14, background: 'var(--bg-2, rgba(0,0,0,0.05))', color: 'var(--ink-3, #666)', fontSize: 12 }} aria-live="polite">
             <span className="streaming-dot" aria-hidden="true" />
             {stageLabel}…
@@ -521,7 +668,7 @@ export function ChatScreen(){
         <div className="conv-mobile-bar">
           <button type="button" className="chat-mobile-conv-btn" onClick={() => setConvOpen(true)}>
             <Icon name="chat" size={13}/>
-            <span>会话列表 ({conversationList.length})</span>
+            <span>会话列表 ({conversationList.length}{convMore ? '+' : ''})</span>
           </button>
         </div>
         <div className="chat-scroll" ref={scrollRef}>
@@ -562,6 +709,7 @@ export function ChatScreen(){
                 allSel={allSel}
                 selectedCount={selected.length}
                 activeCitation={activeCite}
+                conversationId={activeConv}
                 lastUserText={lastUserText}
                 onCitation={handleAnswerCitation}
                 onPreview={previewCitation}
@@ -591,7 +739,7 @@ export function ChatScreen(){
                   范围 · {scopeLabel}
                   <span className="kbd">⌘K</span>
                 </div>
-                {streaming ? (
+                {viewingStream ? (
                   <button type="button" className="send-btn stop" onClick={stopStream} title="停止生成 (Esc)" aria-label="停止生成">
                     <span className="stop-icon" aria-hidden="true" />
                   </button>
@@ -670,6 +818,8 @@ interface MessageItemProps {
   allSel: boolean;
   selectedCount: number;
   activeCitation: number | null;
+  /** 该消息所属会话：调用链明细按需拉取时要用 */
+  conversationId?: string | null;
   lastUserText?: string;
   onCitation: (source: Citation, index: number) => void;
   onPreview: (citation: Citation) => void;
@@ -694,7 +844,7 @@ const MessageItem = memo(function MessageItem(props: MessageItemProps) {
 });
 
 const AiMessageBody = memo(function AiMessageBody({
-  msg, scopeLabel, allSel, selectedCount, activeCitation, lastUserText,
+  msg, scopeLabel, allSel, selectedCount, activeCitation, conversationId, lastUserText,
   onCitation, onPreview, onCopy, onResend, onFeedback,
 }: MessageItemProps) {
   const traceNodes = useMemo(() => (Array.isArray(msg.trace) ? (msg.trace as TraceNode[]) : []), [msg.trace]);
@@ -727,7 +877,10 @@ const AiMessageBody = memo(function AiMessageBody({
         {msg.done && (msg.sources?.length ?? 0) > 0 && (
           <div className="answer-sources"><span>来源：</span>{(msg.sources || []).map((source: Citation, index: number) => <button key={source.id || index} onClick={()=>onPreview(source)} title="打开原始文档预览">[{source.citationIndex || index + 1}] {source.title}</button>)}</div>
         )}
-        {traceNodes.length > 0 && <TraceDetails nodes={traceNodes} stats={traceStats} />}
+        {/* 历史消息不再随会话列表下发 trace（单条可达百 KB），折叠时按需拉取 */}
+        {msg.done && msg.id && conversationId
+          ? <TraceDetails nodes={traceNodes} stats={traceStats} conversationId={conversationId} messageId={msg.id} />
+          : traceNodes.length > 0 && <TraceDetails nodes={traceNodes} stats={traceStats} />}
         {msg.done && (
           <div className="actions">
             <button onClick={()=>onCopy(msg.text)}><Icon name="copy" size={12}/> 复制</button>
@@ -786,21 +939,52 @@ function PipelineProgress({ nodes }: { nodes: TraceNode[] }) {
  * 节点的 details JSON 序列化进 DOM——长会话切换不再为每条消息的历史
  * trace 做全量 stringify。
  */
-const TraceDetails = memo(function TraceDetails({ nodes, stats }: { nodes: TraceNode[]; stats: { total: number; success: number; warnings: number; failed: number; running: number; duration: number | null } }) {
+const TraceDetails = memo(function TraceDetails({ nodes, stats, conversationId, messageId }: { nodes: TraceNode[]; stats: { total: number; success: number; warnings: number; failed: number; running: number; duration: number | null }; conversationId?: string; messageId?: string }) {
   const [open, setOpen] = useState(false);
+  // 会话列表不再随每条消息下发 processingTrace（单条可达百 KB）。首次展开时
+  // 拉取一次，之后用组件内缓存；summary 只在未加载时显示"点击展开"。
+  const [lazyNodes, setLazyNodes] = useState<TraceNode[] | null>(null);
+  const [lazyLoading, setLazyLoading] = useState(false);
+  // 首次展开时按需拉取：会话列表不再随每条消息下发 processingTrace（单条可达
+  // 百 KB）。从 toggle 事件发起而不是 effect，避免 effect 内的级联 setState。
+  const loadLazyTrace = useCallback(() => {
+    if (lazyNodes !== null || lazyLoading || !conversationId || !messageId) return;
+    setLazyLoading(true);
+    void (async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/v1/conversations/${conversationId}/messages/${messageId}/trace`, { headers: apiHeaders() });
+        if (!res.ok) { setLazyNodes([]); return; }
+        const data = (await res.json()) as { trace?: unknown };
+        setLazyNodes(Array.isArray(data?.trace) ? (data.trace as TraceNode[]) : []);
+      } catch { /* 调用链是诊断信息，拉取失败不打扰用户 */ }
+      finally { setLazyLoading(false); }
+    })();
+  }, [conversationId, messageId, lazyNodes, lazyLoading]);
+  const onToggle = useCallback((e: React.SyntheticEvent<HTMLDetailsElement>) => {
+    const next = (e.target as HTMLDetailsElement).open;
+    setOpen(next);
+    if (next) loadLazyTrace();
+  }, [loadLazyTrace]);
+  const displayNodes = nodes.length > 0 ? nodes : (lazyNodes ?? []);
+  const displayStats = nodes.length > 0 || lazyNodes !== null
+    ? stats
+    : { total: 0, success: 0, warnings: 0, failed: 0, running: 0, duration: null };
   return (
-    <details className="retrieval" onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
+    <details className="retrieval" onToggle={onToggle}>
       <summary>
         <Icon name="spark" size={12} color="var(--evidence)"/>
         <span>本次响应处理调用链 ·</span>
-        <b>{stats.failed ? `${stats.failed} 个异常` : stats.running ? `${stats.running} 个执行中` : `${stats.success}/${stats.total} 个节点正常`}</b>
-        {stats.warnings > 0 && <span className="trace-summary-warning">· {stats.warnings} 个警告</span>}
-        {stats.duration !== null && <span className="trace-total">{stats.duration}ms</span>}
+        {lazyNodes === null && nodes.length === 0
+          ? <b>{lazyLoading ? '加载中…' : '展开查看'}</b>
+          : <b>{displayStats.failed ? `${displayStats.failed} 个异常` : displayStats.running ? `${displayStats.running} 个执行中` : `${displayStats.success}/${displayStats.total} 个节点正常`}</b>}
+        {displayStats.warnings > 0 && <span className="trace-summary-warning">· {displayStats.warnings} 个警告</span>}
+        {displayStats.duration !== null && <span className="trace-total">{displayStats.duration}ms</span>}
         <span className="trace-expand">展开 ▾</span>
       </summary>
       {open && (
         <div className="retrieval-body">
-          {nodes.map((node: TraceNode, index: number) => (
+          {displayNodes.length === 0 && <div className="ret-step">暂无调用链记录</div>}
+          {displayNodes.map((node: TraceNode, index: number) => (
             <div className={`ret-step trace-${String(node.status ?? '')}`} key={node.id || index}>
               <span className="n">{node.status === 'success' ? '✓' : node.status === 'warning' ? '!' : node.status === 'failed' ? '×' : node.status === 'skipped' ? '–' : '…'}</span>
               <span className="txt">
