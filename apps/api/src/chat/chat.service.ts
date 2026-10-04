@@ -1028,6 +1028,8 @@ export class ChatService {
       onAuthorization?: (snapshot: import('../permission/authorization-revision').AuthorizationSnapshot) => void;
       /** Non-streaming run to record stage progress on. */
       runId?: string;
+      /** Called by the status endpoint on each poll: renews the client lease. */
+      onPoll?: (runId: string) => void;
     },
   ): Promise<Observable<MessageEvent>> {
     return new Observable((subscriber: Subscriber<MessageEvent>) => {
@@ -1037,9 +1039,12 @@ export class ChatService {
         cancellation.abort(inheritedCancellation?.reason);
         subscriber.error(new Error('Knowledge request cancelled'));
       };
-      if (inheritedCancellation?.aborted) cancelFromTransport();
-      else inheritedCancellation?.addEventListener('abort',cancelFromTransport,{ once:true });
       let authorizationMonitor: ReturnType<typeof setInterval> | undefined;
+      // A non-streaming run's response is detached (it must survive the client
+      // navigating away), which also means no transport close handler is ever
+      // registered — so a closed tab would leave the pipeline running to its
+      // full deadline. ChatRunService holds the client lease for these runs and
+      // renews it from the status endpoint; see CHAT_RUN_LEASE_MS.
       void withAuthorizedRequest(userId, async snapshot => {
       options?.onAuthorization?.(snapshot);
       getRequestContext()!.execution = createQueryExecution(question);
@@ -1055,6 +1060,11 @@ export class ChatService {
         }, 100);
         authorizationMonitor.unref?.();
       }
+      // Expose this run's signal so the status endpoint can renew its lease and
+      // so a cancel that arrives after the POST response closed still reaches it.
+      if (options?.runId) this.chatRunService?.attachSignal(options.runId, cancellation.signal);
+      // Each status poll proves the client is still there.
+      options?.onPoll?.(options.runId!);
       const trace = new ChatTraceRecorder(guarded);
       await this.processChat(
         userId,
@@ -1095,7 +1105,11 @@ export class ChatService {
         guarded.error(err);
       }).finally(() => { getRequestContext()?.execution?.finishRetrieval(); if (authorizationMonitor) clearInterval(authorizationMonitor); });
       }).catch(error => subscriber.error(error));
-      return () => { inheritedCancellation?.removeEventListener('abort',cancelFromTransport); cancellation.abort(); if (authorizationMonitor) clearInterval(authorizationMonitor); };
+      return () => {
+        inheritedCancellation?.removeEventListener('abort', cancelFromTransport);
+        cancellation.abort();
+        if (authorizationMonitor) clearInterval(authorizationMonitor);
+      };
     });
   }
 

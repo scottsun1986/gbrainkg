@@ -375,7 +375,11 @@ export class ChatController {
   @Get("runs/:runId")
   async getRun(@Req() req: any, @Param("runId") runId: string) {
     const userId = await this.authService.userIdFromRequest(req);
-    return this.chatRunService.get(userId, runId);
+    const run = await this.chatRunService.get(userId, runId);
+    // Polling is the client's liveness proof: it renews the lease that stops a
+    // run whose tab was closed outright from burning the full deadline.
+    if (run.status === 'running') this.chatRunService.touch(runId);
+    return run;
   }
 
   /** Best-effort cancel. Only the instance that started the run can abort it. */
@@ -383,9 +387,13 @@ export class ChatController {
   async cancelRun(@Req() req: any, @Param("runId") runId: string) {
     const userId = await this.authService.userIdFromRequest(req);
     // Read first: an unknown or foreign run must 404 rather than report success.
-    await this.chatRunService.get(userId, runId);
+    const run = await this.chatRunService.get(userId, runId);
+    if (run.status !== 'running') return { runId, cancelled: false, alreadyFinished: true };
     const aborted = this.chatRunService.cancel(runId);
     if (aborted) await this.chatRunService.fail(runId, '用户已停止生成。');
-    return { runId, cancelled: aborted };
+    // `cancelled: false` here means the run belongs to the other instance, whose
+    // AbortController is process-local. The client must say so rather than imply
+    // the stop took effect; the run's own deadline still ends it.
+    return { runId, cancelled: aborted, alreadyFinished: false };
   }
 }

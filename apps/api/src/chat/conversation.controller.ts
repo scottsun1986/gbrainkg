@@ -58,11 +58,23 @@ export class ConversationController {
       take: limit + 1,
       select: { id: true, title: true, createdAt: true },
     });
+    // A run still in flight belongs to this user's conversations, so the sidebar
+    // can mark them after a reload. Before this the running state lived only in
+    // the browser, and a refresh left the list disagreeing with the server.
     const page = rows.slice(0, limit);
     const last = page[page.length - 1];
-    if (paginated === undefined) return page;
+    const running = await this.prisma.chatRun.findMany({
+      where: { conversationId: { in: page.map((row) => row.id) }, status: 'running' },
+      select: { conversationId: true, stage: true },
+    });
+    const runningByConv = new Map(running.map((row) => [row.conversationId, row.stage]));
+    const withRun = page.map((row) => ({
+      ...row,
+      ...(runningByConv.has(row.id) ? { runStage: runningByConv.get(row.id) } : {}),
+    }));
+    if (paginated === undefined) return withRun;
     return {
-      items: page,
+      items: withRun,
       nextCursor: page.length === limit && last ? last.id : null,
       hasMore: rows.length > limit,
     };

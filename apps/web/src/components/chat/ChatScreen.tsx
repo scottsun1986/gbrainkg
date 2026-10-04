@@ -9,7 +9,7 @@ import { API_BASE_URL, apiHeaders } from '@/lib/api';
 import { appStore } from '@/lib/app-store';
 import { errorMessage, asRecord, str } from '@/lib/errors';
 import {
-  applyPoll, isTerminal, labelForRun, runningConversationIds, STAGE_LABELS,
+  applyPoll, isTerminal, labelForRun, pollDelayFor, runningConversationIds, STAGE_LABELS,
   type RunPollResult, type RunStage, type RunState,
 } from '@/lib/stream-registry';
 import { emitToast } from '@/lib/app-events';
@@ -153,6 +153,7 @@ export function ChatScreen(){
         const seen = new Set(prev.map(c => c.id));
         return [...prev, ...items.filter(c => !seen.has(c.id))];
       });
+      adoptRunStages(items);
       setConvMore(page?.hasMore === true);
       setConvCursor(typeof page?.nextCursor === 'string' ? page.nextCursor : null);
     } catch {} finally { setConvMoreLoading(false); }
@@ -228,15 +229,40 @@ export function ChatScreen(){
     });
   }, [visibleKbs]);
 
+  // P1-1: the list carries `runStage` for conversations still generating, so a
+  // reload restores the sidebar's running markers instead of losing them with
+  // the in-memory registry.
+  const adoptRunStages = useCallback((items: ConversationSummary[]) => {
+    let changed = false;
+    const next = new Map(runsRef.current);
+    for (const item of items) {
+      const stage = typeof item.runStage === 'string' ? item.runStage as RunStage : null;
+      if (stage && !next.has(item.id)) {
+        next.set(item.id, { runId: '', conversationId: item.id, status: 'running', stage });
+        changed = true;
+      } else if (!stage && next.has(item.id)) {
+        next.delete(item.id);
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    runsRef.current = next;
+    syncRuns();
+  }, []);
+
   useEffect(() => {
     const refresh = () => {
       setConversationList([...appStore.CONVERSATIONS]);
+      adoptRunStages(appStore.CONVERSATIONS);
       setConvMore(appStore.CONVERSATIONS_META?.hasMore ?? false);
       setConvCursor(appStore.CONVERSATIONS_META?.nextCursor ?? null);
     };
     window.addEventListener('app-admin-data-updated', refresh);
     return () => window.removeEventListener('app-admin-data-updated', refresh);
   }, []);
+
+  // Adopt once on mount: the bootstrap payload is already in appStore.
+  useEffect(() => { adoptRunStages(appStore.CONVERSATIONS); }, [adoptRunStages]);
 
   useEffect(() => {
     const onNew = () => { newChat(); };
@@ -315,20 +341,29 @@ export function ChatScreen(){
 
         // Recursive setTimeout with a cancel flag rather than setInterval:
         // a poll that overruns must not queue a second one behind it.
+        //
+        // P3-1: the interval follows the stage. Retrieval and reranking hold
+        // the run for tens of seconds with nothing to show, while generation
+        // is when the user is actually waiting, so polling hard there and
+        // loosely here keeps the request volume flat as conversations pile up.
+        let failures = 0;
         const schedule = (delay: number) => {
           timer = setTimeout(async () => {
             if (cancelled) return;
+            // Nothing is watching a background tab, so stop asking.
+            if (typeof document !== 'undefined' && document.hidden && !ownsView()) { schedule(8000); return; }
             try {
               const poll = await fetch(`${API_BASE_URL}/api/v1/chat/runs/${started.runId}`, { headers: apiHeaders() });
-              if (!poll.ok) { schedule(4000); return; }
+              if (!poll.ok) { failures += 1; schedule(Math.min(30000, 2000 * 2 ** Math.min(failures, 4))); return; }
+              failures = 0;
               const state = await poll.json() as RunPollResult;
               if (cancelled) return;
-              runsRef.current.set(assigned, {
-                runId: state.runId, conversationId: assigned, status: state.status, stage: state.stage,
-              });
-              if (!isTerminal(state.status)) { syncRuns(); schedule(1500); return; }
-              runsRef.current.delete(assigned);
+              // P2-1: route the transition through applyPoll so the "a
+              // finished run is never revived by a late response" invariant has
+              // exactly one implementation instead of relying on call order.
+              runsRef.current = applyPoll(runsRef.current, assigned, state);
               syncRuns();
+              if (!isTerminal(state.status)) { schedule(pollDelayFor(state.stage)); return; }
               if (ownsView()) {
                 if (state.status === 'failed') {
                   const reason = state.errorMessage || '问答未成功完成。';
@@ -489,13 +524,21 @@ export function ChatScreen(){
       pendingAnswersRef.current.delete(id);
       const mapped = mapConversationMessages(conversation);
       const allCitations = collectConversationCitations(conversation);
+      // P1-2: the last turn is a user message with no assistant reply, so the
+      // generation was abandoned (tab closed, run cancelled, service restarted)
+      // and the placeholder the browser optimistically rendered is gone with the
+      // page. Surface that instead of an answer bubble with empty text.
+      const abandoned = mapped.length > 0
+        && mapped[mapped.length - 1].role === 'user'
+        ? { text: '（该回答未完成：生成被中断或已随页面关闭而丢失，请重新提问。）' }
+        : null;
       // Urgent on purpose. Under startTransition this never committed while a
       // run was streaming (the high-frequency trace/citation setMessages calls
       // starve the transition), so clicking a history entry did nothing while
       // "new chat" — which is not in a transition — worked fine.
       setActiveConv(id);
       viewKeyRef.current = id; setViewKey(id);
-      setMessages(mapped);
+      setMessages(abandoned ? [...mapped, { role: 'ai' as const, text: abandoned.text, done: true, trace: [] }] : mapped);
       setCitations(allCitations);
       // 切回仍在生成的会话：这一轮的答案还没落库，等 run 完成时轮询会把它
       // 写进当前视图；此处不需要（也不能）用固定延迟预拉 —— 在快慢两种机器

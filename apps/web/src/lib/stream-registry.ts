@@ -51,6 +51,26 @@ export function isTerminal(status: RunStatus): boolean {
   return status === 'completed' || status === 'failed';
 }
 
+/**
+ * Poll interval per stage.
+ *
+ * Retrieval and reranking hold a run for tens of seconds while producing
+ * nothing new to show; generation is when the user is actually waiting. Polling
+ * hard during generation and loosely during retrieval keeps request volume flat
+ * when several conversations run at once.
+ */
+export function pollDelayFor(stage: RunStage): number {
+  switch (stage) {
+    case 'generating':
+    case 'verifying':
+      return 1000;
+    case 'queued':
+      return 2000;
+    default:
+      return 3000;
+  }
+}
+
 export function labelForRun(run: RunState | undefined): string | null {
   if (!run) return null;
   if (run.status === 'completed') return '已完成';

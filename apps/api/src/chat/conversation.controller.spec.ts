@@ -1,6 +1,9 @@
 const mockPrisma = {
   conversation: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn(), delete: jest.fn() },
   message: { findMany: jest.fn(), count: jest.fn() },
+  // The list annotates each row with its in-flight run stage, so the sidebar
+  // keeps its running markers after a reload.
+  chatRun: { findMany: jest.fn().mockResolvedValue([]) },
 };
 jest.mock('../prisma', () => ({ getPrismaClient: () => mockPrisma }));
 

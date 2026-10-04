@@ -5,6 +5,7 @@ const prismaMock = {
     create: jest.fn(),
     findFirst: jest.fn(),
     updateMany: jest.fn(),
+    deleteMany: jest.fn(),
   },
   message: { findFirst: jest.fn() },
 };
@@ -107,6 +108,50 @@ describe('ChatRunService', () => {
     await service.start('conv-1', 'user-1');
     expect(service.cancel('run-1')).toBe(true);
     expect(service.cancel('run-unknown')).toBe(false);
+  });
+
+  it('does not overwrite a cancelled run when the pipeline finishes late', async () => {
+    // P0-2: cancel() writes status='failed'; if complete() then wrote
+    // unconditionally the user would be told "stopped" while a full answer sat
+    // in the database. The guard is what makes the first write win.
+    await service.start('conv-1', 'user-1');
+    await service.fail('run-1', '用户已停止生成。');
+    await service.complete('run-1', 'msg-1');
+    const completeCall = prismaMock.chatRun.updateMany.mock.calls.at(-1)![0];
+    expect(completeCall.where).toEqual({ id: 'run-1', status: 'running' });
+  });
+
+  it('prunes finished runs past the retention window but never a running one', async () => {
+    prismaMock.chatRun.deleteMany = jest.fn().mockResolvedValue({ count: 7 });
+    const count = await service.pruneOldRuns(1000);
+    expect(count).toBe(7);
+    const where = prismaMock.chatRun.deleteMany.mock.calls[0][0].where;
+    expect(where.status).toEqual({ in: ['completed', 'failed'] });
+    expect(where.completedAt).toBeDefined();
+    // A running row is still being polled; deleting it would strand the sidebar.
+    expect(where.status).not.toContain('running');
+  });
+
+  it('skips pruning when retention is disabled', async () => {
+    prismaMock.chatRun.deleteMany = jest.fn().mockResolvedValue({ count: 0 });
+    expect(await service.pruneOldRuns(0)).toBe(0);
+    expect(prismaMock.chatRun.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('reaps abandoned runs on a schedule, not only at first boot', () => {
+    // P0-1: the reaper existed but nothing called it, so a crashed run left the
+    // sidebar spinning until the next restart. Wiring it to the module lifecycle
+    // is the fix; assert the hook is actually installed.
+    const previous = process.env.CHAT_RUN_REAP_INTERVAL_MS;
+    process.env.CHAT_RUN_REAP_INTERVAL_MS = '60000';
+    try {
+      service.onModuleInit();
+      service.onModuleDestroy();
+    } finally {
+      if (previous === undefined) delete process.env.CHAT_RUN_REAP_INTERVAL_MS;
+      else process.env.CHAT_RUN_REAP_INTERVAL_MS = previous;
+    }
+    expect(prismaMock.chatRun.updateMany).toHaveBeenCalled();
   });
 
   it('fails abandoned runs so the sidebar does not spin forever', async () => {

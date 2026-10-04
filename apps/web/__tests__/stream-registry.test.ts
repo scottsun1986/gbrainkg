@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  applyPoll, isTerminal, labelForRun, runningConversationIds,
+  applyPoll, isTerminal, labelForRun, pollDelayFor, runningConversationIds,
   type RunMap, type RunState,
 } from '../src/lib/stream-registry';
 
@@ -70,5 +70,21 @@ describe('run labels', () => {
 
   it('has no label for a conversation with no run', () => {
     assert.equal(labelForRun(undefined), null);
+  });
+});
+
+describe('poll cadence', () => {
+  it('polls hardest while the user is actually waiting', () => {
+    // Retrieval holds the run for tens of seconds with nothing new to show;
+    // generation is when the answer is about to change.
+    assert.ok(pollDelayFor('generating') < pollDelayFor('retrieving'));
+    assert.ok(pollDelayFor('verifying') < pollDelayFor('retrieving'));
+    assert.ok(pollDelayFor('queued') < pollDelayFor('retrieving'));
+  });
+
+  it('never busy-loops on any known stage', () => {
+    for (const stage of ['queued', 'retrieving', 'reranking', 'generating', 'verifying', 'persisting'] as const) {
+      assert.ok(pollDelayFor(stage) >= 500, `${stage} must not busy-loop`);
+    }
   });
 });
