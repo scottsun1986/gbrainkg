@@ -4,7 +4,7 @@ import { evidenceIdentity, distinctRankedPassages } from './evidence-identity';
 import { StreamDeadline } from './stream-deadline';
 import { ChatRunService } from './chat-run.service';
 import { outlineDocumentTitle, normalizeDocumentTitle, renderDocumentOutline } from './document-outline';
-import { OrderedAnswer, tidyVerifiedAnswer, answerSentenceBoundary, isStructuralHeadingLine, isTableSyntaxLine, isBlockLevelStart } from './ordered-answer';
+import { OrderedAnswer, tidyVerifiedAnswer, answerSentenceBoundary, isStructuralHeadingLine, isTableSyntaxLine, isBlockLevelStart, splitLeadingHeading } from './ordered-answer';
 import { alignSiblingEditionChunks, normalizeFamilyTitle } from './version-sibling-evidence';
 
 export { isStructuralHeadingLine, isTableSyntaxLine, isBlockLevelStart } from './ordered-answer';
@@ -5022,7 +5022,8 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
         // 的句子及其之后的内容保持缓冲（恢复/改写会改变后续渲染）。
         answerStreamer.offerRender(orderedAnswer.render(), [...heldSentences, ...heldRefusals]);
       };
-      const gateSentence = (sentence: string) => {
+      const gateSentence = (input: string) => {
+        let sentence = input;
         sentencePosition = nextSentencePosition++;
         // Transport failures are not answers. An upstream gateway once returned
         // "The request was rejected because it was considered high risk" inside
@@ -5032,6 +5033,23 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
           this.logger.warn(`Provider error text intercepted before display: ${sentence.slice(0, 80)}`);
           providerErrorSeen = true;
           return;
+        }
+        // A heading carries no sentence punctuation, so when the model omits the
+        // newline before it ("**来源 1《…》**（第 5-11 页）该手册规定…") the
+        // boundary search runs past the heading into its own first sentence and
+        // the two arrive as one string. That string is not a heading, so the
+        // gates below treat navigation as a claim and drop it — production: an
+        // answer whose first section had no heading at all. Split the heading
+        // back off and route it through the heading path.
+        if (!isStructuralHeadingLine(sentence)) {
+          const split = splitLeadingHeading(sentence);
+          if (split) {
+            const heading = split.heading;
+            emitVerified(heading);
+            if (!/\n$/.test(heading)) emitVerified('\n');
+            sentence = split.rest;
+            if (!sentence.trim()) return;
+          }
         }
         // Structural headings stream through immediately and in order: they are
         // navigation, not claims. Holding them for the flush-time NLI review

@@ -308,3 +308,53 @@ export function isBlockLevelStart(sentence: string): boolean {
   if (isStructuralHeadingLine(sentence) || isTableSyntaxLine(sentence)) return true;
   return /^\s*(?:\d{1,2}\s*[.、)]\s|\*\*\s*\d{1,2}\s*[.、)]|[-*•]\s)/.test(String(sentence || ''));
 }
+
+/**
+ * Split a heading off the front of a string that merged it with the sentence
+ * that follows.
+ *
+ * The gate finds sentence boundaries by scanning for sentence punctuation, but a
+ * heading ("**来源 1《…》**（第 5-11 页）") contains none. When the model omits the
+ * newline before the heading, the scan runs past it into its own first sentence
+ * and both arrive as one string, which no longer classifies as a heading — so
+ * the gates treat navigation as an unsupported claim and drop it, leaving the
+ * section with no header.
+ *
+ * Only a leading heading is separated, and only when the head really does
+ * classify as one, so ordinary prose (including text containing "V3.0") is left
+ * untouched.
+ */
+export function splitLeadingHeading(input: string): { heading: string; rest: string } | null {
+  // Only strong markers open a heading. A digit ordinal ("2. …") is excluded on
+  // purpose: it also matches the "3.0" of a version string, and cutting there
+  // would shred ordinary prose into two fragments that each stop being a
+  // sentence.
+  const OPENERS = /\*\*|__|#{1,6}\s(?=[^#])|[一二三四五六七八九十]+[、.．]/g;
+  const markers = [...input.matchAll(OPENERS)]
+    .map((match) => ({ index: match.index ?? -1, length: match[0].length }))
+    .filter((marker) => marker.index > 0);
+  const starts = markers.map((marker) => marker.index);
+  // Walk the strong markers in order and try the cut immediately AFTER each one
+  // (plus any punctuation/parenthetical tail that belongs to the heading). A
+  // heading's own closing "**" is itself a candidate, which is what lets
+  // "**来源 1《…》**（第 5-11 页）该手册…" split at the parenthesis rather than at
+  // the first marker.
+  for (let i = 0; i < markers.length; i++) {
+    const afterMarker = markers[i].index + markers[i].length;
+    // Extend over a trailing parenthetical: （集团总部知识库）/（第 5-11 页）.
+    // No length cap: a knowledge-base parenthetical can name two libraries and
+    // run well past 24 chars, and capping it split the heading from its own
+    // qualifier, leaving the qualifier to be gated as a claim.
+    const tail = /^\s*[（(【\[][^（()【】\[\]]{0,120}[)）】\]]/.exec(input.slice(afterMarker));
+    const cut = tail ? afterMarker + tail[0].length : afterMarker;
+    if (cut <= 0 || cut >= input.length) continue;
+    const head = input.slice(0, cut).trim();
+    if (!head || head.length > 120) continue;
+    // The head must be a complete heading: balanced bold, and classified as a
+    // heading on its own. Anything else was prose that merely contains a "**".
+    if ((head.match(/\*\*/g) || []).length % 2 !== 0) continue;
+    if (!isStructuralHeadingLine(head)) continue;
+    return { heading: head, rest: input.slice(cut) };
+  }
+  return null;
+}

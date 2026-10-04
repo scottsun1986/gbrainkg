@@ -1,4 +1,4 @@
-import { OrderedAnswer, tidyVerifiedAnswer, answerSentenceBoundary, isStructuralHeadingLine, isSourceLabelHeading, dropEmptySectionHeadings } from './ordered-answer';
+import { OrderedAnswer, tidyVerifiedAnswer, answerSentenceBoundary, isStructuralHeadingLine, isSourceLabelHeading, dropEmptySectionHeadings, splitLeadingHeading } from './ordered-answer';
 
 describe('verified answer order', () => {
   it('restores delayed evidence beneath its own heading, ahead of later sections', () => {
@@ -96,5 +96,45 @@ describe('multi-source answer structure', () => {
   it('leaves a fenced heading untouched', () => {
     const code = '~~~\n# heading\n~~~';
     expect(dropEmptySectionHeadings(code.split('\n'))).toEqual(code.split('\n'));
+  });
+});
+
+/**
+ * A heading carries no sentence punctuation, so when the model omits the
+ * newline before it the gate's boundary scan runs past the heading into its own
+ * first sentence. Both then arrive as one string, which no longer classifies as
+ * a heading, and the grounding gates drop it as an unsupported claim —
+ * production: an answer whose first section had no heading at all.
+ */
+describe('splitLeadingHeading', () => {
+  const heading = '**来源 1 与来源 5《员工考勤管理制度 V3.0》**（E2ESCORE-82892b86、E2ESCORE-148246e2 两个知识库）';
+  const body = '两份文件内容一致，第三条均规定：弹性打卡时间为 09:00 至 10:00[1][5]。';
+
+  it('separates a heading from the sentence it was merged with', () => {
+    const split = splitLeadingHeading(heading + body);
+    expect(split).not.toBeNull();
+    expect(split!.heading).toBe(heading);
+    expect(isStructuralHeadingLine(split!.heading)).toBe(true);
+    expect(split!.rest).toBe(body);
+  });
+
+  it('keeps a short anchor parenthetical with its heading', () => {
+    const h = '**来源 3《企业考勤管理制度详细手册.doc》**（集团总部知识库）';
+    const split = splitLeadingHeading(h + '该手册提到员工上下班均需打卡[3]。');
+    expect(split!.heading).toBe(h);
+    expect(split!.rest).toBe('该手册提到员工上下班均需打卡[3]。');
+  });
+
+  it('leaves prose containing a version number alone', () => {
+    // "V3.0" must not be mistaken for a numbered section ordinal.
+    expect(splitLeadingHeading('上班时间随版本而不同：现行 V3.0 为弹性打卡 09:00–10:00 [3]，V1.0 则为固定 08:30 [1][4]。')).toBeNull();
+  });
+
+  it('leaves mid-sentence bold emphasis alone', () => {
+    expect(splitLeadingHeading('现行版本为 **V3.0**，弹性打卡 09:00 至 10:00[3]。')).toBeNull();
+  });
+
+  it('returns null when there is no heading to recover', () => {
+    expect(splitLeadingHeading('两份文件内容一致，第三条均规定 08:30[2][4]。')).toBeNull();
   });
 });
