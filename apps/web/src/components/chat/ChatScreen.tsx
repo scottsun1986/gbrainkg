@@ -9,8 +9,8 @@ import { API_BASE_URL, apiHeaders } from '@/lib/api';
 import { appStore } from '@/lib/app-store';
 import { errorMessage, asRecord, str } from '@/lib/errors';
 import {
-  applyPoll, isTerminal, labelForRun, runningConversationIds,
-  type RunPollResult, type RunState,
+  applyPoll, isTerminal, labelForRun, runningConversationIds, STAGE_LABELS,
+  type RunPollResult, type RunStage, type RunState,
 } from '@/lib/stream-registry';
 import { emitToast } from '@/lib/app-events';
 import { AnswerMarkdown } from './AnswerMarkdown';
@@ -88,6 +88,32 @@ function collectRunCitations(run: RunPollResult): Citation[] {
 
 function mapTraceNodes(trace: unknown): TraceNode[] {
   return Array.isArray(trace) ? trace as TraceNode[] : [];
+}
+
+interface TraceStats { total: number; success: number; warnings: number; failed: number; running: number; duration: number | null }
+
+/**
+ * Summarise a set of trace nodes.
+ *
+ * This has to run over the nodes actually on screen. The summary bar used to
+ * read the parent's stats, which were computed from the message's own trace —
+ * empty for any message loaded from history, since the conversation endpoint
+ * strips processingTrace. After the lazy fetch filled the list the bar kept
+ * showing the empty numbers: every history message read "0/0 个节点正常".
+ */
+function summarizeTrace(traceNodes: TraceNode[]): TraceStats {
+  const started = traceNodes.map((node) => Date.parse(node.startedAt || '')).filter(Number.isFinite);
+  const finished = traceNodes.map((node) => Date.parse(node.finishedAt || '')).filter(Number.isFinite);
+  return {
+    total: traceNodes.length,
+    success: traceNodes.filter((node) => node.status === 'success' || node.status === 'skipped').length,
+    warnings: traceNodes.filter((node) => node.status === 'warning').length,
+    failed: traceNodes.filter((node) => node.status === 'failed').length,
+    running: traceNodes.filter((node) => node.status === 'running').length,
+    duration: started.length && finished.length
+      ? Math.max(0, Math.max(...finished) - Math.min(...started))
+      : null,
+  };
 }
 
 function collectConversationCitations(conversation: ConversationPayload): Citation[] {
@@ -177,10 +203,14 @@ export function ChatScreen(){
   // value belonged to whichever conversation the user last looked at, so
   // switching away dropped the progress indicator of the conversation that was
   // still generating (production: the stage nodes vanished on navigate).
-  const stageLabel = useMemo(
-    () => (viewKey ? labelForRun(runsRef.current.get(viewKey)) : null),
+  // The raw stage key drives the pipeline chips; the label is what the status
+  // pill shows. Passing only the label made every STAGE_TO_PIPELINE lookup miss.
+  const viewRun = useMemo(
+    () => (viewKey ? runsRef.current.get(viewKey) : undefined),
     [viewKey, runningIds],
   );
+  const viewStage = viewRun?.status === 'running' ? viewRun.stage : null;
+  const stageLabel = useMemo(() => labelForRun(viewRun), [viewRun]);
   const allSel = selected.length === visibleKbs.length;
   const scopeLabel = allSel ? '我可见的全部' : (selected.length === 0 ? '未选择任何库' : `已选 ${selected.length} 库`);
 
@@ -702,6 +732,8 @@ export function ChatScreen(){
                 selectedCount={selected.length}
                 activeCitation={activeCite}
                 conversationId={activeConv}
+                stageLabel={mi === messages.length - 1 ? stageLabel : null}
+                stageKey={mi === messages.length - 1 ? viewStage : null}
                 lastUserText={lastUserText}
                 onCitation={handleAnswerCitation}
                 onPreview={previewCitation}
@@ -812,6 +844,10 @@ interface MessageItemProps {
   activeCitation: number | null;
   /** 该消息所属会话：调用链明细按需拉取时要用 */
   conversationId?: string | null;
+  /** 当前运行阶段文案：用于状态提示 */
+  stageLabel?: string | null;
+  /** 当前运行阶段键：非流式下没有 trace 节点，管线进度靠它 */
+  stageKey?: string | null;
   lastUserText?: string;
   onCitation: (source: Citation, index: number) => void;
   onPreview: (citation: Citation) => void;
@@ -837,24 +873,9 @@ const MessageItem = memo(function MessageItem(props: MessageItemProps) {
 
 const AiMessageBody = memo(function AiMessageBody({
   msg, scopeLabel, allSel, selectedCount, activeCitation, conversationId, lastUserText,
-  onCitation, onPreview, onCopy, onResend, onFeedback,
+  stageLabel, stageKey, onCitation, onPreview, onCopy, onResend, onFeedback,
 }: MessageItemProps) {
   const traceNodes = useMemo(() => (Array.isArray(msg.trace) ? (msg.trace as TraceNode[]) : []), [msg.trace]);
-  const traceStats = useMemo(() => {
-    const started = traceNodes.map((node) => Date.parse(node.startedAt || '')).filter(Number.isFinite);
-    const finished = traceNodes.map((node) => Date.parse(node.finishedAt || '')).filter(Number.isFinite);
-    return {
-      total: traceNodes.length,
-      success: traceNodes.filter((node) => node.status === 'success' || node.status === 'skipped').length,
-      warnings: traceNodes.filter((node) => node.status === 'warning').length,
-      failed: traceNodes.filter((node) => node.status === 'failed').length,
-      running: traceNodes.filter((node) => node.status === 'running').length,
-      duration: started.length && finished.length
-        ? Math.max(0, Math.max(...finished) - Math.min(...started))
-        : null,
-    };
-  }, [traceNodes]);
-
   return (
     <div className="msg msg-ai">
       <div className="body">
@@ -863,16 +884,20 @@ const AiMessageBody = memo(function AiMessageBody({
           <span>百纳 · 大脑综述</span>
           <span style={{color:'var(--ink-4)'}}>· 你的大脑 · {scopeLabel}{allSel ? `（${selectedCount} 库）` : ''}</span>
         </div>
-        {/* 流式生成期间展示动态管线进度 */}
-        {!msg.done && traceNodes.length > 0 && <PipelineProgress nodes={traceNodes} />}
+        {/* 生成期间展示动态管线进度：非流式下没有 trace 节点，改用 run 的阶段 */}
+        {!msg.done && (traceNodes.length > 0 || stageKey) && <PipelineProgress nodes={traceNodes} stage={stageKey} />}
         <AnswerMarkdown content={msg.text} sources={msg.sources} activeCitation={activeCitation} streaming={!msg.done} onCitation={onCitation} />
         {msg.done && (msg.sources?.length ?? 0) > 0 && (
           <div className="answer-sources"><span>来源：</span>{(msg.sources || []).map((source: Citation, index: number) => <button key={source.id || index} onClick={()=>onPreview(source)} title="打开原始文档预览">[{source.citationIndex || index + 1}] {source.title}</button>)}</div>
         )}
-        {/* 历史消息不再随会话列表下发 trace（单条可达百 KB），折叠时按需拉取 */}
+        {/* 历史消息不再随会话列表下发 trace（单条可达百 KB），折叠时按需拉取。
+            生成中的消息还没有 messageId 可拉取，改用当前阶段显示调用链进度 ——
+            否则这一栏在整轮生成期间完全不出现（生产回归）。 */}
         {msg.done && msg.id && conversationId
-          ? <TraceDetails nodes={traceNodes} stats={traceStats} conversationId={conversationId} messageId={msg.id} />
-          : traceNodes.length > 0 && <TraceDetails nodes={traceNodes} stats={traceStats} />}
+          ? <TraceDetails nodes={traceNodes} conversationId={conversationId} messageId={msg.id} />
+          : (!msg.done && stageLabel)
+            ? <TraceDetails nodes={traceNodes} liveStage={stageLabel} />
+            : traceNodes.length > 0 && <TraceDetails nodes={traceNodes} />}
         {msg.done && (
           <div className="actions">
             <button onClick={()=>onCopy(msg.text)}><Icon name="copy" size={12}/> 复制</button>
@@ -894,10 +919,33 @@ const PIPELINE_STAGES: [string, string][] = [
   ['citation_validation', '引用校验'],
 ];
 
-function PipelineProgress({ nodes }: { nodes: TraceNode[] }) {
+/**
+ * `stage` is the only progress signal while a non-streaming run is in flight:
+ * the trace is persisted with the finished answer, so there are no nodes to
+ * read mid-turn. The backend's coarse stage maps onto the same six chips, which
+ * is what kept this view alive after streaming was removed.
+ */
+const STAGE_TO_PIPELINE: Record<string, string> = {
+  queued: 'query_rewrite',
+  retrieving: 'gbrain_retrieval',
+  reranking: 'confidence_rerank',
+  generating: 'llm_generation',
+  verifying: 'grounding_gate',
+  persisting: 'citation_validation',
+};
+
+function PipelineProgress({ nodes, stage }: { nodes: TraceNode[]; stage?: string | null }) {
   const activeIds = new Set(nodes.map((n) => n.id));
   const doneIds = new Set(nodes.filter((n) => n.status === 'success' || n.status === 'skipped').map((n) => n.id));
   const runningIds = new Set(nodes.filter((n) => n.status === 'running').map((n) => n.id));
+  const stageNode = stage ? STAGE_TO_PIPELINE[stage] : undefined;
+  // With no nodes yet, mark every stage before the current one as reached so the
+  // chips fill in left to right instead of all sitting at "pending".
+  if (stageNode && nodes.length === 0) {
+    const index = PIPELINE_STAGES.findIndex(([id]) => id === stageNode);
+    PIPELINE_STAGES.slice(0, Math.max(index, 0)).forEach(([id]) => { doneIds.add(id); activeIds.add(id); });
+    if (index >= 0) { runningIds.add(stageNode); activeIds.add(stageNode); }
+  }
   return (
     <div className="pipeline-progress" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '8px 0 4px', fontSize: 12, lineHeight: 1 }}>
       {PIPELINE_STAGES.map(([id, label]) => {
@@ -931,7 +979,7 @@ function PipelineProgress({ nodes }: { nodes: TraceNode[] }) {
  * 节点的 details JSON 序列化进 DOM——长会话切换不再为每条消息的历史
  * trace 做全量 stringify。
  */
-const TraceDetails = memo(function TraceDetails({ nodes, stats, conversationId, messageId }: { nodes: TraceNode[]; stats: { total: number; success: number; warnings: number; failed: number; running: number; duration: number | null }; conversationId?: string; messageId?: string }) {
+const TraceDetails = memo(function TraceDetails({ nodes, conversationId, messageId, liveStage }: { nodes: TraceNode[]; conversationId?: string; messageId?: string; liveStage?: string | null }) {
   const [open, setOpen] = useState(false);
   // 会话列表不再随每条消息下发 processingTrace（单条可达百 KB）。首次展开时
   // 拉取一次，之后用组件内缓存；summary 只在未加载时显示"点击展开"。
@@ -958,17 +1006,19 @@ const TraceDetails = memo(function TraceDetails({ nodes, stats, conversationId, 
     if (next) loadLazyTrace();
   }, [loadLazyTrace]);
   const displayNodes = nodes.length > 0 ? nodes : (lazyNodes ?? []);
-  const displayStats = nodes.length > 0 || lazyNodes !== null
-    ? stats
-    : { total: 0, success: 0, warnings: 0, failed: 0, running: 0, duration: null };
+  // Recomputed over the nodes on screen, not taken from the parent: after the
+  // lazy fetch `nodes` is still empty and the inherited stats read 0/0.
+  const displayStats = useMemo(() => summarizeTrace(displayNodes), [displayNodes]);
   return (
     <details className="retrieval" onToggle={onToggle}>
       <summary>
         <Icon name="spark" size={12} color="var(--evidence)"/>
         <span>本次响应处理调用链 ·</span>
-        {lazyNodes === null && nodes.length === 0
-          ? <b>{lazyLoading ? '加载中…' : '展开查看'}</b>
-          : <b>{displayStats.failed ? `${displayStats.failed} 个异常` : displayStats.running ? `${displayStats.running} 个执行中` : `${displayStats.success}/${displayStats.total} 个节点正常`}</b>}
+        {displayStats.total === 0 && liveStage
+          ? <b>{STAGE_LABELS[liveStage as RunStage] ?? '处理中'}</b>
+          : displayStats.total === 0 && lazyNodes === null && nodes.length === 0
+            ? <b>{lazyLoading ? '加载中…' : '展开查看'}</b>
+            : <b>{displayStats.failed ? `${displayStats.failed} 个异常` : displayStats.running ? `${displayStats.running} 个执行中` : `${displayStats.success}/${displayStats.total} 个节点正常`}</b>}
         {displayStats.warnings > 0 && <span className="trace-summary-warning">· {displayStats.warnings} 个警告</span>}
         {displayStats.duration !== null && <span className="trace-total">{displayStats.duration}ms</span>}
         <span className="trace-expand">展开 ▾</span>
