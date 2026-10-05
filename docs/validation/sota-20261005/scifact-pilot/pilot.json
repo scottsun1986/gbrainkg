@@ -1,0 +1,33 @@
+{
+  "api": "http://127.0.0.1:3202",
+  "kbName": "EVAL-BEIR-SciFact-Official-Full-20261005",
+  "officialCorpusCount": 5183,
+  "testQueryCount": 300,
+  "selectedCorpusIds": [
+    "10009203",
+    "10010651",
+    "10012166",
+    "10015292",
+    "10017612",
+    "10024681",
+    "10029891",
+    "10029970",
+    "10039688",
+    "1006165"
+  ],
+  "corpusSha256": "c01a0a47ad4b1b976618da46dd2699bc9f0f699b00c8d525ea1176f6b739ae07",
+  "qrelsSha256": "5602d9f31c96d309a906692e1b722a9acfc4138c5d52e06d47bbb89a9c4ab7c3",
+  "source": "/home/scottsun/gbrainkg/tests/evaluation/intl-benchmark/results/luna-fresh-20261005-161918/scifact/scifact",
+  "workers": 1,
+  "startedAt": "2026-10-05T01:03:37+0800",
+  "qualityScoresComputed": false,
+  "status": "ready",
+  "kbId": "f7d28686-ff50-44a9-8c20-67a0cb976eb6",
+  "submittedDocuments": 10,
+  "failures": [],
+  "submissionSeconds": 0.44,
+  "publishedReadyCount": 10,
+  "elapsedSeconds": 5.51,
+  "remainingCorpusCount": 5173,
+  "followup": "Select remaining official corpus IDs by subtracting saved manifest values; ingest into this same KB. Do not submit the first ten IDs again."
+}

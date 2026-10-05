@@ -95,6 +95,33 @@ describe('ObjectStorageService', () => {
     ObjectStorageService.resetFallbackWarning();
   });
 
+  it('strict MinIO deletion and verification cannot fall back to local storage', async () => {
+    await withoutMinioEnv(async () => {
+      const service = new ObjectStorageService();
+      await expect(service.delete('raw/test', 'minio', { strictProvider: true })).rejects.toThrow('MinIO configuration');
+      await expect(service.exists('raw/test', 'minio')).rejects.toThrow('MinIO configuration');
+    });
+  });
+  it('existence probe treats only MinIO 404 as absence', async () => {
+    await withMinioEnv(async () => {
+      const service = new ObjectStorageService();
+      const request = jest.spyOn(service as any, 'minioRequest').mockRejectedValue(Object.assign(new Error('missing'), { statusCode: 404 }));
+      expect(await service.exists('raw/test', 'minio')).toBe(false);
+      request.mockRejectedValue(Object.assign(new Error('forbidden'), { statusCode: 403 }));
+      await expect(service.exists('raw/test', 'minio')).rejects.toThrow('forbidden');
+    });
+  });
+
+  it('strict MinIO deletion is idempotent on an already absent object', async () => {
+    await withMinioEnv(async () => {
+      const service = new ObjectStorageService();
+      const request = jest.spyOn(service as any, 'minioRequest').mockRejectedValue(Object.assign(new Error('missing'), { statusCode: 404 }));
+      await expect(service.delete('raw/test', 'minio', { strictProvider: true })).resolves.toBeUndefined();
+      request.mockRejectedValue(Object.assign(new Error('forbidden'), { statusCode: 403 }));
+      await expect(service.delete('raw/test', 'minio', { strictProvider: true })).rejects.toThrow('forbidden');
+    });
+  });
+
   describe('path safety', () => {
     it('rejects path traversal in object keys (via resolveLocal semantics)', async () => {
       const svc = new ObjectStorageService();

@@ -1,0 +1,74 @@
+{
+  "status": "passed",
+  "submission_calls": [
+    {
+      "kind": "submit",
+      "cid": "conv-A",
+      "rid": "run-A",
+      "message": "Question A"
+    },
+    {
+      "kind": "submit",
+      "cid": "conv-B",
+      "rid": "run-B",
+      "message": "Question B"
+    },
+    {
+      "kind": "poll",
+      "rid": "run-B"
+    },
+    {
+      "kind": "poll",
+      "rid": "run-A"
+    },
+    {
+      "kind": "poll",
+      "rid": "run-B"
+    },
+    {
+      "kind": "poll",
+      "rid": "run-A"
+    },
+    {
+      "kind": "poll",
+      "rid": "run-A"
+    },
+    {
+      "kind": "poll",
+      "rid": "run-A"
+    },
+    {
+      "kind": "poll",
+      "rid": "run-seed"
+    },
+    {
+      "kind": "poll",
+      "rid": "run-A"
+    },
+    {
+      "kind": "poll",
+      "rid": "run-seed"
+    }
+  ],
+  "history_calls": [
+    {
+      "cid": "conv-A",
+      "url": "http://localhost:3200/api/v1/conversations/conv-A?limit=50"
+    },
+    {
+      "cid": "seed-old",
+      "url": "http://localhost:3200/api/v1/conversations/seed-old?limit=50"
+    },
+    {
+      "cid": "seed-old",
+      "url": "http://localhost:3200/api/v1/conversations/seed-old?limit=50&before=history-cursor"
+    }
+  ],
+  "cancel_calls": [
+    "run-B"
+  ],
+  "trace_calls": [
+    "/conversations/seed-old/messages/old-a-49/trace"
+  ],
+  "page_errors": []
+}

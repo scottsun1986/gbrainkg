@@ -1,3 +1,4 @@
+import { getRequestContext } from '../observability/request-context';
 import { TableEvidenceService } from '../retrieval/table-evidence.service';
 import { countTables } from './table-count';
 import { Test, TestingModule } from "@nestjs/testing";
@@ -290,6 +291,37 @@ describe("ChatService", () => {
       events.some((e) => (e.data as any).type === "citation"),
     ).toBeTruthy();
     expect(events.some((e) => (e.data as any).type === "done")).toBeTruthy();
+  });
+
+  it('captures source dependencies before returning evidence without a model', async () => {
+    const previous = process.env.CORE_AUTH_ENFORCE;
+    const previousRls = process.env.RLS_ENFORCE;
+    process.env.CORE_AUTH_ENFORCE = '1';
+    process.env.RLS_ENFORCE = '1';
+    jest.spyOn((service as any).modelConfigService, 'getLlmChatConfig').mockResolvedValue(null);
+    mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(['kb-1']);
+    mockCompilerService.ensureUserBrainRepo.mockResolvedValue({ gitRepoUrl: '/tmp/repo' });
+    mockPrisma.document.findMany.mockResolvedValue([
+      { id: 'doc-1', kbId: 'kb-1', aclMode: 'inherit', title: '规则.md', version: 1,
+        activeVersionId: null, contentHash: 'hash', effectiveTo: null },
+    ]);
+    mockPrisma.$queryRaw.mockImplementation(async (sql: any) => String(sql).includes('AuthorizationState')
+      ? [{ revision: 1n, policyVersion: 'core-auth-v1', active: true, expiresAt: null }] : []);
+    try {
+      const stream = await service.handleChatStream('user-1', '测试问题');
+      const events = await lastValueFrom(stream.pipe(toArray()));
+      const done = events.find(event => (event.data as any).type === 'done');
+      expect((done?.data as any).dependency_manifest).toEqual([
+        { documentId: 'doc-1', versionId: null, number: 1, sourceHash: 'hash', effectiveTo: null },
+      ]);
+      expect(events.some(event => (event.data as any).type === 'citation')).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env.CORE_AUTH_ENFORCE;
+      else process.env.CORE_AUTH_ENFORCE = previous;
+      if (previousRls === undefined) delete process.env.RLS_ENFORCE;
+      else process.env.RLS_ENFORCE = previousRls;
+      mockPrisma.$queryRaw.mockReset();
+    }
   });
 
   it('turns graph relations into ACL-checked source citations instead of graph prose', async () => {
@@ -919,6 +951,43 @@ describe("ChatService", () => {
     expect(result.results[0].previewUrl).toContain("/api/v1/kbs/kb-1/documents/doc-1/preview-config");
   });
 
+  it("runs final ACL verification after retrieval deadline exhaustion and stops further probes", async () => {
+    const originalAdaptive = process.env.ADAPTIVE_RETRIEVAL_ENABLED;
+    process.env.ADAPTIVE_RETRIEVAL_ENABLED = 'true';
+    mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(["kb-1"]);
+    mockCompilerService.ensureUserBrainRepo.mockResolvedValue({ gitRepoUrl: "/tmp/repo" });
+    const poolAcl = jest.spyOn(service as any, 'filterQueryResultByCurrentPermission').mockImplementation(async (result: any) => {
+      expect(getRequestContext()?.userId).toBe('user-1');
+      expect(getRequestContext()?.execution).toBeUndefined();
+      return result;
+    });
+    const finalAcl = jest.spyOn(service as any, 'filterSearchResultsForUser').mockImplementation(async () => {
+      expect(getRequestContext()?.execution).toBeUndefined();
+      return []; // no verified candidates => no results
+    });
+    const fallback = jest.spyOn(service, 'searchChunksFallback').mockResolvedValue([]);
+    let retrievalCalls = 0;
+    const rerank = jest.spyOn(service as any, 'rerankByProbeGroups').mockImplementation(async () => {
+      retrievalCalls = fallback.mock.calls.length;
+      getRequestContext()!.execution!.deadline.abort();
+    });
+    try {
+      const result = await service.searchKnowledgeForAgent('user-1', 'Which regulation applies?', ['kb-1'], 100);
+      expect(poolAcl).toHaveBeenCalled();
+      expect(finalAcl).toHaveBeenCalled();
+      expect(result.results).toEqual([]);
+      expect(result.execution).toBeDefined();
+      // Probe work before rerank is allowed; no post-timeout augmentation.
+      expect(fallback).toHaveBeenCalledTimes(retrievalCalls);
+      finalAcl.mockRejectedValueOnce(new Error('ACL unavailable'));
+      await expect(service.searchKnowledgeForAgent('user-1', 'Which regulation applies?', ['kb-1'], 100)).rejects.toThrow('ACL unavailable');
+    } finally {
+      poolAcl.mockRestore(); finalAcl.mockRestore(); fallback.mockRestore(); rerank.mockRestore();
+      if (originalAdaptive === undefined) delete process.env.ADAPTIVE_RETRIEVAL_ENABLED;
+      else process.env.ADAPTIVE_RETRIEVAL_ENABLED = originalAdaptive;
+    }
+  });
+
   it("weknora_retrieval runs in shadow mode when WeKnora client is provided", async () => {
     const mockWeKnoraClient = {
       search: jest.fn().mockResolvedValue([
@@ -1013,8 +1082,18 @@ describe("ChatService", () => {
     ];
     const res = service.resolveTemporalPrecedence(citations);
     expect(res.hasVersionConflict).toBe(true);
-    expect(res.temporalNotice).toContain("最高效力优先规则");
+    expect(res.temporalNotice).toContain("版本序号和上传时间不能证明旧版已废止");
     expect(res.temporalNotice).toContain("V4");
+  });
+
+  it('does not infer version precedence across knowledge bases', () => {
+    const citations = [
+      { kbId: 'kb-a', docTitle: 'Shared policy', version: 4 },
+      { kbId: 'kb-b', docTitle: 'Shared policy', version: 1 },
+    ];
+    const res = service.resolveTemporalPrecedence(citations);
+    expect(res.hasVersionConflict).toBe(false);
+    expect(res.citations).toEqual(citations);
   });
 
   it('boosts rank of overlapping citations via WeKnora RRF fusion', () => {

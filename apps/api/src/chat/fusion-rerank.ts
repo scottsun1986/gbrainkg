@@ -4,7 +4,7 @@ import { rerankPairs } from '../retrieval/pair-reranker';
 import { recordFailopen } from '../observability/failopen';
 import { Logger } from "@nestjs/common";
 import { createHash } from "node:crypto";
-import { assertRequestAuthorization } from '../permission/authorization-revision';
+import { assertRequestAuthorization, rethrowAuthorizationFailure } from '../permission/authorization-revision';
 import type { RetrievedEvidence } from "../retrieval/weknora-client";
 import type { ModelConfigService } from "../model-config.service";
 import { extractRawChunkText } from "./retrieval-arms";
@@ -323,7 +323,8 @@ export class FusionRerankService {
             target.scoreSource = 'rerank';
             target.rerankQuery = rerankQuery === question ? undefined : rerankQuery;
           }
-        } catch {
+        } catch (error) {
+          rethrowAuthorizationFailure(error);
           // Fail-open: this group keeps its arm scores.
         }
       }),

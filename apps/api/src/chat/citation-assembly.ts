@@ -1016,6 +1016,7 @@ export class CitationAssemblyService {
     question?: string,
     userScope?: { fingerprint: string; knowledgeEpoch: number; cacheable?: boolean },
     modelName?: string,
+    answerKind?: 'refusal',
   ) {
     trace.start("citation_validation", "引用校验与映射", "校验回答角标并绑定到原始文档预览");
     // If the LLM cited specific [n] sources, match and retain them
@@ -1195,6 +1196,7 @@ export class CitationAssemblyService {
     });
     subscriber.next({
       data: { type: "done", total_tokens: totalTokens, latency_ms: 0,
+        answer_kind: answerKind,
         dependency_manifest: getRequestContext()?.evidenceDependencies,
         execution: getRequestContext()?.execution?.report() },
     });

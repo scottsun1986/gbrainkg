@@ -27,4 +27,22 @@ describe('request pair reranking', () => {
     });
     expect(fetch).not.toHaveBeenCalled();
   });
+  it('cancels a stalled reranker using the shared deadline rather than the provider timeout', async () => {
+    const execution = new QueryExecution('question', true);
+    jest.spyOn(execution.deadline, 'remainingMs').mockReturnValue(25);
+    let upstreamSignal: AbortSignal | undefined;
+    global.fetch = jest.fn(async (_url, options) => {
+      upstreamSignal = options!.signal as AbortSignal;
+      return await new Promise((_resolve, reject) => {
+        upstreamSignal!.addEventListener('abort', () => reject(upstreamSignal!.reason), { once: true });
+      });
+    }) as any;
+    const started = Date.now();
+    await runWithRequestContext({ requestId: 'stalled-reranker', execution }, async () => {
+      await expect(rerankPairs(config, 'question', ['one', 'two'], 60000)).rejects.toThrow();
+    });
+    expect(upstreamSignal?.aborted).toBe(true);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
 });

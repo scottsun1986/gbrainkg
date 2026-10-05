@@ -88,3 +88,12 @@ describe('poll cadence', () => {
     }
   });
 });
+
+describe('run identity', () => {
+  it('ignores a late result from an older turn in the same conversation', () => {
+    const current: RunMap = new Map([['conv-a', running('conv-a', 'new-run')]]);
+    const after = applyPoll(current, 'conv-a', { ...running('conv-a', 'old-run'), status: 'completed' });
+    assert.equal(after.get('conv-a')?.runId, 'new-run');
+    assert.equal(after.get('conv-a')?.status, 'running');
+  });
+});

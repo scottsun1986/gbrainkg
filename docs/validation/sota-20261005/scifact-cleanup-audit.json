@@ -1,0 +1,68 @@
+{
+  "date": "2026-10-05",
+  "kbId": "f7d28686-ff50-44a9-8c20-67a0cb976eb6",
+  "scope": "EVAL-BEIR-SciFact-Official-Full-20261005 only",
+  "userRequestedReadyTarget": 910,
+  "finalManifestDocuments": 1110,
+  "databaseDocuments": 1110,
+  "publishedReady": 1110,
+  "notReady": 0,
+  "permanentlyDeleted": 0,
+  "officialCorpusTotal": 5183,
+  "notIngestedDocuments": 4073,
+  "queueAfterStop": {
+    "wait": 0,
+    "active": 0,
+    "delayed": 0,
+    "failed": 1
+  },
+  "positiveQrels": {
+    "uniqueDocuments": 283,
+    "readyDocuments": 95,
+    "coverage": 0.3357,
+    "queriesWithAllPositiveQrelsReady": 91,
+    "queries": 300
+  },
+  "decision": "No unready documents remained in the new benchmark KB, so none were deleted. The 4,073 remaining official corpus documents had never been ingested and do not exist to delete. No ready documents were deleted.",
+  "otherArchivedKbRecords": {
+    "EVAL-BEIR-SciFact-Full-20260927-Retry": {
+      "documents": 5183,
+      "indexReadiness_pending": 5183,
+      "kbStatus": "archived",
+      "deleteRouteAvailable": false
+    },
+    "EVAL-BEIR-SciFact-Full-20260927": {
+      "documents": 600,
+      "indexing_pending": 90,
+      "indexing_degraded": 3,
+      "indexing_ready": 500,
+      "published_ready": 7,
+      "kbStatus": "archived",
+      "deleteRouteAvailable": false
+    },
+    "action": "Not modified. Document API requires an active KB; database trigger rejected an attempted temporary activation with Invalid KB status transition (transaction rolled back). No document rows were deleted."
+  },
+  "archivedCleanupAttempt": {
+    "preflightTargets": 5776,
+    "targetBreakdown": {
+      "EVAL-BEIR-SciFact-Full-20260927": 593,
+      "EVAL-BEIR-SciFact-Full-20260927-Retry": 5183
+    },
+    "operation": "No document deletion ran. Temporary archived-to-active status change was rejected by DB trigger: Invalid KB status transition; transaction rolled back.",
+    "deleted": 0,
+    "verifiedAfterAttempt": {
+      "EVAL-BEIR-SciFact-Full-20260927": {
+        "kbStatus": "archived",
+        "documents": 600,
+        "publishedReady": 7,
+        "notReady": 593
+      },
+      "EVAL-BEIR-SciFact-Full-20260927-Retry": {
+        "kbStatus": "archived",
+        "documents": 5183,
+        "publishedReady": 0,
+        "notReady": 5183
+      }
+    }
+  }
+}

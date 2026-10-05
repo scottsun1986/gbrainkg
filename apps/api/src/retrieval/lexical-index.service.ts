@@ -70,11 +70,12 @@ export class LexicalIndexService {
    * Remove a document's postings and repair df/N. Called on the delete path
    * immediately before the Document row (and therefore its chunks) disappear.
    */
-  async removeDocument(kbId: string, documentId: string): Promise<{ removed: number; terms: number }> {
-    if (!this.isEnabled()) return { removed: 0, terms: 0 };
+  async removeDocument(kbId: string, documentId: string, options: { strict?: boolean } = {}): Promise<{ removed: number; terms: number }> {
+    if (!options.strict && !this.isEnabled()) return { removed: 0, terms: 0 };
     try {
       return await unindexDocument(this.prisma, kbId, documentId);
     } catch (err) {
+      if (options.strict) throw err;
       this.logger.warn(
         `Lexical unindex failed for ${documentId}: ${err instanceof Error ? err.message : String(err)}`,
       );

@@ -1170,7 +1170,7 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  async onKnowledgeDeleted(kbId: string, docId: string) {
+  async onKnowledgeDeleted(kbId: string, docId: string, options: { requireMapping?: boolean; deferSynthesis?: boolean } = {}): Promise<string[]> {
     const db: any = this.prisma as any;
     const mappedSources = db.brainSourceDocument?.findMany
       ? await db.brainSourceDocument.findMany({
@@ -1181,6 +1181,8 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
     const sourceKeys = new Set<string>(
       mappedSources.map((item: any) => item.source?.sourceKey).filter(Boolean),
     );
+    if (options.requireMapping && !sourceKeys.size) return [];
+    const invalidatedScopes = new Set<string>();
     // Source key = hash(kbId), so the deleted doc's KB has exactly one source.
     // Fetch it directly instead of resolving per-user plans (N+1 query storm).
     const kbSourceKey = sourceKeyForKnowledgeBase(kbId);
@@ -1202,8 +1204,10 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
         `Removed document ${docId} from GBrain source ${sourceKey}.`,
       );
       const scopeIds = await this.invalidateScopesForSource(sourceKey);
-      await this.queueScopeSynthesis(scopeIds, CompilePriority.HIGH);
+      for (const scopeId of scopeIds) invalidatedScopes.add(scopeId);
+      if (!options.deferSynthesis) await this.queueScopeSynthesis(scopeIds, CompilePriority.HIGH);
     }
+    return [...invalidatedScopes];
   }
 
   /**

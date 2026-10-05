@@ -26,6 +26,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 MODE="${1:-quick}"
+case "$MODE" in quick|full) ;; *) echo "Unknown mode: $MODE" >&2; exit 2 ;; esac
 
 export API_BASE="${API_BASE:-http://127.0.0.1:3202}"
 if [ -z "${LLMWIKI_TOKEN:-}" ] && [ -f /tmp/llmwiki-eval-token ]; then
@@ -41,73 +42,70 @@ FAILURES=0
 
 say() { printf '\n=== %s\n' "$1"; }
 
-clear_cache() {
-  docker exec -e PGPASSWORD=llmwiki_pass llmwiki-postgres \
-    psql -h 127.0.0.1 -p 5432 -U llmwiki -d llmwiki -Atc 'DELETE FROM "SemanticCache";' >/dev/null 2>&1 || \
-    echo "  (warning: could not clear SemanticCache; measurements may replay cached answers)"
-}
+# Each invocation owns fresh artifacts. Never mutate shared cache/database state.
+mkdir -p "$PROJECT_ROOT/tests/evaluation/results"
+RUN_DIR="$(mktemp -d "$PROJECT_ROOT/tests/evaluation/results/sota-gate-XXXXXXXX")"
+echo "Run artifacts: $RUN_DIR"
+export INTL_RESULTS_DIR="$RUN_DIR/public"
+mkdir -p "$INTL_RESULTS_DIR"
+echo "Cache state is preserved; these runs do not measure cold-cache latency."
 
 say "1/4 公开基准检索门禁（n=100/数据集，对比 v15 基线）"
-clear_cache
 ( cd "$SCRIPT_DIR" && python3 benchmark_suite.py all --mode retrieval --limit 100 --gate ) || FAILURES=$((FAILURES+1))
 
 if [ "$MODE" = "full" ]; then
-  say "2/4 公开基准端到端（n=100/数据集，跑前清缓存）"
+  say "2/4 公开基准端到端（n=100/数据集，保留缓存）"
   for ds in 2wiki hotpot musique; do
-    clear_cache
     ( cd "$SCRIPT_DIR" && python3 benchmark_suite.py "$ds" --mode full --limit 100 --gate ) || FAILURES=$((FAILURES+1))
   done
 else
   say "2/4 端到端阶段（quick 模式跳过）"
 fi
 
-say "3/4 无答案类安全门禁（GS-NA 30 题：幻觉率必须为 0）"
+say "3/4 无答案类安全门禁（GS-NA 完整题集）"
 (
   cd "$PROJECT_ROOT/tests/evaluation"
-  EVAL_RESULTS_NAME=sota-gate-na.json python3 -m pytest test_retrieval_quality.py -q \
-    --golden-file=golden_dataset.json -k "GS-NA" >/tmp/sota-gate-na.log 2>&1 || true
-  python3 - <<'PY'
-import json, os, sys
-d = json.load(open('results/sota-gate-na.json'))
-rate = d['summary']['overall'].get('hallucination_rate', 1.0)
-count = d['summary']['overall'].get('count', 0)
-print(f"  可答题 {count} 题，幻觉率 {rate:.3f}")
-if count == 0 or rate > float(os.environ.get("GATE_NO_ANSWER_HALLUCINATION_MAX", "0.01")):
-    print("  ❌ 无答案类出现编造（或未跑起来）")
-    sys.exit(1)
-print("  ✓ 无答案类全部规范作答")
-PY
+  # pytest and the public harness must use the same explicitly selected API.
+  EVAL_API_BASE_URL="${API_BASE%/}/api/v1" EVAL_LIMIT=0 \
+    EVAL_RESULTS_NAME="${RUN_DIR##*/}/no-answer.json" \
+    python3 -m pytest test_retrieval_quality.py -q \
+      --golden-file=golden_dataset.json -k "GS-NA" >"$RUN_DIR/no-answer.log" 2>&1 &&
+    python3 "$SCRIPT_DIR/sota_gate_results.py" no-answer \
+      "$RUN_DIR/no-answer.json" "$PROJECT_ROOT/tests/evaluation/golden_dataset.json"
 ) || FAILURES=$((FAILURES+1))
 
 if [ -f "$PROBE_DIR/floors.json" ]; then
   say "4/4 定向失败集回归（历史失败题，不得低于下限）"
-  python3 - "$PROBE_DIR" "$PROBE_TOLERANCE" "$SCRIPT_DIR" <<'PY' || FAILURES=$((FAILURES+1))
+  PYTHONPATH="$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 - "$PROBE_DIR" "$PROBE_TOLERANCE" "$SCRIPT_DIR" "$RUN_DIR" <<'PY' || FAILURES=$((FAILURES+1))
 import json, os, subprocess, sys
-probe_dir, tolerance, script_dir = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+from pathlib import Path
+from sota_gate_results import validate_probe
+probe_dir, tolerance, script_dir, run_dir = sys.argv[1:]
 floors = json.load(open(os.path.join(probe_dir, 'floors.json')))
-bad = []
+tolerance = int(tolerance)
+if tolerance < 0:
+    raise ValueError('PROBE_TOLERANCE must be nonnegative')
+if not floors:
+    raise ValueError('empty hard-probe floors')
 for ds, info in floors.items():
     env = dict(os.environ)
     env['EVAL_SET_PATH'] = os.path.join(probe_dir, f'hard-multihop-{ds}.json')
     env['QA_WORKERS'] = env.get('QA_WORKERS', '3')
+    output = Path(run_dir) / 'probes' / ds
+    output.mkdir(parents=True)
+    env['INTL_RESULTS_DIR'] = str(output)
     subprocess.run(['python3', 'benchmark_suite.py', ds, '--mode', 'full'],
                    cwd=script_dir, env=env, check=True)
-import glob
-for ds, info in floors.items():
-    expected = info['probe_passed']
-    newest = sorted(glob.glob(os.path.join(script_dir, 'results', f'intl-{ds}-*.json')))[-1]
-    run = json.load(open(newest))
-    if run['n'] != info['cases']:
-        continue
-    passed = round(run['qa']['containment'] * run['n'])
-    flag = '✓' if passed >= expected - tolerance else '❌'
-    print(f"  {flag} {ds}: {passed}/{run['n']}（下限 {expected}，容差 {tolerance}）")
-    if passed < expected - tolerance:
-        bad.append(ds)
-sys.exit(1 if bad else 0)
+    files = list(output.glob(f'intl-{ds}-*.json'))
+    if len(files) != 1:
+        raise ValueError(f'{ds}: expected one fresh result, found {len(files)}')
+    expected_qids = [case['qid'] for case in json.loads(Path(env['EVAL_SET_PATH']).read_text())]
+    passed = validate_probe(json.loads(files[0].read_text()), ds, info, tolerance, expected_qids)
+    print(f"  ✓ {ds}: {passed}/{info['cases']}（下限 {info['probe_passed']}，容差 {tolerance}）")
 PY
 else
-  say "4/4 定向失败集（未配置，跳过）"
+  say "4/4 定向失败集（缺少 floors.json，失败）"
+  FAILURES=$((FAILURES+1))
 fi
 
 if [ "$FAILURES" -gt 0 ]; then

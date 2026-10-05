@@ -31,7 +31,8 @@ run(["pnpm", "--filter", "api", "build"])
 run(["node", "tests/integration/core-knowledge-versions.cjs"])
 run(["node", "tests/integration/core-graph-projection.cjs"])
 run(["node", "tests/integration/core-ingestion-replacement.cjs"])
-with (root / "tests/integration/core-knowledge-security.sql").open() as sql:
-    subprocess.run(["docker", "exec", "-i", "llmwiki-postgres", "psql", "-U", "llmwiki", "-d", args.database, "-v", "ON_ERROR_STOP=1"], stdin=sql, check=True)
+for name in ("core-knowledge-security.sql", "artifact-read-guard.sql"):
+    with (root / "tests/integration" / name).open() as sql:
+        subprocess.run(["docker", "exec", "-i", "llmwiki-postgres", "psql", "-U", "llmwiki", "-d", args.database, "-v", "ON_ERROR_STOP=1", "-v", "skip_original=1"], stdin=sql, check=True)
 if args.unit:
     run(["pnpm", "run", "test", "--env-mode=loose", "--force"])

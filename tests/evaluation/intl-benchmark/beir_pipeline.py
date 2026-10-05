@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import random
 import ssl
@@ -106,6 +107,16 @@ def load_beir(dataset_dir: Path):
                 qrels.setdefault(qid, {})[doc_id] = float(score)
             except ValueError:
                 continue
+    if not corpus or not qrels:
+        raise ValueError("BEIR corpus and qrels must be nonempty")
+    for qid, judgments in qrels.items():
+        if qid not in queries or not queries[qid].strip():
+            raise ValueError(f"{qid}: qrels query missing or empty")
+        for doc_id, gain in judgments.items():
+            if not math.isfinite(gain):
+                raise ValueError(f"{qid}/{doc_id}: nonfinite qrel gain")
+            if gain > 0 and doc_id not in corpus:
+                raise ValueError(f"{qid}/{doc_id}: positive qrel document missing from corpus")
     return corpus, queries, qrels
 
 
@@ -133,24 +144,26 @@ class ApiClient:
         preset = os.environ.get("LLMWIKI_TOKEN") or os.environ.get("EVAL_BEARER_TOKEN")
         if preset:
             self.token = preset
-            return self.token
-        status, raw = self._request(
-            "/api/v1/auth/login",
-            "POST",
-            {"username": self.user, "password": self.password},
-            auth=False,
-        )
-        if status not in (200, 201):
-            raise SystemExit(f"login failed ({status}): {raw[:200]}")
-        self.token = json.loads(raw)["token"]
+        else:
+            status, raw = self._request(
+                "/api/v1/auth/login", "POST",
+                {"username": self.user, "password": self.password}, auth=False,
+            )
+            if status not in (200, 201):
+                raise RuntimeError(f"login failed (HTTP {status})")
+            self.token = json.loads(raw).get("token")
+        if not isinstance(self.token, str) or not self.token.strip():
+            raise RuntimeError("authentication response contains no token")
+        # Pre-minted credentials must also prove they work before ingestion/run.
+        status, raw = self._request("/api/v1/auth/me", "GET")
+        if status != 200 or not isinstance(json.loads(raw), dict):
+            raise RuntimeError(f"authentication preflight failed (HTTP {status})")
         return self.token
 
 
 def select_corpus_ids(corpus, qrels, *, limit_docs=None, limit_queries=None, seed=42):
     """Choose a deterministic corpus subset without dropping evaluation golds."""
     all_ids = sorted(corpus.keys())
-    if not limit_docs or limit_docs >= len(all_ids):
-        return all_ids
     qids = sorted(qrels.keys())
     if limit_queries and limit_queries < len(qids):
         qids = qids[:limit_queries]
@@ -165,6 +178,8 @@ def select_corpus_ids(corpus, qrels, *, limit_docs=None, limit_queries=None, see
             f"corpus is missing {len(missing_gold)} positive-qrel documents; "
             f"examples: {missing_gold[:5]}"
         )
+    if limit_docs is None or limit_docs >= len(all_ids):
+        return all_ids
     required = {
         doc_id
         for qid in qids
@@ -191,14 +206,18 @@ def ingest_corpus(client, kb_id, corpus, *, ids=None, workers=4):
             "title": build_beir_title(doc_id, item.get("title", "")),
             "content": item.get("text", ""),
         }
-        status, raw = client._request(f"/api/v1/kbs/{kb_id}/documents/text", "POST", body)
+        try:
+            status, raw = client._request(f"/api/v1/kbs/{kb_id}/documents/text", "POST", body)
+        except Exception as exc:
+            # Keep successful siblings in the returned manifest for safe resume.
+            return doc_id, None, f"submission transport failed: {type(exc).__name__}"
         if status not in (200, 201):
             return doc_id, None, f"HTTP {status}: {raw[:160]}"
         try:
             documents = json.loads(raw).get("documents") or []
             if documents:
                 return doc_id, documents[0].get("id"), None
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, AttributeError, TypeError):
             return doc_id, None, "invalid JSON response"
         return doc_id, None, "response contained no document id"
 
@@ -244,7 +263,12 @@ def wait_for_ready(client, kb_id, expected_total, *, timeout_seconds=7200, poll_
 
 
 def retrieve_run(client, kb_id, queries, qrels, *, manifest=None, top_k=100, workers=4, limit_queries=None):
-    qids = [q for q in qrels.keys() if q in queries]
+    missing_queries = sorted(set(qrels) - set(queries))
+    if missing_queries:
+        raise ValueError(f"qrels queries missing from dataset: {missing_queries[:5]}")
+    qids = sorted(qrels)
+    if not qids:
+        raise ValueError("no qrels queries to evaluate")
     if limit_queries and limit_queries < len(qids):
         qids = qids[:limit_queries]
 
@@ -255,16 +279,21 @@ def retrieve_run(client, kb_id, queries, qrels, *, manifest=None, top_k=100, wor
             try:
                 status, raw = client._request("/api/v1/chat/search", "POST", body)
                 break
-            except Exception:
+            except Exception as exc:
                 if attempt == 2:
-                    return qid, []
+                    raise RuntimeError(f"{qid}: retrieval transport failed after 3 attempts") from exc
                 time.sleep(2 * (attempt + 1))
         if status not in (200, 201):
-            return qid, []
+            raise RuntimeError(f"{qid}: retrieval failed (HTTP {status}); run invalid")
         try:
-            results = json.loads(raw).get("results") or []
-        except json.JSONDecodeError:
-            return qid, []
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"{qid}: invalid retrieval JSON; run invalid") from exc
+        if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
+            raise RuntimeError(f"{qid}: retrieval response lacks result list; run invalid")
+        results = payload["results"]
+        if any(not isinstance(item, dict) for item in results):
+            raise RuntimeError(f"{qid}: malformed retrieval hit; run invalid")
         docids: list[str] = []
         seen = set()
         for item in results:
@@ -273,7 +302,7 @@ def retrieve_run(client, kb_id, queries, qrels, *, manifest=None, top_k=100, wor
                 system_id = item.get("document_id") or item.get("documentId") or item.get("docId")
                 beir_id = manifest.get(str(system_id)) if system_id else None
             if not beir_id:
-                continue
+                raise RuntimeError(f"{qid}: nonempty hit cannot be mapped to a BEIR corpus ID; run invalid")
             if beir_id in seen:
                 continue
             seen.add(beir_id)
@@ -286,6 +315,8 @@ def retrieve_run(client, kb_id, queries, qrels, *, manifest=None, top_k=100, wor
             run[qid] = docids
             if index % 50 == 0:
                 print(f"[retrieve] {index}/{len(qids)}", flush=True)
+    if set(run) != set(qids):
+        raise RuntimeError("retrieval query count mismatch; run invalid")
     return run
 
 
@@ -318,6 +349,69 @@ def _selftest() -> int:
     except ValueError:
         pass
 
+    from unittest.mock import patch
+
+    class FakeClient:
+        def __init__(self, response):
+            self.response = response
+        def _request(self, *args, **kwargs):
+            if isinstance(self.response, Exception):
+                raise self.response
+            return self.response
+
+    class MixedIngestClient:
+        def _request(self, path, method, body):
+            if 'd2' in body['title']:
+                raise OSError('offline')
+            return 201, '{"documents": [{"id": "system-d1"}]}'
+    partial_manifest, failures = ingest_corpus(MixedIngestClient(), 'kb',
+        {"d1": {"text": "one"}, "d2": {"text": "two"}}, workers=1)
+    assert partial_manifest == {"system-d1": "d1"}
+    assert len(failures) == 1 and failures[0]['doc_id'] == 'd2'
+
+    queries, judgments = {"q": "question"}, {"q": {"d": 1}}
+    # A legitimate empty ranking is measurable; environment errors are not.
+    assert retrieve_run(FakeClient((200, '{"results": []}')), "kb", queries, judgments) == {"q": []}
+    assert retrieve_run(FakeClient((200, '{"results": [{"title": "[BEIR:d]", "documentId": "x"}]}')),
+                        "kb", queries, judgments) == {"q": ["d"]}
+    assert retrieve_run(FakeClient((200, '{"results": [{"title": "original", "documentId": "system"}]}')),
+                        "kb", queries, judgments, manifest={"system": "d"}) == {"q": ["d"]}
+    for response in ((401, '{}'), (403, '{}'), (500, '{}'), (200, 'invalid'),
+                     (200, '{}'), (200, '{"results": [null]}'), (200, '{"results": [{"title": "unmapped"}]}'), OSError("transport")):
+        with patch("time.sleep"):
+            try:
+                retrieve_run(FakeClient(response), "kb", queries, judgments)
+            except RuntimeError:
+                pass
+            else:
+                raise AssertionError(f"invalid retrieval response accepted: {response}")
+    try:
+        retrieve_run(FakeClient((200, '{"results": []}')), "kb", {}, judgments)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("missing qrels query silently skipped")
+    for budget in (None, 100):
+        try:
+            select_corpus_ids({"d": {}}, {"q": {"missing": 1}}, limit_docs=budget)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("unlimited corpus selector missed absent positive gold")
+    for status in (200, 401):
+        client = ApiClient("http://offline-fixture", "user", "password")
+        with patch.dict(os.environ, {"LLMWIKI_TOKEN": "fixture"}), patch.object(
+                client, "_request", return_value=(status, '{}')):
+            if status == 200:
+                assert client.login() == "fixture"
+            else:
+                try:
+                    client.login()
+                except RuntimeError:
+                    pass
+                else:
+                    raise AssertionError("expired preset token accepted")
+
     import tempfile
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -337,6 +431,13 @@ def _selftest() -> int:
         corpus, queries, qrels = load_beir(root)
         assert list(corpus) == ["d1"] and queries["q1"] == "query"
         assert qrels["q1"]["d1"] == 1.0
+        (root / "qrels" / "test.tsv").write_text("query-id\tcorpus-id\tscore\nq1\tmissing\t1\n")
+        try:
+            load_beir(root)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("loader silently accepted missing positive gold")
     print("beir_pipeline selftest OK")
     return 0
 
@@ -368,6 +469,15 @@ def main() -> int:
     if not args.kb_id:
         parser.error("--kb-id is required")
 
+    for name in ("limit_docs", "limit_queries", "top_k", "workers"):
+        value = getattr(args, name)
+        if value is not None and value <= 0:
+            parser.error(f"--{name.replace('_', '-')} must be positive")
+    if args.top_k > 100:
+        parser.error("--top-k cannot exceed the native search limit of 100")
+    # A failed attempt must not leave an older output at the advertised path.
+    if args.run_out.exists():
+        parser.error("--run-out already exists; use a fresh path for each evaluation")
     corpus, queries, qrels = load_beir(args.dataset_dir)
     print(f"[data] corpus={len(corpus)} queries={len(queries)} qrels={len(qrels)}")
     client = ApiClient(args.api_base, args.user, args.password)

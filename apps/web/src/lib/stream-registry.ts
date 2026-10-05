@@ -87,7 +87,7 @@ export function labelForRun(run: RunState | undefined): string | null {
  */
 export function applyPoll(runs: RunMap, conversationId: string, result: RunPollResult): RunMap {
   const next = new Map(runs);
-  if (!next.has(conversationId)) return next;
+  if (!next.has(conversationId) || next.get(conversationId)?.runId !== result.runId) return next;
   next.set(conversationId, {
     runId: result.runId,
     conversationId,

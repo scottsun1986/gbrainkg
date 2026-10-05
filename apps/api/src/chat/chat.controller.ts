@@ -25,6 +25,7 @@ import { parseAsOf } from '../retrieval/as-of';
 import { withStrictOutputPermit } from '../permission/strict-output-permit';
 import { authorizationEnforced, AuthorizationSnapshot } from '../permission/authorization-revision';
 import { TableEvidenceService } from '../retrieval/table-evidence.service';
+import { nonEvidenceManifest } from '../permission/evidence-dependencies';
 
 @UseGuards(AuthGuard)
 @Controller("api/v1/chat")
@@ -75,7 +76,13 @@ export class ChatController {
     if (getRequestContext()) { getRequestContext()!.asOf = parseAsOf(body?.asOf); getRequestContext()!.asOfExplicit = body?.asOf != null; }
     const query = String(body?.query || "").trim();
     if (!query) throw new BadRequestException("query is required.");
-    const limit = Math.max(1, Math.min(Number(body?.limit || 10) || 10, 50));
+    const requestedLimit = body?.limit == null ? 10 : Number(body.limit);
+    if (!Number.isFinite(requestedLimit) || !Number.isInteger(requestedLimit) || requestedLimit <= 0) {
+      throw new BadRequestException("limit must be a positive integer.");
+    }
+    // Native search supports bounded deep retrieval while retaining the same
+    // authorization and final evidence filters used for smaller result sets.
+    const limit = Math.min(requestedLimit, 100);
     return this.chatService.searchKnowledgeForAgent(userId, query, body?.kb_scope, limit);
   }
 
@@ -220,7 +227,16 @@ export class ChatController {
     const finalize = () => {
       if (finalizePromise) return finalizePromise;
       finalizePromise = (async () => {
-        const content = answer || errorContent || "本次问答未生成可保存的回答。";
+        const content = errorContent || answer || "本次问答未生成可保存的回答。";
+        if (errorContent) {
+          citations.length = 0;
+          dependencyManifest = nonEvidenceManifest('failure');
+        }
+        // Status-only responses have no source authorization manifest. Keep
+        // retrieved excerpts out of their later diagnostic endpoint as well.
+        const persistenceTrace = () => dependencyManifest?.kind === 'non_evidence'
+          ? [...traceNodes.values()].filter(node => node.id === 'message_persistence')
+          : [...traceNodes.values()];
         upsertPersistenceTrace("running", "正在保存回答、引用和处理链路");
         let messageId: string | undefined;
         try {
@@ -231,7 +247,7 @@ export class ChatController {
               content,
               citationsSummary: citations,
               dependencyManifest: dependencyManifest || undefined,
-              processingTrace: [...traceNodes.values()],
+              processingTrace: persistenceTrace(),
               latencyMs: Date.now() - requestStartedAt,
             },
           });
@@ -251,12 +267,13 @@ export class ChatController {
           upsertPersistenceTrace("success", "回答、引用和处理链路已保存");
           await this.prisma.message.update({
             where: { id: created.id },
-            data: { processingTrace: [...traceNodes.values()] },
+            data: { processingTrace: persistenceTrace() },
           });
           // A poll only learns the answer exists once the row does, so the run
           // is closed here rather than on `complete`: closing earlier would let
           // a client fetch a message that is not written yet.
           if (runId && messageId && !errorContent) await this.chatRunService.complete(runId, messageId);
+          if (runId && errorContent) await this.chatRunService.fail(runId, errorContent);
         } catch (error: any) {
           console.error("Failed to persist assistant message:", error);
           upsertPersistenceTrace(
@@ -315,7 +332,8 @@ export class ChatController {
         }
         if (data?.type === "done") {
           totalTokens = Number(data.total_tokens || 0);
-          dependencyManifest = data.dependency_manifest || null;
+          dependencyManifest = data.answer_kind === 'refusal' && !citations.length
+            ? nonEvidenceManifest('refusal') : data.dependency_manifest || null;
           return;
         }
         if (!response.writableEnded) writeEvent(event.data);

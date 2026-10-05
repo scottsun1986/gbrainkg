@@ -51,7 +51,7 @@ export function llmConfig(): LlmConfig | null {
 /** Chat completion returning assistant text (reasoning_content fallback). */
 export async function llmChat(
   messages: Array<{ role: string; content: string }>,
-  opts: { maxTokens?: number; timeoutMs?: number } = {},
+  opts: { maxTokens?: number; timeoutMs?: number; onResponse?: (payload: unknown) => void } = {},
 ): Promise<string> {
   const config = llmConfig();
   if (!config) return '';
@@ -68,6 +68,7 @@ export async function llmChat(
   });
   if (!response.ok) throw new Error(`LLM HTTP ${response.status}`);
   const payload: any = await response.json();
+  opts.onResponse?.(payload);
   const message = payload?.choices?.[0]?.message || {};
   const content = String(message.content || '').trim();
   if (content) return content;

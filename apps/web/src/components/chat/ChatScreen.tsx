@@ -2,20 +2,22 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
 import dynamic from 'next/dynamic';
 import { Icon } from '@/components/common/Icon';
-import { TypeBadge, TYPE_BADGE } from '@/components/common/TypeBadge';
+import { TYPE_BADGE } from '@/components/common/TypeBadge';
 import { ScopePicker } from '@/components/common/ScopePicker';
 import { ContextMenu } from '@/components/common/ContextMenu';
 import { API_BASE_URL, apiHeaders } from '@/lib/api';
 import { appStore } from '@/lib/app-store';
-import { errorMessage, asRecord, str } from '@/lib/errors';
+import { errorMessage } from '@/lib/errors';
 import {
   applyPoll, isTerminal, labelForRun, pollDelayFor, runningConversationIds, STAGE_LABELS,
   type RunPollResult, type RunStage, type RunState,
 } from '@/lib/stream-registry';
 import { emitToast } from '@/lib/app-events';
-import { AnswerMarkdown } from './AnswerMarkdown';
+const AnswerMarkdown = dynamic(() => import('./AnswerMarkdown').then(module => module.AnswerMarkdown), {
+  loading: () => <span role="status">正在加载回答…</span>,
+});
 import type {
-  ChatMessage, Citation, ConversationSummary, CtxMenuItem, KbInfo, PreviewTarget, TraceNode,
+  ChatMessage, Citation, ConversationSummary, CtxMenuItem, PreviewTarget, TraceNode,
 } from '@/types';
 
 // 预览弹窗挂载了 docx/ppt 解析链路，仅在用户点开引用预览时才加载对应分包。
@@ -43,7 +45,7 @@ interface ConversationMessagePayload {
   createdAt?: string;
   citationsSummary?: ConversationCitationPayload[];
 }
-interface ConversationPayload { messages?: ConversationMessagePayload[] }
+interface ConversationPayload { messages?: ConversationMessagePayload[]; hasMore?: boolean; nextCursor?: string | null; activeRun?: RunState | null }
 
 function mapCitation(cite: ConversationCitationPayload, messageId: string | undefined, index: number): Citation {
   const entry = cite.timeline_entry;
@@ -86,10 +88,6 @@ function collectRunCitations(run: RunPollResult): Citation[] {
   return list.map((entry, index) => mapCitation(entry, run.messageId, index));
 }
 
-function mapTraceNodes(trace: unknown): TraceNode[] {
-  return Array.isArray(trace) ? trace as TraceNode[] : [];
-}
-
 interface TraceStats { total: number; success: number; warnings: number; failed: number; running: number; duration: number | null }
 
 /**
@@ -124,6 +122,22 @@ function collectConversationCitations(conversation: ConversationPayload): Citati
   );
 }
 
+const ConversationRow = memo(function ConversationRow({ conversation, active, runLabel, onOpen, onMenu }: {
+  conversation: ConversationSummary; active: boolean; runLabel?: string;
+  onOpen: (id: string) => void; onMenu: (event: React.MouseEvent, conversation: ConversationSummary) => void;
+}) {
+  return <div className={`conv-item ${active ? 'active' : ''} ${runLabel ? 'running' : ''}`}
+    role="button" tabIndex={0} onClick={() => onOpen(conversation.id)}
+    onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onOpen(conversation.id); } }}
+    onContextMenu={event => onMenu(event, conversation)}>
+    <span className="conv-title">{conversation.title || '未命名会话'}</span>
+    {runLabel && <span className="conv-run" title={`正在生成回答：${runLabel}`}>
+      <span className="spinner" aria-hidden="true" /><span className="conv-run-label">{runLabel}</span>
+    </span>}
+    <span className="conv-time">{conversation.createdAt ? new Date(conversation.createdAt).toLocaleDateString('zh-CN') : ''}</span>
+  </div>;
+});
+
 export function ChatScreen(){
   const visibleKbs = appStore.KNOWLEDGE_BASES;
   const [selected, setSelected] = useState<string[]>([]);
@@ -153,7 +167,6 @@ export function ChatScreen(){
         const seen = new Set(prev.map(c => c.id));
         return [...prev, ...items.filter(c => !seen.has(c.id))];
       });
-      adoptRunStages(items);
       setConvMore(page?.hasMore === true);
       setConvCursor(typeof page?.nextCursor === 'string' ? page.nextCursor : null);
     } catch {} finally { setConvMoreLoading(false); }
@@ -167,9 +180,13 @@ export function ChatScreen(){
   const [citations, setCitations] = useState<Citation[]>([]);
   const [onlinePreview, setOnlinePreview] = useState<PreviewTarget | null>(null);
   const [convLoading, setConvLoading] = useState(false);
+  const [historyMore, setHistoryMore] = useState(false);
+  const [historyCursor, setHistoryCursor] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const historyControllerRef = useRef<AbortController | null>(null);
+  const inputRef = useRef('');
+  const draftsRef = useRef(new Map<string, string>());
   const [citeCollapsed, setCiteCollapsed] = useState(true);
-  const [feedbackMap, setFeedbackMap] = useState<Record<string, string>>({});
-  const [rewriting, setRewriting] = useState(false);
   const [autoStick, setAutoStick] = useState(true);
   const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null);
   const [hiddenConvs, setHiddenConvs] = useState<Set<string>>(() => new Set<string>());
@@ -186,17 +203,18 @@ export function ChatScreen(){
    */
   const runsRef = useRef(new Map<string, RunState>());
   const runSeqRef = useRef(0);
-  const [runningIds, setRunningIds] = useState<string[]>([]);
-  const syncRuns = () => setRunningIds(runningConversationIds(runsRef.current));
+  const [runs, setRuns] = useState(new Map<string, RunState>());
+  const runningIds = useMemo(() => runningConversationIds(runs), [runs]);
+  const syncRuns = useCallback(() => setRuns(new Map(runsRef.current)), []);
   /** Pollers to tear down on unmount / logout. */
-  const pollersRef = useRef(new Set<() => void>());
+  const pollersRef = useRef(new Map<string, () => void>());
   /** Runs that completed while another conversation was on screen. */
-  const pendingAnswersRef = useRef(new Map<string, string>());
+  const pendingAnswersRef = useRef(new Map<string, Pick<RunPollResult, 'runId' | 'messageId' | 'status'>>());
 
   // 当前视图归属：activeConv 非空时看它；为空时看持有这个空视图的草稿流。
   const [viewKey, setViewKey] = useState<string | null>(null);
   const viewKeyRef = useRef<string | null>(null);
-  useEffect(() => { viewKeyRef.current = viewKey; }, [viewKey]);
+
   // 仅当“正在查看的会话”仍在生成回答时，输入框才进入生成态。
   // 停留在别的会话时，输入框保持可用，便于直接继续提问。
   const viewingStream = viewKey !== null && runningIds.includes(viewKey);
@@ -206,10 +224,7 @@ export function ChatScreen(){
   // still generating (production: the stage nodes vanished on navigate).
   // The raw stage key drives the pipeline chips; the label is what the status
   // pill shows. Passing only the label made every STAGE_TO_PIPELINE lookup miss.
-  const viewRun = useMemo(
-    () => (viewKey ? runsRef.current.get(viewKey) : undefined),
-    [viewKey, runningIds],
-  );
+  const viewRun = viewKey ? runs.get(viewKey) : undefined;
   const viewStage = viewRun?.status === 'running' ? viewRun.stage : null;
   const stageLabel = useMemo(() => labelForRun(viewRun), [viewRun]);
   const allSel = selected.length === visibleKbs.length;
@@ -229,46 +244,96 @@ export function ChatScreen(){
     });
   }, [visibleKbs]);
 
-  // P1-1: the list carries `runStage` for conversations still generating, so a
-  // reload restores the sidebar's running markers instead of losing them with
-  // the in-memory registry.
+  const applyAnswer = useCallback((state: RunPollResult) => {
+    const sources = state.status === 'completed' ? collectRunCitations(state) : [];
+    const answer: ChatMessage = { role: 'ai', text: state.status === 'failed'
+      ? state.errorMessage || '问答未成功完成。' : state.answer || '', done: true,
+      id: state.messageId, trace: [], sources };
+    setMessages(current => {
+      if (state.messageId && current.some(message => message.id === state.messageId)) return current;
+      const last = current[current.length - 1];
+      return last?.role === 'ai' && !last.done ? [...current.slice(0, -1), answer] : [...current, answer];
+    });
+    setCitations(sources);
+  }, []);
+
+  const pollRun = useCallback((run: RunState) => {
+    if (!run.runId || pollersRef.current.has(run.conversationId)) return;
+    const id = run.conversationId;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let failures = 0;
+    const stop = () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      if (pollersRef.current.get(id) === stop) pollersRef.current.delete(id);
+      if (runsRef.current.get(id)?.runId === run.runId) runsRef.current.delete(id);
+      syncRuns();
+    };
+    pollersRef.current.set(id, stop);
+    const schedule = (delay: number) => {
+      timer = setTimeout(async () => {
+        if (cancelled) return;
+        try {
+          const response = await fetch(`${API_BASE_URL}/api/v1/chat/runs/${run.runId}`, { headers: apiHeaders() });
+          if (!response.ok) {
+            if (response.status === 401 || response.status === 403 || response.status === 404) {
+              if (viewKeyRef.current === id) applyAnswer({ ...run, status: 'failed', errorMessage: '问答状态不可用，请重新打开会话。' });
+              stop(); return;
+            }
+            throw new Error('暂时无法读取问答进度');
+          }
+          const state = await response.json() as RunPollResult;
+          if (cancelled || runsRef.current.get(id)?.runId !== run.runId) return;
+          failures = 0;
+          runsRef.current = applyPoll(runsRef.current, id, state);
+          syncRuns();
+          if (!isTerminal(state.status)) {
+            schedule(typeof document !== 'undefined' && document.hidden ? 8000 : pollDelayFor(state.stage));
+            return;
+          }
+          pendingAnswersRef.current.set(id, { runId: state.runId, messageId: state.messageId, status: state.status });
+          if (viewKeyRef.current === id) applyAnswer(state);
+          stop();
+        } catch {
+          if (!cancelled) { failures++; schedule(Math.min(30000, 2000 * 2 ** Math.min(failures, 4))); }
+        }
+      }, delay);
+    };
+    schedule(600);
+  }, [applyAnswer, syncRuns]);
+
   const adoptRunStages = useCallback((items: ConversationSummary[]) => {
     let changed = false;
-    const next = new Map(runsRef.current);
     for (const item of items) {
-      const stage = typeof item.runStage === 'string' ? item.runStage as RunStage : null;
-      if (stage && !next.has(item.id)) {
-        next.set(item.id, { runId: '', conversationId: item.id, status: 'running', stage });
-        changed = true;
-      } else if (!stage && next.has(item.id)) {
-        next.delete(item.id);
-        changed = true;
-      }
+      if (typeof item.runStage !== 'string' || typeof item.runId !== 'string'
+        || !item.runId || pendingAnswersRef.current.has(item.id) || runsRef.current.has(item.id)) continue;
+      const run: RunState = { runId: item.runId, conversationId: item.id, status: 'running', stage: item.runStage as RunStage };
+      runsRef.current.set(item.id, run);
+      changed = true;
+      pollRun(run);
     }
-    if (!changed) return;
-    runsRef.current = next;
-    syncRuns();
-  }, []);
+    if (changed) syncRuns();
+  }, [pollRun, syncRuns]);
 
   useEffect(() => {
     const refresh = () => {
-      setConversationList([...appStore.CONVERSATIONS]);
+      setConversationList(current => {
+        const incoming = [...appStore.CONVERSATIONS];
+        const seen = new Set(incoming.map(item => item.id));
+        return [...incoming, ...current.filter(item => !seen.has(item.id))];
+      });
       adoptRunStages(appStore.CONVERSATIONS);
       setConvMore(appStore.CONVERSATIONS_META?.hasMore ?? false);
       setConvCursor(appStore.CONVERSATIONS_META?.nextCursor ?? null);
     };
     window.addEventListener('app-admin-data-updated', refresh);
     return () => window.removeEventListener('app-admin-data-updated', refresh);
-  }, []);
+  }, [adoptRunStages]);
 
   // Adopt once on mount: the bootstrap payload is already in appStore.
-  useEffect(() => { adoptRunStages(appStore.CONVERSATIONS); }, [adoptRunStages]);
+  useEffect(() => { adoptRunStages(conversationList); }, [conversationList, adoptRunStages]);
 
-  useEffect(() => {
-    const onNew = () => { newChat(); };
-    window.addEventListener('app-new-chat', onNew);
-    return () => window.removeEventListener('app-new-chat', onNew);
-  }, []);
 
   /**
    * Ask a question. The server answers with a run id immediately and does the
@@ -278,125 +343,59 @@ export function ChatScreen(){
    * Nothing here holds a stream open, so several conversations can be in flight
    * at once and switching away from one never disturbs it.
    */
-  const startRun = useCallback((opts: {
-    convId: string | null;
-    text: string;
-    kbScope: string[];
-  }) => {
-    const draftKey = `draft:${++runSeqRef.current}`;
-    let convId = opts.convId;
+  const startRun = useCallback((opts: { convId: string | null; text: string; kbScope: string[] }) => {
+    const draftKey = opts.convId || `draft:${++runSeqRef.current}`;
+    if (runsRef.current.has(draftKey)) return;
+    const scope = [...opts.kbScope];
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    const ownsView = () => convId === null
-      ? viewKeyRef.current === null || viewKeyRef.current === draftKey
-      : viewKeyRef.current === convId;
-
-    const put = (next: RunState) => {
-      runsRef.current.set(convId ?? draftKey, next);
-      syncRuns();
-    };
-    put({ runId: '', conversationId: convId ?? draftKey, status: 'running', stage: 'queued' });
-    if (viewKeyRef.current === null) { setViewKey(draftKey); viewKeyRef.current = draftKey; }
-
     const stop = () => {
       cancelled = true;
-      if (timer !== null) clearTimeout(timer);
-      pollersRef.current.delete(stop);
-      if (runsRef.current.get(convId ?? draftKey)?.status === 'running') {
-        runsRef.current.delete(convId ?? draftKey);
-        syncRuns();
-      }
+      pollersRef.current.delete(draftKey);
+      runsRef.current.delete(draftKey);
+      syncRuns();
     };
-    pollersRef.current.add(stop);
-
+    runsRef.current.set(draftKey, { runId: '', conversationId: draftKey, status: 'running', stage: 'queued' });
+    pollersRef.current.set(draftKey, stop);
+    if (opts.convId === null) { viewKeyRef.current = draftKey; setViewKey(draftKey); }
+    syncRuns();
     void (async () => {
       try {
-        const res = await fetch(`${API_BASE_URL}/api/v1/chat/completions`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...apiHeaders() },
-          body: JSON.stringify({ message: opts.text, kb_scope: opts.kbScope, conversation_id: opts.convId || undefined }),
+        const response = await fetch(`${API_BASE_URL}/api/v1/chat/completions`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...apiHeaders() },
+          body: JSON.stringify({ message: opts.text, kb_scope: scope, conversation_id: opts.convId || undefined, stream: false }),
         });
-        if (!res.ok) {
-          let detail = `API Error (${res.status})`;
-          try { const payload = await res.json(); detail = payload?.message || payload?.error || detail; } catch { /* keep status text */ }
+        if (!response.ok) {
+          let detail = `API Error (${response.status})`;
+          try { const payload = await response.json(); detail = payload?.message || payload?.error || detail; } catch { /* keep status */ }
           throw new Error(detail);
         }
-        const started = await res.json() as { conversationId: string; runId: string };
-        if (cancelled) return;
-        const assigned = started.conversationId;
-        // Rekey the draft placeholder now that the server has an id for it.
-        if (convId === null) {
-          runsRef.current.delete(draftKey);
-          convId = assigned;
-          if (viewKeyRef.current === draftKey) { setViewKey(assigned); viewKeyRef.current = assigned; }
-          if (viewKeyRef.current === null) { setViewKey(assigned); viewKeyRef.current = assigned; }
+        const run = { ...await response.json(), status: 'running', stage: 'queued' } as RunState;
+        if (!run.runId || !run.conversationId) throw new Error('问答运行信息不完整');
+        if (cancelled) {
+          void fetch(`${API_BASE_URL}/api/v1/chat/runs/${run.runId}/cancel`, { method: 'POST', headers: apiHeaders() });
+          return;
         }
-        setConversationList(list => list.some(item => item.id === assigned)
-          ? list
-          : [{ id: assigned, title: opts.text.slice(0, 120), createdAt: new Date().toISOString() }, ...list]);
-        put({ runId: started.runId, conversationId: assigned, status: 'running', stage: 'queued' });
-        setActiveConv(assigned);
-        viewKeyRef.current = assigned; setViewKey(assigned);
-
-        // Recursive setTimeout with a cancel flag rather than setInterval:
-        // a poll that overruns must not queue a second one behind it.
-        //
-        // P3-1: the interval follows the stage. Retrieval and reranking hold
-        // the run for tens of seconds with nothing to show, while generation
-        // is when the user is actually waiting, so polling hard there and
-        // loosely here keeps the request volume flat as conversations pile up.
-        let failures = 0;
-        const schedule = (delay: number) => {
-          timer = setTimeout(async () => {
-            if (cancelled) return;
-            // Nothing is watching a background tab, so stop asking.
-            if (typeof document !== 'undefined' && document.hidden && !ownsView()) { schedule(8000); return; }
-            try {
-              const poll = await fetch(`${API_BASE_URL}/api/v1/chat/runs/${started.runId}`, { headers: apiHeaders() });
-              if (!poll.ok) { failures += 1; schedule(Math.min(30000, 2000 * 2 ** Math.min(failures, 4))); return; }
-              failures = 0;
-              const state = await poll.json() as RunPollResult;
-              if (cancelled) return;
-              // P2-1: route the transition through applyPoll so the "a
-              // finished run is never revived by a late response" invariant has
-              // exactly one implementation instead of relying on call order.
-              runsRef.current = applyPoll(runsRef.current, assigned, state);
-              syncRuns();
-              if (!isTerminal(state.status)) { schedule(pollDelayFor(state.stage)); return; }
-              if (ownsView()) {
-                if (state.status === 'failed') {
-                  const reason = state.errorMessage || '问答未成功完成。';
-                  setMessages(ms => ms.map((m, i) => i === ms.length - 1 && m.role === 'ai' ? { ...m, text: reason, done: true } : m));
-                } else {
-                  setMessages(ms => ms.map((m, i) => i === ms.length - 1 && m.role === 'ai'
-                    ? { ...m, text: state.answer ?? '', done: true, id: state.messageId, trace: mapTraceNodes(state.trace) }
-                    : m));
-                  setCitations(collectRunCitations(state));
-                }
-                return;
-              }
-              // Finished while the user was reading another conversation. The
-              // answer is persisted, so record it for the view: opening this
-              // conversation later must show the completed answer rather than
-              // the empty "ai" placeholder left behind when the question was
-              // asked. Reload only if that view is still showing this turn.
-              if (state.status === 'completed') pendingAnswersRef.current.set(assigned, state.messageId || '');
-            } catch { if (!cancelled) schedule(4000); }
-          }, delay);
-        };
-        schedule(600);
-      } catch (err) {
-        if (cancelled) return;
-        const text = `大模型请求失败：${errorMessage(err) || '未知错误'}`;
-        if (ownsView()) {
-          setMessages(ms => ms.map((m, i) => i === ms.length - 1 && m.role === 'ai' ? { ...m, text, done: true } : m));
+        const ownsView = viewKeyRef.current === draftKey;
+        pollersRef.current.delete(draftKey);
+        runsRef.current.delete(draftKey);
+        pendingAnswersRef.current.delete(run.conversationId);
+        runsRef.current.set(run.conversationId, run);
+        setConversationList(list => list.some(item => item.id === run.conversationId) ? list
+          : [{ id: run.conversationId, title: opts.text.slice(0, 120), createdAt: new Date().toISOString() }, ...list]);
+        if (ownsView) {
+          setActiveConv(run.conversationId);
+          viewKeyRef.current = run.conversationId; setViewKey(run.conversationId);
         }
+        syncRuns();
+        pollRun(run);
+      } catch (error) {
+        if (cancelled) return;
+        if (viewKeyRef.current === draftKey) applyAnswer({ runId: '', conversationId: draftKey, stage: 'queued', status: 'failed',
+          errorMessage: `问答请求失败：${errorMessage(error) || '未知错误'}` });
         stop();
       }
     })();
-    return draftKey;
-  }, []);
+  }, [applyAnswer, pollRun, syncRuns]);
 
   // 流式期间自动滚底（除非用户主动上滑）
   useEffect(()=>{
@@ -407,7 +406,8 @@ export function ChatScreen(){
 
   // 卸载时停掉所有轮询器：否则 detached 的定时器会继续写已卸载组件的状态。
   useEffect(() => () => {
-    for (const stop of pollersRef.current) stop();
+    historyControllerRef.current?.abort();
+    for (const stop of pollersRef.current.values()) stop();
     pollersRef.current.clear();
     runsRef.current.clear();
   }, []);
@@ -431,10 +431,10 @@ export function ChatScreen(){
     if (!run) return;
     // Stop polling first, then ask the server to abandon the run. The server
     // call is best-effort: only the instance that started the run can abort it.
-    for (const stop of pollersRef.current) stop();
-    void fetch(`${API_BASE_URL}/api/v1/chat/runs/${run.runId}/cancel`, { method: 'POST', headers: apiHeaders() })
+    pollersRef.current.get(viewKey)?.();
+    if (run.runId) void fetch(`${API_BASE_URL}/api/v1/chat/runs/${run.runId}/cancel`, { method: 'POST', headers: apiHeaders() })
       .catch(() => { /* the run's own deadline still bounds it */ });
-    setMessages(ms => ms.map((m, i) => i === ms.length - 1 && m.role === 'ai' ? { ...m, done: true } : m));
+    setMessages(ms => ms.map((m, i) => i === ms.length - 1 && m.role === 'ai' ? { ...m, text: m.text || '已停止生成。', done: true } : m));
   };
   const scrollToBottom = () => {
     const el = scrollRef.current;
@@ -445,10 +445,10 @@ export function ChatScreen(){
 
   const send = (preset?: string)=>{
     const text = (preset ?? input).trim();
-    if(!text || viewingStream || selected.length===0) return;
+    if(!text || convLoading || (viewKeyRef.current !== null && runsRef.current.has(viewKeyRef.current)) || selected.length===0) return;
     // 同一会话已有回答在生成时不重复提交；其他会话的并发流互不影响。
     setMessages(ms=>[...ms, {role:'user', text}, {role:'ai', text:'', done:false, trace:[]}]);
-    setInput('');
+    inputRef.current = ''; if (viewKeyRef.current) draftsRef.current.delete(viewKeyRef.current); setInput('');
     setActiveCite(null);
     setCitations([]);
     setAutoStick(true);
@@ -456,16 +456,25 @@ export function ChatScreen(){
     startRun({ convId: activeConv, text, kbScope: selected });
   };
 
-  const newChat = ()=>{
+  const newChat = useCallback(()=>{
     ++openSeqRef.current;
+    historyControllerRef.current?.abort();
+    if (viewKeyRef.current) draftsRef.current.set(viewKeyRef.current, inputRef.current);
+    inputRef.current = '';
     setConvLoading(false);
+    setHistoryMore(false); setHistoryCursor(null);
     // 只清空视图，不中止正在生成的答案：那些流仍留在注册表里按会话 id 继续跑，
     // 用户从列表切回该会话时会接着看到流式内容。新草稿流接管空视图。
     setMessages([]); setActiveCite(null); setCitations([]); setActiveConv(null);
     viewKeyRef.current = null; setViewKey(null);
     setInput('');
     if(taRef.current){ taRef.current.style.height = 'auto'; taRef.current.focus(); }
-  };
+  }, []);
+  useEffect(() => {
+    const onNew = () => { newChat(); };
+    window.addEventListener('app-new-chat', onNew);
+    return () => window.removeEventListener('app-new-chat', onNew);
+  }, [newChat]);
 
   const copyAnswer = useCallback(async (text: string) => { try { await navigator.clipboard.writeText(text); window.dispatchEvent(new CustomEvent('app-toast',{detail:'回答已复制'})); } catch { window.dispatchEvent(new CustomEvent('app-toast',{detail:'复制失败，请检查浏览器权限'})); } }, []);
   const saveFeedback = useCallback(async (feedback: string, messageId?: string) => {
@@ -511,44 +520,74 @@ export function ChatScreen(){
 
   const openConversation = useCallback(async (id: string) => {
     if (!id) return;
-    // 连续点击不同会话时只应用最后一次响应，避免慢响应覆盖新选择。
     const seq = ++openSeqRef.current;
-    setConvLoading(true);
+    historyControllerRef.current?.abort();
+    const controller = new AbortController();
+    historyControllerRef.current = controller;
+    if (viewKeyRef.current) draftsRef.current.set(viewKeyRef.current, inputRef.current);
+    viewKeyRef.current = id; setViewKey(id); setActiveConv(id);
+    inputRef.current = draftsRef.current.get(id) || ''; setInput(inputRef.current);
+    setMessages([]); setCitations([]); setActiveCite(null);
+    setHistoryMore(false); setHistoryCursor(null); setHistoryLoading(false); setConvLoading(true); setAutoStick(true);
+    setConvOpen(false);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/conversations/${id}`, { headers: apiHeaders() });
+      const response = await fetch(`${API_BASE_URL}/api/v1/conversations/${id}?limit=50`, { headers: apiHeaders(), signal: controller.signal });
       if (!response.ok) throw new Error('会话加载失败');
-      const conversation = await response.json();
+      let conversation = await response.json() as ConversationPayload;
       if (seq !== openSeqRef.current) return;
-      // A run that finished while the user was elsewhere has already been
-      // persisted, so the reload above picks it up; drop the marker.
+      const pending = pendingAnswersRef.current.get(id);
+      // A completion can race this history snapshot. Re-read persisted,
+      // authorized messages instead of replaying cached source text.
+      if (pending && (!pending.messageId || !conversation.messages?.some(message => message.id === pending.messageId))) {
+        const refreshed = await fetch(`${API_BASE_URL}/api/v1/conversations/${id}?limit=50`, { headers: apiHeaders(), signal: controller.signal });
+        if (!refreshed.ok) throw new Error('会话加载失败');
+        conversation = await refreshed.json() as ConversationPayload;
+        if (seq !== openSeqRef.current) return;
+      }
       pendingAnswersRef.current.delete(id);
+      const active = pending ? null : conversation.activeRun || runsRef.current.get(id);
+      if (active) adoptRunStages([{ id, runId: active.runId, runStage: active.stage }]);
       const mapped = mapConversationMessages(conversation);
-      const allCitations = collectConversationCitations(conversation);
-      // P1-2: the last turn is a user message with no assistant reply, so the
-      // generation was abandoned (tab closed, run cancelled, service restarted)
-      // and the placeholder the browser optimistically rendered is gone with the
-      // page. Surface that instead of an answer bubble with empty text.
-      const abandoned = mapped.length > 0
-        && mapped[mapped.length - 1].role === 'user'
-        ? { text: '（该回答未完成：生成被中断或已随页面关闭而丢失，请重新提问。）' }
-        : null;
-      // Urgent on purpose. Under startTransition this never committed while a
-      // run was streaming (the high-frequency trace/citation setMessages calls
-      // starve the transition), so clicking a history entry did nothing while
-      // "new chat" — which is not in a transition — worked fine.
-      setActiveConv(id);
-      viewKeyRef.current = id; setViewKey(id);
-      setMessages(abandoned ? [...mapped, { role: 'ai' as const, text: abandoned.text, done: true, trace: [] }] : mapped);
-      setCitations(allCitations);
-      // 切回仍在生成的会话：这一轮的答案还没落库，等 run 完成时轮询会把它
-      // 写进当前视图；此处不需要（也不能）用固定延迟预拉 —— 在快慢两种机器
-      // 上都会猜错。
+      if (mapped[mapped.length - 1]?.role === 'user') mapped.push({ role: 'ai', text: active ? ''
+        : '该回答未完成，请重新提问。', done: !active, trace: [] });
+      setMessages(mapped);
+      setCitations(collectConversationCitations(conversation));
+      setHistoryMore(conversation.hasMore === true);
+      setHistoryCursor(conversation.nextCursor || null);
     } catch (error) {
-      if (seq === openSeqRef.current) window.dispatchEvent(new CustomEvent('app-toast', {detail: errorMessage(error) || '会话加载失败'}));
+      if (seq === openSeqRef.current && !controller.signal.aborted) emitToast(errorMessage(error) || '会话加载失败');
     } finally {
       if (seq === openSeqRef.current) setConvLoading(false);
     }
-  }, []);
+  }, [adoptRunStages]);
+
+  const loadOlderMessages = useCallback(async () => {
+    const id = viewKeyRef.current;
+    if (!id || !historyMore || !historyCursor || historyLoading) return;
+    const seq = openSeqRef.current;
+    setHistoryLoading(true);
+    const element = scrollRef.current;
+    const previousHeight = element?.scrollHeight || 0;
+    const previousTop = element?.scrollTop || 0;
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/conversations/${id}?limit=50&before=${encodeURIComponent(historyCursor)}`, { headers: apiHeaders(), signal: historyControllerRef.current?.signal });
+      if (!response.ok) throw new Error('历史消息加载失败');
+      const page = await response.json() as ConversationPayload;
+      if (seq !== openSeqRef.current || viewKeyRef.current !== id) return;
+      const older = mapConversationMessages(page);
+      setAutoStick(false);
+      setMessages(current => {
+        const seen = new Set(current.map(message => message.id));
+        return [...older.filter(message => !seen.has(message.id)), ...current];
+      });
+      setHistoryMore(page.hasMore === true); setHistoryCursor(page.nextCursor || null);
+      requestAnimationFrame(() => {
+        if (element && viewKeyRef.current === id) element.scrollTop = previousTop + element.scrollHeight - previousHeight;
+      });
+    } catch (error) {
+      if (seq === openSeqRef.current) emitToast(errorMessage(error) || '历史消息加载失败');
+    } finally { if (seq === openSeqRef.current) setHistoryLoading(false); }
+  }, [historyMore, historyCursor, historyLoading]);
 
   // 命令面板跨屏打开会话：订阅最新的 openConversation，保证流式期间守卫生效。
   useEffect(() => {
@@ -597,7 +636,6 @@ export function ChatScreen(){
     });
   };
 
-  const focusInput = ()=>{ if(taRef.current) taRef.current.focus(); };
 
   const autoGrow = (el: HTMLTextAreaElement)=>{
     el.style.height = 'auto';
@@ -611,12 +649,12 @@ export function ChatScreen(){
   /** 会话 id → 当前阶段文案，供侧栏行内图标使用。 */
   const runLabelByConv = useMemo(() => {
     const map = new Map<string, string>();
-    for (const id of runningIds) {
-      const label = labelForRun(runsRef.current.get(id));
+    for (const [id, run] of runs) {
+      const label = labelForRun(run);
       if (label) map.set(id, label);
     }
     return map;
-  }, [runningIds]);
+  }, [runs]);
 
   const convGroups = useMemo(() => {
     const q = convSearch.trim().toLowerCase();
@@ -689,18 +727,9 @@ export function ChatScreen(){
                 </div>
                 {!isCollapsed && (
                   <div className="conv-group-items">
-                    {g.items.map((c) => (
-                      <div key={c.id} className={`conv-item ${activeConv===c.id?'active':''} ${runLabelByConv.get(c.id)?'running':''}`} onClick={()=>{ openConversation(c.id); setConvOpen(false); }} onContextMenu={(e) => showConvMenu(e, c)}>
-                        <span className="conv-title">{c.title || '未命名会话'}</span>
-                        {runLabelByConv.get(c.id) && (
-                          <span className="conv-run" title={`正在生成回答：${runLabelByConv.get(c.id)}`}>
-                            <span className="spinner" aria-hidden="true" />
-                            <span className="conv-run-label">{runLabelByConv.get(c.id)}</span>
-                          </span>
-                        )}
-                        <span className="conv-time">{c.createdAt ? new Date(c.createdAt).toLocaleDateString('zh-CN') : ''}</span>
-                      </div>
-                    ))}
+                    {g.items.map(conversation => <ConversationRow key={conversation.id} conversation={conversation}
+                      active={activeConv === conversation.id} runLabel={runLabelByConv.get(conversation.id)}
+                      onOpen={openConversation} onMenu={showConvMenu} />)}
                   </div>
                 )}
               </div>
@@ -744,7 +773,10 @@ export function ChatScreen(){
             </button>
           )}
           <div className="chat-inner">
-            {messages.length===0 && (
+            {historyMore && <button type="button" onClick={() => void loadOlderMessages()} disabled={historyLoading}>
+              {historyLoading ? '正在加载…' : '加载更早消息'}
+            </button>}
+            {messages.length===0 && !convLoading && (
               <div className="welcome">
                 <div className="welcome-icon" aria-hidden="true">百</div>
                 <h1>问你的大脑。<em>答案可溯源。</em></h1>
@@ -768,7 +800,7 @@ export function ChatScreen(){
 
             {messages.map((msg, mi) => (
               <MessageItem
-                key={mi}
+                key={msg.id || `${viewKey || 'draft'}-${mi}`}
                 msg={msg}
                 scopeLabel={scopeLabel}
                 allSel={allSel}
@@ -796,7 +828,7 @@ export function ChatScreen(){
                 ref={taRef}
                 placeholder={selected.length===0 ? '请先在左侧选择至少一个知识库…' : '向你的知识库提问…（Enter 发送，Shift+Enter 换行）'}
                 value={input}
-                onChange={e=>{setInput(e.target.value); autoGrow(e.target);}}
+                onChange={e=>{inputRef.current = e.target.value; setInput(e.target.value); autoGrow(e.target);}}
                 onKeyDown={e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send();} }}
                 rows={1}
               />
@@ -811,7 +843,7 @@ export function ChatScreen(){
                     <span className="stop-icon" aria-hidden="true" />
                   </button>
                 ) : (
-                  <button type="button" className="send-btn" onClick={()=>send()} disabled={!input.trim() || selected.length===0} title="发送 (Enter)" aria-label="发送">
+                  <button type="button" className="send-btn" onClick={()=>send()} disabled={convLoading || !input.trim() || selected.length===0} title="发送 (Enter)" aria-label="发送">
                     <Icon name="send" size={14} color="var(--on-ink)"/>
                   </button>
                 )}
@@ -1048,7 +1080,7 @@ const TraceDetails = memo(function TraceDetails({ nodes, conversationId, message
     setOpen(next);
     if (next) loadLazyTrace();
   }, [loadLazyTrace]);
-  const displayNodes = nodes.length > 0 ? nodes : (lazyNodes ?? []);
+  const displayNodes = useMemo(() => nodes.length > 0 ? nodes : (lazyNodes ?? []), [nodes, lazyNodes]);
   // Recomputed over the nodes on screen, not taken from the parent: after the
   // lazy fetch `nodes` is still empty and the inherited stats read 0/0.
   const displayStats = useMemo(() => summarizeTrace(displayNodes), [displayNodes]);

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import random
 import shutil
 import sys
@@ -61,28 +62,44 @@ def subset_beir(
 ):
     """Return a (corpus, queries, qrels) subset that never drops a gold doc of a
     retained query."""
+    for label, limit in (("limit_docs", limit_docs), ("limit_queries", limit_queries)):
+        if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0):
+            raise ValueError(f"{label} must be a positive integer or None")
+    missing_queries = sorted(set(qrels) - set(queries))
+    if missing_queries:
+        raise ValueError(f"qrels query IDs missing from queries: {missing_queries[:5]}")
+    if any(not math.isfinite(gain) for judgments in qrels.values() for gain in judgments.values()):
+        raise ValueError("qrels contain nonfinite gains")
     rng = random.Random(seed)
-    evaluable_qids = [qid for qid in qrels.keys() if qid in queries and qrels[qid]]
-    if limit_queries and limit_queries < len(evaluable_qids):
-        evaluable_qids = rng.sample(evaluable_qids, limit_queries)
+    evaluable_qids = sorted(qid for qid in qrels if qid in queries and qrels[qid])
+    if limit_queries is not None and limit_queries < len(evaluable_qids):
+        evaluable_qids = sorted(rng.sample(evaluable_qids, limit_queries))
 
     required_docs: set[str] = set()
     for qid in evaluable_qids:
+        missing = [doc for doc, gain in qrels[qid].items() if gain > 0 and doc not in corpus]
+        if missing:
+            raise ValueError(f"{qid}: positive qrels reference missing documents: {sorted(missing)}")
         required_docs.update(doc for doc in qrels[qid] if doc in corpus)
 
-    selected_docs = set(required_docs)
-    if limit_docs and len(selected_docs) < limit_docs:
-        optional = [doc for doc in corpus.keys() if doc not in selected_docs]
+    if limit_docs is None:
+        selected_docs = set(corpus)
+    else:
+        if len(required_docs) > limit_docs:
+            raise ValueError(f"document budget {limit_docs} is smaller than {len(required_docs)} required qrels documents; reduce --limit-queries or increase --limit-docs")
+        selected_docs = set(required_docs)
+        optional = sorted(doc for doc in corpus if doc not in selected_docs)
         fill = min(limit_docs - len(selected_docs), len(optional))
         selected_docs.update(rng.sample(optional, fill))
 
-    sub_corpus = {doc: corpus[doc] for doc in selected_docs}
+    sub_corpus = {doc: corpus[doc] for doc in sorted(selected_docs)}
     sub_queries = {qid: queries[qid] for qid in evaluable_qids}
     sub_qrels = {
-        qid: {doc: gain for doc, gain in qrels[qid].items() if doc in sub_corpus}
+        qid: {doc: qrels[qid][doc] for doc in sorted(qrels[qid]) if doc in sub_corpus}
         for qid in evaluable_qids
     }
     sub_qrels = {qid: rel for qid, rel in sub_qrels.items() if rel}
+    sub_queries = {qid: query for qid, query in sub_queries.items() if qid in sub_qrels}
     return sub_corpus, sub_queries, sub_qrels
 
 
@@ -156,9 +173,9 @@ def _selftest() -> int:
     queries = {f"q{i}": {"text": f"query {i}"} for i in range(5)}
     qrels = {"q0": {"d0": 1, "d1": 1}, "q1": {"d19": 1}, "q2": {"d5": 1}}
 
-    # Subset docs far below the gold count: gold docs are never dropped.
+    # A valid subset retains gold documents within the explicit budget.
     sub_corpus, sub_queries, sub_qrels = subset_beir(
-        corpus, queries, qrels, limit_docs=2, limit_queries=2, seed=1
+        corpus, queries, qrels, limit_docs=4, limit_queries=2, seed=1
     )
     for qid, rel in sub_qrels.items():
         for doc in rel:
@@ -167,13 +184,39 @@ def _selftest() -> int:
 
     # No limits returns everything evaluable.
     full_corpus, full_queries, full_qrels = subset_beir(corpus, queries, qrels)
+    assert full_corpus == corpus
     assert set(full_qrels.keys()) == {"q0", "q1", "q2"}
     assert set(full_queries.keys()) == {"q0", "q1", "q2"}
 
     # Deterministic under a fixed seed.
     a = subset_beir(corpus, queries, qrels, limit_docs=10, seed=7)
     b = subset_beir(corpus, queries, qrels, limit_docs=10, seed=7)
-    assert a[0].keys() == b[0].keys()
+    assert list(a[0]) == list(b[0])
+    reordered = subset_beir(dict(reversed(list(corpus.items()))), queries,
+                            dict(reversed(list(qrels.items()))), limit_docs=10, limit_queries=2, seed=7)
+    ordered = subset_beir(corpus, queries, qrels, limit_docs=10, limit_queries=2, seed=7)
+    assert reordered == ordered and list(reordered[0]) == list(ordered[0])
+    assert subset_beir(corpus, queries, qrels, limit_queries=1)[0] == corpus
+    for invalid_qrels in ({"missing-query": {"d0": 1}}, {"q0": {"d0": float("nan")}}):
+        try:
+            subset_beir(corpus, queries, invalid_qrels)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid qrels accepted")
+    for kwargs in ({"limit_docs": 2}, {"limit_docs": 0}, {"limit_queries": -1}):
+        try:
+            subset_beir(corpus, queries, qrels, **kwargs)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"invalid budget accepted: {kwargs}")
+    try:
+        subset_beir(corpus, queries, {"q0": {"missing": 1}})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("missing positive gold accepted")
     print("fetch_datasets selftest OK")
     return 0
 

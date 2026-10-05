@@ -508,12 +508,12 @@ def run_single_benchmark(dataset, mode="full", limit=0, token=None):
         "detail_retrieval": search_rows,
     }
 
-    res_dir = BASE / "results"
+    res_dir = Path(os.environ.get("INTL_RESULTS_DIR") or (BASE / "results"))
     res_dir.mkdir(parents=True, exist_ok=True)
     profile_suffix = f"-{profile}" if profile else ""
     out_file = res_dir / f"intl-{dataset}{profile_suffix}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out_file.write_text(json.dumps(result, ensure_ascii=False, indent=2))
-    print(f"  ✓ 结果保存至: {out_file.relative_to(BASE.parent.parent)}")
+    print(f"  ✓ 结果保存至: {out_file}")
     return result
 
 

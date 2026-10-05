@@ -98,4 +98,9 @@ describe('GraphRagService.removeDocumentFromGraph', () => {
 
     expect(res).toEqual({ relationsRemoved: 2, entitiesRemoved: 0 });
   });
+  it('propagates graph cleanup errors in strict maintenance mode', async () => {
+    executeRaw.mockResolvedValueOnce(0).mockRejectedValueOnce(new Error('graph unavailable'));
+    await expect(service.removeDocumentFromGraph(KB, DOC, { strict: true })).rejects.toThrow('graph unavailable');
+  });
+
 });

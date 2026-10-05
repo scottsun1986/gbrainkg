@@ -682,3 +682,57 @@ export function planTopRankGuarantee(input: TopRankGuaranteeInput): TopRankGuara
   }
   return plan;
 }
+
+export interface HopProbeInput {
+  /** Follow-up queries the sufficiency judge proposed, in its own order. */
+  suggestedFollowUp?: string[] | null;
+  /** Bridge entities harvested from hop-1 evidence (already corpus-checked). */
+  bridgeSeeds?: string[] | null;
+  /** Normalised (lowercased, trimmed) queries already spent. */
+  executedProbes: Set<string>;
+  /** The relation attribute the question asks for, e.g. `director`. */
+  relationTerm?: string | null;
+  /** 1-based hop counter; the deterministic rescue is spent once, on hop 1. */
+  currentHop: number;
+  maxProbes?: number;
+}
+
+export interface HopProbePlan {
+  /** Queries to run this hop. Empty means retrieval stops here. */
+  probes: string[];
+  /** True when the probes come from the deterministic bridge seeds. */
+  fromBridgeSeed: boolean;
+}
+
+/**
+ * Decide what the next retrieval hop should ask.
+ *
+ * The deterministic bridge seed is a *rescue*, so it is gated on "no novel
+ * follow-up remains", never on the judge's verdict. Gating it on
+ * `status === 'sufficient'` made it dead code for the conservative case it
+ * exists for: a judge that returns `insufficient` while proposing nothing new
+ * (measured 2Wiki four-hop full evidence 2/31 — the judge names the missing
+ * attribute but cannot name the query that would supply it) went straight to
+ * `break` without ever probing the bridge entity already named in the evidence.
+ *
+ * Corpus-agnostic: the seeds come from the caller's own corpus check, and the
+ * relation suffix is a configurable surface form, not a domain rule.
+ */
+export function planNextHopProbes(input: HopProbeInput): HopProbePlan {
+  const maxProbes = Math.max(0, input.maxProbes ?? 2);
+  if (!maxProbes) return { probes: [], fromBridgeSeed: false };
+  const spent = (value: unknown): string => String(value ?? '').trim().toLowerCase();
+  const probes = (input.suggestedFollowUp ?? [])
+    .map((value) => String(value ?? '').trim())
+    .filter((value) => value.length >= 2 && !input.executedProbes.has(spent(value)))
+    .slice(0, maxProbes);
+  if (probes.length) return { probes, fromBridgeSeed: false };
+  if (input.currentHop !== 1) return { probes: [], fromBridgeSeed: false };
+  const suffix = input.relationTerm ? ` ${input.relationTerm}` : '';
+  const seeds = (input.bridgeSeeds ?? [])
+    .map((seed) => String(seed ?? '').trim())
+    .filter((seed) => seed && !input.executedProbes.has(spent(seed)))
+    .slice(0, maxProbes)
+    .map((seed) => `${seed}${suffix}`.trim());
+  return seeds.length ? { probes: seeds, fromBridgeSeed: true } : { probes: [], fromBridgeSeed: false };
+}

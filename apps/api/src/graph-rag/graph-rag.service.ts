@@ -1055,6 +1055,7 @@ ${chunkContent.slice(0, 4000)}
   async removeDocumentFromGraph(
     kbId: string,
     documentId: string,
+    options: { strict?: boolean } = {},
   ): Promise<{ relationsRemoved: number; entitiesRemoved: number }> {
     const result = { relationsRemoved: 0, entitiesRemoved: 0 };
     try {
@@ -1129,6 +1130,7 @@ ${chunkContent.slice(0, 4000)}
       }
       return result;
     } catch (err) { throwAuthorizationFailure(err);
+      if (options.strict) throw err;
       this.logger.warn(
         `Graph cleanup failed for document ${documentId} in KB ${kbId}: ${err instanceof Error ? err.message : String(err)}`,
       );

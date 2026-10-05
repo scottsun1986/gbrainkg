@@ -394,3 +394,17 @@ describe("BrainCompilerService query freshness", () => {
     expect(queue.add).not.toHaveBeenCalled();
   });
 });
+
+
+describe('Archived cleanup source guard', () => {
+  it('does not resolve KB source, mutate GBrain or queue synthesis without document mapping', async () => {
+    mockPrisma.brainSourceDocument = { findMany: jest.fn().mockResolvedValue([]) };
+    mockPrisma.brainSource = { findUnique: jest.fn() };
+    const queue = { add: jest.fn() };
+    const adapter = { delete: jest.fn() };
+    const service = new BrainCompilerService(queue as any, {} as any, {} as any, {} as any, {} as any, adapter as any);
+    expect(await service.onKnowledgeDeleted('kb-1', 'doc-1', { requireMapping: true, deferSynthesis: true })).toEqual([]);
+    expect(mockPrisma.brainSource.findUnique).not.toHaveBeenCalled();
+    expect(adapter.delete).not.toHaveBeenCalled(); expect(queue.add).not.toHaveBeenCalled();
+  });
+});

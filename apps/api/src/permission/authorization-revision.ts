@@ -68,3 +68,18 @@ export function rethrowAuthorizationFailure(error: unknown): void {
   const status = (error as any)?.getStatus?.();
   if (status === 403 || status === 503) throw error;
 }
+
+/** Mandatory ACL verification has its own bounded RLS query timeout. Exhausting
+ * optional retrieval cannot suppress this check or turn it into an unfiltered return.
+ * Keep identity, snapshot and caller cancellation; only detach retrieval budget.
+ */
+export function withAuthorizationVerification<T>(work: () => Promise<T>): Promise<T> {
+  const previous = getRequestContext();
+  if (!previous) return work();
+  return runWithRequestContext({ ...previous, execution: undefined }, async () => {
+    if (previous.cancellation?.aborted) throw previous.cancellation.reason;
+    const result = await work();
+    if (previous.cancellation?.aborted) throw previous.cancellation.reason;
+    return result;
+  });
+}

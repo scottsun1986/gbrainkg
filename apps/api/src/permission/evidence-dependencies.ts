@@ -5,6 +5,9 @@ import { PermissionService } from './permission.service';
 import { getRequestContext } from '../observability/request-context';
 
 export interface EvidenceDependency { documentId: string; versionId: string | null; number: number; sourceHash: string | null; effectiveTo: string | null }
+export function nonEvidenceManifest(outcome: 'failure' | 'refusal') {
+  return { kind: 'non_evidence', version: 1, outcome };
+}
 export async function captureEvidenceDependencies(citations: any[]): Promise<EvidenceDependency[] | null> {
   if (!citations.length || citations.some(c => !c.docId && !c.documentId)) return null;
   const ids: string[] = [...new Set<string>(citations.map(c => String(c.docId || c.documentId)))];
@@ -22,6 +25,13 @@ export async function captureEvidenceDependencies(citations: any[]): Promise<Evi
     effectiveTo: row.effectiveTo?.toISOString() ?? null }));
 }
 export async function validateEvidenceDependencies(userId: string, manifest: unknown): Promise<boolean> {
+  if (manifest && typeof manifest === 'object' && !Array.isArray(manifest)) {
+    const marker = manifest as Record<string, unknown>;
+    if (marker.kind === 'non_evidence' && marker.version === 1 && ['failure', 'refusal'].includes(String(marker.outcome))) {
+      await assertRequestAuthorization();
+      return true;
+    }
+  }
   if (!Array.isArray(manifest) || !manifest.length || manifest.some(d => !d?.documentId || !Number.isInteger(d.number))) return false;
   await assertRequestAuthorization();
   const rows = await getPrismaClient().document.findMany({ where: { id: { in: manifest.map(d => d.documentId) }, status: 'published' },

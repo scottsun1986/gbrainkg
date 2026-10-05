@@ -3,7 +3,7 @@ const mockPrisma = {
   message: { findMany: jest.fn(), count: jest.fn() },
   // The list annotates each row with its in-flight run stage, so the sidebar
   // keeps its running markers after a reload.
-  chatRun: { findMany: jest.fn().mockResolvedValue([]) },
+  chatRun: { findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn().mockResolvedValue(null) },
 };
 jest.mock('../prisma', () => ({ getPrismaClient: () => mockPrisma }));
 
@@ -125,11 +125,11 @@ describe('GET /conversations/:id payload', () => {
     mockPrisma.conversation.findFirst.mockResolvedValue(conversation);
     mockPrisma.message.count.mockResolvedValue(2);
     mockPrisma.message.findMany.mockResolvedValue([
-      { id: 'm1', role: 'user', content: '问', createdAt: new Date(), citationsSummary: null, processingTrace: [{ id: 'x' }] },
       {
         id: 'm2', role: 'assistant', content: '答', createdAt: new Date(),
         citationsSummary: [{ index: 1 }], processingTrace: [{ id: 'y' }], dependencyManifest: [{ documentId: 'd' }],
       },
+      { id: 'm1', role: 'user', content: '问', createdAt: new Date(), citationsSummary: null, processingTrace: [{ id: 'x' }] },
     ]);
     const result = await controller().get({}, 'c01');
     for (const message of result.messages) {
@@ -144,11 +144,52 @@ describe('GET /conversations/:id payload', () => {
     mockPrisma.conversation.findFirst.mockResolvedValue(conversation);
     mockPrisma.message.count.mockResolvedValue(500);
     mockPrisma.message.findMany.mockResolvedValue(
-      Array.from({ length: 5 }, (_, i) => ({ id: `m${i}`, role: 'user', content: 'x', createdAt: new Date(), citationsSummary: null })),
+      Array.from({ length: 6 }, (_, i) => ({ id: `m${5-i}`, role: 'user', content: 'x', createdAt: new Date(), citationsSummary: null })),
     );
     const result = await controller().get({}, 'c01', '5');
     expect(result.hasMore).toBe(true);
-    expect(result.nextCursor).toBe('m4');
-    expect(mockPrisma.message.findMany.mock.calls[0][0].take).toBe(5);
+    expect(result.nextCursor).toBe('m1');
+    expect(result.messages.map(message => message.id)).toEqual(['m1', 'm2', 'm3', 'm4', 'm5']);
+    expect(mockPrisma.message.findMany.mock.calls[0][0].orderBy).toEqual([{ createdAt: 'desc' }, { id: 'desc' }]);
+    expect(mockPrisma.message.findMany.mock.calls[0][0].take).toBe(6);
+  });
+});
+describe('Historical failed response visibility', () => {
+  const previous = process.env.CORE_AUTH_ENFORCE;
+  beforeEach(() => { process.env.CORE_AUTH_ENFORCE = '1'; });
+  afterEach(() => {
+    if (previous === undefined) delete process.env.CORE_AUTH_ENFORCE;
+    else process.env.CORE_AUTH_ENFORCE = previous;
+  });
+  const stored = (patch: Record<string, unknown> = {}) => {
+    mockPrisma.conversation.findFirst.mockResolvedValue({ id: 'c01', userId: USER });
+    mockPrisma.message.count.mockResolvedValue(1);
+    mockPrisma.message.findMany.mockResolvedValue([{
+      id: 'm1', role: 'assistant', content: 'Partial source-backed text must stay hidden',
+      dependencyManifest: null, citationsSummary: [],
+      processingTrace: [{ id: 'request_failure', status: 'failed', summary: 'Query execution deadline exhausted' }],
+      ...patch,
+    }]);
+  };
+  it('reports a historical timeout without exposing its stored partial answer', async () => {
+    stored();
+    const result = await controller().get({}, 'c01');
+    expect(result.messages[0].content).toBe('知识检索超时，请重试。');
+    expect(result.messages[0].citationsSummary).toBeNull();
+  });
+  it('keeps a source-backed answer without a manifest hidden', async () => {
+    stored({ processingTrace: [{ id: 'llm_generation', status: 'success' }] });
+    const result = await controller().get({}, 'c01');
+    expect(result.messages[0].content).toBe('该回答的来源已失效或您已无权访问。');
+  });
+  it('does not classify an answer with citations as a source-free failure', async () => {
+    stored({ citationsSummary: [{ index: 1 }] });
+    const result = await controller().get({}, 'c01');
+    expect(result.messages[0].content).toBe('该回答的来源已失效或您已无权访问。');
+  });
+  it('shows an explicit server failure marker without source citations', async () => {
+    stored({ content: '问答处理失败', dependencyManifest: { kind: 'non_evidence', version: 1, outcome: 'failure' } });
+    const result = await controller().get({}, 'c01');
+    expect(result.messages[0].content).toBe('问答处理失败');
   });
 });

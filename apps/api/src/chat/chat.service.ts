@@ -11,6 +11,7 @@ export { isStructuralHeadingLine, isTableSyntaxLine, isBlockLevelStart } from '.
 import { admitModelCall } from '../retrieval/model-admission';
 import { rethrowAuthorizationFailure } from '../permission/authorization-revision';
 import { requestFetch } from '../retrieval/request-signal';
+import { combineAbortSignals } from '../retrieval/abort-signal';
 import { authorizationEnforced } from '../permission/authorization-revision';
 import { validateEvidenceDependencies } from '../permission/evidence-dependencies';
 import { QueryExecution, createQueryExecution } from '../retrieval/query-execution';
@@ -43,7 +44,7 @@ import { applySectionAlign, extractSectionAnchors } from './section-align';
 import { needsSectionRescue } from './section-rescue';
 import { ShadowRetrievalService } from '../experiments/shadow-retrieval.service';
 import { CONTROL_VARIANT } from '../experiments/retrieval-variants';
-import { surfaceFormsForRelation, extractRelationFromQuery as extractRelationFromQueryImpl } from './relation-extractor';
+import { surfaceFormsForRelation, shouldProbeEvidenceHops, extractRelationFromQuery as extractRelationFromQueryImpl } from './relation-extractor';
 import { RaptorService } from "../raptor/raptor.service";
 import { EmbeddingService } from "../embedding/embedding.service";
 import { buildDocumentPreviewUrl } from "../ingestion/preview-url";
@@ -61,6 +62,7 @@ import {
   parseRetryMarkers,
   planAspectPassageRescue,
   planDocumentCompleteness,
+  planNextHopProbes,
   planSecondHopRescue,
   planTopRankGuarantee,
   rewriteRetryMarkers,
@@ -81,7 +83,7 @@ import {
 } from "./evidence-pack";
 import { RetrievalArmsService } from "./retrieval-arms";
 import { FusionRerankService } from "./fusion-rerank";
-import { assertAuthorizationSnapshot, assertRequestAuthorization, withAuthorizedRequest } from '../permission/authorization-revision';
+import { assertAuthorizationSnapshot, assertRequestAuthorization, withAuthorizedRequest, withAuthorizationVerification } from '../permission/authorization-revision';
 import { authorizationOutput } from './authorization-output';
 import { selectDiverseSearchCitations } from "./search-result-diversity";
 import { answerStyleRule } from "./answer-style";
@@ -826,9 +828,10 @@ export class ChatService {
     question?: string,
     userScope?: { fingerprint: string; knowledgeEpoch: number; cacheable?: boolean },
     modelName?: string,
+    answerKind?: 'refusal',
   ) {
     try {
-      return await this.citationAssembly.emitCitationsAndComplete(userId, citations, subscriber, totalTokens, fullAnswer, trace, question, userScope, modelName);
+      return await this.citationAssembly.emitCitationsAndComplete(userId, citations, subscriber, totalTokens, fullAnswer, trace, question, userScope, modelName, answerKind);
     } finally {
       // Total answer latency (P50/P95 via chat_total_ms). startedAt comes from
       // the request-id middleware so cache hits and refusals are measured too.
@@ -1095,7 +1098,7 @@ export class ChatService {
             data: { type: "delta", content: friendlyMsg, delta: friendlyMsg },
           });
           guarded.next({
-            data: { type: "done", total_tokens: 0, latency_ms: 0 },
+            data: { type: "done", total_tokens: 0, latency_ms: 0, answer_kind: 'refusal' },
           });
           guarded.complete();
           return;
@@ -1630,7 +1633,7 @@ export class ChatService {
       }
     }
 
-    queryResult = await this.filterQueryResultByCurrentPermission(
+    queryResult = await withAuthorizationVerification(() => this.filterQueryResultByCurrentPermission(
       queryResult,
       scope,
       {
@@ -1640,7 +1643,7 @@ export class ChatService {
         knowledgeEpoch: userScope.knowledgeEpoch,
         userId,
       },
-    );
+    ));
 
     const citations = Array.isArray(queryResult.citations) ? queryResult.citations : [];
     citations.sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0));
@@ -1663,11 +1666,11 @@ export class ChatService {
     });
 
     // If GBrain returned fewer results than requested, augment with high-recall Chunk fallback
-    if (results.length < limit) {
+    if (results.length < limit && !getRequestContext()?.execution?.deadline.expired()) {
       const subQueries = this.decomposeComplexQuery(query);
       const queriesToSearch = [query, ...subQueries];
       for (const q of queriesToSearch) {
-        if (results.length >= limit) break;
+        if (results.length >= limit || getRequestContext()?.execution?.deadline.expired()) break;
         const fallbackResults = await this.searchChunksFallback(scope, q, limit - results.length);
         const existingSnippets = new Set(
           results.map((r) => evidenceIdentity(r.evidence)),
@@ -1682,7 +1685,7 @@ export class ChatService {
       }
     }
 
-    const authorizedResults = await this.filterSearchResultsForUser(userId, scope, results);
+    const authorizedResults = await withAuthorizationVerification(() => this.filterSearchResultsForUser(userId, scope, results));
     const precedence = this.resolveTemporalPrecedence(authorizedResults);
     getRequestContext()?.execution?.finishRetrieval();
 
@@ -1807,7 +1810,7 @@ export class ChatService {
   /**
    * Temporal & Version Precedence Resolver:
    * Examines retrieved citations, detects if different versions or dates exist,
-   * prioritizes latest effective standards, and injects temporal precedence guidance.
+   * reports multiple versions without inferring legal precedence from counters.
    */
   resolveTemporalPrecedence(citations: any[]): {
     citations: any[];
@@ -1819,8 +1822,11 @@ export class ChatService {
     }
 
     const versionsByTopic = new Map<string, Set<number>>();
+    const topicLabels = new Map<string, string>();
     for (const c of citations) {
-      const title = String(c.docTitle || c.title || c.topic || "").replace(/\(V\d+.*?\)/i, "").trim();
+      const label = String(c.docTitle || c.title || c.topic || "").replace(/\(V\d+.*?\)/i, "").trim();
+      const title = `${c.kbId || ''}:${label}`;
+      topicLabels.set(title, label);
       const ver = typeof c.version === "number" ? c.version : 1;
       if (!versionsByTopic.has(title)) {
         versionsByTopic.set(title, new Set());
@@ -1834,13 +1840,13 @@ export class ChatService {
       if (versions.size > 1) {
         hasConflict = true;
         const maxVer = Math.max(...Array.from(versions));
-        latestVersionTag = `${title} (最新现行版本: V${maxVer})`;
+        latestVersionTag = `${topicLabels.get(title)} (检索版本包含 V${maxVer})`;
         break;
       }
     }
 
     const temporalNotice = hasConflict
-      ? `【时序效力与版本裁决提示】：检索到同一规范的历史与最新修订版本（${latestVersionTag}）。已自动执行最高效力优先规则：以最新现行版本条款为准，历史旧版条款已标明废止，请在回答中明确最新标准与修订变化。`
+      ? `【多版本证据提示】：检索到多个版本（${latestVersionTag}）。请并列说明与本问题相关的规定及差异，逐项引用；仅依据明确的替代关系、生效元数据或原文条款判断适用状态。版本序号和上传时间不能证明旧版已废止，依据不足时说明适用关系待确认。`
       : null;
 
     return {
@@ -2342,7 +2348,15 @@ export class ChatService {
       else signal.addEventListener("abort", linkRequestAbort, { once: true });
     }
     const gbrainHardTimer = setTimeout(
-      () => gbrainAbort.abort(),
+      () => {
+        if (gbrainAbort.signal.aborted) return;
+        gbrainAbort.abort();
+        trace.warn(
+          "gbrain_hard_timeout",
+          "GBrain 检索预算耗尽",
+          `GBrain 检索超过 ${Number(process.env.GBRAIN_QUERY_HARD_TIMEOUT_MS || "20000")}ms，已中止未完成的引擎检索，继续使用已召回的授权原文证据；部分引擎来源可能未完成检索。`,
+        );
+      },
       Number(process.env.GBRAIN_QUERY_HARD_TIMEOUT_MS || "20000"),
     );
     gbrainHardTimer.unref?.();
@@ -2556,9 +2570,9 @@ export class ChatService {
       // gbrainAbort so that the 2500ms race timeout doesn't poison subsequent stages (escalation,
       // source reconcile). Each stage gets its own controller linked to the request signal.
       const stageAbort = new AbortController();
-      const stageAbortLink = () => stageAbort.abort();
-      if (signal?.aborted) stageAbort.abort();
-      else if (signal) signal.addEventListener("abort", stageAbortLink, { once: true });
+      // The request's engine limit must also bound this independently raced
+      // controller; otherwise the main federated query ignores the hard timer.
+      const stageCancellation = combineAbortSignals([signal, gbrainAbort.signal, stageAbort.signal]);
       // Resolved once for the whole retrieval stage: the arm policy decides both
       // whether the main GBrain query is raced and whether the decomposed
       // sub-query probes are launched at all.
@@ -2569,18 +2583,18 @@ export class ChatService {
           ? this.gbrain.queryMany(sourceRefs, q, {
               breadth: retrieval.breadth,
               operation: effectiveOp,
-              signal: stageAbort.signal,
+              signal: stageCancellation.signal,
               ...(forceQueryRefresh ? { forceRefresh: true } : {}),
             })
           : this.gbrain.query(
               sourceRefs[0] || brainRepo.gitRepoUrl,
               q,
-              { breadth: retrieval.breadth, operation: effectiveOp, signal: stageAbort.signal, ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
+              { breadth: retrieval.breadth, operation: effectiveOp, signal: stageCancellation.signal, ...(forceQueryRefresh ? { forceRefresh: true } : {}) },
             );
       const gbrainSearchPromise = gbrainQueryOnce(retrieval.query).catch((err) => {
         // Distinguish a genuine GBrain failure from the expected 2.5s
         // race-window abort (which has its own timed warning below).
-        if (!stageAbort.signal.aborted) {
+        if (!stageCancellation.signal.aborted) {
           trace.warn(
             "gbrain_search_error",
             "GBrain 检索异常降级",
@@ -2592,7 +2606,7 @@ export class ChatService {
       }).finally(() => {
         // The request-signal link only needs to live as long as the search is
         // in flight; drop it once the promise settles to avoid a listener leak.
-        if (signal) signal.removeEventListener("abort", stageAbortLink);
+        stageCancellation.dispose();
       });
       // Decomposed sub-queries get their own GBrain probes, launched at the
       // same time as the main query (they overlap the race window, so waiting
@@ -3675,10 +3689,7 @@ export class ChatService {
         );
       }
     }
-    const needsHopProbe = Boolean(relationTerm) ||
-      agenticComplexity === 'multi_hop' ||
-      agenticComplexity === 'comparative' ||
-      agenticSubQueries.length > 0;
+    const needsHopProbe = shouldProbeEvidenceHops(agenticComplexity, agenticSubQueries, bridgeSeeds);
     if (this.agenticRagService && needsHopProbe) {
       const executedProbes = new Set<string>([
         (retrieval.query || question).trim().toLowerCase(),
@@ -3727,41 +3738,31 @@ export class ChatService {
           },
         );
 
-        let nextProbes = (judgment.suggestedFollowUp || [])
-          .map((p) => p.trim())
-          .filter((p) => p.length >= 2 && !executedProbes.has(p.toLowerCase()))
-          .slice(0, 2);
-
-        if (judgment.status === 'sufficient' || judgment.status === 'irrelevant') {
-          // The judge can be wrong when the question asks for an attribute that the
-          // evidence never states (measured: "sufficient (80%)" with the asked fact
-          // absent). If a deterministic bridge seed exists, spend one hop on it before
-          // closing; after that the judge's verdict is respected.
-          // Relation-augmented queries: "North Holland in charge" retrieves the
-          // province page, and "Lessing author" retrieves sibling pages that merely
-          // *mention* the author. The bare entity name is kept as a fallback probe.
-          const relationSuffix = relationTerm ? ` ${relationTerm}` : '';
-          const seeded = bridgeSeeds
-            .filter((seed) => !executedProbes.has(seed.trim().toLowerCase()))
-            .slice(0, 2)
-            .map((seed) => `${seed}${relationSuffix}`.trim());
-          if (currentHop === 1 && seeded.length > 0) {
-            bridgeSeeds.length = 0;
-            nextProbes = seeded;
-            trace.warn(
-              'bridge_seed_probe',
-              '桥接实体补检（裁决保守化）',
-              `充分性裁决为「${judgment.status}」，但问题指向关系「${relationTerm}」的缺失属性，先执行定向补检：${seeded.join('、')}`,
-              { hop: currentHop, seeds: seeded, judgeStatus: judgment.status, confidence: judgment.confidence },
-            );
-          } else {
-            break;
-          }
+        // The deterministic bridge seed is a rescue, so planNextHopProbes gates it
+        // on "no novel follow-up remains" rather than on the verdict — a judge that
+        // says `insufficient` while proposing nothing new would otherwise skip the
+        // bridge entity already named in hop-1 evidence (2Wiki four-hop full
+        // evidence 2/31). The relation suffix keeps probes relation-augmented:
+        // "North Holland in charge" retrieves the province page, and "Lessing
+        // author" retrieves sibling pages that merely *mention* the author.
+        const hopPlan = planNextHopProbes({
+          suggestedFollowUp: judgment.suggestedFollowUp,
+          bridgeSeeds,
+          executedProbes,
+          relationTerm,
+          currentHop,
+        });
+        const nextProbes = hopPlan.probes;
+        if (hopPlan.fromBridgeSeed) {
+          bridgeSeeds.length = 0;
+          trace.warn(
+            'bridge_seed_probe',
+            '桥接实体补检（裁决保守化）',
+            `充分性裁决为「${judgment.status}」且无新查询词，但问题指向关系「${relationTerm}」的缺失属性，先执行定向补检：${nextProbes.join('、')}`,
+            { hop: currentHop, seeds: nextProbes, judgeStatus: judgment.status, confidence: judgment.confidence },
+          );
         }
-
-        if (nextProbes.length === 0) {
-          break;
-        }
+        if (nextProbes.length === 0) break;
 
         for (const p of nextProbes) {
           executedProbes.add(p.toLowerCase());
@@ -4341,6 +4342,7 @@ export class ChatService {
         // edition is chosen by lifecycle status, then effective date, then
         // version number.
         const versionsByFamily = new Map<string, Array<{
+          id: string;
           title: string;
           version: number;
           updatedAt: Date;
@@ -4368,9 +4370,10 @@ export class ChatService {
           familyKeyByDocId.set(pd.id, familyKey);
           if (!familyKeyByTitle.has(pd.title)) familyKeyByTitle.set(pd.title, familyKey);
           const list = versionsByFamily.get(familyKey) || [];
-          if (!list.some((entry) => entry.version === detectedVersion)) {
+          if (!list.some((entry) => entry.id === pd.id)) {
             const updatedAt = pd.updatedAt ? new Date(pd.updatedAt) : new Date(0);
             list.push({
+              id: pd.id,
               title: pd.title,
               version: detectedVersion,
               updatedAt: Number.isNaN(updatedAt.getTime()) ? new Date(0) : updatedAt,
@@ -4425,7 +4428,7 @@ export class ChatService {
             const target = resolveFamily(key);
             if (target === key) continue;
             const combined = [...(merged.get(target) || []), ...entries].filter(
-              (entry, index, all) => all.findIndex((e) => e.version === entry.version) === index,
+              (entry, index, all) => all.findIndex((e) => e.id === entry.id) === index,
             );
             merged.set(target, combined);
             merged.delete(key);
@@ -4467,14 +4470,30 @@ export class ChatService {
           });
           const latest = sorted[0];
           const latestDateLabel = latest.effectiveDate || "未知";
-          const matchingEntry = allEntries.find((entry) => entry.version === citDetectedVersion);
+          const matchingEntry = cit.docId
+            ? allEntries.find((entry) => entry.id === cit.docId)
+            : allEntries.find((entry) => entry.title === cit.docTitle && entry.version === citDetectedVersion);
+          // A higher number or a later upload does not supersede a separate
+          // document. Follow only an explicit replacement chain from the
+          // effective edition to the cited document.
+          let replacement = latest.current ? docsById.get(latest.id) : null;
+          const replacementIds = new Set<string>();
+          let explicitlyReplaced = false;
+          while (replacement?.supersedesDocumentId && !replacementIds.has(replacement.id)) {
+            replacementIds.add(replacement.id);
+            if (replacement.supersedesDocumentId === matchingEntry?.id) {
+              explicitlyReplaced = true;
+              break;
+            }
+            replacement = docsById.get(replacement.supersedesDocumentId);
+          }
           const isSuperseded = (matchingEntry?.repealed ?? false)
-            || (!latest.current ? false : citDetectedVersion < latest.version);
+            || explicitlyReplaced;
           cit.versionConflict = {
             hasConflict: true,
             currentVersion: citDetectedVersion,
             latestVersion: latest.version,
-            allVersions: allEntries.map((entry) => entry.version).sort((a, b) => b - a),
+            allVersions: Array.from(new Set(allEntries.map((entry) => entry.version))).sort((a, b) => b - a),
             latestEffectiveDate: latestDateLabel,
           };
           // Do not slash superseded scores to avoid dropping conflicting evidence from prompt context;
@@ -4769,6 +4788,10 @@ export class ChatService {
         0,
         refusalMessage,
         trace,
+        undefined,
+        undefined,
+        undefined,
+        'refusal',
       );
       return;
       }
@@ -4788,6 +4811,11 @@ export class ChatService {
       const modelName = llmRequest?.modelName || "";
 
       if (!apiKey) {
+        getRequestContext()?.execution?.finishRetrieval();
+        await assertRequestAuthorization();
+        if (getRequestContext()?.authorization && getRequestContext()?.authorization?.revision !== 'disabled') {
+          getRequestContext()!.evidenceDependencies = await captureEvidenceDependencies(queryResult.citations || []);
+        }
         // The compiled truth remains useful when the model gateway is not
         // configured. Return it explicitly instead of inventing an answer or
         // leaving the browser's stream hanging.
@@ -4890,7 +4918,7 @@ ${answerStyleRule(false)}`;
           ? "【全景统计规范】：本次是知识库/文档盘点类问题，参考资料按知识库逐一给出文档清单。请分知识库逐项呈现统计结果，并在每个知识库的统计陈述末尾标注它对应的引用角标（如 [1]、[2]），让用户可逐库核对。"
           : "",
         orderedCitations.some((c: any) => c.isCompiledTruth || c.isCompiledDerived)
-          ? "【编译真理优先采信】：参考资料中带有【编译真理·高优先】或【Scope派生智库】标记的来源，是经过系统编译消歧与对账的高置信度权威事实。若其与普通未编译的碎片化分块存在局部表述差异，请优先采信编译真理。"
+          ? "【编译资料使用规则】：【编译真理·高优先】与【Scope派生智库】属于派生资料。涉及具体规定、数值或来源差异时，逐项引用可访问的原文证据；派生资料与原文不一致时明确说明差异，不以编译标记决定效力或忽略其他适用来源。"
           : "",
       ]
         .filter(Boolean)

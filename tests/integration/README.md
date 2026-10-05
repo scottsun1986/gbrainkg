@@ -18,8 +18,18 @@ python3 tests/integration/run-core-checks.py --database gbrain_core_opt_test --u
 | core-knowledge-versions.cjs | 核心索引覆盖回滚、旧版保持在线、乱序与幂等、generation build/switch/rollback、严格输出与撤权并发 |
 | core-graph-projection.cjs | 文档分片复用、差量节点/边、依赖最小来源、撤回及并发发布栅栏 |
 | core-knowledge-security.sql | 真实 NOBYPASSRLS 身份、权限矩阵、派生来源合取、更新依赖保护、时点和模型配额；事务回滚 |
+| artifact-read-guard.sql | 2232 个派生节点 × 908 个依赖；真实 NOBYPASSRLS 策略、旧守卫等价性、文档撤权、版本/hash/时点漂移、manifest 缺失与跨 KB 拒绝；事务回滚 |
 
 Node 检查使用显式后台上下文验证后台构建；用户身份/RLS 的真实性由 SQL 检查验证。禁止把后台构建测试通过描述为请求角色隔离证明。
+
+派生读取检查要求已应用 `20261005120000_artifact_set_read_guard`。运行器传入 `skip_original=1`，省略全量旧守卫计时，仍保留每种状态下对 12 个节点的旧函数比较。需要同一 fixture 的完整旧路径计时，单独运行：
+
+```bash
+docker exec -i llmwiki-postgres psql -U llmwiki -d gbrain_core_opt_test \
+  -v ON_ERROR_STOP=1 < tests/integration/artifact-read-guard.sql
+```
+
+该检查临时插入 2026656 条依赖，并输出真实用户策略的 `EXPLAIN (ANALYZE,BUFFERS)`。测试角色与 fixture 随事务回滚；应预留测试库空间。性能记录与边界见 `docs/validation/sota-20261005/artifact-read-guard-fix.md`。
 
 ## 空库迁移与运行角色权限
 

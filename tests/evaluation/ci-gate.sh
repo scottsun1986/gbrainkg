@@ -20,6 +20,15 @@ echo ""
 # than a skip. The default (0) keeps local/offline development usable.
 source "$SCRIPT_DIR/gate-thresholds.sh"
 
+# Strict/release runs must use an independent entailment judge. Without this
+# explicit wiring a release could pass on keyword and citation proxies while
+# reporting faithfulness as "measured" even though no judge route ran.
+if [ "$GATE_STRICT" = "1" ]; then
+  export GATE_LLM_JUDGE="true"
+  export GATE_LLM_JUDGE_MIN="${GATE_LLM_JUDGE_MIN:-$GATE_FAITHFULNESS}"
+  export GATE_LLM_JUDGE_SAMPLES="${GATE_LLM_JUDGE_SAMPLES:-3}"
+fi
+
 echo "Thresholds:"
 echo "  Hit Rate:          >= $GATE_HIT_RATE"
 echo "  Keyword Coverage:  >= $GATE_KEYWORD_COVERAGE"
@@ -32,10 +41,7 @@ echo ""
 
 # Run the quality gate
 cd "$PROJECT_ROOT"
-npx --yes tsx@4.23.13 tests/evaluation/quality-gate.ts
-EXIT_CODE=$?
-
-if [ $EXIT_CODE -ne 0 ]; then
+if ! npx --yes tsx@4.23.13 tests/evaluation/quality-gate.ts; then
   echo ""
   echo "❌ QUALITY GATE FAILED"
   echo "Please review the evaluation report above."
@@ -43,14 +49,14 @@ if [ $EXIT_CODE -ne 0 ]; then
 fi
 
 echo ""
-echo "✅ OFFLINE QUALITY GATE PASSED"
+echo "✅ GOLDEN QUALITY GATE PASSED"
 
 # ---------------------------------------------------------------------------
 # Live gates. Each one is skipped only when GATE_STRICT=0; a release run
 # (GATE_STRICT=1) treats "cannot run" as a failure so a missing credential can
 # never be mistaken for a passing benchmark.
 # ---------------------------------------------------------------------------
-STRICT_FAILURES=0
+LIVE_FAILURES=0
 
 gate_step() {
   local name="$1"; shift
@@ -63,9 +69,7 @@ gate_step() {
     return 0
   fi
   echo "❌ $name failed or could not run"
-  if [ "$GATE_STRICT" = "1" ]; then
-    STRICT_FAILURES=$((STRICT_FAILURES + 1))
-  fi
+  LIVE_FAILURES=$((LIVE_FAILURES + 1))
   return 1
 }
 
@@ -80,7 +84,7 @@ should_run_live() {
 if should_run_live; then
   # 1. Public multi-hop benchmarks against the live API.
   gate_step "international retrieval benchmark" \
-    python3 tests/evaluation/intl-benchmark/benchmark_suite.py all --mode retrieval --gate
+    python3 tests/evaluation/intl-benchmark/benchmark_suite.py all --mode retrieval --gate || true
 
   # 2. Filtered ANN recall against exact KNN (pgvector). Reading a database is
   #    enough; no API needed.
@@ -89,24 +93,19 @@ if should_run_live; then
       python3 tests/evaluation/intl-benchmark/ann_recall_eval.py \
         --limit "${ANN_EVAL_QUERIES:-50}" --k 10 \
         --ef-search "${VECTOR_EF_SEARCH:-100}" --iterative-scan "${VECTOR_ITERATIVE_SCAN:-relaxed_order}" \
-        --target-recall "$GATE_ANN_RECALL"
+        --target-recall "$GATE_ANN_RECALL" || true
   else
     echo "❌ filtered HNSW recall gate cannot run: ANN_EVAL_DATABASE_URL/DATABASE_URL is not set"
-    [ "$GATE_STRICT" = "1" ] && STRICT_FAILURES=$((STRICT_FAILURES + 1))
+    LIVE_FAILURES=$((LIVE_FAILURES + 1))
   fi
 fi
 
-if [ "$GATE_STRICT" = "1" ] && [ "$STRICT_FAILURES" -gt 0 ]; then
+if [ "$LIVE_FAILURES" -gt 0 ]; then
   echo ""
-  echo "❌ $STRICT_FAILURES live gate(s) failed in strict release mode."
+  echo "❌ $LIVE_FAILURES enabled live gate(s) failed."
   exit 1
 fi
 
-if [ "$STRICT_FAILURES" -eq 0 ]; then
-  echo ""
-  echo "🎯 All enabled gates passed."
-else
-  echo ""
-  echo "⚠️  Live gates were skipped (development mode). Release requires GATE_STRICT=1."
-fi
+echo ""
+echo "🎯 All enabled gates passed."
 exit 0

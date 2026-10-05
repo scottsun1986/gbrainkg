@@ -762,9 +762,9 @@ Output strict JSON:
         ]),
       ).slice(0, 2);
 
-      const status = rawStatus === 'insufficient' && mergedFollowUps.length === 0
-        ? 'sufficient'
-        : rawStatus;
+      // Exhausting novel probes stops retrieval; it does not prove sufficiency.
+      // Preserve the verdict for the caller's trace and bounded-hop policy.
+      const status = rawStatus;
 
       const missingAspects = Array.isArray(parsed.missingAspects) && parsed.missingAspects.length
         ? parsed.missingAspects.slice(0, 3)

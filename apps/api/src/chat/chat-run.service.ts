@@ -1,5 +1,7 @@
 import { Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { getPrismaClient } from '../prisma';
+import { authorizationEnforced } from '../permission/authorization-revision';
+import { validateEvidenceDependencies } from '../permission/evidence-dependencies';
 
 /**
  * Non-streaming question/answer runs.
@@ -201,10 +203,18 @@ export class ChatRunService implements OnModuleInit, OnModuleDestroy {
     if (run.status === 'completed' && run.messageId) {
       const message = await this.prisma.message.findFirst({
         where: { id: run.messageId, conversationId: run.conversationId, conversation: { userId } },
-        select: { id: true, content: true, citationsSummary: true, processingTrace: true, latencyMs: true },
+        select: { id: true, content: true, citationsSummary: true, processingTrace: true, latencyMs: true, dependencyManifest: true },
       });
       if (message) {
         view.messageId = message.id;
+        // Polling returns the same stored answer as conversation history, so
+        // it must apply the same live ACL, version and temporal checks.
+        if (authorizationEnforced() && !await validateEvidenceDependencies(userId, message.dependencyManifest)) {
+          view.answer = '该回答的来源已失效或您已无权访问。';
+          view.citations = [];
+          view.trace = [];
+          return view;
+        }
         view.answer = message.content;
         view.citations = message.citationsSummary ?? [];
         view.trace = message.processingTrace ?? [];

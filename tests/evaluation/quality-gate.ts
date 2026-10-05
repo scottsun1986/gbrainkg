@@ -19,6 +19,7 @@ import fs from 'fs';
 import path from 'path';
 import { llmChat, extractJson, llmConfig } from './llm-client';
 import { runMetadata } from './run-meta';
+import { judgeConfiguration, judgeResponseScore, summarizeJudgeSamples } from './quality-gate-judge';
 import { requireResolvedScopes, resolveGateToken } from './quality-gate-auth';
 import { classifyResultError, evaluateValidity, isEnvironmentError, validityBounds } from './quality-gate-validity';
 
@@ -51,15 +52,11 @@ const API_BASE = (process.env.API_URL || process.env.API_BASE || 'http://127.0.0
 const CHAT_URL = `${API_BASE}/api/v1/chat/completions`;
 let TOKEN = '';
 const REQUEST_TIMEOUT_MS = Number(process.env.GATE_REQUEST_TIMEOUT_MS || 90_000);
-// Independent (LLM-as-judge) scoring: opt-in, reported always, gated only when
-// GATE_LLM_JUDGE_MIN > 0. This avoids a gate that only measures keyword overlap.
-const LLM_JUDGE_ENABLED = process.env.GATE_LLM_JUDGE === 'true';
-const LLM_JUDGE_MIN = parseFloat(process.env.GATE_LLM_JUDGE_MIN || '0');
-// Judge self-consistency: how many independent judge passes to run per answer.
-// A single pass cannot distinguish "the answer is weak" from "the judge is
-// unstable". With N>1 the score is the mean and the spread is reported, so a
-// gate decision made on an unstable judge is visible instead of silent.
-const LLM_JUDGE_SAMPLES = Math.max(1, Math.min(5, Number(process.env.GATE_LLM_JUDGE_SAMPLES || 1)));
+// Resolve before any API request; invalid release settings fail closed.
+const judgeConfig = judgeConfiguration();
+const LLM_JUDGE_ENABLED = judgeConfig.enabled;
+const LLM_JUDGE_MIN = judgeConfig.minimum;
+const LLM_JUDGE_SAMPLES = judgeConfig.samples;
 
 const DATASET_PATH = path.join(__dirname, 'golden-dataset.json');
 const RESULTS_DIR = path.join(__dirname, 'results');
@@ -182,43 +179,49 @@ const EVIDENCE_SNIPPET_MAX_CHARS = 800;
  * the snippet text of every citation (not just titles) and decomposes the
  * answer into atomic assertions; the returned score is the ratio of assertions
  * supported by the evidence. Returns -1 when no judge route is configured or
- * the judge output cannot be parsed (fail-open).
+ * the judge output cannot be parsed. Missing results fail the judge coverage gate.
  */
+interface JudgePassTrace {
+  sample: number;
+  requestedAt: string;
+  requestAttempted: boolean;
+  rawResponse: string | null;
+  rawCompletion: unknown;
+  parsed: unknown;
+  score: number | null;
+  valid: boolean;
+  error?: string;
+}
+interface JudgeTrace {
+  input: { question: string; answer: string; expectedKeywords: string[]; expectedNoAnswer: boolean; evidence: string; prompt: string };
+  config: { baseUrl: string; model: string; temperature: number; maxTokens: number; timeoutMs: number } | null;
+  evidenceBudget: { maxCitations: number; maxCharsPerCitation: number };
+  samples: JudgePassTrace[];
+  valid: boolean;
+  spread: number | null;
+  error?: string;
+}
+
+function safeJudgeConfiguration(): JudgeTrace['config'] {
+  const config = llmConfig();
+  if (!config) return null;
+  let baseUrl = '[invalid URL]';
+  try {
+    const url = new URL(config.baseUrl);
+    url.username = ''; url.password = ''; url.search = ''; url.hash = '';
+    baseUrl = url.toString().replace(/\/$/, '');
+  } catch { /* Invalid route is recorded by each attempted judge call. */ }
+  return { baseUrl, model: config.modelName,
+    temperature: 0, maxTokens: 600, timeoutMs: 45000 };
+}
+
 async function judgeAnswer(
   question: string,
   answer: string,
   expectedKeywords: string[],
   citations: Array<{ doc_title?: string; snippet?: string }>,
   expectedNoAnswer: boolean,
-): Promise<number> {
-  if (LLM_JUDGE_SAMPLES <= 1) {
-    return judgeAnswerOnce(question, answer, expectedKeywords, citations, expectedNoAnswer);
-  }
-  const scores: number[] = [];
-  for (let sample = 0; sample < LLM_JUDGE_SAMPLES; sample++) {
-    const score = await judgeAnswerOnce(question, answer, expectedKeywords, citations, expectedNoAnswer);
-    if (score >= 0) scores.push(score);
-  }
-  if (!scores.length) return -1;
-  if (scores.length > 1) judgeSampleSpreads.push(Math.max(...scores) - Math.min(...scores));
-  return scores.reduce((a, b) => a + b, 0) / scores.length;
-}
-
-/**
- * Per-answer spread between judge passes. Reported so a decision taken on an
- * unstable judge is visible; a high mean spread means the judge score should not
- * be trusted as a release gate without human review.
- */
-const judgeSampleSpreads: number[] = [];
-
-async function judgeAnswerOnce(
-  question: string,
-  answer: string,
-  expectedKeywords: string[],
-  citations: Array<{ doc_title?: string; snippet?: string }>,
-  expectedNoAnswer: boolean,
-): Promise<number> {
-  if (!llmConfig()) return -1; // no route configured: skip
+): Promise<{ score: number; trace: JudgeTrace }> {
   const evidence = citations.slice(0, 8)
     .map((c, index) => {
       const snippet = String(c.snippet || '').trim().slice(0, EVIDENCE_SNIPPET_MAX_CHARS);
@@ -233,25 +236,53 @@ async function judgeAnswerOnce(
 ${direction}
 证据片段（引用正文，与引用编号对应）：
 ${evidence || '(无)'}
-模型回答：${answer.slice(0, 1200)}
+模型回答：${answer}
 评分步骤：
 1. 将模型回答拆分为原子断言（可独立验证的最小陈述）。
 2. 逐断言判断其是否被证据片段蕴含（supported / unsupported）。${expectedNoAnswer ? '任何编造的断言一律记为 unsupported；正确拒答则 score=1.0。' : ''}
 3. score = supported 断言数 / 总断言数。
 请输出 json：{"assertions": [{"text": "断言", "supported": true}], "score": 0.0-1.0, "reason": "一句话理由"}`;
+  const trace: JudgeTrace = {
+    input: { question, answer, expectedKeywords, expectedNoAnswer, evidence, prompt },
+    config: safeJudgeConfiguration(),
+    evidenceBudget: { maxCitations: 8, maxCharsPerCitation: EVIDENCE_SNIPPET_MAX_CHARS },
+    samples: [], valid: false, spread: null,
+  };
+  if (!answer.trim()) {
+    trace.error = 'empty answer; judge not requested';
+    return { score: -1, trace };
+  }
+  for (let sample = 0; sample < LLM_JUDGE_SAMPLES; sample++) {
+    trace.samples.push(await judgeAnswerOnce(prompt, expectedNoAnswer, sample + 1));
+  }
+  const result = summarizeJudgeSamples(trace.samples.map(pass => pass.score ?? -1), LLM_JUDGE_SAMPLES);
+  trace.valid = result.score >= 0;
+  trace.spread = result.spread;
+  if (!trace.valid) trace.error = 'one or more requested judge samples failed';
+  if (result.spread !== null) judgeSampleSpreads.push(result.spread);
+  return { score: result.score, trace };
+}
+
+/** Spreads are reported alongside complete per-sample traces. */
+const judgeSampleSpreads: number[] = [];
+
+async function judgeAnswerOnce(prompt: string, expectedNoAnswer: boolean, sample: number): Promise<JudgePassTrace> {
+  const pass: JudgePassTrace = { sample, requestedAt: new Date().toISOString(), requestAttempted: false,
+    rawResponse: null, rawCompletion: null, parsed: null, score: null, valid: false };
+  const config = llmConfig();
+  if (!config) return { ...pass, error: 'judge route not configured' };
   try {
-    const text = await llmChat([{ role: 'user', content: prompt }], { maxTokens: 600, timeoutMs: 45000 });
-    const parsed = extractJson<{ score?: number; assertions?: Array<{ supported?: boolean }> }>(text);
-    if (!parsed) return -1;
-    // Recount the judge's own assertion table instead of trusting its arithmetic.
-    const judgments = Array.isArray(parsed.assertions) ? parsed.assertions : [];
-    if (judgments.length > 0) {
-      const supported = judgments.filter((a) => a?.supported === true).length;
-      return Math.max(0, Math.min(1, supported / judgments.length));
-    }
-    if (typeof parsed.score === 'number') return Math.max(0, Math.min(1, parsed.score));
-  } catch { /* fail-open */ }
-  return -1;
+    pass.requestAttempted = true;
+    pass.rawResponse = await llmChat([{ role: 'user', content: prompt }], { maxTokens: 600, timeoutMs: 45000, onResponse: payload => { pass.rawCompletion = payload; } });
+    pass.parsed = extractJson(pass.rawResponse);
+    const score = judgeResponseScore(pass.parsed, expectedNoAnswer);
+    if (score >= 0) { pass.score = score; pass.valid = true; }
+    else pass.error = pass.parsed ? 'malformed judge assertions/score' : 'judge response is not valid JSON';
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    pass.error = config.apiKey ? message.split(config.apiKey).join('[REDACTED]') : message;
+  }
+  return pass;
 }
 
 // ---------------------------------------------------------------- main
@@ -302,9 +333,9 @@ async function runQualityGate() {
   interface Row {
     id: string; category: string; success: boolean;
     hitRate: boolean; citationAccuracy: boolean; noAnswer: boolean;
-    permission: boolean; keywordCoverage: number;
-    faithfulness: number; contextPrecision: number; judged: boolean;
-    answer: string; citations: string[]; error?: string; llmJudge?: number;
+    permission: boolean; keywordCoverage: number; groundingPresence: boolean;
+    faithfulness: number | null; contextPrecision: number; judged: boolean;
+    answer: string; fullAnswer: string; question: string; judgeTrace?: JudgeTrace; citations: string[]; error?: string; llmJudge?: number;
     /**
      * Set when the case produced no score for an environmental reason (auth,
      * transport, timeout, corpus). Such a row is excluded from every metric:
@@ -372,9 +403,9 @@ async function runQualityGate() {
       results.push({
         id: item.id, category: item.category, success: false,
         hitRate: false, citationAccuracy: false, noAnswer: false,
-        permission: false, keywordCoverage: 0, faithfulness: 0,
+        permission: false, keywordCoverage: 0, groundingPresence: false, faithfulness: null,
         contextPrecision: 0, judged: false,
-        answer: '', citations: [], error: envError, envError,
+        answer: res.answer.slice(0, 400), fullAnswer: res.answer, question: item.question, citations: [], error: envError, envError,
       });
       continue;
     }
@@ -399,26 +430,27 @@ async function runQualityGate() {
 
     const finalRefused = REFUSAL_MARKERS.some((m) => res.answer.includes(m));
     const noAnswer = item.expected_no_answer
-      ? finalRefused || res.answer.trim() === ''
-      : res.answer.length > 0 && !REFUSAL_MARKERS.every((m) => res.answer.includes(m));
+      ? res.answer.trim().length > 0 && finalRefused
+      : res.answer.trim().length > 0 && !finalRefused;
 
     const keywordCoverage = item.expected_keywords.length > 0
       ? item.expected_keywords.filter((kw) => res.answer.includes(kw)).length / item.expected_keywords.length
       : 1;
 
-    // Faithfulness = ratio of answer assertions supported by the cited
-    // evidence (judge-based entailment). Without a judge route the metric
-    // degrades to a strict grounding-presence check (0/1) so ungrounded
-    // long answers still fail the gate.
+    // Only independent entailment judgments measure faithfulness. Missing
+    // measurements remain null rather than being replaced by citation proxies.
     let llmJudge: number | undefined;
+    let judgeTrace: JudgeTrace | undefined;
     if (LLM_JUDGE_ENABLED) {
-      const score = await judgeAnswer(item.question, res.answer, item.expected_keywords, res.citations, item.expected_no_answer);
-      if (score >= 0) llmJudge = score;
+      const judgment = await judgeAnswer(item.question, res.answer, item.expected_keywords, res.citations, item.expected_no_answer);
+      judgeTrace = judgment.trace;
+      if (judgment.score >= 0) llmJudge = judgment.score;
     }
-    const faithfulness = llmJudge !== undefined
-      ? llmJudge
-      : (!item.expected_no_answer && res.citations.length === 0
-        && res.answer.length > 20 && !finalRefused) ? 0 : 1;
+    const faithfulness = llmJudge ?? null;
+    // Preserve the development gate's previous citation-presence guard, but
+    // report it as a proxy rather than claiming it measures entailment.
+    const groundingPresence = item.expected_no_answer || res.citations.length > 0
+      || res.answer.length <= 20 || finalRefused;
 
     // Permission probe: any permission-boundary case must also reject an
     // out-of-scope KB request outright, proving scope is enforced.
@@ -436,9 +468,9 @@ async function runQualityGate() {
         results.push({
           id: item.id, category: item.category, success: false,
           hitRate: false, citationAccuracy: false, noAnswer: false,
-          permission: false, keywordCoverage: 0, faithfulness: 0,
+          permission: false, keywordCoverage: 0, groundingPresence: false, faithfulness: null,
           contextPrecision: 0, judged: false,
-          answer: '', citations: [], error: 'auth: permission probe rejected the credential',
+          answer: res.answer.slice(0, 400), fullAnswer: res.answer, question: item.question, judgeTrace, citations: titles, error: 'auth: permission probe rejected the credential',
           envError: 'auth: permission probe rejected the credential',
         });
         continue;
@@ -446,7 +478,7 @@ async function runQualityGate() {
       permission = probe.status === 403;
     }
 
-    const success = (item.expected_no_answer ? noAnswer : hitRate) && permission;
+    const success = noAnswer && (item.expected_no_answer || hitRate) && permission;
     if (success) totalScore++;
 
     console.log(success ? `${colors.green}✓ PASS${colors.reset}` : `${colors.red}✗ FAIL${colors.reset}`);
@@ -454,8 +486,8 @@ async function runQualityGate() {
     results.push({
       id: item.id, category: item.category, success,
       hitRate, citationAccuracy, noAnswer, permission,
-      keywordCoverage, faithfulness, contextPrecision, judged: llmJudge !== undefined,
-      answer: res.answer.slice(0, 400), citations: titles, error: res.error, llmJudge,
+      keywordCoverage, groundingPresence, faithfulness, contextPrecision, judged: llmJudge !== undefined,
+      answer: res.answer.slice(0, 400), fullAnswer: res.answer, question: item.question, judgeTrace, citations: titles, error: res.error, llmJudge,
     });
   }
 
@@ -481,13 +513,24 @@ async function runQualityGate() {
     maxEnvErrorRate: bounds.maxEnvErrorRate,
   });
 
+  const judgedCount = scoredRows.filter((r) => typeof r.llmJudge === 'number').length;
+  const judgeCoveragePass = !LLM_JUDGE_ENABLED || (scored > 0 && judgedCount === scored);
+  if (verdict.valid && !judgeCoveragePass) {
+    verdict.valid = false;
+    verdict.invalidReason = `independent judge incomplete: ${judgedCount}/${scored} cases completed all ${LLM_JUDGE_SAMPLES} passes`;
+  }
+
   const agg = {
     hitRate: rate((r) => r.hitRate),
     keywordCoverage: mean((r) => r.keywordCoverage),
     permission: rate((r) => r.permission),
     noAnswer: rate((r) => r.noAnswer),
     citationAccuracy: rate((r) => r.citationAccuracy),
-    faithfulness: mean((r) => r.faithfulness),
+    groundingPresence: rate((r) => r.groundingPresence),
+    faithfulness: (() => {
+      const measured = scoredRows.filter((r) => r.faithfulness !== null);
+      return measured.length ? measured.reduce((sum, r) => sum + r.faithfulness!, 0) / measured.length : null;
+    })(),
     contextPrecision: mean((r) => r.contextPrecision),
     llmJudge: (() => {
       const judged = scoredRows.filter((r) => typeof r.llmJudge === 'number');
@@ -541,6 +584,13 @@ async function runQualityGate() {
       judge: {
         enabled: LLM_JUDGE_ENABLED,
         samplesPerAnswer: LLM_JUDGE_SAMPLES,
+        minimum: LLM_JUDGE_MIN,
+        judgedCount,
+        coverage: scored > 0 ? judgedCount / scored : 0,
+        coveragePass: judgeCoveragePass,
+        faithfulnessMeasured: scored > 0 && judgedCount === scored,
+        model: LLM_JUDGE_ENABLED ? llmConfig()?.modelName ?? null : null,
+        config: LLM_JUDGE_ENABLED ? safeJudgeConfiguration() : null,
         meanSampleSpread: judgeSampleSpreads.length
           ? judgeSampleSpreads.reduce((a, b) => a + b, 0) / judgeSampleSpreads.length
           : null,
@@ -557,11 +607,18 @@ async function runQualityGate() {
     ['Keyword Coverage', THRESHOLDS.keywordCoverage, agg.keywordCoverage, agg.keywordCoverage >= THRESHOLDS.keywordCoverage],
     ['Permission', THRESHOLDS.permission, agg.permission, agg.permission >= THRESHOLDS.permission],
     ['No-Answer', THRESHOLDS.noAnswer, agg.noAnswer, agg.noAnswer >= THRESHOLDS.noAnswer],
-    ['Faithfulness', THRESHOLDS.faithfulness, agg.faithfulness, agg.faithfulness >= THRESHOLDS.faithfulness],
     ['Citation Accuracy', THRESHOLDS.citationAccuracy, agg.citationAccuracy, agg.citationAccuracy >= THRESHOLDS.citationAccuracy],
     ['Context Precision', THRESHOLDS.contextPrecision, agg.contextPrecision, agg.contextPrecision >= THRESHOLDS.contextPrecision],
-    ['LLM Judge (independent)', LLM_JUDGE_MIN, agg.llmJudge, llmJudgePass],
   ];
+  if (LLM_JUDGE_ENABLED) {
+    checks.push(
+      ['Faithfulness', THRESHOLDS.faithfulness, agg.faithfulness ?? -1, agg.faithfulness !== null && agg.faithfulness >= THRESHOLDS.faithfulness],
+      ['LLM Judge (independent)', LLM_JUDGE_MIN, agg.llmJudge, llmJudgePass],
+      ['LLM Judge Coverage', 1, scored > 0 ? judgedCount / scored : 0, judgeCoveragePass],
+    );
+  } else {
+    checks.push(['Grounding Presence (proxy)', THRESHOLDS.faithfulness, agg.groundingPresence, agg.groundingPresence >= THRESHOLDS.faithfulness]);
+  }
 
   if (!verdict.valid) {
     // Print the counts, then refuse to present them as a result. The banner is
@@ -579,6 +636,7 @@ async function runQualityGate() {
 
   console.log(`\n${colors.cyan}--- Quality Gate Summary ---${colors.reset}`);
   console.log(`Total: ${total}  Scored: ${scored}  Env errors: ${envErrorCount}  Passed: ${totalScore} (${((totalScore / Math.max(1, scored)) * 100).toFixed(1)}%)\n`);
+  if (!LLM_JUDGE_ENABLED) console.log('Faithfulness: NOT MEASURED (development run; release requires GATE_STRICT=1).');
   console.log('Metric                | Threshold | Actual  | Status');
   console.log('----------------------|-----------|---------|-------');
   let allPassed = true;

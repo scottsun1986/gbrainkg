@@ -65,12 +65,12 @@ export class ConversationController {
     const last = page[page.length - 1];
     const running = await this.prisma.chatRun.findMany({
       where: { conversationId: { in: page.map((row) => row.id) }, status: 'running' },
-      select: { conversationId: true, stage: true },
+      select: { id: true, conversationId: true, stage: true },
     });
-    const runningByConv = new Map(running.map((row) => [row.conversationId, row.stage]));
+    const runningByConv = new Map(running.map((row) => [row.conversationId, row]));
     const withRun = page.map((row) => ({
       ...row,
-      ...(runningByConv.has(row.id) ? { runStage: runningByConv.get(row.id) } : {}),
+      ...(runningByConv.has(row.id) ? { runStage: runningByConv.get(row.id)!.stage, runId: runningByConv.get(row.id)!.id } : {}),
     }));
     if (paginated === undefined) return withRun;
     return {
@@ -90,16 +90,28 @@ export class ConversationController {
     if (!conversation) throw new NotFoundException('Conversation not found.');
     const messages = await this.prisma.message.findMany({
       where: { conversationId: id, ...(before ? {} : {}) },
-      orderBy: { createdAt: 'asc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       ...(before
-        ? { cursor: { id: before }, skip: 1, take: limit }
-        : { take: limit }),
+        ? { cursor: { id: before }, skip: 1, take: limit + 1 }
+        : { take: limit + 1 }),
     });
+    const hasMore = messages.length > limit;
+    if (hasMore) messages.pop();
+    messages.reverse();
     if (authorizationEnforced()) {
       const checks = new Map<string, boolean>();
       for (let index = 0; index < messages.length; index++) {
         const message: any = messages[index];
         if (message.role !== 'assistant') continue;
+        // Older failed runs have no evidence manifest. Never return their
+        // stored content: it can contain a partial, source-backed answer.
+        if (message.dependencyManifest == null && Array.isArray(message.citationsSummary) && !message.citationsSummary.length
+          && Array.isArray(message.processingTrace) && message.processingTrace.some((node: any) => node?.id === 'request_failure' && node.status === 'failed')) {
+          const failure = message.processingTrace.find((node: any) => node?.id === 'request_failure');
+          messages[index] = { ...message, content: /deadline|timeout|timed out/i.test(String(failure.summary))
+            ? '知识检索超时，请重试。' : '本次问答处理失败，请重试。', citationsSummary: null, processingTrace: null } as any;
+          continue;
+        }
         const key = JSON.stringify(message.dependencyManifest);
         if (!checks.has(key)) checks.set(key, await validateEvidenceDependencies(userId, message.dependencyManifest));
         if (!checks.get(key)) messages[index] = { ...message, content: '该回答的来源已失效或您已无权访问。', citationsSummary: null, processingTrace: null, dependencyManifest: null } as any;
@@ -108,14 +120,16 @@ export class ConversationController {
     // dependencyManifest 只服务端证据校验使用；trace JSON 可达百 KB/条，
     // 且只有展开“调用链”时才需要。列表接口按需用
     // GET /conversations/:conversationId/messages/:messageId/trace 单条拉取。
-    const totalMessages = await this.prisma.message.count({ where: { conversationId: id } });
+    const activeRun = await this.prisma.chatRun.findFirst({ where: { conversationId: id, userId, status: 'running' },
+      orderBy: { startedAt: 'desc' }, select: { id: true, stage: true } });
     const safeMessages = messages.map(({ dependencyManifest: _drop, processingTrace: _traceDrop, ...message }: any) => message);
-    const lastLoaded = messages[messages.length - 1];
+    const lastLoaded = messages[0];
     return {
       ...conversation,
       messages: safeMessages,
+      activeRun: activeRun ? { runId: activeRun.id, conversationId: id, status: 'running', stage: activeRun.stage } : null,
       // R-3: 翻页元数据（超长会话按 nextCursor 取下一窗口；老客户端可忽略）。
-      hasMore: Boolean(lastLoaded) && totalMessages > safeMessages.length + (before ? 0 : 0) && messages.length === limit,
+      hasMore,
       nextCursor: lastLoaded?.id ?? null,
     };
   }

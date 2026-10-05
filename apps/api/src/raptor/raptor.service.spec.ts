@@ -122,6 +122,14 @@ describe('RaptorService', () => {
     expect(schedule).toHaveBeenCalledWith('kb-1');
   });
 
+  it('cleans archived maintenance nodes without scheduling a new global tree', async () => {
+    const deleteMany = jest.fn().mockResolvedValue({ count: 1 });
+    (service as any).prisma = { $transaction: (callback: any) => callback({ raptorNode: { deleteMany } }) };
+    const schedule = jest.spyOn(service, 'scheduleBuildKbGlobalTree');
+    await service.removeDocument('kb-1', 'doc-1', { rebuild: false });
+    expect(deleteMany).toHaveBeenCalledTimes(2); expect(schedule).not.toHaveBeenCalled();
+  });
+
   it('removes a stale KB-global node when no document summaries remain', async () => {
     const findMany = jest.fn().mockResolvedValue([]);
     const deleteMany = jest.fn().mockResolvedValue({ count: 1 });

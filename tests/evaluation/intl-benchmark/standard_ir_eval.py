@@ -89,7 +89,9 @@ def average_precision_at_k(ranked: list[str], qrels: dict[str, float], k: int) -
         if doc_id in relevant:
             hits += 1
             precision_sum += hits / rank
-    return precision_sum / min(len(relevant), k)
+    # trec_eval map_cut divides by all relevant documents, including those
+    # outside the cutoff (m_map_cut.c), as used by BEIR/pytrec_eval.
+    return precision_sum / len(relevant)
 
 
 METRIC_FUNCS = {
@@ -145,6 +147,7 @@ def evaluate(
     qrels: dict[str, dict[str, float]],
     run: dict[str, list[str]],
     k_values: list[int],
+    *, ignore_identical_ids: bool = False,
 ) -> dict[str, float]:
     """Macro-average each metric over queries present in qrels. Queries with no
     retrieved result score 0 (they are NOT skipped — dropping hard queries is
@@ -154,7 +157,7 @@ def evaluate(
     for qid, relevance in qrels.items():
         if not relevance:
             continue
-        ranked = run.get(qid, [])
+        ranked = [doc for doc in run.get(qid, []) if not ignore_identical_ids or doc != qid]
         count += 1
         for k in k_values:
             for name, func in METRIC_FUNCS.items():
@@ -205,6 +208,10 @@ def _selftest() -> int:
     assert abs(result["mrr@10"] - 0.75) < 1e-9, result
     # q1 nDCG@2 = 1.0, q2 nDCG@2 = 1/log2(3) -> macro average
     assert abs(result["ndcg@2"] - (1.0 + (1.0 / math.log2(3))) / 2) < 1e-9, result
+    # BEIR map_cut keeps all relevant documents in the denominator when R > k.
+    assert average_precision_at_k(["d1"], {"d1": 1, "d2": 1, "d3": 1}, 1) == 1 / 3
+    assert evaluate({"q": {"q": 1}}, {"q": ["q"]}, [1])["recall@1"] == 1
+    assert evaluate({"q": {"q": 1}}, {"q": ["q"]}, [1], ignore_identical_ids=True)["recall@1"] == 0
     # Missing query contributes 0, not excluded.
     partial = evaluate({"q1": {"d1": 1}, "q2": {"d3": 1}}, {"q1": ["d1"]}, [1])
     assert abs(partial["recall@1"] - 0.5) < 1e-9, partial
@@ -234,6 +241,8 @@ def main() -> int:
         default=[],
         help="gate metric, e.g. --threshold ndcg@10=0.5,recall@100=0.9 (repeatable)",
     )
+    parser.add_argument("--ignore-identical-ids", action="store_true",
+                        help="exclude docs whose id equals the query id (BEIR default); included unless requested")
     parser.add_argument("--selftest", action="store_true")
     args = parser.parse_args()
 
@@ -245,7 +254,7 @@ def main() -> int:
     k_values = [int(x) for x in str(args.k).split(",") if x.strip()]
     qrels = load_qrels(args.qrels)
     run = load_run(args.run)
-    metrics = evaluate(qrels, run, k_values)
+    metrics = evaluate(qrels, run, k_values, ignore_identical_ids=args.ignore_identical_ids)
     if not metrics:
         print("No evaluable queries (empty qrels?)", file=sys.stderr)
         return 1

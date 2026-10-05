@@ -9,6 +9,7 @@ import {
   selectRetrySentenceSources,
   planAspectPassageRescue,
   planDocumentCompleteness,
+  planNextHopProbes,
   planSecondHopRescue,
   planTopRankGuarantee,
   selectSupportingSentences,
@@ -486,5 +487,68 @@ describe("top-rank guarantee relevance gate", () => {
     ];
     const plan = planTopRankGuarantee({ selected, pool, keyOf: key, topDocs: 5 });
     expect(plan.indices).toEqual([1]);
+  });
+});
+
+describe("hop probe planning", () => {
+  it("runs the judge's novel follow-ups before any bridge seed", () => {
+    const plan = planNextHopProbes({
+      suggestedFollowUp: ["Bergen municipality", "Bergen"],
+      bridgeSeeds: ["Andrei Ujică"],
+      executedProbes: new Set(["bergen"]),
+      relationTerm: "born",
+      currentHop: 1,
+    });
+    expect(plan.probes).toEqual(["Bergen municipality"]);
+    expect(plan.fromBridgeSeed).toBe(false);
+  });
+
+  it("falls back to the bridge seed when a conservative judge proposes nothing new", () => {
+    // 2Wiki four-hop failure shape: the judge reports `insufficient` and names the
+    // missing attribute, but every proposed query was already executed.
+    const plan = planNextHopProbes({
+      suggestedFollowUp: ["已执行查询", "  "],
+      bridgeSeeds: ["Axel Julius De la Gardie"],
+      executedProbes: new Set(["已执行查询"]),
+      relationTerm: "grandmother",
+      currentHop: 1,
+    });
+    expect(plan.probes).toEqual(["Axel Julius De la Gardie grandmother"]);
+    expect(plan.fromBridgeSeed).toBe(true);
+  });
+
+  it("spends the deterministic rescue once, on the first hop", () => {
+    const input = {
+      suggestedFollowUp: [],
+      bridgeSeeds: ["Ada Lovelace"],
+      executedProbes: new Set<string>(),
+      relationTerm: null,
+    };
+    expect(planNextHopProbes({ ...input, currentHop: 2 }).probes).toEqual([]);
+    expect(planNextHopProbes({ ...input, currentHop: 1 }).probes).toEqual(["Ada Lovelace"]);
+  });
+
+  it("stops instead of repeating an executed seed", () => {
+    const plan = planNextHopProbes({
+      suggestedFollowUp: [],
+      bridgeSeeds: ["Ada Lovelace", "ada lovelace", "Grace Hopper"],
+      executedProbes: new Set(["ada lovelace"]),
+      relationTerm: "",
+      currentHop: 1,
+    });
+    expect(plan.probes).toEqual(["Grace Hopper"]);
+    expect(plan.fromBridgeSeed).toBe(true);
+  });
+
+  it("stops when neither the judge nor the corpus offers a probe", () => {
+    const plan = planNextHopProbes({
+      suggestedFollowUp: null,
+      bridgeSeeds: [],
+      executedProbes: new Set<string>(),
+      relationTerm: "director",
+      currentHop: 1,
+    });
+    expect(plan.probes).toEqual([]);
+    expect(plan.fromBridgeSeed).toBe(false);
   });
 });

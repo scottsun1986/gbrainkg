@@ -132,12 +132,32 @@ export class ObjectStorageService {
     return fsp.readFile(this.resolveLocal(objectKey));
   }
 
-  async delete(objectKey: string, provider: StorageProvider): Promise<void> {
+  async delete(objectKey: string, provider: StorageProvider, options: { strictProvider?: boolean } = {}): Promise<void> {
+    if (options.strictProvider && provider === 'minio' && !this.minio) throw new Error('MinIO configuration required for explicit MinIO deletion');
     if (provider === 'minio' && this.minio) {
-      await this.minioRequest('DELETE', objectKey);
+      try {
+        await this.minioRequest('DELETE', objectKey);
+      } catch (error) {
+        // A retry after a partially applied delete finds the object already gone.
+        // Treating that as success is what makes deletion idempotent; every other
+        // failure (auth, transport, wrong bucket) must still surface.
+        if ((error as any)?.statusCode === 404) return;
+        throw error;
+      }
       return;
     }
     await fsp.rm(this.resolveLocal(objectKey), { force: true });
+  }
+
+  /** Strict existence probe for maintenance verification; transport/auth failures propagate. */
+  async exists(objectKey: string, provider: StorageProvider): Promise<boolean> {
+    if (provider === 'minio') {
+      if (!this.minio) throw new Error('MinIO configuration required for explicit MinIO verification');
+      try { await this.minioRequest('HEAD', objectKey); return true; }
+      catch (error) { if ((error as any).statusCode === 404) return false; throw error; }
+    }
+    try { await fsp.access(this.resolveLocal(objectKey)); return true; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
   }
 
   private assertSafeKey(key: string): void {
@@ -276,7 +296,7 @@ export class ObjectStorageService {
                   resolvePromise(buf);
                 } else {
                   rejectPromise(
-                    new Error(`MinIO ${method} ${key} -> ${res.statusCode}: ${buf.toString().slice(0, 200)}`),
+                    Object.assign(new Error(`MinIO ${method} ${key} -> ${res.statusCode}: ${buf.toString().slice(0, 200)}`), { statusCode: res.statusCode }),
                   );
                 }
               });

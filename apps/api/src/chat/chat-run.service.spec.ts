@@ -11,6 +11,9 @@ const prismaMock = {
 };
 
 jest.mock('../prisma', () => ({ getPrismaClient: () => prismaMock }));
+jest.mock('../permission/authorization-revision', () => ({ authorizationEnforced: () => true }));
+jest.mock('../permission/evidence-dependencies', () => ({ validateEvidenceDependencies: jest.fn() }));
+import { validateEvidenceDependencies } from '../permission/evidence-dependencies';
 import { ChatRunService } from './chat-run.service';
 
 const makeRun = (over: Record<string, unknown> = {}) => ({
@@ -24,6 +27,7 @@ describe('ChatRunService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    (validateEvidenceDependencies as jest.Mock).mockResolvedValue(true);
     prismaMock.chatRun.create.mockResolvedValue({ id: 'run-1', conversationId: 'conv-1' });
     prismaMock.chatRun.updateMany.mockResolvedValue({ count: 1 });
     prismaMock.chatRun.findFirst.mockResolvedValue(makeRun());
@@ -85,6 +89,22 @@ describe('ChatRunService', () => {
   it('hides a run that belongs to another user behind a 404', async () => {
     prismaMock.chatRun.findFirst.mockResolvedValue(null);
     await expect(service.get('user-2', 'run-1')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('redacts a completed answer, citations and trace after evidence access is revoked', async () => {
+    const manifest = [{ documentId: 'doc-1', number: 1 }];
+    prismaMock.chatRun.findFirst.mockResolvedValue(makeRun({ status: 'completed', messageId: 'msg-1' }));
+    prismaMock.message.findFirst.mockResolvedValue({
+      id: 'msg-1', content: 'Restricted answer', citationsSummary: [{ docId: 'doc-1' }],
+      processingTrace: [{ summary: 'Restricted source excerpt' }], dependencyManifest: manifest,
+    });
+    (validateEvidenceDependencies as jest.Mock).mockResolvedValue(false);
+    const view = await service.get('user-1', 'run-1');
+    expect(validateEvidenceDependencies).toHaveBeenCalledWith('user-1', manifest);
+    expect(view.answer).toBe('该回答的来源已失效或您已无权访问。');
+    expect(view.citations).toEqual([]);
+    expect(view.trace).toEqual([]);
+    expect(view).not.toHaveProperty('dependencyManifest');
   });
 
   it('never leaks another user\'s answer through the message lookup', async () => {

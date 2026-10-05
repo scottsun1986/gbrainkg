@@ -8,7 +8,7 @@ TEST_HOST = os.environ.get("TEST_HOST", "http://127.0.0.1")
 TEST_PORT = os.environ.get("TEST_PORT", "3202")
 TEST_USER = os.environ.get("TEST_USER", "admin")
 TEST_PASSWORD = os.environ.get("TEST_PASSWORD", "123456")
-API_BASE = f"{TEST_HOST}:{TEST_PORT}/api/v1"
+API_BASE = os.environ.get("EVAL_API_BASE_URL") or f"{TEST_HOST}:{TEST_PORT}/api/v1"
 
 def pytest_addoption(parser):
     parser.addoption(

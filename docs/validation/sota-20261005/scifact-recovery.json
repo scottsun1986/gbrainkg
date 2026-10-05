@@ -1,0 +1,144 @@
+{
+  "status": "blocked_archived_kb_without_standard_restore_endpoint",
+  "replayRequested": true,
+  "environment": "confirmed_local_test_instance",
+  "api": "http://127.0.0.1:3202",
+  "eventId": "2ffb4fda-b4b4-4808-9d11-b6f9c1dc79d1",
+  "documentId": "680d3f26-6cdf-4ac5-934b-44cf7e7c8c01",
+  "kbName": "EVAL-BEIR-SciFact-Full-20260927-Retry",
+  "expectedVersion": 1,
+  "before": {
+    "event": "2ffb4fda-b4b4-4808-9d11-b6f9c1dc79d1",
+    "document": "680d3f26-6cdf-4ac5-934b-44cf7e7c8c01",
+    "kb": "EVAL-BEIR-SciFact-Full-20260927-Retry",
+    "eventStatus": "dead",
+    "retryCount": 10,
+    "documentStatus": "indexing",
+    "indexReadiness": "pending",
+    "version": 1,
+    "queue": {
+      "wait": 0,
+      "active": 0,
+      "delayed": 0,
+      "failed": 1,
+      "completed": 500
+    },
+    "observedAt": "2026-10-05T00:57:46+0800"
+  },
+  "historicalFailureSample": "Full-corpus benchmark paused: shared enrichment queue saturation in test environment.",
+  "operation": {
+    "endpoint": "/api/v1/admin/outbox/2ffb4fda-b4b4-4808-9d11-b6f9c1dc79d1/replay",
+    "method": "POST",
+    "auth": "existing_environment_test_admin_identity",
+    "directDatabaseWrites": false,
+    "directRedisWrites": false,
+    "replayCount": 1,
+    "pollSeconds": 5,
+    "observationTimeoutSeconds": 600,
+    "responseStatus": 201,
+    "observationStoppedEarly": true
+  },
+  "acceptance": {
+    "eventStatus": "completed",
+    "documentStatus": "published",
+    "indexReadiness": "ready"
+  },
+  "after": {
+    "event": "2ffb4fda-b4b4-4808-9d11-b6f9c1dc79d1",
+    "document": "680d3f26-6cdf-4ac5-934b-44cf7e7c8c01",
+    "kb": "EVAL-BEIR-SciFact-Full-20260927-Retry",
+    "eventStatus": "completed",
+    "retryCount": 0,
+    "documentStatus": "indexing",
+    "indexReadiness": "pending",
+    "version": 1,
+    "queue": {
+      "wait": 0,
+      "active": 0,
+      "delayed": 0,
+      "failed": 1,
+      "completed": 500
+    },
+    "observedAt": "2026-10-05T00:57:51+0800"
+  },
+  "elapsedSeconds": null,
+  "accepted": false,
+  "followup": "No recovery throughput estimate is valid because the worker skipped this archived KB. Keep remaining 5182 dead events unchanged; no bulk replay.",
+  "observations": [
+    {
+      "phase": "before",
+      "event": "2ffb4fda-b4b4-4808-9d11-b6f9c1dc79d1",
+      "document": "680d3f26-6cdf-4ac5-934b-44cf7e7c8c01",
+      "kb": "EVAL-BEIR-SciFact-Full-20260927-Retry",
+      "eventStatus": "dead",
+      "retryCount": 10,
+      "documentStatus": "indexing",
+      "indexReadiness": "pending",
+      "version": 1,
+      "queue": {
+        "wait": 0,
+        "active": 0,
+        "delayed": 0,
+        "failed": 1,
+        "completed": 500
+      },
+      "observedAt": "2026-10-05T00:57:46+0800"
+    },
+    {
+      "phase": "replay",
+      "event": "2ffb4fda-b4b4-4808-9d11-b6f9c1dc79d1",
+      "status": 201
+    },
+    {
+      "phase": "observed",
+      "event": "2ffb4fda-b4b4-4808-9d11-b6f9c1dc79d1",
+      "document": "680d3f26-6cdf-4ac5-934b-44cf7e7c8c01",
+      "kb": "EVAL-BEIR-SciFact-Full-20260927-Retry",
+      "eventStatus": "processing",
+      "retryCount": 0,
+      "documentStatus": "indexing",
+      "indexReadiness": "pending",
+      "version": 1,
+      "queue": {
+        "wait": 0,
+        "active": 0,
+        "delayed": 0,
+        "failed": 1,
+        "completed": 500
+      },
+      "observedAt": "2026-10-05T00:57:46+0800"
+    },
+    {
+      "phase": "observed",
+      "event": "2ffb4fda-b4b4-4808-9d11-b6f9c1dc79d1",
+      "document": "680d3f26-6cdf-4ac5-934b-44cf7e7c8c01",
+      "kb": "EVAL-BEIR-SciFact-Full-20260927-Retry",
+      "eventStatus": "completed",
+      "retryCount": 0,
+      "documentStatus": "indexing",
+      "indexReadiness": "pending",
+      "version": 1,
+      "queue": {
+        "wait": 0,
+        "active": 0,
+        "delayed": 0,
+        "failed": 1,
+        "completed": 500
+      },
+      "observedAt": "2026-10-05T00:57:51+0800"
+    }
+  ],
+  "readinessOutcome": "superseded: archived knowledge base; event completed but document remains indexing/pending",
+  "kbState": {
+    "id": "4ff9ac97-0527-4f4f-841a-33bb81ae1c3a",
+    "status": "archived",
+    "type": "personal",
+    "owner": "local_test_admin",
+    "documentCount": 5183,
+    "uniqueBeirTitles": 5183,
+    "allDocumentVersions": 1,
+    "updatedAt": "2026-09-26T18:28:15.150+00:00"
+  },
+  "blockingCondition": "Existing restore endpoint only applies to organization KBs; this personal test KB has no standard unarchive endpoint. No direct DB state change or archive guard bypass was performed.",
+  "terminalObservationSeconds": 5.0
+}

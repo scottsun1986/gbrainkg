@@ -1,6 +1,12 @@
 /** Relation syntax and explicit deployment configuration, without a subject lexicon. */
 import { resolveRelationSurfaceForms } from './corpus-agnostic-config';
 
+/** An attribute name alone does not establish a missing reasoning hop. */
+export function shouldProbeEvidenceHops(complexity: string, subQueries: string[], bridgeSeeds: string[]): boolean {
+  return complexity === 'multi_hop' || complexity === 'comparative'
+    || subQueries.length > 0 || bridgeSeeds.length > 0;
+}
+
 export function extractRelationFromQuery(query: string): string | null {
   if (!query) return null;
   const table = resolveRelationSurfaceForms();

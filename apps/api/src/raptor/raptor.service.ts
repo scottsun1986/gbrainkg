@@ -111,14 +111,14 @@ export class RaptorService {
   }
 
   /** Remove document-scoped nodes and immediately invalidate the KB-global summary. */
-  async removeDocument(kbId: string, documentId: string): Promise<void> {
+  async removeDocument(kbId: string, documentId: string, options: { rebuild?: boolean } = {}): Promise<void> {
     await (this.prisma as any).$transaction(async (tx: any) => {
       await tx.raptorNode.deleteMany({ where: { documentId } });
       // Level-2 content contains facts from every Level-1 document and must
       // not survive deletion of any contributor.
       await tx.raptorNode.deleteMany({ where: { kbId, level: 2 } });
     });
-    this.scheduleBuildKbGlobalTree(kbId);
+    if (options.rebuild !== false) this.scheduleBuildKbGlobalTree(kbId);
   }
 
   private isSpreadsheet(title?: string): boolean {

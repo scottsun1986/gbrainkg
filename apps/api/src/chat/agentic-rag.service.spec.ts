@@ -301,5 +301,32 @@ describe('AgenticRagService', () => {
         (global as any).fetch = originalFetch;
       }
     });
+
+    it.each(['insufficient', 'sufficient'])('keeps missing evidence insufficient after a %s verdict with no novel probe', async (status) => {
+      const originalFetch = global.fetch;
+      (global as any).fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: JSON.stringify({
+          status,
+          missingAspects: ['缺少目标事实的直接取值'],
+          suggestedFollowUp: ['已执行查询'],
+          confidence: 0.95,
+          evidenceQuote: '',
+        }) } }] }),
+      });
+      try {
+        const res = await service.judgeRetrievalSufficiency(
+          'What is the calibration unit of Device Q?',
+          'Device Q is mentioned, but the calibration value is not stated.',
+          1,
+          { complexity: 'multi_hop', executedProbes: ['已执行查询'] },
+        );
+        expect(res.status).toBe('insufficient');
+        expect(res.suggestedFollowUp).toEqual([]);
+        expect(res.missingAspects).toContain('缺少目标事实的直接取值');
+      } finally {
+        (global as any).fetch = originalFetch;
+      }
+    });
   });
 });

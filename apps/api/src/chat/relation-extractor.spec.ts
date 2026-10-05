@@ -1,4 +1,4 @@
-import { extractRelationFromQuery, surfaceFormsForRelation } from './relation-extractor';
+import { extractRelationFromQuery, surfaceFormsForRelation, shouldProbeEvidenceHops } from './relation-extractor';
 
 describe('relation-extractor', () => {
   const original = process.env.RELATION_SURFACE_FORMS_JSON;
@@ -21,6 +21,18 @@ describe('relation-extractor', () => {
   it('does not inject unconfigured semantic aliases', () => {
     expect(surfaceFormsForRelation('director')).toEqual(['director']);
     expect(surfaceFormsForRelation('custodian')).toEqual(['custodian']);
+  });
+  it('does not judge a simple attribute lookup merely because it has a relation name', () => {
+    expect(extractRelationFromQuery('这个项目的复核单位是什么')).toBe('复核单位');
+    expect(shouldProbeEvidenceHops('simple', [], [])).toBe(false);
+  });
+  it.each([
+    ['multi_hop', [], []],
+    ['comparative', [], []],
+    ['simple', ['planned query'], []],
+    ['simple', [], ['validated entity']],
+  ])('keeps evidence hops for %s with planned or validated bridges', (complexity, subQueries, bridgeSeeds) => {
+    expect(shouldProbeEvidenceHops(complexity as string, subQueries as string[], bridgeSeeds as string[])).toBe(true);
   });
   it('uses explicit aliases and matches complete words', () => {
     process.env.RELATION_SURFACE_FORMS_JSON = JSON.stringify({custodian:['held by']});

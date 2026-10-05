@@ -1,0 +1,71 @@
+{
+  "executed": false,
+  "scope": "local test only",
+  "plans": [
+    {
+      "kbId": "7bae6312-86de-44d0-8082-1f7d15d3583a",
+      "kbName": "EVAL-BEIR-SciFact-Full-20260927",
+      "operationId": "8cfd03fe-b7fc-4b73-a957-410dbc022cfa",
+      "planFile": "/home/scottsun/.local/share/llmwiki/maintenance-plans/20261005/scifact-full.json",
+      "sha256": "115beab2992eaa55e8f7acee743ddf0f89774e8779c534e64df17de575e94a50",
+      "eligible": 593,
+      "retainedReady": 7,
+      "retainedReadyIds": [
+        "5a8ee8a2-ef9b-4de8-900f-63daa4111ac6",
+        "96665af7-556a-432c-8585-1fa361bb751c",
+        "b7e2207a-b3e8-4f5a-86af-b64304be61da",
+        "c6b08e13-0fe2-4c90-a2c6-101101456a9e",
+        "d8dcd164-53fb-44a9-b278-fc5a492c552a",
+        "ebb11345-744b-4e0f-aecc-011eadcaced2",
+        "efeb80b7-6753-446e-b29f-ecaf091bfe67"
+      ],
+      "states": {
+        "indexing/ready": 500,
+        "indexing/pending": 90,
+        "indexing/degraded": 3
+      },
+      "storageProviders": [
+        "local"
+      ],
+      "rawNamespaceFailures": 0,
+      "existingRawFilesMissing": 0,
+      "existingLocalObjectsMissing": 0,
+      "duplicateTargetStorageKeys": 0,
+      "uploadRoot": "/home/scottsun/.local/share/llmwiki/uploads",
+      "brainRepoBasePath": "/home/scottsun/.local/share/llmwiki/brain_repos"
+    },
+    {
+      "kbId": "4ff9ac97-0527-4f4f-841a-33bb81ae1c3a",
+      "kbName": "EVAL-BEIR-SciFact-Full-20260927-Retry",
+      "operationId": "06b723e9-49d4-45a7-a621-93b86b0dd209",
+      "planFile": "/home/scottsun/.local/share/llmwiki/maintenance-plans/20261005/scifact-retry.json",
+      "sha256": "9167dd1e40aca408a6f46afa76309889888b1616a2ad2f7b336bd0959a0a875e",
+      "eligible": 5183,
+      "retainedReady": 0,
+      "retainedReadyIds": [],
+      "states": {
+        "indexing/pending": 5183
+      },
+      "storageProviders": [
+        "local"
+      ],
+      "rawNamespaceFailures": 0,
+      "existingRawFilesMissing": 0,
+      "existingLocalObjectsMissing": 0,
+      "duplicateTargetStorageKeys": 0,
+      "uploadRoot": "/home/scottsun/.local/share/llmwiki/uploads",
+      "brainRepoBasePath": "/home/scottsun/.local/share/llmwiki/brain_repos"
+    }
+  ],
+  "validation": {
+    "apiFullSuitesPassed": 139,
+    "apiTestsPassed": 1190,
+    "apiTestsSkipped": 5,
+    "tasksPassed": 6,
+    "typecheck": "passed",
+    "lint": "passed",
+    "build": "passed",
+    "deletionExecuted": false
+  },
+  "totalEligible": 5776
+}
