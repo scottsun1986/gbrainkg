@@ -17,6 +17,8 @@ import { buildDocumentPreviewUrl } from "../ingestion/preview-url";
 import { buildBm25Pool, bm25Scores } from "./lexical-bm25";
 import { loadCorpusConfig } from "./corpus-agnostic-config";
 import { tokenizeQuery } from "../retrieval/lexical-tokenizer";
+import { measuredScoreOf } from "../retrieval/score-contract";
+import { retrievalConfigFingerprint } from "../retrieval/retrieval-config";
 import { Bulkhead, RetrievalDeadline } from "../retrieval/retrieval-budget";
 import type { EmbeddingService } from "../embedding/embedding.service";
 import type { GraphRagService } from "../graph-rag/graph-rag.service";
@@ -237,27 +239,29 @@ export function semanticCacheScopeKey(
   // that value to replace the schema version would replay answers whose source
   // numbering predates structured evidence routing. The environment value is
   // an additional operator-controlled namespace only.
-  const version = `v7:${process.env.SEMANTIC_CACHE_KEY_VERSION || 'default'}`;
+  //
+  // v8 (2026-10-05): unified score contract + soft-floor flag + multiplicative
+  // MMR boosts + budget-skip selection change what evidence reaches the model.
+  const version = `v8:${process.env.SEMANTIC_CACHE_KEY_VERSION || 'default'}`;
+  // Retrieval config fingerprint (review P1-4): every retrieval-behaviour knob
+  // (floor ratio, soft-floor flag, group caps, rerank capacity, ...) is hashed
+  // into the key, so changing any of them — code default or per-instance env —
+  // partitions the cache automatically instead of replaying answers produced
+  // under different retrieval behaviour.
+  const retrievalSalt = `|retrieval:${retrievalConfigFingerprint()}`;
   const policy = ['CORE_AUTH_ENFORCE', 'CORE_VERSIONING_ENABLED', 'CORE_GRAPH_INCREMENTAL_ENABLED', 'ADAPTIVE_RETRIEVAL_ENABLED', 'RETRIEVAL_QUALITY_PROFILE']
     .map(key => `${key}=${process.env[key] || ''}`).join(';');
   const modelSalt = modelName ? `|m:${modelName}` : '';
   const userSalt = userId ? `|u:${userId}` : '';
   return createHash('sha256')
-    .update(`${version}|policy:${policy}|${[...sourceKeys].sort().join(',')}|acl:${aclEpoch}|kb:${knowledgeEpoch}${modelSalt}${userSalt}`)
+    .update(`${version}|policy:${policy}${retrievalSalt}|${[...sourceKeys].sort().join(',')}|acl:${aclEpoch}|kb:${knowledgeEpoch}${modelSalt}${userSalt}`)
     .digest('hex')
     .slice(0, 32);
 }
 
 /** The score a calibrated scorer (cross-encoder or engine rerank) produced, if any. */
 export function calibratedScoreOf(citation: any): number | null {
-  if (!citation) return null;
-  if (getRequestContext()?.execution?.adaptive) {
-    const probability = citation.calibratedProbability;
-    return typeof probability === 'number' && Number.isFinite(probability) && probability >= 0 && probability <= 1 ? probability : null;
-  }
-  if (String(citation.scoreSource || '') === 'synthetic') return null;
-  const value = Number(citation.relevanceScore ?? citation.rerankScore ?? citation.score);
-  return Number.isFinite(value) && value > 0 ? value : null;
+  return measuredScoreOf(citation);
 }
 
 /**
@@ -2103,7 +2107,26 @@ export class RetrievalArmsService {
           section: meta.section,
           breadcrumb: meta.breadcrumb,
           headingHierarchy: meta.heading_hierarchy,
-          metadata: meta,
+          // Whitelisted metadata only (review §6): the full metadata object
+          // carries contextual_prefix and table-header blobs whose size bloats
+          // traces/semantic-cache entries and invites over-exposure when a
+          // future caller serialises the whole candidate.
+          metadata: {
+            page_no: meta.page_no,
+            pageNumber: meta.pageNumber,
+            bbox: meta.bbox,
+            blockId: meta.blockId,
+            span: meta.span,
+            contentHash: meta.contentHash,
+            chunk_order: meta.chunk_order,
+            section: meta.section,
+            breadcrumb: meta.breadcrumb,
+            article_no: meta.article_no,
+            chapter_no: meta.chapter_no,
+            heading_hierarchy: meta.heading_hierarchy,
+            tableRole: meta.tableRole,
+            title: meta.title,
+          },
           bbox: meta.bbox,
           previewUrl: buildDocumentPreviewUrl(c.kbId, c.documentId, {
             page: meta.page_no || meta.pageNumber || c.ord + 1,

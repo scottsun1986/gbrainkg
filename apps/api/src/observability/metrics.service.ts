@@ -314,6 +314,23 @@ export class MetricsService {
     }
   }
 
+  /**
+   * Cross-encoder rerank call outcome (review 2026-10-05 P1-6): duration by
+   * kind plus outcome accounting per pool-size bucket. Raising RERANK_MAX_DOCS
+   * trades recall for timeout risk — a rerank that fails open to arm scores is
+   * silently WORSE than a smaller capped call, so per-call P95 latency and the
+   * timeout rate per capacity bucket must be observable before/after tuning.
+   */
+  observeRerankCall(kind: 'pool' | 'probe_group', docCount: number, durationMs: number, outcome: 'ok' | 'timeout' | 'error'): void {
+    try {
+      metricsRegistry.observeHistogram('rerank_call_ms', Math.max(0, durationMs), { kind });
+      const docs = docCount <= 30 ? 'le30' : docCount <= 60 ? '31_60' : docCount <= 100 ? '61_100' : 'gt100';
+      metricsRegistry.incCounter('rerank_calls_total', { kind, outcome, docs });
+    } catch {
+      /* metrics must never break the rerank path */
+    }
+  }
+
   /** Incremental stream had to repair a prefix divergence (0 is the goal). */
   incStreamRepair(): void {
     metricsRegistry.incCounter('chat_stream_repair_total', {}, 1);

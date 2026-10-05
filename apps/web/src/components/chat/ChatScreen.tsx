@@ -1101,12 +1101,24 @@ const TraceDetails = memo(function TraceDetails({ nodes, conversationId, message
       {open && (
         <div className="retrieval-body">
           {displayNodes.length === 0 && <div className="ret-step">暂无调用链记录</div>}
-          {displayNodes.map((node: TraceNode, index: number) => (
+          {displayNodes.map((node: TraceNode, index: number) => {
+            // 检索漏斗行（评审 §5）：evidence_selection 节点携带
+            // 召回→重排→入选 数字时，在节点摘要下以单行数字展示，
+            // 普通用户无需展开 JSON。
+            const details = (node.details ?? {}) as Record<string, any>;
+            const funnel = details?.selection?.funnel as
+              { recalled: number; rerankScored: number; eligible: number; selected: number } | undefined;
+            return (
             <div className={`ret-step trace-${String(node.status ?? '')}`} key={node.id || index}>
               <span className="n">{node.status === 'success' ? '✓' : node.status === 'warning' ? '!' : node.status === 'failed' ? '×' : node.status === 'skipped' ? '–' : '…'}</span>
               <span className="txt">
                 <b>{String(node.name ?? '')}</b>
                 {node.summary ? ` · ${String(node.summary ?? '')}` : ''}
+                {funnel && (
+                  <div className="ret-funnel">
+                    漏斗：召回 {funnel.recalled} → 重排实测 {funnel.rerankScored} → 入池 {funnel.eligible} → 入选 {funnel.selected}
+                  </div>
+                )}
                 {node.details && Object.keys(node.details).length > 0 && (
                   <details className="trace-details">
                     <summary>查看节点反馈</summary>
@@ -1116,7 +1128,8 @@ const TraceDetails = memo(function TraceDetails({ nodes, conversationId, message
               </span>
               <span className="v">{node.status === 'running' ? '执行中' : node.status === 'skipped' ? '跳过' : `${node.durationMs ?? 0}ms`}</span>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </details>

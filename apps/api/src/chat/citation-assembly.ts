@@ -12,6 +12,8 @@ import type { ModelConfigService } from "../model-config.service";
 import type { SemanticCacheService } from "./semantic-cache.service";
 import type { ChatTraceRecorder } from "./chat-trace";
 import { estimateTokens } from "./context-budget";
+import { measuredScoreOf } from "../retrieval/score-contract";
+import { retrievalConfigFingerprint } from "../retrieval/retrieval-config";
 import { buildDocumentPreviewUrl } from "../ingestion/preview-url";
 import { isProviderErrorText } from "./output-hygiene";
 import { classifyTableRole, extractSectionAnchors } from './section-align';
@@ -348,20 +350,29 @@ export class CitationAssemblyService {
       const n = Number(v);
       return Number.isFinite(n) ? n : 0;
     };
-    // Score truth: only calibrated (cross-encoder / engine) scores share one
-    // scale. Anchor the relative floor on those whenever they exist, so a
-    // fabricated 0.95 from the min-max fallback arm cannot become the "best
-    // score" and drag the floor up until genuinely relevant evidence (scored on
-    // the real scale) looks irrelevant next to it. When nothing calibrated was
-    // produced, the legacy all-scores behaviour is preserved.
-    const calibratedScores = citations
-      .map((c: any) => calibratedScoreOf(c))
-      .filter((v: any): v is number => v !== null);
-    const hasCalibrated = calibratedScores.length > 0;
+    // Unified score contract (retrieval/score-contract.ts): thresholds act only
+    // on MEASURED scores (cross-encoder raw / Platt probability / engine rerank
+    // that actually scored this passage). Synthetic arm scores (min-max 0.05-
+    // 0.95 whose top hit is ~0.95 by construction, rescue constants) and
+    // rerank-cap overflow candidates (`rerankSkipped`) carry no measurement and
+    // may only fill leftover slots. Previously the floor anchor and the
+    // guaranteed slots were computed over ALL scores: a pool of synthetic 0.95s
+    // the cross-encoder never saw normalised to ~1, dragged the floor onto a
+    // fake scale and took the guaranteed slots from genuinely scored evidence
+    // (review P0-2).
+    const measuredOfCitation = citations.map((c: any) => measuredScoreOf(c));
+    const measuredList = measuredOfCitation.filter((v: any): v is number => v !== null);
+    const hasMeasured = measuredList.length > 0;
+    const maxMeasured = hasMeasured ? Math.max(...measuredList) : 0;
+    const calibratedScores = measuredList;
+    const hasCalibrated = hasMeasured;
     const raw = citations.map(rawScore);
     const max = Math.max(...raw);
-    const min = Math.min(...raw);
     const norm = (v: number) => (max > 0 ? Math.max(0, v) / max : 1);
+    // Elimination funnel bookkeeping (review §4.1): recall ordinal → group, so
+    // every candidate that does not reach the context can be attributed to the
+    // stage that dropped it. Kept id-only (no text) for privacy/size.
+    const groupKeyByIndex = new Map<any, string>();
 
     const groupKeyOf = (c: any, index: number) =>
       typeof c?.sectionGroup === "string" && c.sectionGroup ? c.sectionGroup : `__single_${index}`;
@@ -377,6 +388,8 @@ export class CitationAssemblyService {
         repText: string;
         isSummary: boolean;
         isSpreadsheetOrTable: boolean;
+        measuredBest: number | null;
+        firstOrdinal: number;
       }
     >();
     citations.forEach((c: any, index: any) => {
@@ -423,6 +436,8 @@ export class CitationAssemblyService {
         repText: "",
         isSummary: false,
         isSpreadsheetOrTable: false,
+        measuredBest: null,
+        firstOrdinal: Number.MAX_SAFE_INTEGER,
       };
       entry.members.push(c);
       const memberScore = rawScore(c);
@@ -434,7 +449,22 @@ export class CitationAssemblyService {
         entry.summaryMemberScore = memberScore;
         entry.summaryMember = c;
       }
-      entry.best = Math.max(entry.best, norm(memberScore));
+      const memberMeasured = measuredOfCitation[index];
+      if (memberMeasured !== null && memberMeasured !== undefined) {
+        entry.measuredBest = Math.max(entry.measuredBest ?? -Infinity, memberMeasured);
+      }
+      entry.firstOrdinal = Math.min(entry.firstOrdinal, index);
+      groupKeyByIndex.set(index, key);
+      // Selection score: measured-mode groups are normalised over the MEASURED
+      // pool only, so a synthetic 0.95 can no longer define the scale. Groups
+      // without any measured member score 0 in measured mode — they do not
+      // compete in MMR and enter only via the capped synthetic fill below.
+      const selectionScore = hasMeasured
+        ? entry.measuredBest != null && maxMeasured > 0
+          ? entry.measuredBest / maxMeasured
+          : 0
+        : norm(memberScore);
+      entry.best = Math.max(entry.best, selectionScore);
       if (isSummaryItem) entry.isSummary = true;
       if (isTableItem) entry.isSpreadsheetOrTable = true;
       if (!entry.repText) entry.repText = String(c.context || c.snippet || c.docTitle || c.topic || "").slice(0, 400);
@@ -445,22 +475,40 @@ export class CitationAssemblyService {
     // long-tailed reranker distribution and makes a rigid relative floor cut
     // genuinely relevant groups. Dynamic soft floor uses quantile-smoothed
     // baseline and top-group safety guarantees to protect true low-score answers.
-    const rawBest = hasCalibrated
-      ? Math.max(...calibratedScores)
+    // Contract (P0-2): in measured mode the anchor and the comparison both live
+    // on the raw measured scale — no normalized value is ever compared against
+    // a raw-unit floor again.
+    //
+    // Rollout switch (review P1-5 / process §4.4): the LOOSENED parameter set
+    // from 27cd327 — 0.22 ratio, quantile-smoothed baseline, 6 guaranteed
+    // groups, synthetic fill — ships behind RETRIEVAL_SOFT_FLOOR_ENABLED,
+    // default OFF, so every instance without an explicit opt-in keeps the rigid
+    // 0.35 floor and no guarantee slots until the A/B gate proves the new set.
+    // The unified score contract (P0-2 pool separation) is a bug fix and applies
+    // in BOTH modes.
+    const softFloorEnabled = ['1', 'true', 'on'].includes(
+      String(process.env.RETRIEVAL_SOFT_FLOOR_ENABLED ?? '').trim().toLowerCase(),
+    );
+    const rawBest = hasMeasured
+      ? maxMeasured
       : Math.max(...[...groups.values()].map((g) => g.best));
 
     let baselineScore = rawBest;
-    if (hasCalibrated && calibratedScores.length >= 5) {
-      const sortedCalibrated = [...calibratedScores].sort((a, b) => b - a);
+    if (softFloorEnabled && hasMeasured && measuredList.length >= 5) {
+      const sortedCalibrated = [...measuredList].sort((a, b) => b - a);
       const top3Avg = (sortedCalibrated[0] + sortedCalibrated[1] + sortedCalibrated[2]) / 3;
       // Quantile-smoothed baseline prevents single outlier (e.g. 0.98) from dragging the floor
       // sky-high and discarding valid 0.25 answers, but stays bounded above 80% of rawBest.
       baselineScore = Math.max(rawBest * 0.80, Math.min(rawBest, top3Avg * 1.10));
     }
 
-    const relFloor = Math.max(0, Number(process.env.RETRIEVAL_RELEVANCE_FLOOR_RATIO || 0.22));
-    const maxFloorCutoff = Number(process.env.RETRIEVAL_MAX_FLOOR_CUTOFF || 0.28);
-    const effectiveFloor = Math.min(baselineScore * relFloor, maxFloorCutoff);
+    const relFloor = Math.max(0, Number(process.env.RETRIEVAL_RELEVANCE_FLOOR_RATIO || (softFloorEnabled ? 0.22 : 0.35)));
+    // RETRIEVAL_MAX_FLOOR_CUTOFF was removed (review P1-2): with rerank scores
+    // bounded by 1, baselineScore*ratio ≤ ratio < 0.28 whenever ratio ≤ 0.22,
+    // so the min() could never bind under the shipped defaults — and under a
+    // 0.35 ratio it silently acted as an absolute 0.28 cap the operator never
+    // asked for. The floor is exactly baselineScore * ratio now.
+    const effectiveFloor = baselineScore * relFloor;
 
     const questionText = `${opts.question || ""} ${(opts.subQueries || []).join(" ")}`;
     const wantsSummarySection =
@@ -480,26 +528,50 @@ export class CitationAssemblyService {
     // final arbitration to downstream MMR and LLM context budgeting.
     // For queries with decomposed sub-queries, the dedicated per-hop sub-query quota handles
     // hop representation directly.
+    // Contract (P0-2): guarantee slots are reserved for MEASURED groups only —
+    // the viability check runs on the raw measured score, never on a value a
+    // synthetic candidate normalised towards 1.
+    // Rollout: guarantees exist only with RETRIEVAL_SOFT_FLOOR_ENABLED (P1-5).
     const minViableRelevance = Math.max(0.01, Number(process.env.RETRIEVAL_MIN_VIABLE_RELEVANCE || 0.10));
-    const defaultMinGroups = hasSubQueries ? 0 : Math.max(1, Number(process.env.RETRIEVAL_MIN_FLOOR_GROUPS || 6));
-    const minGuaranteedGroups = Math.max(0, Number(process.env.RETRIEVAL_MIN_FLOOR_GROUPS !== undefined ? process.env.RETRIEVAL_MIN_FLOOR_GROUPS : defaultMinGroups));
-    const sortedByBest = [...allEntries].sort((a, b) => b.best - a.best);
+    const guaranteeDefault = hasSubQueries ? 0 : softFloorEnabled ? 6 : 0;
+    const defaultMinGroups = Math.max(0, Number(process.env.RETRIEVAL_MIN_FLOOR_GROUPS !== undefined ? process.env.RETRIEVAL_MIN_FLOOR_GROUPS : guaranteeDefault));
+    const minGuaranteedGroups = Math.max(0, defaultMinGroups);
+    const viabilityOf = (g: (typeof allEntries)[number]) =>
+      hasMeasured ? (g.measuredBest ?? -Infinity) : g.best;
+    const sortedByBest = [...allEntries].sort((a, b) => viabilityOf(b) - viabilityOf(a));
     const guaranteedKeys = new Set(
       sortedByBest
+        .filter((g) => {
+          if (hasMeasured) return g.measuredBest != null && g.measuredBest >= minViableRelevance;
+          return g.best >= minViableRelevance;
+        })
         .slice(0, minGuaranteedGroups)
-        .filter((g) => g.best >= minViableRelevance)
         .map((g) => g.key),
     );
+
+    const passesFloor = (g: (typeof allEntries)[number]) =>
+      hasMeasured
+        ? (g.measuredBest ?? -Infinity) >= effectiveFloor
+        : g.best >= effectiveFloor;
 
     const entries = allEntries
       .filter(
         (g) =>
-          g.best >= effectiveFloor ||
+          passesFloor(g) ||
           guaranteedKeys.has(g.key) ||
           g.members.some((m: any) => m?.floorExempt === true) ||
           // Summary-section groups stay in the pool when the question names them
           // (P2-03): the relevance floor is calibrated on detail-table scores.
           (wantsSummarySection && g.isSummary),
+      )
+      // Measured mode: synthetic-only groups do not compete with cross-encoded
+      // evidence for MMR slots. They enter exclusively through the capped
+      // ordinal-based fill below (or the exemptions above).
+      .filter((g) =>
+        !hasMeasured ||
+        g.measuredBest != null ||
+        g.members.some((m: any) => m?.floorExempt === true) ||
+        (wantsSummarySection && g.isSummary),
       )
       .sort((a, b) => {
         if (wantsSummarySection) {
@@ -530,7 +602,32 @@ export class CitationAssemblyService {
     const selected: any[] = [];
     const selectedSets: Array<{ tokens: Set<string>; docId: string; isSummary: boolean }> = [];
     let usedTokens = 0;
+    // P1-3 budget accounting: groups degraded to their representative member
+    // and groups skipped entirely because nothing about them fits.
+    let budgetDegraded = 0;
+    let budgetSkipped = 0;
+    const budgetSkippedKeys = new Set<string>();
+    const budgetDroppedIds = new Set<string>();
     const pool = entries.slice();
+    // Audit trail (review §6): why each selected citation entered the context.
+    // Only the first reason sticks (order: exempt > guaranteed > floor for MMR
+    // picks; dedicated paths mark their own).
+    const markReason = (c: any, reason: string) => {
+      if (c && typeof c === 'object' && !c.selectionReason) c.selectionReason = reason;
+    };
+    // Elimination funnel (review §4.1): per-group eligibility snapshot so every
+    // dropped candidate can be attributed to floor / mmr_budget / max_groups /
+    // rerank_cap after the fact.
+    const eligibility = new Map<string, { eligible: boolean }>();
+    for (const g of allEntries) {
+      eligibility.set(g.key, {
+        eligible:
+          passesFloor(g) ||
+          guaranteedKeys.has(g.key) ||
+          g.members.some((m: any) => m?.floorExempt === true) ||
+          (wantsSummarySection && g.isSummary),
+      });
+    }
     const docCounts = new Map<string, number>();
     const normalizeDocId = (doc: any) => {
       const rawId = doc?.docId || doc?.documentId;
@@ -550,6 +647,7 @@ export class CitationAssemblyService {
         const docId = docIdOf(g);
         const representative = g.summaryMember || g.bestMember || g.members[0];
         selected.push(representative);
+        markReason(representative, 'summary');
         selectedSets.push({ tokens, docId, isSummary: true });
         usedTokens += costOf(representative);
         docCounts.set(docId, (docCounts.get(docId) || 0) + 1);
@@ -594,7 +692,14 @@ export class CitationAssemblyService {
         const concreteBoost = wantsSummarySection ? (g.isSummary ? 0.55 : 0) : (!g.isSummary ? 0.15 : 0);
         const tableBoost = wantsSummarySection ? (g.isSummary ? 0.25 : 0) : (g.isSpreadsheetOrTable ? 0.10 : 0);
 
-        const value = lambda * g.best - (1 - lambda) * redundancy + (isNovelDoc ? 0.15 : 0) + concreteBoost + tableBoost;
+        // Multiplicative boosts (review P1-1): additive constants let a
+        // 0.12-score table chunk from a novel document (0.72*0.12 + 0.15 + 0.15
+        // + 0.10 ≈ 0.49) outscore a 0.50-score same-document text chunk (≈0.36
+        // before its redundancy penalty). Fixed bonuses do not scale with
+        // relevance, so every loosening of the floor amplified noise straight
+        // into the context. Boosts now scale the relevance term itself.
+        const boostFactor = 1 + (isNovelDoc ? 0.15 : 0) + concreteBoost + tableBoost;
+        const value = lambda * g.best * boostFactor - (1 - lambda) * redundancy;
         if (value > pickVal) { pickVal = value; pickIdx = i; }
       }
       if (pickIdx < 0) {
@@ -603,28 +708,88 @@ export class CitationAssemblyService {
       }
       const group = pool.splice(pickIdx, 1)[0];
       const groupTokens = group.members.reduce((sum, m) => sum + costOf(m), 0);
-      // Token budget: the first (best) group always fits; later groups must fit.
-      if (selected.length > 0 && usedTokens + groupTokens > opts.tokenBudget) break;
+      // Token budget (review P1-3): an oversized group no longer TERMINATES the
+      // whole MMR loop. Degrade it to its representative member first; if even
+      // that does not fit, skip the group and keep scanning — the smaller
+      // groups after it (often exactly the short factual answers) still get
+      // their chance instead of being dropped by one big neighbour.
+      let membersToAdd = group.members;
+      if (selected.length > 0 && usedTokens + groupTokens > opts.tokenBudget) {
+        const degraded = [(wantsSummarySection ? group.summaryMember : null)
+          || group.bestMember
+          || group.members[0]].filter(Boolean);
+        const degradedTokens = degraded.reduce((sum, m) => sum + costOf(m), 0);
+        if (degraded.length && usedTokens + degradedTokens <= opts.tokenBudget) {
+          membersToAdd = degraded as any[];
+          budgetDegraded += 1;
+          for (const m of group.members) {
+            if (!membersToAdd.includes(m)) {
+              budgetDroppedIds.add(m?.id || `${m?.docId}:${m?.ord}`);
+            }
+          }
+        } else {
+          budgetSkipped += 1;
+          budgetSkippedKeys.add(group.key);
+          continue;
+        }
+      }
       // Every member of the group reaches the model, so the group's
       // representative must lead: the prompt renders sources in this order and
       // the first one is the passage a summary question is answered from.
       const representative = (wantsSummarySection ? group.summaryMember : null)
         || group.bestMember
         || group.members[0];
-      for (const m of group.members) {
+      const groupReason = group.members.some((m: any) => m?.floorExempt === true) && !passesFloor(group)
+        ? 'exempt'
+        : guaranteedKeys.has(group.key) && !passesFloor(group)
+          ? 'guaranteed'
+          : 'floor';
+      for (const m of membersToAdd) {
         if (m !== representative) selected.push(m);
+        markReason(m, groupReason);
       }
       selected.push(representative);
+      markReason(representative, groupReason);
       const dId = docIdOf(group);
       selectedSets.push({
         tokens: tokenize(group.repText),
         docId: dId,
         isSummary: group.isSummary,
       });
-      usedTokens += groupTokens;
+      usedTokens += membersToAdd.reduce((sum, m) => sum + costOf(m), 0);
       // Only concrete groups count towards document quota; auxiliary summaries do not block concrete evidence
       if (!group.isSummary) {
         docCounts.set(dId, (docCounts.get(dId) || 0) + 1);
+      }
+    }
+
+    // Synthetic fill (contract rule 3): groups whose scores are arm-local —
+    // never cross-encoded, e.g. candidates kept beyond RERANK_MAX_DOCS — do not
+    // compete with measured evidence. They fill leftover context slots by
+    // original recall ordinal, capped, so recall beyond the rerank capacity
+    // still reaches the model without displacing measured evidence.
+    let syntheticFilled = 0;
+    if (hasMeasured) {
+      const fillCap = Math.max(0, Number(process.env.RETRIEVAL_SYNTHETIC_FILL_MAX ?? (softFloorEnabled ? 2 : 0)));
+      const syntheticOnly = allEntries
+        .filter((g) => g.measuredBest == null)
+        .filter((g) => !g.members.some((m: any) => m?.floorExempt === true))
+        .sort((a, b) => a.firstOrdinal - b.firstOrdinal);
+      for (const g of syntheticOnly) {
+        if (syntheticFilled >= fillCap) break;
+        if (selectedSets.length >= maxGroups) break;
+        const representative = g.bestMember || g.members[0];
+        if (!representative) continue;
+        const tokens = costOf(representative);
+        if (selected.length > 0 && usedTokens + tokens > opts.tokenBudget) continue;
+        selected.push(representative);
+        markReason(representative, 'synthetic_fill');
+        selectedSets.push({ tokens: tokenize(g.repText), docId: docIdOf(g), isSummary: g.isSummary });
+        usedTokens += tokens;
+        if (!g.isSummary) {
+          docCounts.set(docIdOf(g), (docCounts.get(docIdOf(g)) || 0) + 1);
+        }
+        syntheticFilled += 1;
       }
     }
 
@@ -703,6 +868,7 @@ export class CitationAssemblyService {
             : bestGroup.bestMember) || bestGroup.members[0];
           if (topMember && !selectedIds.has(topMember.id || `${topMember.docId}:${topMember.ord}`)) {
             selected.push(topMember);
+            markReason(topMember, 'subquery');
             selectedIds.add(topMember.id || `${topMember.docId}:${topMember.ord}`);
             usedTokens += costOf(topMember);
             subQueryInjected += 1;
@@ -713,6 +879,7 @@ export class CitationAssemblyService {
         for (const m of bestGroup.members) {
           if (!selectedIds.has(m.id || `${m.docId}:${m.ord}`)) {
             selected.push(m);
+            markReason(m, 'subquery');
             selectedIds.add(m.id || `${m.docId}:${m.ord}`);
           }
         }
@@ -739,14 +906,95 @@ export class CitationAssemblyService {
           const id = topForHop.id || `${topForHop.docId}:${topForHop.ord}`;
           if (!selected.some((c: any) => (c.id || `${c.docId}:${c.ord}`) === id)) {
             selected.push(topForHop);
+            markReason(topForHop, 'hop');
             usedTokens += costOf(topForHop);
           }
         }
       }
     }
 
+    // Multi-source coverage (review §3.3): the recurring production miss (the
+    // attendance V2 case) was not low scores but SINGLE-SOURCE MONOPOLY — two
+    // sibling policies were both in the candidate pool and only one ever
+    // reached the context. For every distinct document whose best group scores
+    // at least RETRIEVAL_MULTISOURCE_COVERAGE_RATIO of the best group AND
+    // discusses the same topic as already-selected evidence (character-bigram
+    // affinity, corpus-agnostic — never a business rule), keep at least its
+    // best member. Gated behind RETRIEVAL_SOFT_FLOOR_ENABLED like the rest of
+    // the loosened set; 0 disables.
+    let multiSourceAdded = 0;
+    const multiSourceRatio = Math.max(0, Math.min(1, Number(process.env.RETRIEVAL_MULTISOURCE_COVERAGE_RATIO ?? (softFloorEnabled ? 0.35 : 0))));
+    if (multiSourceRatio > 0 && selected.length) {
+      const bigramsOf = (text: string): Set<string> => {
+        const compact = String(text || '').replace(/\s+/g, '');
+        const grams = new Set<string>();
+        for (let i = 0; i + 1 < compact.length; i++) grams.add(compact.slice(i, i + 2));
+        return grams;
+      };
+      // The 1-4 char greedy tokenizer under-segments CJK overlaps (two sibling
+      // policies sharing 考勤管理/迟到 scored ~0.08 jaccard), so topical affinity
+      // for the coverage constraint uses character bigrams of the actual texts.
+      const selectedBigrams = selected.map((c: any) => bigramsOf(String(c?.context || c?.snippet || c?.evidence || '')));
+      const bestGroupScore = Math.max(...allEntries.map((g) => Math.max(viabilityOf(g), 0)), 0);
+      if (bestGroupScore > 0) {
+        const representedDocs = new Set(selectedSets.map((s) => s.docId));
+        for (const g of allEntries) {
+          const docId = docIdOf(g);
+          if (representedDocs.has(docId)) continue;
+          if (viabilityOf(g) < bestGroupScore * multiSourceRatio) continue;
+          // Same topic as the already-selected evidence, different source.
+          const gBigrams = bigramsOf(g.repText);
+          const topical = selectedBigrams.some((sb) => jaccard(gBigrams, sb) >= 0.15);
+          if (!topical) continue;
+          const representative = g.bestMember || g.members[0];
+          if (!representative) continue;
+          const tokens = costOf(representative);
+          if (usedTokens + tokens > opts.tokenBudget) continue;
+          selected.push(representative);
+          markReason(representative, 'multi_source');
+          selectedSets.push({ tokens: tokenize(g.repText), docId, isSummary: g.isSummary });
+          usedTokens += tokens;
+          if (!g.isSummary) docCounts.set(docId, (docCounts.get(docId) || 0) + 1);
+          representedDocs.add(docId);
+          multiSourceAdded += 1;
+        }
+      }
+    }
+
     if (!selected.length) return result;
     const removed = citations.length - selected.length;
+    // --- Elimination funnel (review §4.1) ------------------------------------
+    // Attribute every non-selected candidate to the stage that dropped it:
+    //   rerank_cap  – never cross-encoded (pool exceeded RERANK_MAX_DOCS)
+    //   floor       – group failed the relevance floor / pool separation
+    //   mmr_budget  – group (or member) dropped by the token budget
+    //   max_groups  – eligible, but MMR/group caps never reached it
+    // (acl stripping happens later in the citation pipeline and is reported
+    // there as aclStripped.) Only the first N are listed, id-only.
+    const selectedIdSet = new Set(selected.map((c: any) => c.id || `${c.docId}:${c.ord}`));
+    const eliminatedByStage: Record<string, number> = {};
+    const eliminated: Array<{ docId?: string; chunkId?: string; ordinal: number; scoreSource?: string; stage: string }> = [];
+    const eliminatedCap = Math.max(0, Number(process.env.RETRIEVAL_ELIMINATION_TRACE_MAX || 12));
+    citations.forEach((c: any, index: number) => {
+      const id = c?.id || `${c?.docId}:${c?.ord}`;
+      if (selectedIdSet.has(id)) return;
+      const key = groupKeyByIndex.get(index);
+      let stage: string;
+      if (c?.rerankSkipped === true) stage = 'rerank_cap';
+      else if (budgetDroppedIds.has(id) || (key != null && budgetSkippedKeys.has(key))) stage = 'mmr_budget';
+      else if (!key || !eligibility.get(key)?.eligible) stage = 'floor';
+      else stage = 'max_groups';
+      eliminatedByStage[stage] = (eliminatedByStage[stage] || 0) + 1;
+      if (eliminated.length < eliminatedCap) {
+        eliminated.push({
+          docId: typeof c?.docId === 'string' ? c.docId : undefined,
+          chunkId: typeof (c?.chunkId ?? c?.id) === 'string' ? String(c.chunkId ?? c.id) : undefined,
+          ordinal: index,
+          scoreSource: typeof c?.scoreSource === 'string' ? c.scoreSource : undefined,
+          stage,
+        });
+      }
+    });
     return {
       ...result,
       citations: selected,
@@ -760,9 +1008,33 @@ export class CitationAssemblyService {
         usedTokens,
         relevanceFloorRatio: relFloor,
         effectiveFloor,
+        // Which scale the floor was anchored on. Adaptive mode without a
+        // Platt calibration profile yields no measured/calibrated score at all,
+        // so the floor silently degrades to a ratio over normalised synthetic
+        // scores. Making the mode explicit in the trace keeps that degradation
+        // observable instead of discoverable only by reading the code.
+        floorMode: hasCalibrated ? 'calibrated' : 'relative',
         guaranteedGroups: guaranteedKeys.size,
+        measuredGroups: hasMeasured ? allEntries.filter((g) => g.measuredBest != null).length : undefined,
+        syntheticFilled: hasMeasured ? syntheticFilled : undefined,
+        budgetDegradedGroups: budgetDegraded || undefined,
+        budgetSkippedGroups: budgetSkipped || undefined,
+        multiSourceAdded: multiSourceAdded || undefined,
         mmrLambda: lambda,
         ...(subQueries.length ? { subQueries: subQueries.length, subQueryCovered, subQueryInjected } : {}),
+        // Recall→rerank→selection funnel for the trace UI (review §5): the
+        // cited count is attached downstream in emitCitationsAndComplete.
+        funnel: {
+          recalled: citations.length,
+          rerankScored: measuredList.length,
+          eligible: entries.length,
+          selected: selected.length,
+        },
+        // Effective retrieval config fingerprint (review §3.5): every trace is
+        // attributable to the exact config it executed under.
+        retrievalConfig: retrievalConfigFingerprint(),
+        eliminated,
+        eliminatedByStage,
       },
     };
   }

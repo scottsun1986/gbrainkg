@@ -429,6 +429,44 @@ export function retrievalCandidateKey(item: any): string {
 export type CitationScoreSource = 'rerank' | 'native' | 'synthetic';
 
 /**
+ * Single mapping from a fallback-arm chunk to a chat citation (review §3.5).
+ * This shape was previously duplicated across three call sites in the search
+ * and chat paths; any new field the fallback arm produces (headingHierarchy,
+ * sectionGroup, subQueryOrigin, …) must be wired HERE once, not per site.
+ */
+export function fallbackChunkToCitation(fb: any, idx: number): any {
+  return {
+    topic: fb.title || fb.documentId || '',
+    docId: fb.documentId,
+    chunkId: fb.id || fb.chunkId,
+    kbId: fb.kbId,
+    version: fb.version,
+    ord: fb.ord,
+    pageNo: fb.pageNo,
+    articleNo: fb.articleNo,
+    evidence: fb.evidence,
+    snippet: fb.evidence,
+    context: fb.evidence,
+    // min-max placement constant: ordering only, never a measurement (the
+    // score contract in retrieval/score-contract.ts governs thresholds).
+    score: typeof fb.score === 'number' && fb.score > 0 ? fb.score : Math.max(0.70, 0.95 - idx * 0.02),
+    scoreSource: 'synthetic' as CitationScoreSource,
+    docTitle: fb.title,
+    sectionGroup: (fb as any).sectionGroup,
+    subQueryOrigin: (fb as any).subQueryOrigin,
+    section: (fb as any).section,
+    breadcrumb: (fb as any).breadcrumb,
+    headingHierarchy: (fb as any).headingHierarchy,
+    bbox: fb.bbox,
+    previewUrl: fb.previewUrl,
+    // Propagate the arm's provenance flags: downstream classification must be
+    // able to tell a real source page from a derived summary.
+    raptor: (fb as any).raptor === true,
+    isSummary: (fb as any).isSummary === true,
+  };
+}
+
+/**
  * Document-inventory intent: the user wants the list of documents themselves
  * (titles/count/catalogue), not facts from them. Purely generic document
  * vocabulary — no business terms. Matched shapes:
@@ -1526,33 +1564,7 @@ export class ChatService {
         queryResult = armPolicy === 'engine_first' ? racedGBrain : {
           topics: fallbackChunks.map((fb) => fb.title || '相关条款'),
           answer: fallbackChunks.map((fb) => fb.evidence).join('\n\n'),
-          citations: fallbackChunks.map((fb, idx) => ({
-            topic: fb.title || fb.documentId || "",
-            docId: fb.documentId,
-            chunkId: fb.id || fb.chunkId,
-            kbId: fb.kbId,
-            version: fb.version,
-            ord: fb.ord,
-            pageNo: fb.pageNo,
-            articleNo: fb.articleNo,
-            evidence: fb.evidence,
-            snippet: fb.evidence,
-            context: fb.evidence,
-            score: fb.score ?? Math.max(0.70, 0.95 - idx * 0.02),
-            scoreSource: 'synthetic',
-            docTitle: fb.title,
-            sectionGroup: (fb as any).sectionGroup,
-            subQueryOrigin: (fb as any).subQueryOrigin,
-            section: (fb as any).section,
-            breadcrumb: (fb as any).breadcrumb,
-            headingHierarchy: (fb as any).headingHierarchy,
-            bbox: fb.bbox,
-            previewUrl: fb.previewUrl,
-            // Propagate the arm's provenance flags: the bridge scan below must be
-            // able to tell a real source page from a derived summary.
-            raptor: (fb as any).raptor === true,
-            isSummary: (fb as any).isSummary === true,
-          })),
+          citations: fallbackChunks.map((fb, idx) => fallbackChunkToCitation(fb, idx)),
           reranked: (racedGBrain as any).reranked,
         };
         // Engine citations are appended below the chunk arm so the final score sort
@@ -1588,30 +1600,8 @@ export class ChatService {
       } else {
         queryResult = {
           topics: Array.from(new Set(fallbackChunks.map((fb) => fb.title || "相关条款"))),
-          answer: fallbackChunks.map((fb) => fb.evidence).join("\n\n"),
-          citations: fallbackChunks.map((fb, idx) => ({
-            topic: fb.title || fb.documentId || "",
-            docId: fb.documentId,
-            chunkId: fb.id || fb.chunkId,
-            kbId: fb.kbId,
-            version: fb.version,
-            ord: fb.ord,
-            pageNo: fb.pageNo,
-            articleNo: fb.articleNo,
-            evidence: fb.evidence,
-            snippet: fb.evidence,
-            context: fb.evidence,
-            score: fb.score ?? Math.max(0.70, 0.95 - idx * 0.02),
-            scoreSource: "synthetic",
-            docTitle: fb.title,
-            sectionGroup: (fb as any).sectionGroup,
-            subQueryOrigin: (fb as any).subQueryOrigin,
-            section: (fb as any).section,
-            breadcrumb: (fb as any).breadcrumb,
-            headingHierarchy: (fb as any).headingHierarchy,
-            bbox: fb.bbox,
-            previewUrl: fb.previewUrl,
-          })),
+          answer: fallbackChunks.map((fb) => fb.evidence).join('\n\n'),
+          citations: fallbackChunks.map((fb, idx) => fallbackChunkToCitation(fb, idx)),
           reranked: false,
         };
       }
@@ -2720,29 +2710,8 @@ export class ChatService {
         const chunkArmResult = (): BrainQueryResult => ({
           topics: Array.from(new Set(fallbackChunks.map((fb) => fb.title || "相关条款"))),
           fallbackMerged: true,
-          answer: fallbackChunks.map((fb) => fb.evidence).join("\n\n"),
-          citations: fallbackChunks.map((fb, idx) => ({
-            topic: fb.title || fb.documentId || "",
-            docId: fb.documentId,
-            kbId: fb.kbId,
-            version: fb.version,
-            ord: fb.ord,
-            pageNo: fb.pageNo,
-            articleNo: fb.articleNo,
-            evidence: fb.evidence,
-            snippet: fb.evidence,
-            context: fb.evidence,
-            score: typeof fb.score === "number" && fb.score > 0 ? fb.score : Math.max(0.70, 0.95 - idx * 0.02),
-            scoreSource: "synthetic",
-            docTitle: fb.title,
-            sectionGroup: (fb as any).sectionGroup,
-            subQueryOrigin: (fb as any).subQueryOrigin,
-            section: (fb as any).section,
-            breadcrumb: (fb as any).breadcrumb,
-            headingHierarchy: (fb as any).headingHierarchy,
-            bbox: fb.bbox,
-            previewUrl: fb.previewUrl,
-          })),
+          answer: fallbackChunks.map((fb) => fb.evidence).join('\n\n'),
+          citations: fallbackChunks.map((fb, idx) => fallbackChunkToCitation(fb, idx)),
           reranked: false,
           ...({ isMultiHop: agenticComplexity !== "simple" } as any),
         });
@@ -4127,11 +4096,19 @@ export class ChatService {
       }
     }
     const afterSelect = queryResult.citations?.length || 0;
+    // Funnel numbers in the summary line (review §5): the collapsed trace view
+    // shows 召回→重排→入选 so operators can see where candidates die without
+    // expanding JSON. The cited count lands in the citation_validation node.
+    const selectionFunnel = (queryResult as any).evidenceSelection?.funnel as
+      { recalled: number; rerankScored: number; eligible: number; selected: number } | undefined;
+    const funnelText = selectionFunnel
+      ? `（召回 ${selectionFunnel.recalled} → 重排 ${selectionFunnel.rerankScored} → 入选 ${selectionFunnel.selected}）`
+      : '';
     trace.finish(
       "evidence_selection",
       afterSelect > 0 ? (afterSelect < beforeSelect ? "warning" : "success") : "warning",
       afterSelect > 0
-        ? `已选择 ${afterSelect}/${beforeSelect} 条证据（组级去重 + token 预算）`
+        ? `已选择 ${afterSelect}/${beforeSelect} 条证据（组级去重 + token 预算）${funnelText}`
         : "没有证据通过相关性选择",
       {
         before: beforeSelect,
@@ -4770,9 +4747,23 @@ export class ChatService {
           },
         );
       } else {
+      // Refusal cause differentiation (review §5): the user previously saw the
+      // same sentence whether retrieval found nothing at all or found material
+      // whose measured confidence was below the floor. The two cases need
+      // different messages — "nothing relevant exists" and "relevant material
+      // exists but is not confident enough". Both texts must still match
+      // isRefusalAnswerText so cache/trace classification keeps working.
+      // (The third cause — some material exists but is ACL-restricted — is
+      // deliberately NOT worded here: surfacing it safely needs the pre-ACL
+      // candidate count plumbed into this gate plus a security review.)
       const refusalMessage = isEnglishQuery
-        ? "Based on the provided reference materials, the relevant information is not available in the knowledge base."
-        : "已知知识库资料中未包含与该问题直接相关的信息，无法依据现有文档回答。";
+        ? (orderedCitations.length === 0
+            ? "Based on the provided reference materials, the relevant information is not available in the knowledge base."
+            : "The knowledge base returned material related to this question, but its relevance confidence is too low; unable to answer reliably.")
+        : (orderedCitations.length === 0
+            ? "已知知识库资料中未包含与该问题直接相关的信息，无法依据现有文档回答。"
+            : "知识库中检索到了与该问题主题相关的资料，但其相关度置信度不足，为避免误导，本次无法回答。");
+      const refusalCause = orderedCitations.length === 0 ? 'no_evidence' : 'low_confidence';
       trace.start("llm_generation", "大模型流式生成", "未命中高置信度证据，触发置信度门禁标准拒答");
       subscriber.next({
         data: { type: "delta", content: refusalMessage, delta: refusalMessage },
@@ -4783,6 +4774,7 @@ export class ChatService {
         "未检索到满足置信度门禁的有效证据，已触发秒级标准拒答（消除反事实幻觉与噪音脑补）",
         {
           fastRefusal: true,
+          refusalCause,
           evidenceCount: orderedCitations.length,
           maxScore: maxEvidenceScore,
           threshold: evidenceFloor,
@@ -4896,6 +4888,7 @@ export class ChatService {
 - Subsequent sentences should provide the necessary supporting context, calculations, or contractual clauses.
 6. [Decisive Values Must Be Copied Verbatim]: The decisive value of an answer — full dates, numbers, identifiers, and proper names — MUST be copied character-for-character from a cited sentence in the reference materials. Never produce a date, quantity, or named entity from your own memory when the cited sentence offers a different value; if the materials do not state the value, say it is not recorded. Adjacent or topically similar sentences are not substitutes for the sentence that carries the asked value.
 7. [Material-vs-Knowledge Conflict Note]: If a cited statement in the reference materials clearly contradicts well-established common knowledge, answer according to the materials (they are the authority of this knowledge base) and append one brief note that this differs from common knowledge. Never silently substitute the material's value with the widely known one.
+8. [Coverage Gap Note]: When other same-topic sources in the materials provide different or supplementary provisions that are not compared in the body, or when the materials do not cover a specific dimension of the question (a time range, a case class), state that explicitly at the end of the answer (e.g. "Source X provides a different/supplementary provision on this" / "The materials do not cover …"). Never let the user believe the topic is exhausted when it is not.
 ${answerStyleRule(true)}`
         : `你是一个专业的企业级知识库智能助手。请严格基于下方给出的【参考知识库资料】回答用户的问题。
 
@@ -4907,6 +4900,7 @@ ${answerStyleRule(true)}`
 5. 【多源覆盖与对比完整呈现】：当参考资料中存在多份文件、不同版本或不同条款对同一事项存在不同规定或潜在冲突时，必须同时且完整列出各份文件的具体规定内容（包括具体数值、标准与文档名称），并清晰对比其差异与适用背景（例如说明版本差异、生效日期与适用范围）。严禁只选择其中一份而忽略另一份。
 - 若两份以上资料都与问题直接相关，先用一句话说明共有几份资料覆盖该问题，再为每一份单独建立一个以“**来源 N《文档名》**”开头的小节，逐节写明该来源的相关规定；小节必须按来源编号升序排列，且每一节都必须有实质内容，禁止出现没有内容的小节。
 - 只比较与本问题相关的规定；不同知识库或适用范围需分别说明。文件名的版本号、上传时间及标题相似度不能证明替代关系，缺少明确依据时不得断言某份制度取代其他制度。
+- 【覆盖缺口标注】：若已引用的来源之外还有同主题资料给出了不同或补充规定但未纳入正文对比，须在回答末尾用一句话注明（如“另有《X》对此另有不同/补充规定”）;若现有资料未覆盖问题的某个具体维度（如某时间段、某类情形），也须在末尾明确说明未覆盖的范围，禁止让用户误以为资料已穷尽该主题。
 6. 【多源合并】：若多个来源共同支持某一相同结论，可合并标注如 [1][2]。严禁捏造未在参考资料中提供的引用编号；可用编号严格限制在参考资料实际提供的来源序号范围内。
 7. 【客观真实与分层回答】：
 - 部分相关事实必须涉及问题中的同一主体，或有资料明确证明与该主体的关系；仅有词语重合、宽泛主题相似、其他文档的名称或编号，不属于相关事实。若问题主体没有证据，禁止罗列无关资料或用这些资料的引用证明不存在，直接使用下述标准拒答。

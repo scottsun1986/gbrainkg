@@ -1,5 +1,6 @@
 import { calibrateRerankScore } from '../retrieval/evidence-calibration';
 import { getRequestContext } from '../observability/request-context';
+import { metricsService } from '../observability/metrics.service';
 import { rerankPairs } from '../retrieval/pair-reranker';
 import { recordFailopen } from '../observability/failopen';
 import { Logger } from "@nestjs/common";
@@ -15,36 +16,149 @@ export interface FusionRerankDeps {
   modelConfigService?: ModelConfigService;
 }
 
+/** Classify a rerank failure for the rerank_calls_total{outcome} metric. */
+function rerankOutcomeOf(error: unknown): 'timeout' | 'error' {
+  const name = String((error as any)?.name || '');
+  const message = String(error instanceof Error ? error.message : error);
+  return name === 'TimeoutError' || name === 'AbortError' || /timeout|timed?\s*out|aborted/i.test(message)
+    ? 'timeout'
+    : 'error';
+}
+
+/** Time one rerank call and report it (P1-6). Rethrows the original error. */
+async function timedRerankPairs(
+  config: { modelName: string; provider: { baseUrl: string; apiKey?: string } },
+  query: string,
+  documents: string[],
+  timeoutMs: number,
+  kind: 'pool' | 'probe_group',
+): Promise<Array<{ index: number; relevance_score: number }>> {
+  const startedAt = Date.now();
+  try {
+    const ranked = await rerankPairs(config, query, documents, timeoutMs);
+    metricsService.observeRerankCall(kind, documents.length, Date.now() - startedAt, 'ok');
+    return ranked;
+  } catch (error) {
+    metricsService.observeRerankCall(kind, documents.length, Date.now() - startedAt, rerankOutcomeOf(error));
+    throw error;
+  }
+}
+
+/**
+ * Rerank input format version (review §3.4): bump whenever the text layout
+ * changes (field priority, hierarchy assembly, dedup rules). Embedded in the
+ * in-process rerank cache key so a format change cannot replay stale rankings
+ * from the previous format within the TTL.
+ */
+export const RERANK_TEXT_FORMAT_VERSION = 'v2';
+
+/** Structural placeholders that carry no information for the reranker. */
+const PLACEHOLDER_HIERARCHY = new Set(['文档正文', '正文', 'default', 'body', 'main', 'content']);
+
+function isMeaningfulHierarchyPart(part: string): boolean {
+  const trimmed = String(part || '').trim();
+  return Boolean(trimmed) && !PLACEHOLDER_HIERARCHY.has(trimmed.toLowerCase());
+}
+
 /**
  * Assemble a contextualized document text for Cross-Encoder reranking.
  * Prepends document title and structural section/article hierarchy so
  * concise factual passages are not penalized for missing query context.
+ *
+ * Field priority is evidence > context > snippet (review P2): engines may
+ * return a truncated preview as `snippet`, and the reranker must score the
+ * fullest text available, not a preview.
  */
 export function buildContextualizedRerankText(citation: any): string {
   const title = String(citation?.docTitle || citation?.title || '').trim();
-  const text = String(citation?.snippet || citation?.context || citation?.evidence || citation?.topic || '');
+  const text = String(citation?.evidence || citation?.context || citation?.snippet || citation?.topic || '');
   const raw = extractRawChunkText(text);
 
-  const hierarchyParts: string[] = [];
   const breadcrumb = String(citation?.breadcrumb || citation?.metadata?.breadcrumb || '').trim();
   const section = String(citation?.section || citation?.metadata?.section || '').trim();
+  // headingHierarchy is passed under either naming (camel from the fallback
+  // arm, snake from section metadata); both are honoured, segments filtered.
+  const headingHierarchyRaw: unknown[] = Array.isArray(citation?.headingHierarchy)
+    ? citation.headingHierarchy
+    : Array.isArray(citation?.heading_hierarchy)
+      ? citation.heading_hierarchy
+      : Array.isArray(citation?.metadata?.heading_hierarchy)
+        ? citation.metadata.heading_hierarchy
+        : [];
+  const headingTrail = headingHierarchyRaw
+    .map((h) => String(h || '').trim())
+    .filter(isMeaningfulHierarchyPart)
+    .join(' > ');
   const articleNo = String(citation?.articleNo || (citation?.metadata?.article_no ? `第${citation.metadata.article_no}条` : '')).trim();
 
-  if (breadcrumb && breadcrumb !== title) {
-    hierarchyParts.push(breadcrumb);
-  } else if (section && section !== title) {
-    hierarchyParts.push(section);
+  const structural: string[] = [];
+  if (headingTrail) {
+    structural.push(headingTrail);
+  } else if (isMeaningfulHierarchyPart(breadcrumb) && breadcrumb !== title) {
+    structural.push(breadcrumb);
+  } else if (isMeaningfulHierarchyPart(section) && section !== title) {
+    structural.push(section);
   }
-  if (articleNo && !hierarchyParts.some((p) => p.includes(articleNo))) {
-    hierarchyParts.push(articleNo);
+  // The fallback arm bakes 【第X章】【第X条】 into the evidence text itself, so
+  // the clause number must not be repeated in the hierarchy (review P2).
+  const articleAlreadyInText = Boolean(articleNo) && raw.includes(articleNo);
+  if (articleNo && !articleAlreadyInText && !structural.some((p) => p.includes(articleNo))) {
+    structural.push(articleNo);
   }
-  const hierarchy = hierarchyParts.filter(Boolean).join(' > ');
+  const hierarchy = structural.filter(Boolean).join(' > ');
 
   return [title, hierarchy, raw || text]
     .filter(Boolean)
     .join('\n')
     .slice(0, 3000)
     .trim();
+}
+
+/**
+ * Coarse stage of the two-stage rerank cascade (review §3.2).
+ *
+ * The pool arrives RRF/score-ordered from the merge. A plain head-slice to
+ * RERANK_MAX_DOCS starves a channel whose strong semantic hits sit deeper in
+ * the merged order (review 根因 1) and pushes every overflow candidate into
+ * un-measured territory (P0-2). This keeps the head candidates of EVERY probe
+ * channel admitted regardless of rank, then fills the remaining cross-encoder
+ * slots by merged rank. When the retrieval stack attached MaxSim coarse
+ * scores (`maxsimScore`, BGE-M3 late interaction), those order the pool
+ * instead of the merged rank.
+ */
+export function coarseSelectRerankPool(citations: any[], keep: number): any[] {
+  if (keep >= citations.length) return citations.slice();
+  if (keep <= 0) return [];
+  const hasMaxsim = citations.some((c: any) => typeof c?.maxsimScore === 'number');
+  if (hasMaxsim) {
+    return citations
+      .slice()
+      .sort((a, b) => (Number(b?.maxsimScore) || -Infinity) - (Number(a?.maxsimScore) || -Infinity))
+      .slice(0, keep);
+  }
+  const channelHeads = Math.max(1, Number(process.env.RERANK_CASCADE_CHANNEL_HEADS || 3));
+  const selected: any[] = [];
+  const taken = new Set<any>();
+  const channelCount = new Map<string, number>();
+  // Pass 1: every channel's head candidates are guaranteed a pool slot.
+  for (const c of citations) {
+    const channel = String(c?.subQueryOrigin || '').trim() || '__primary__';
+    const count = channelCount.get(channel) || 0;
+    if (count >= channelHeads) continue;
+    channelCount.set(channel, count + 1);
+    selected.push(c);
+    taken.add(c);
+    if (selected.length >= keep) break;
+  }
+  // Pass 2: fill the remaining slots by merged rank order.
+  for (const c of citations) {
+    if (selected.length >= keep) break;
+    if (!taken.has(c)) {
+      selected.push(c);
+      taken.add(c);
+    }
+  }
+  return selected;
 }
 
 /**
@@ -319,7 +433,7 @@ export class FusionRerankService {
     if (!config) return;
     const primaryWeight = Number(process.env.RETRIEVAL_PRIMARY_GROUP_WEIGHT || 1);
     const probeWeight = Number(process.env.RETRIEVAL_PROBE_GROUP_WEIGHT || 0.9);
-    const maxDocs = Math.max(2, Number(process.env.RERANK_MAX_DOCS || 100));
+    const maxDocs = Math.max(2, Number(process.env.RERANK_MAX_DOCS || 60));
     const timeoutMs = Math.max(1000, Number(process.env.RERANK_TIMEOUT_MS || 60000));
 
     const groups = new Map<string, any[]>();
@@ -340,7 +454,7 @@ export class FusionRerankService {
         if (documents.length < 2 || documents.length !== pool.length) return;
         try {
           await assertRequestAuthorization();
-          const ranked = await rerankPairs(config, rerankQuery, documents, timeoutMs);
+          const ranked = await timedRerankPairs(config, rerankQuery, documents, timeoutMs, 'probe_group');
           const weight = key === '__primary__' ? primaryWeight : probeWeight;
           for (const item of ranked) {
             const index = Number(item?.index);
@@ -438,10 +552,13 @@ export class FusionRerankService {
       return result;
     }
 
-    // Memoize by (question, candidate-set) — section expansion makes candidate
-    // sets stable, so repeated questions reuse the same ranking.
+    // Memoize by (question, candidate-set, rerank-text-format) — section
+    // expansion makes candidate sets stable, so repeated questions reuse the
+    // same ranking. The format version salt keeps a layout change (field
+    // priority, hierarchy assembly) from replaying rankings produced by the
+    // previous format within the cache TTL (review P2).
     const candidateHash = createHash("sha256")
-      .update(`${question}||${citations.map((c: any) => c.evidence || c.snippet || c.docId || c.topic || "").join("\u0001")}`)
+      .update(`${RERANK_TEXT_FORMAT_VERSION}||${question}||${citations.map((c: any) => c.evidence || c.snippet || c.docId || c.topic || "").join("\u0001")}`)
       .digest("hex")
       .slice(0, 24);
     const cacheKey = JSON.stringify([config.provider.baseUrl, config.modelName, process.env.RERANK_DEPLOYMENT_REVISION,
@@ -469,9 +586,17 @@ export class FusionRerankService {
     // Cross-encoding every candidate is the dominant cost: a 180-candidate
     // request with 3k-char documents cannot finish inside a sane timeout on a
     // small instance, and the list is already score-ordered, so the tail adds
-    // little. Cap it (configurable) and keep the index mapping exact.
-    const maxRerankDocs = Math.max(2, Number(process.env.RERANK_MAX_DOCS || 100));
-    const rerankPool = citations.length > maxRerankDocs ? citations.slice(0, maxRerankDocs) : citations;
+    // little. Two-stage cascade (review §3.2, P1-6): the coarse stage below
+    // caps the pool at RERANK_MAX_DOCS (default 60 — raised capacity was the
+    // 27cd327 default and measurably increased whole-batch timeout risk),
+    // preserving every probe channel's head candidates instead of a plain
+    // head slice. Keep the index mapping exact.
+    const maxRerankDocs = Math.max(2, Number(process.env.RERANK_MAX_DOCS || 60));
+    const rerankPool = citations.length > maxRerankDocs
+      ? (process.env.RERANK_CASCADE_ENABLED !== 'false'
+        ? coarseSelectRerankPool(citations, maxRerankDocs)
+        : citations.slice(0, maxRerankDocs))
+      : citations;
     const documents = rerankPool
       .map((citation: any) => buildContextualizedRerankText(citation))
       .filter(Boolean);
@@ -488,7 +613,7 @@ export class FusionRerankService {
       .filter((i: any): i is number => i !== null);
     try {
       await assertRequestAuthorization();
-      const ranked = await rerankPairs(config, question, documents, Number(process.env.RERANK_TIMEOUT_MS || 60000));
+      const ranked = await timedRerankPairs(config, question, documents, Number(process.env.RERANK_TIMEOUT_MS || 60000), 'pool');
       if (!ranked.length) return result;
 
       const scoredItems = ranked

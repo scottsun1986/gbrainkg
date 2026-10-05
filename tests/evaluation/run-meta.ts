@@ -27,11 +27,34 @@ export function corpusFingerprint(datasetPath: string): string {
   }
 }
 
+/**
+ * Retrieval configuration fingerprint (review 2026-10-05 §3.4/§3.5): identifies
+ * the exact retrieval behaviour a run executed under, so two reports can be
+ * attributed to config differences instead of guessing.
+ */
+export function retrievalFingerprint(): string {
+  const keys = [
+    'RETRIEVAL_RELEVANCE_FLOOR_RATIO', 'RETRIEVAL_SOFT_FLOOR_ENABLED', 'RETRIEVAL_MIN_FLOOR_GROUPS',
+    'RETRIEVAL_MAX_GROUPS', 'RETRIEVAL_MMR_LAMBDA', 'RETRIEVAL_CONTEXT_TOKEN_BUDGET',
+    'RERANK_MAX_DOCS', 'RERANK_TIMEOUT_MS', 'RERANK_CASCADE_ENABLED',
+    'FORCE_PLATFORM_RERANK', 'RETRIEVAL_ARM_POLICY', 'RETRIEVAL_QUALITY_PROFILE',
+    'AGENTIC_RAG_ENABLED', 'HYDE_ENABLED', 'GRAPHRAG_DRIFT_ENABLED', 'RAPTOR_ENABLED',
+    'ADAPTIVE_RETRIEVAL_ENABLED', 'SEMANTIC_CACHE_KEY_VERSION',
+  ];
+  return createHash('sha256')
+    .update(keys.map((key) => `${key}=${process.env[key] ?? ''}`).join(';'))
+    .digest('hex')
+    .slice(0, 16);
+}
+
 export interface RunMetadata {
   runId: string;
   gitCommit: string;
   timestamp: string;
   corpusVersion: string;
+  /** Retrieval behaviour fingerprint + rerank input format version. */
+  retrievalConfig: string;
+  rerankTextFormat: string;
 }
 
 export function runMetadata(datasetPath: string): RunMetadata {
@@ -40,5 +63,8 @@ export function runMetadata(datasetPath: string): RunMetadata {
     gitCommit: gitCommitHash(),
     timestamp: new Date().toISOString(),
     corpusVersion: corpusFingerprint(datasetPath),
+    retrievalConfig: retrievalFingerprint(),
+    // Keep in sync with apps/api/src/chat/fusion-rerank.ts RERANK_TEXT_FORMAT_VERSION.
+    rerankTextFormat: process.env.RERANK_TEXT_FORMAT_VERSION_OVERRIDE || 'v2',
   };
 }

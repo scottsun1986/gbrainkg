@@ -15,6 +15,14 @@ describe('citation score provenance', () => {
     expect(calibratedScoreOf({ score: 0 })).toBeNull();
   });
 
+  it('never treats a rerank-cap overflow candidate as measured (P0-2)', () => {
+    // rerankSkipped marks candidates the cross-encoder never scored (pool
+    // exceeded RERANK_MAX_DOCS). Their surviving score is the arm-local
+    // number, whatever its scoreSource claims.
+    expect(calibratedScoreOf({ score: 0.9, scoreSource: 'rerank', rerankSkipped: true })).toBeNull();
+    expect(calibratedScoreOf({ rerankScore: 0.88, scoreSource: 'native', rerankSkipped: true })).toBeNull();
+  });
+
   it('keeps the min-max fallback arm out of the calibrated maximum', () => {
     // A weak retrieval set where the only high number is the fallback arm's
     // self-normalised 0.95. Before the split this cleared the 0.25 refusal

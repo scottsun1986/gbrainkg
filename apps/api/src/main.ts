@@ -11,6 +11,7 @@ import { metricsMiddleware } from './observability/metrics.middleware';
 import { createLogger, resolveLogFormat } from './observability/json-logger';
 import { getPrismaClient } from './prisma';
 import { assertStartupPortAvailable } from './startup-port';
+import { retrievalConfigFingerprint } from './retrieval/retrieval-config';
 // compression 是旧式 CJS 导出（无 default），tsconfig 未开启 esModuleInterop，
 // 默认导入在编译后会变成 undefined，这里显式按 require 语义引入。
 const compression = require('compression');
@@ -131,6 +132,13 @@ async function bootstrap() {
   await app.listen(port, '0.0.0.0');
   Logger.log(
     `Application is running on port ${port} (Redis Queue: ${redisHost}:${redisPort} db=${redisDb}, logFormat=${logFormat})`,
+    'Bootstrap',
+  );
+  // Effective retrieval config fingerprint (review 2026-10-05 §3.5): printed
+  // once at startup so two instances of the same release can be told apart by
+  // behaviour-relevant config from the very first log line.
+  Logger.log(
+    `Retrieval config fingerprint: ${retrievalConfigFingerprint()} (soft floor ${process.env.RETRIEVAL_SOFT_FLOOR_ENABLED === 'true' ? 'ON' : 'OFF'}, rerank max docs ${process.env.RERANK_MAX_DOCS || 60})`,
     'Bootstrap',
   );
 }

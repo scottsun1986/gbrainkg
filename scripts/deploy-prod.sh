@@ -268,6 +268,43 @@ discover_instances() {
   done
 }
 
+# ---- 检索配置一致性预检（评审 2026-10-05 §4.5）----
+# 同一版本在不同实例上因 .env 差异可能跑出不同检索行为（0.35 vs 0.22 地板、
+# 重排容量差异…），事后排查无法还原。发布前按实例计算检索相关键的哈希，
+# 对比所有已发现实例：默认告警，DEPLOY_REQUIRE_CFG_CONSISTENCY=1 时阻断发布。
+RETRIEVAL_CFG_HASH_KEYS='^(RETRIEVAL_RELEVANCE_FLOOR_RATIO|RETRIEVAL_SOFT_FLOOR_ENABLED|RETRIEVAL_MIN_FLOOR_GROUPS|RETRIEVAL_MIN_VIABLE_RELEVANCE|RETRIEVAL_SYNTHETIC_FILL_MAX|RETRIEVAL_MULTISOURCE_COVERAGE_RATIO|RETRIEVAL_MAX_GROUPS|RETRIEVAL_MAX_GROUPS_BREADTH|RETRIEVAL_MAX_GROUPS_MULTIHOP|RETRIEVAL_MMR_LAMBDA|RETRIEVAL_CONTEXT_TOKEN_BUDGET|RERANK_MAX_DOCS|RERANK_TIMEOUT_MS|RERANK_CASCADE_ENABLED|FORCE_PLATFORM_RERANK|RETRIEVAL_ARM_POLICY|RETRIEVAL_QUALITY_PROFILE|AGENTIC_RAG_ENABLED|HYDE_ENABLED|GRAPHRAG_DRIFT_ENABLED|RAPTOR_ENABLED|ADAPTIVE_RETRIEVAL_ENABLED|SEMANTIC_CACHE_KEY_VERSION)='
+
+instance_retrieval_config_hash() {
+  local inst="$1"
+  resolve_instance_params "$inst"
+  ssh "$PROD_HOST" "grep -E '$RETRIEVAL_CFG_HASH_KEYS' '$ENV_FILE' 2>/dev/null | sort | sha256sum | cut -c1-16" | tr -d '[:space:]'
+}
+
+check_retrieval_config_consistency() {
+  local -A seen=()
+  local inst hash first_inst first_hash
+  for inst in "${INSTANCES[@]}"; do
+    hash="$(instance_retrieval_config_hash "$inst")"
+    log "[$inst] retrieval config fingerprint: ${hash:-<empty>}"
+    if [[ -z "$first_hash" ]]; then
+      first_hash="$hash"; first_inst="$inst"
+    elif [[ "$hash" != "$first_hash" ]]; then
+      log "========================================================================"
+      log "WARNING: retrieval config divergence across instances!"
+      log "  $first_inst -> $first_hash"
+      log "  $inst -> $hash"
+      log "The same release will behave differently per instance (floor ratio,"
+      log "rerank capacity, cache version ...). Align the .env retrieval keys or"
+      log "set DEPLOY_REQUIRE_CFG_CONSISTENCY=1 to make this check blocking."
+      log "========================================================================"
+      if [[ "${DEPLOY_REQUIRE_CFG_CONSISTENCY:-0}" == "1" ]]; then
+        log "ERROR: DEPLOY_REQUIRE_CFG_CONSISTENCY=1 and configs diverge. Aborting."
+        exit 1
+      fi
+    fi
+  done
+}
+
 # ---- 0c. 发布前快照（回滚点） ----
 # 在 rsync 前把 $PROD_REPO 当前状态写入 .releases/<ts>/：
 #   manifest.json : remote git SHA (`git rev-parse HEAD`)、local git SHA、
@@ -755,11 +792,14 @@ if [[ "$TARGET" == "all" ]]; then
     log "ERROR: no instances discovered on $PROD_HOST."
     exit 1
   fi
+  check_retrieval_config_consistency
   for inst in "${INSTANCES[@]}"; do
     echo ""
     deploy_single_instance "$inst"
   done
   log "All discovered instances (${INSTANCES[*]}) deployed successfully!"
 else
+  # 单实例发布也记录指纹，便于事后归因（评审 §4.5 发布清单）。
+  log "[$TARGET] retrieval config fingerprint: $(instance_retrieval_config_hash "$TARGET" || echo '<unavailable>')"
   deploy_single_instance "$TARGET"
 fi

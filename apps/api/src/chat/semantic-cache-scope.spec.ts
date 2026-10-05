@@ -40,4 +40,25 @@ describe('semanticCacheScopeKey', () => {
     // Same user + same scope stays stable so the cache still works per user.
     expect(semanticCacheScopeKey(keys, 1, 1, 'model-a', 'user-a')).toBe(userA);
   });
+
+  it('changes when any retrieval-behaviour knob changes (P1-4 config fingerprint)', () => {
+    // Flipping the soft-floor flag changes what evidence reaches the model, so
+    // answers cached under the old flag must never be replayed under the new
+    // one — without an operator remembering to bump the version salt.
+    delete process.env.RETRIEVAL_SOFT_FLOOR_ENABLED;
+    const offKey = semanticCacheScopeKey(keys, 1, 1, 'model-a', 'user-a');
+    process.env.RETRIEVAL_SOFT_FLOOR_ENABLED = 'true';
+    const onKey = semanticCacheScopeKey(keys, 1, 1, 'model-a', 'user-a');
+    expect(onKey).not.toBe(offKey);
+    // Stable for unrelated env noise and across calls with identical config.
+    process.env.UNRELATED_ENV_VAR = 'noise';
+    expect(semanticCacheScopeKey(keys, 1, 1, 'model-a', 'user-a')).toBe(onKey);
+  });
+
+  it('changes when the rerank capacity changes (P1-4)', () => {
+    delete process.env.RERANK_MAX_DOCS;
+    const base = semanticCacheScopeKey(keys, 1, 1);
+    process.env.RERANK_MAX_DOCS = '60';
+    expect(semanticCacheScopeKey(keys, 1, 1)).not.toBe(base);
+  });
 });
