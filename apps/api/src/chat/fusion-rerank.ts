@@ -16,6 +16,38 @@ export interface FusionRerankDeps {
 }
 
 /**
+ * Assemble a contextualized document text for Cross-Encoder reranking.
+ * Prepends document title and structural section/article hierarchy so
+ * concise factual passages are not penalized for missing query context.
+ */
+export function buildContextualizedRerankText(citation: any): string {
+  const title = String(citation?.docTitle || citation?.title || '').trim();
+  const text = String(citation?.snippet || citation?.context || citation?.evidence || citation?.topic || '');
+  const raw = extractRawChunkText(text);
+
+  const hierarchyParts: string[] = [];
+  const breadcrumb = String(citation?.breadcrumb || citation?.metadata?.breadcrumb || '').trim();
+  const section = String(citation?.section || citation?.metadata?.section || '').trim();
+  const articleNo = String(citation?.articleNo || (citation?.metadata?.article_no ? `第${citation.metadata.article_no}条` : '')).trim();
+
+  if (breadcrumb && breadcrumb !== title) {
+    hierarchyParts.push(breadcrumb);
+  } else if (section && section !== title) {
+    hierarchyParts.push(section);
+  }
+  if (articleNo && !hierarchyParts.some((p) => p.includes(articleNo))) {
+    hierarchyParts.push(articleNo);
+  }
+  const hierarchy = hierarchyParts.filter(Boolean).join(' > ');
+
+  return [title, hierarchy, raw || text]
+    .filter(Boolean)
+    .join('\n')
+    .slice(0, 3000)
+    .trim();
+}
+
+/**
  * RRF fusion, probe-group / whole-pool rerank and lost-in-the-middle reordering.
  * Extracted from ChatService; behaviour is unchanged (code move + ctor injection).
  */
@@ -287,7 +319,7 @@ export class FusionRerankService {
     if (!config) return;
     const primaryWeight = Number(process.env.RETRIEVAL_PRIMARY_GROUP_WEIGHT || 1);
     const probeWeight = Number(process.env.RETRIEVAL_PROBE_GROUP_WEIGHT || 0.9);
-    const maxDocs = Math.max(2, Number(process.env.RERANK_MAX_DOCS || 60));
+    const maxDocs = Math.max(2, Number(process.env.RERANK_MAX_DOCS || 100));
     const timeoutMs = Math.max(1000, Number(process.env.RERANK_TIMEOUT_MS || 60000));
 
     const groups = new Map<string, any[]>();
@@ -303,7 +335,7 @@ export class FusionRerankService {
         const rerankQuery = key === '__primary__' ? question : key;
         const pool = list.slice(0, maxDocs);
         const documents = pool
-          .map((citation) => [String(citation?.docTitle || citation?.title || ''), String(citation?.evidence || citation?.snippet || citation?.context || '')].filter(Boolean).join('\n').slice(0, 3000).trim())
+          .map((citation) => buildContextualizedRerankText(citation))
           .filter(Boolean);
         if (documents.length < 2 || documents.length !== pool.length) return;
         try {
@@ -438,14 +470,10 @@ export class FusionRerankService {
     // request with 3k-char documents cannot finish inside a sane timeout on a
     // small instance, and the list is already score-ordered, so the tail adds
     // little. Cap it (configurable) and keep the index mapping exact.
-    const maxRerankDocs = Math.max(2, Number(process.env.RERANK_MAX_DOCS || 60));
+    const maxRerankDocs = Math.max(2, Number(process.env.RERANK_MAX_DOCS || 100));
     const rerankPool = citations.length > maxRerankDocs ? citations.slice(0, maxRerankDocs) : citations;
     const documents = rerankPool
-      .map((citation: any) => {
-        const text = String(citation.snippet || citation.context || citation.evidence || citation.docTitle || citation.topic || "");
-        const raw = extractRawChunkText(text);
-        return [String(citation.docTitle || citation.title || ''), raw || text].filter(Boolean).join('\n').slice(0, 3000).trim();
-      })
+      .map((citation: any) => buildContextualizedRerankText(citation))
       .filter(Boolean);
     if (documents.length < 2) return result;
 
@@ -454,9 +482,7 @@ export class FusionRerankService {
     // indices won't match original citation positions.
     const docIndexToCitationIdx = rerankPool
       .map((citation: any, i: number) => {
-        const text = String(citation.snippet || citation.context || citation.evidence || citation.docTitle || citation.topic || "");
-        const raw = extractRawChunkText(text);
-        const trimmed = [String(citation.docTitle || citation.title || ''), raw || text].filter(Boolean).join('\n').slice(0, 3000).trim();
+        const trimmed = buildContextualizedRerankText(citation);
         return trimmed ? i : null;
       })
       .filter((i: any): i is number => i !== null);

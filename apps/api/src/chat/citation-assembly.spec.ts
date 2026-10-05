@@ -1,4 +1,5 @@
-import { mergeCitationsByDocument, stripMarkersOfDroppedCitations } from './citation-assembly';
+import { CitationAssemblyService, mergeCitationsByDocument, stripMarkersOfDroppedCitations } from './citation-assembly';
+import { buildContextualizedRerankText } from './fusion-rerank';
 
 describe('mergeCitationsByDocument', () => {
   const chunk = (over: Record<string, any>) => ({
@@ -93,3 +94,73 @@ describe('stripMarkersOfDroppedCitations (ACL strip marker hygiene)', () => {
     expect(stripMarkersOfDroppedCitations(original, new Set([1, 2, 3]))).toBe(original);
   });
 });
+
+describe('selectEvidence dynamic soft floor and guaranteed top groups', () => {
+  const svc = new CitationAssemblyService({
+    logger: { debug: () => undefined, warn: () => undefined, log: () => undefined } as any,
+  });
+
+  it('protects valid 0.25 answers from being eliminated when single outlier scores 0.98', () => {
+    const result = {
+      citations: [
+        { id: 'outlier-1', topic: '干扰长文', relevanceScore: 0.98, context: '包含大量问题词汇但无结论' },
+        { id: 'valid-ans', topic: '简要规范', relevanceScore: 0.25, context: '核心指标规定为300元每人每月' },
+        { id: 'distractor-low', topic: '无关内容', relevanceScore: 0.04, context: '完全无关内容' },
+      ],
+      reranked: true,
+    };
+    const out = svc.selectEvidence(result, {
+      breadth: false,
+      tokenBudget: 4000,
+      question: '特种作业补贴发放标准是多少？',
+    });
+    const ids = (out.citations || []).map((c: any) => c.id);
+    expect(ids).toContain('outlier-1');
+    expect(ids).toContain('valid-ans'); // 0.25 answer protected by dynamic soft floor and top groups
+    expect(ids).not.toContain('distractor-low'); // < 0.10 low-score distractor correctly pruned
+  });
+
+  it('preserves top M candidate groups under high candidate density', () => {
+    const candidates = [
+      { id: 'c1', topic: 'doc1', relevanceScore: 0.92, context: 'text 1' },
+      { id: 'c2', topic: 'doc2', relevanceScore: 0.85, context: 'text 2' },
+      { id: 'c3', topic: 'doc3', relevanceScore: 0.70, context: 'text 3' },
+      { id: 'c4', topic: 'doc4', relevanceScore: 0.50, context: 'text 4' },
+      { id: 'c5', topic: 'doc5', relevanceScore: 0.28, context: 'text 5' },
+      { id: 'c6', topic: 'doc6', relevanceScore: 0.22, context: 'text 6' },
+      { id: 'c7', topic: 'doc7', relevanceScore: 0.03, context: 'text 7' },
+    ];
+    const out = svc.selectEvidence({ citations: candidates, reranked: true }, {
+      breadth: false,
+      tokenBudget: 8000,
+      question: '测试查询',
+    });
+    const ids = (out.citations || []).map((c: any) => c.id);
+    expect(ids).toContain('c5'); // 0.28 protected
+    expect(ids).toContain('c6'); // 0.22 protected
+    expect(ids).not.toContain('c7'); // 0.03 pruned
+  });
+});
+
+describe('buildContextualizedRerankText', () => {
+  it('prepends document title and breadcrumb/section hierarchy to chunk text', () => {
+    const text = buildContextualizedRerankText({
+      docTitle: '员工考勤管理制度.pdf',
+      breadcrumb: '第四章 请假管理',
+      articleNo: '第十二条',
+      context: '病假应提供二级甲等及以上医院开具的诊断证明。',
+    });
+    expect(text).toContain('员工考勤管理制度.pdf');
+    expect(text).toContain('第四章 请假管理 > 第十二条');
+    expect(text).toContain('病假应提供二级甲等及以上医院开具的诊断证明。');
+  });
+
+  it('falls back cleanly when hierarchy metadata is missing', () => {
+    const text = buildContextualizedRerankText({
+      docTitle: '通用文档.pdf',
+      context: '正文内容第一行',
+    });
+    expect(text).toBe('通用文档.pdf\n正文内容第一行');
+  });
+});
+

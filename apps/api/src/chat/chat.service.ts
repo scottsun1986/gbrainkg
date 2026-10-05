@@ -1543,6 +1543,9 @@ export class ChatService {
             docTitle: fb.title,
             sectionGroup: (fb as any).sectionGroup,
             subQueryOrigin: (fb as any).subQueryOrigin,
+            section: (fb as any).section,
+            breadcrumb: (fb as any).breadcrumb,
+            headingHierarchy: (fb as any).headingHierarchy,
             bbox: fb.bbox,
             previewUrl: fb.previewUrl,
             // Propagate the arm's provenance flags: the bridge scan below must be
@@ -1603,6 +1606,9 @@ export class ChatService {
             docTitle: fb.title,
             sectionGroup: (fb as any).sectionGroup,
             subQueryOrigin: (fb as any).subQueryOrigin,
+            section: (fb as any).section,
+            breadcrumb: (fb as any).breadcrumb,
+            headingHierarchy: (fb as any).headingHierarchy,
             bbox: fb.bbox,
             previewUrl: fb.previewUrl,
           })),
@@ -2231,7 +2237,7 @@ export class ChatService {
     // never even a candidate for the answer, and no downstream guarantee could
     // restore it. The pool depth is therefore a knob (RETRIEVAL_ANSWER_POOL_DOCS)
     // instead of a literal, so pool depth and context depth stay independent.
-    const answerPoolDocs = Math.max(15, Number(process.env.RETRIEVAL_ANSWER_POOL_DOCS || 15));
+    const answerPoolDocs = Math.max(15, Number(process.env.RETRIEVAL_ANSWER_POOL_DOCS || 30));
     const speculativeBaseChunksPromise = this.searchChunksFallback(
       scope,
       retrieval.query || question,
@@ -2464,7 +2470,7 @@ export class ChatService {
       const fallbackChunksPromise = (async () => {
         let base: any[] = await speculativeBaseChunksPromise;
         if (!base || base.length === 0) {
-          base = await this.searchChunksFallback(scope, question, Math.max(15, Number(process.env.RETRIEVAL_ANSWER_POOL_DOCS || 15)), recallVariants).catch((err) => {
+          base = await this.searchChunksFallback(scope, question, Math.max(15, Number(process.env.RETRIEVAL_ANSWER_POOL_DOCS || 30)), recallVariants).catch((err) => {
             this.logger.warn(`searchChunksFallback early promise error: ${err.message}`);
             return [];
           });
@@ -2731,6 +2737,9 @@ export class ChatService {
             docTitle: fb.title,
             sectionGroup: (fb as any).sectionGroup,
             subQueryOrigin: (fb as any).subQueryOrigin,
+            section: (fb as any).section,
+            breadcrumb: (fb as any).breadcrumb,
+            headingHierarchy: (fb as any).headingHierarchy,
             bbox: fb.bbox,
             previewUrl: fb.previewUrl,
           })),
@@ -4683,7 +4692,7 @@ export class ChatService {
       queryResult.answer.trim().length >= 15 &&
       !queryResult.answer.includes("No truth found");
 
-    const fastRefusalFloor = Number(process.env.RETRIEVAL_FAST_REFUSAL_THRESHOLD || 0.4);
+    const fastRefusalFloor = Number(process.env.RETRIEVAL_FAST_REFUSAL_THRESHOLD || 0.35);
     // Missing scores are unknown, not perfect evidence: treating them as 1 used
     // to let unscored candidates bypass the hallucination gate.
     //

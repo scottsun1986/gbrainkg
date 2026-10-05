@@ -442,12 +442,26 @@ export class CitationAssemblyService {
     });
 
     // Relevance floor on RAW score ratios: min-max normalization stretches a
-    // long-tailed reranker distribution and makes a 0.35 relative floor cut
-    // genuinely relevant groups. Raw cross-encoder scores share one scale.
+    // long-tailed reranker distribution and makes a rigid relative floor cut
+    // genuinely relevant groups. Dynamic soft floor uses quantile-smoothed
+    // baseline and top-group safety guarantees to protect true low-score answers.
     const rawBest = hasCalibrated
       ? Math.max(...calibratedScores)
       : Math.max(...[...groups.values()].map((g) => g.best));
-    const relFloor = Math.max(0, Number(process.env.RETRIEVAL_RELEVANCE_FLOOR_RATIO || 0.35));
+
+    let baselineScore = rawBest;
+    if (hasCalibrated && calibratedScores.length >= 5) {
+      const sortedCalibrated = [...calibratedScores].sort((a, b) => b - a);
+      const top3Avg = (sortedCalibrated[0] + sortedCalibrated[1] + sortedCalibrated[2]) / 3;
+      // Quantile-smoothed baseline prevents single outlier (e.g. 0.98) from dragging the floor
+      // sky-high and discarding valid 0.25 answers, but stays bounded above 80% of rawBest.
+      baselineScore = Math.max(rawBest * 0.80, Math.min(rawBest, top3Avg * 1.10));
+    }
+
+    const relFloor = Math.max(0, Number(process.env.RETRIEVAL_RELEVANCE_FLOOR_RATIO || 0.22));
+    const maxFloorCutoff = Number(process.env.RETRIEVAL_MAX_FLOOR_CUTOFF || 0.28);
+    const effectiveFloor = Math.min(baselineScore * relFloor, maxFloorCutoff);
+
     const questionText = `${opts.question || ""} ${(opts.subQueries || []).join(" ")}`;
     const wantsSummarySection =
       /汇总|合计|统计|总览|摘要/.test(questionText) ||
@@ -460,10 +474,28 @@ export class CitationAssemblyService {
         : Math.max(2, Number(process.env.RETRIEVAL_MAX_GROUPS || 8));
 
     const allEntries = [...groups.entries()].map(([key, g]) => ({ key, ...g }));
+
+    // Guaranteed top groups: top M groups by best score that clear minimal viable relevance
+    // (default >= 0.10) are protected from being discarded by relative floor alone, leaving
+    // final arbitration to downstream MMR and LLM context budgeting.
+    // For queries with decomposed sub-queries, the dedicated per-hop sub-query quota handles
+    // hop representation directly.
+    const minViableRelevance = Math.max(0.01, Number(process.env.RETRIEVAL_MIN_VIABLE_RELEVANCE || 0.10));
+    const defaultMinGroups = hasSubQueries ? 0 : Math.max(1, Number(process.env.RETRIEVAL_MIN_FLOOR_GROUPS || 6));
+    const minGuaranteedGroups = Math.max(0, Number(process.env.RETRIEVAL_MIN_FLOOR_GROUPS !== undefined ? process.env.RETRIEVAL_MIN_FLOOR_GROUPS : defaultMinGroups));
+    const sortedByBest = [...allEntries].sort((a, b) => b.best - a.best);
+    const guaranteedKeys = new Set(
+      sortedByBest
+        .slice(0, minGuaranteedGroups)
+        .filter((g) => g.best >= minViableRelevance)
+        .map((g) => g.key),
+    );
+
     const entries = allEntries
       .filter(
         (g) =>
-          g.best >= rawBest * relFloor ||
+          g.best >= effectiveFloor ||
+          guaranteedKeys.has(g.key) ||
           g.members.some((m: any) => m?.floorExempt === true) ||
           // Summary-section groups stay in the pool when the question names them
           // (P2-03): the relevance floor is calibrated on detail-table scores.
@@ -727,6 +759,8 @@ export class CitationAssemblyService {
         groups: selectedSets.length,
         usedTokens,
         relevanceFloorRatio: relFloor,
+        effectiveFloor,
+        guaranteedGroups: guaranteedKeys.size,
         mmrLambda: lambda,
         ...(subQueries.length ? { subQueries: subQueries.length, subQueryCovered, subQueryInjected } : {}),
       },

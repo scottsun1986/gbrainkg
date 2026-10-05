@@ -2100,6 +2100,10 @@ export class RetrievalArmsService {
           scoreSource: "synthetic",
           sectionGroup: (c as any).sectionGroup,
           subQueryOrigin: (c as any).subQueryOrigin,
+          section: meta.section,
+          breadcrumb: meta.breadcrumb,
+          headingHierarchy: meta.heading_hierarchy,
+          metadata: meta,
           bbox: meta.bbox,
           previewUrl: buildDocumentPreviewUrl(c.kbId, c.documentId, {
             page: meta.page_no || meta.pageNumber || c.ord + 1,
