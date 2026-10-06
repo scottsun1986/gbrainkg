@@ -70,3 +70,6 @@ bun.lock
 apps/api/perf-probe.js
 apps/api/perf-probe.d.ts
 apps/api/perf-probe.js.map
+
+# 环境初始化种子数据（含口令哈希，禁止提交）
+deploy/seed/*.sql
