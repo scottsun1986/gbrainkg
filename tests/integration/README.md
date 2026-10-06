@@ -29,7 +29,7 @@ docker exec -i llmwiki-postgres psql -U llmwiki -d gbrain_core_opt_test \
   -v ON_ERROR_STOP=1 < tests/integration/artifact-read-guard.sql
 ```
 
-该检查临时插入 2026656 条依赖，并输出真实用户策略的 `EXPLAIN (ANALYZE,BUFFERS)`。测试角色与 fixture 随事务回滚；应预留测试库空间。性能记录与边界见 `docs/validation/sota-20261005/artifact-read-guard-fix.md`。
+该检查临时插入 2026656 条依赖，并输出真实用户策略的 `EXPLAIN (ANALYZE,BUFFERS)`。测试角色与 fixture 随事务回滚；应预留测试库空间。性能记录与边界见 `docs/archive/2026-10-07/validation/sota-20261005/artifact-read-guard-fix.md`。
 
 ## 空库迁移与运行角色权限
 

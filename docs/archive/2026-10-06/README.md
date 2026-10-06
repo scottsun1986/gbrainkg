@@ -6,11 +6,7 @@
 保留原因：其中 `BUG-REPORT` 与 `TEST-REPORT` 是修复台账 133 条问题的**原始出处**
 （台账只保留了编号与摘要）；其余为当时的技术方案与评审，已被实际实现取代。
 
-**当前有效的文档在 `docs/` 顶层**，请以它们为准：
-
-- `FIX-TODO-2026-10-06.md` —— 逐条台账与状态
-- `FIX-DONE-2026-10-06.md` —— 已确认完成项与证据
-- `REGRESSION-REPORT-2026-10-06.md` —— 全量回归与三环境发布结果
-- `RLS-SERVICE-ONLY-WRITE-SWEEP-2026-10-06.md` —— RLS 写入面巡检
-- `UPSTREAM-BOUNDARY-ASSESSMENT-2026-10-06.md` —— 上游边界与可更新性
-- `repair-notes/2026-10-06/` —— 分组修复证据
+上述 133 条问题已全部闭环并随 v49.0 发布（2026-10-06）：
+修复台账、回归报告、巡检与评估记录现归档于 [`../2026-10-07/`](../2026-10-07/README.md)，
+分组修复证据在 [`repair-notes/`](repair-notes/)。当前有效文档见根目录 `README.md`
+与 [`../../README.md`](../../docs/README.md) 文档索引。

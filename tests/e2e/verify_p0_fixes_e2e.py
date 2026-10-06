@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-P0 六项修复的测试环境端到端验证（对应 docs/plans/sota-optimization-output-2026-10-03.md）。
+P0 六项修复的测试环境端到端验证（对应 docs/archive/2026-10-07/plans/sota-optimization-output-2026-10-03.md）。
 
 覆盖：
   B-2  kb.industry.read 权限矩阵（admin/data 不再泄露全量组织树/用户/角色）
