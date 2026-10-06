@@ -15,6 +15,9 @@
 | 文档 | 内容 |
 |---|---|
 | [`RLS-BOUNDARIES.md`](RLS-BOUNDARIES.md) | 应用层访问边界清单（数据库 RLS 已移除，权限语义全部由应用层负责；新增数据访问入口必须更新此清单） |
+| [`SOTA-ASSESSMENT-2026-10-07.md`](SOTA-ASSESSMENT-2026-10-07.md) | 核心业务流程 SOTA 评估（六子系统对标 + 差距清单） |
+| [`SOTA20-BENCHMARK-REPORT-2026-10-07.md`](SOTA20-BENCHMARK-REPORT-2026-10-07.md) | 20 个主流公开数据集基准得分（每集 ≤100 篇知识，nDCG/MRR/Recall） |
+| [`COMPREHENSIVE-TEST-REPORT-2026-10-07.md`](COMPREHENSIVE-TEST-REPORT-2026-10-07.md) | 全面测试报告（单元/E2E/GUI/基准四层 + 问题处置清单） |
 
 ## 手册
 
