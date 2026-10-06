@@ -275,16 +275,23 @@ def retrieve_run(client, kb_id, queries, qrels, *, manifest=None, top_k=100, wor
     def query_one(qid: str):
         body = {"query": queries[qid], "kb_scope": [kb_id], "limit": top_k}
         status, raw = 0, ""
-        for attempt in range(3):
+        last_error: Exception | None = None
+        for attempt in range(4):
             try:
                 status, raw = client._request("/api/v1/chat/search", "POST", body)
-                break
             except Exception as exc:
-                if attempt == 2:
-                    raise RuntimeError(f"{qid}: retrieval transport failed after 3 attempts") from exc
-                time.sleep(2 * (attempt + 1))
-        if status not in (200, 201):
-            raise RuntimeError(f"{qid}: retrieval failed (HTTP {status}); run invalid")
+                last_error = exc
+                time.sleep(3 * (attempt + 1))
+                continue
+            if status in (200, 201):
+                last_error = None
+                break
+            last_error = RuntimeError(f"HTTP {status}")
+            if status < 500 and status != 429:
+                break  # 4xx 是确定性失败，重试无意义
+            time.sleep(3 * (attempt + 1))
+        if last_error is not None or status not in (200, 201):
+            raise RuntimeError(f"{qid}: retrieval failed ({last_error}); run invalid") from last_error
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError as exc:
