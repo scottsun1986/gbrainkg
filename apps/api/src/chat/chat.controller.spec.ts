@@ -43,8 +43,8 @@ describe('Chat completion message identity', () => {
   });
   it('fails and cancels an oversized strict stream without escaping an async rejection', async () => {
     const previousStrict = process.env.KNOWLEDGE_STRICT_OUTPUT;
-    const previousRls = process.env.RLS_ENFORCE;
-    process.env.KNOWLEDGE_STRICT_OUTPUT = '1'; process.env.RLS_ENFORCE = '1';
+    const previousAuth = process.env.CORE_AUTH_ENFORCE;
+    process.env.KNOWLEDGE_STRICT_OUTPUT = '1'; process.env.CORE_AUTH_ENFORCE = '1';
     try {
       jest.clearAllMocks();
       mockPrisma.conversation.create.mockResolvedValue({ id: 'conversation-1' });
@@ -67,7 +67,7 @@ describe('Chat completion message identity', () => {
       expect(mockPrisma.message.create.mock.calls[1][0].data.citationsSummary).toEqual([]);
     } finally {
       if (previousStrict === undefined) delete process.env.KNOWLEDGE_STRICT_OUTPUT; else process.env.KNOWLEDGE_STRICT_OUTPUT = previousStrict;
-      if (previousRls === undefined) delete process.env.RLS_ENFORCE; else process.env.RLS_ENFORCE = previousRls;
+      if (previousAuth === undefined) delete process.env.CORE_AUTH_ENFORCE; else process.env.CORE_AUTH_ENFORCE = previousAuth;
     }
   });
   it('records an empty provider completion as failure rather than a successful run', async () => {

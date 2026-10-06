@@ -6,9 +6,11 @@ export interface ModalProps {
   onClose: () => void;
   children?: ReactNode;
   foot?: ReactNode;
+  /** 宽版弹窗：用于含穿梭框等需要横向空间的表单。 */
+  wide?: boolean;
 }
 
-export function Modal({ title, onClose, children, foot }: ModalProps) {
+export function Modal({ title, onClose, children, foot, wide }: ModalProps) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
@@ -16,7 +18,7 @@ export function Modal({ title, onClose, children, foot }: ModalProps) {
   }, [onClose]);
   return (
     <div className="modal-mask" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div className={`modal${wide ? ' modal-wide' : ''}`} onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>{title}</h3>
           <button type="button" className="x" aria-label="关闭" onClick={onClose}>×</button>

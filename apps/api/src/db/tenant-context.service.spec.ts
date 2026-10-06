@@ -55,14 +55,13 @@ describe('formatVectorValues', () => {
   });
 });
 
-describe('TenantContextService.forService', () => {
+describe('TenantContextService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockTx.$executeRaw.mockResolvedValue(1);
     mockPrisma.$transaction.mockImplementation(async (callback: any) => callback(mockTx));
   });
 
-  it('sets app.service=on (and clears app.user_id) before running the callback', async () => {
+  it('runs the callback inside a plain transaction and propagates the result', async () => {
     const svc = new TenantContextService();
     const result = await svc.forService(async (tx) => {
       expect(tx).toBe(mockTx);
@@ -70,19 +69,12 @@ describe('TenantContextService.forService', () => {
     });
     expect(result).toBe('ok');
     expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
-    expect(mockTx.$executeRaw).toHaveBeenCalledTimes(2);
-
-    const first = mockTx.$executeRaw.mock.calls[0];
-    const second = mockTx.$executeRaw.mock.calls[1];
-    expect(String(first[0])).toContain("set_config('app.user_id'");
-    expect(first[1]).toBe('');
-    expect(String(second[0])).toContain("set_config('app.service'");
-    expect(second[1]).toBe('on');
+    expect(mockTx.$executeRaw).not.toHaveBeenCalled();
   });
 
-  it('propagates the callback result and errors', async () => {
+  it('propagates callback errors', async () => {
     const svc = new TenantContextService();
-    await expect(svc.forService(async () => 42)).resolves.toBe(42);
+    await expect(svc.forUser('user-1', async () => 42)).resolves.toBe(42);
     await expect(
       svc.forService(async () => {
         throw new Error('boom');
@@ -91,13 +83,13 @@ describe('TenantContextService.forService', () => {
   });
 });
 
-describe('withServiceContext', () => {
+describe('transaction context helpers', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockTx.$executeRaw.mockResolvedValue(1);
+    mockPrisma.$transaction.mockImplementation(async (callback: any) => callback(mockTx));
   });
 
-  it('scopes background work with app.service=on when the client supports transactions', async () => {
+  it('scopes work with a transaction when the client supports it', async () => {
     const seen: string[] = [];
     await withServiceContext(mockPrisma, async (tx) => {
       seen.push('fn');
@@ -105,28 +97,8 @@ describe('withServiceContext', () => {
       return 1;
     });
     expect(seen).toEqual(['fn']);
-    const configs = mockTx.$executeRaw.mock.calls.map((c) => String(c[0]));
-    expect(configs.some((s) => s.includes("set_config('app.service'"))).toBe(true);
-    expect(configs.some((s) => s.includes("'on'"))).toBe(true);
-  });
-
-  it('keeps the request user context instead of downgrading to service scope', async () => {
-    // Request-path arms (BGE-M3 sparse recall, semantic cache lookups) call
-    // this helper from inside an HTTP request. Forcing app.service=on there
-    // silently bypassed row-level security for those queries; the request
-    // user's visibility must be preserved.
-    const { runWithRequestContext } = require('../observability/request-context');
-    await runWithRequestContext(
-      { requestId: 'req-1', userId: 'user-9' },
-      async () => {
-        await withServiceContext(mockPrisma, async () => 'ok');
-      },
-    );
-    const configs = mockTx.$executeRaw.mock.calls.map((c) => String(c[0]));
-    expect(configs.some((s) => s.includes("set_config('app.user_id'"))).toBe(true);
-    expect(mockTx.$executeRaw.mock.calls[0][1]).toBe('user-9');
-    expect(configs.some((s) => s.includes("'off'"))).toBe(true);
-    expect(configs.some((s) => s.includes("'on'"))).toBe(false);
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockTx.$executeRaw).not.toHaveBeenCalled();
   });
 
   it('falls back to a direct call for unit-test doubles without $transaction', async () => {
@@ -137,31 +109,19 @@ describe('withServiceContext', () => {
     });
   });
 
-  it('never promotes an unauthenticated HTTP request to service scope', async () => {
-    const { runWithRequestContext } = require('../observability/request-context');
-    await runWithRequestContext({ requestId: 'anonymous' }, () => withServiceContext(mockPrisma, async () => 'ok'));
-    const call = mockTx.$executeRaw.mock.calls[0];
-    expect(call[1]).toBe('');
-    expect(String(call[0])).toContain("'off'");
-    expect(String(call[0])).not.toContain("'on'");
-  });
-});
-
-describe('explicit elevation boundaries', () => {
-  beforeEach(() => jest.clearAllMocks());
-
-  it.each([withPermissionRead, withAdminInventory])('keeps elevated reads read-only', async (read) => {
+  it.each([withPermissionRead, withAdminInventory])('wraps reads in a transaction', async (read) => {
     await read(mockPrisma, async (tx) => {
       expect(tx).toBe(mockTx);
       return 'scope-result';
     });
-    expect(String(mockTx.$executeRaw.mock.calls[0][0])).toContain('SET TRANSACTION READ ONLY');
-    expect(String(mockTx.$executeRaw.mock.calls[1][0])).toContain("'on'");
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
   });
 
-  it('allows explicitly authorized system writes without making the transaction read-only', async () => {
-    await expect(withSystemWrite(mockPrisma, async () => 'written')).resolves.toBe('written');
-    expect(mockTx.$executeRaw).toHaveBeenCalledTimes(1);
-    expect(String(mockTx.$executeRaw.mock.calls[0][0])).not.toContain('READ ONLY');
+  it('wraps explicit system writes in a transaction', async () => {
+    await expect(withSystemWrite(mockPrisma, async (tx) => {
+      expect(tx).toBe(mockTx);
+      return 'written';
+    })).resolves.toBe('written');
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
   });
 });

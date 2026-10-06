@@ -297,9 +297,7 @@ describe("ChatService", () => {
 
   it('captures source dependencies before returning evidence without a model', async () => {
     const previous = process.env.CORE_AUTH_ENFORCE;
-    const previousRls = process.env.RLS_ENFORCE;
     process.env.CORE_AUTH_ENFORCE = '1';
-    process.env.RLS_ENFORCE = '1';
     jest.spyOn((service as any).modelConfigService, 'getLlmChatConfig').mockResolvedValue(null);
     mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(['kb-1']);
     mockCompilerService.ensureUserBrainRepo.mockResolvedValue({ gitRepoUrl: '/tmp/repo' });
@@ -320,8 +318,6 @@ describe("ChatService", () => {
     } finally {
       if (previous === undefined) delete process.env.CORE_AUTH_ENFORCE;
       else process.env.CORE_AUTH_ENFORCE = previous;
-      if (previousRls === undefined) delete process.env.RLS_ENFORCE;
-      else process.env.RLS_ENFORCE = previousRls;
       mockPrisma.$queryRaw.mockReset();
     }
   });

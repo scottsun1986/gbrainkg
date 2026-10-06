@@ -9,13 +9,19 @@ export function nonEvidenceManifest(outcome: 'failure' | 'refusal') {
   return { kind: 'non_evidence', version: 1, outcome };
 }
 export async function captureEvidenceDependencies(citations: any[]): Promise<EvidenceDependency[] | null> {
-  if (!citations.length || citations.some(c => !c.docId && !c.documentId)) return null;
-  const ids: string[] = [...new Set<string>(citations.map(c => String(c.docId || c.documentId)))];
+  // 派生页引用（RAPTOR 宏观摘要 / 图谱社区摘要等 compiled-truth 页面）没有
+  // 源文档 id，其可读性由 compiled-truth 授权链路自行校验，不进入文档清单。
+  // 此前任一引用无 docId 就整体返回 null，导致引用中含派生页的回答在读侧
+  // 被整体误判为「来源已失效」（2026-10-06 R3 E2E P0）。
+  const documentCitations = citations.filter(c => c?.docId || c?.documentId);
+  if (!documentCitations.length) return null;
+  const citationsUsed = documentCitations;
+  const ids: string[] = [...new Set<string>(citationsUsed.map(c => String(c.docId || c.documentId)))];
   const rows = await getPrismaClient().document.findMany({ where: { id: { in: ids }, status: 'published' },
     select: { id: true, activeVersionId: true, version: true, contentHash: true, effectiveTo: true } });
   if (rows.length !== ids.length) return null;
   const byId = new Map(rows.map(row => [row.id,row]));
-  if (citations.some(c => {
+  if (citationsUsed.some(c => {
     const row = byId.get(String(c.docId || c.documentId))!;
     const version = c.documentVersionId ?? c.document_version_id;
     return (version != null && version !== row.activeVersionId) || (c.version != null && Number(c.version) !== row.version)

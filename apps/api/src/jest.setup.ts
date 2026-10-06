@@ -18,7 +18,6 @@
  */
 
 process.env.NODE_ENV = process.env.NODE_ENV || 'test';
-process.env.RLS_ENFORCE = process.env.RLS_ENFORCE || '0';
 process.env.CORE_AUTH_ENFORCE = '0';
 process.env.CORE_VERSIONING_ENABLED = '0';
 process.env.CORE_GRAPH_INCREMENTAL_ENABLED = '0';

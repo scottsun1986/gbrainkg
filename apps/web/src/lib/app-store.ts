@@ -37,6 +37,8 @@ export interface AppStore {
   INDUSTRY_KBS: IndustryKbRow[];
   PROVIDERS: ProviderRow[];
   CAPABILITIES: string[];
+  /** 当前登录用户是否持有“超级管理员”角色（用于“行业库创建者”授予等仅超管动作）。 */
+  IS_SUPER_ADMIN: boolean;
 }
 
 export const appStore: AppStore = {
@@ -58,4 +60,5 @@ export const appStore: AppStore = {
   INDUSTRY_KBS: [],
   PROVIDERS: [],
   CAPABILITIES: [],
+  IS_SUPER_ADMIN: false,
 };

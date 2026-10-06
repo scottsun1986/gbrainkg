@@ -12,7 +12,7 @@ function mapKbs(raw: unknown[]): KbInfo[] {
     const admins = asArray(kb.admins).map((a) => {
       const admin = asRecord(a);
       const user = asRecord(admin.user);
-      return { n: str(user.displayName), i: str(user.username) };
+      return { id: str(admin.userId) || str(user.id), n: str(user.displayName), i: str(user.username) };
     });
     return {
       id: str(kb.id),
@@ -104,6 +104,9 @@ export function useAdminBootstrap(): {
     const applyBootstrap = async (d: AdminData) => {
     if (!isCurrent()) return;
     appStore.CAPABILITIES = Array.isArray(d.capabilities) ? (d.capabilities as string[]) : [];
+    appStore.IS_SUPER_ADMIN = asArray(asRecord(d.user).roles)
+      .map((item) => str(asRecord(asRecord(item).role).name))
+      .includes('超级管理员');
     appStore.KNOWLEDGE_BASES = mapKbs(asArray(d.kbs));
     appStore.USERS = mapUsers(asArray(d.users));
     appStore.ROLES = asArray(d.roles).map((item) => {
@@ -132,8 +135,13 @@ export function useAdminBootstrap(): {
           docs: Number(kb.documentCount || 0),
           created: kb.createdAt ? new Date(String(kb.createdAt)).toLocaleDateString('zh-CN') : '—',
           admins: asArray(kb.admins).map((a) => {
-            const user = asRecord(asRecord(a).user);
-            return { n: str(user.displayName) || str(user.username), i: str(user.username) };
+            const admin = asRecord(a);
+            const user = asRecord(admin.user);
+            return {
+              id: str(admin.userId) || str(user.id),
+              n: str(user.displayName) || str(user.username),
+              i: str(user.username),
+            };
           }),
           grants: grants.filter((grant) => asRecord(grant).kbId === kb.id).length,
           canManage: bool(kb.canManage),

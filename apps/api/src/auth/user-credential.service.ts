@@ -233,12 +233,7 @@ export class UserCredentialService {
         },
       },
     });
-    const credential = process.env.RLS_ENFORCE === '1'
-      ? await this.prisma.$transaction(async tx => {
-          await tx.$executeRaw`SELECT set_config('app.auth_app_id', ${appId}, true), set_config('app.auth_secret_hash', ${this.hashSecret(appSecret.trim())}, true)`;
-          return query(tx as typeof this.prisma);
-        })
-      : await query(this.prisma);
+    const credential = await query(this.prisma);
 
     if (!credential || credential.status !== 'active') return null;
     if (credential.user.status !== 'active') return null;

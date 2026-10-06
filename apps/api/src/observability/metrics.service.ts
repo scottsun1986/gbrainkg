@@ -241,14 +241,11 @@ export class MetricsService {
     metricsRegistry.defineCounter('llm_errors_total', 'Upstream LLM/embedding/rerank provider errors');
     metricsRegistry.defineCounter('embedding_failures_total', 'Embedding batch/item failures');
     metricsRegistry.defineGauge('app_build_info', 'Build/runtime descriptor (value is always 1)');
-    metricsRegistry.defineGauge('rls_enforce', '1 when RLS_ENFORCE=1 is active');
     metricsRegistry.setGauge('process_uptime_seconds', () => Math.floor(process.uptime()));
     metricsRegistry.setGauge('app_build_info', 1, {
       service: 'llmwiki-api',
       node: process.version,
-      rls: String(process.env.RLS_ENFORCE ?? '0'),
     });
-    metricsRegistry.setGauge('rls_enforce', () => (String(process.env.RLS_ENFORCE ?? '').toLowerCase() === '1' ? 1 : 0));
   }
 
   observeHttpRequest(method: string, route: string, status: number, durationMs: number): void {

@@ -121,7 +121,7 @@ services:
       HOST: 0.0.0.0
       DATABASE_URL: postgresql://${DB_USER}:${DB_PASS}@postgres:5432/${DB_NAME}?schema=public
       DATABASE_URL_APP: postgresql://${DB_USER_APP:-llmwiki_app}:${DB_PASS_APP:?DB_PASS_APP is required}@postgres:5432/${DB_NAME}?schema=public
-      RLS_ENFORCE: "1"
+      RLS_ENFORCE: "0"
       GBRAIN_DATABASE_URL: postgresql://${DB_USER}:${DB_PASS}@postgres:5432/${DB_NAME}
       REDIS_HOST: redis
       REDIS_PORT: 6379

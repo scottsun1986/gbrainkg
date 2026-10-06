@@ -2301,3 +2301,36 @@ ul,ol{list-style:none}
 
 /* 危险操作与常规操作隔离:左向隔开一段距离,避免与相邻按钮误触 */
 .actions .btn-danger-gap{margin-left:18px}
+
+/* ===== User transfer tree (穿梭树用户选择器) ===== */
+.ut-root{display:flex;flex-direction:column;gap:8px;width:100%}
+.ut-panes{display:flex;gap:10px;align-items:stretch;width:100%}
+.ut-pane{flex:1 1 0;min-width:240px;border:1px solid var(--line);border-radius:8px;background:var(--surface);display:flex;flex-direction:column;overflow:hidden}
+.ut-pane-head{display:flex;justify-content:space-between;align-items:center;padding:7px 10px;font-size:12px;font-weight:600;border-bottom:1px solid var(--line-2);color:var(--ink)}
+.ut-count{font-size:11px;color:var(--ink-3);font-weight:400;flex:0 0 auto}
+.ut-search{border-bottom:1px solid var(--line-2);border-radius:0}
+.ut-search input{width:100%}
+.ut-list{overflow-y:auto;padding:4px 0}
+.ut-group-head,.ut-org-head{display:flex;align-items:center;gap:6px;padding:5px 10px 5px 8px;font-size:12px;color:var(--ink-2);background:var(--surface-2)}
+.ut-org-head{position:sticky;top:0;z-index:1}
+.ut-group-name,.ut-org-name{flex:1;cursor:pointer;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ut-caret{background:none;border:none;cursor:pointer;color:var(--ink-3);font-size:11px;padding:0 2px;width:14px;flex:0 0 auto}
+.ut-row{display:flex;align-items:center;gap:8px;padding:5px 10px;font-size:12.5px;color:var(--ink);cursor:pointer}
+.ut-row:hover{background:var(--surface-2)}
+.ut-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ut-meta{font-size:10.5px;color:var(--ink-4);flex:0 0 auto}
+.ut-empty{padding:18px 10px;text-align:center;color:var(--ink-4);font-size:12px}
+.ut-actions{display:flex;flex-direction:column;justify-content:center;gap:6px;flex:0 0 auto}
+.ut-actions .btn{padding:5px 9px;font-size:13px;min-width:40px;justify-content:center}
+.ut-footer{font-size:11.5px;color:var(--ink-3);text-align:right}
+@media (max-width:720px){.ut-panes{flex-direction:column}.ut-actions{flex-direction:row;justify-content:center}.ut-pane{min-width:0}}
+
+/* 授权中枢：给穿梭框留足横向空间（列表侧收敛，表单侧显著加宽） */
+.split-layout-container.grant-layout{grid-template-columns:minmax(680px,2fr) 1fr}
+.split-layout-container.grant-layout .split-card{padding:16px 16px}
+@media (max-width:1280px){.split-layout-container.grant-layout{grid-template-columns:minmax(560px,1.6fr) 1fr}}
+@media (max-width:1024px){.split-layout-container.grant-layout{grid-template-columns:1fr}}
+
+/* 宽版弹窗（含穿梭框的表单） */
+.modal-wide{max-width:900px;width:calc(100% - 48px)}
+@media (max-width:720px){.modal-wide{max-width:calc(100% - 24px)}}

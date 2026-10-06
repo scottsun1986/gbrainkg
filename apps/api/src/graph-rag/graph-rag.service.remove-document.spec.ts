@@ -33,39 +33,38 @@ describe('GraphRagService.removeDocumentFromGraph', () => {
     executeRaw.mock.calls[callIndex].slice(1);
 
   it('deletes relations via provenance containment first, then prunes orphan entities', async () => {
-    executeRaw.mockResolvedValueOnce(0).mockResolvedValueOnce(4)
-      .mockResolvedValueOnce(0).mockResolvedValueOnce(3);
+    executeRaw.mockResolvedValueOnce(4).mockResolvedValueOnce(3);
 
     const res = await service.removeDocumentFromGraph(KB, DOC);
 
     expect(res).toEqual({ relationsRemoved: 4, entitiesRemoved: 3 });
-    expect(executeRaw).toHaveBeenCalledTimes(4);
+    expect(executeRaw).toHaveBeenCalledTimes(2);
 
     // Step 1: relation delete scoped to the KB, matching the documentId
     // inside the JSONB provenance array.
-    const relationSql = sqlOf(1);
+    const relationSql = sqlOf(0);
     expect(relationSql).toContain('DELETE FROM "GraphRelation"');
     expect(relationSql).toContain('"kbId"');
     expect(relationSql).toContain('provenance');
     expect(relationSql).toContain('@>');
-    const relationArgs = argsOf(1);
+    const relationArgs = argsOf(0);
     expect(relationArgs).toContain(KB);
     expect(relationArgs).toContain(JSON.stringify([{ documentId: DOC }]));
 
     // Step 2: entity delete only afterwards, via NOT EXISTS orphan check.
-    const entitySql = sqlOf(3);
+    const entitySql = sqlOf(1);
     expect(entitySql).toContain('DELETE FROM "GraphEntity"');
     expect(entitySql).toContain('"kbId"');
     expect(entitySql).toContain('NOT EXISTS');
     expect(entitySql).toContain('docIds');
     expect(entitySql).toContain('jsonb_array_elements_text');
-    const entityArgs = argsOf(3);
+    const entityArgs = argsOf(1);
     expect(entityArgs).toContain(KB);
     expect(entityArgs).toContain(DOC);
 
     // Relation cleanup must be issued before the entity cleanup.
-    expect(sqlOf(1)).toContain('GraphRelation');
-    expect(sqlOf(3)).not.toContain('DELETE FROM "GraphRelation"');
+    expect(sqlOf(0)).toContain('GraphRelation');
+    expect(sqlOf(1)).not.toContain('DELETE FROM "GraphRelation"');
   });
 
   it('returns zeroes and still runs both idempotent deletes when nothing matches', async () => {
@@ -74,24 +73,22 @@ describe('GraphRagService.removeDocumentFromGraph', () => {
     const res = await service.removeDocumentFromGraph(KB, DOC);
 
     expect(res).toEqual({ relationsRemoved: 0, entitiesRemoved: 0 });
-    expect(executeRaw).toHaveBeenCalledTimes(4);
+    expect(executeRaw).toHaveBeenCalledTimes(2);
   });
 
   it('swallows a failure in the relation phase and skips the orphan cleanup', async () => {
-    executeRaw.mockResolvedValueOnce(0).mockRejectedValueOnce(new Error('relation delete failed'));
+    executeRaw.mockRejectedValueOnce(new Error('relation delete failed'));
 
     await expect(
       service.removeDocumentFromGraph(KB, DOC),
     ).resolves.toEqual({ relationsRemoved: 0, entitiesRemoved: 0 });
 
-    expect(executeRaw).toHaveBeenCalledTimes(2);
+    expect(executeRaw).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the partial relation count when the orphan phase fails', async () => {
     executeRaw
-      .mockResolvedValueOnce(0)
       .mockResolvedValueOnce(2)
-      .mockResolvedValueOnce(0)
       .mockRejectedValueOnce(new Error('entity delete failed'));
 
     const res = await service.removeDocumentFromGraph(KB, DOC);

@@ -64,4 +64,17 @@ describe('elevated admin inventory scope', () => {
     expect(mockPrisma.knowledgeBase.findMany.mock.calls[0][0].where.OR)
       .toEqual([{ type: { not: 'personal' } }, { ownerUserId: 'caller' }]);
   });
+
+  it('returns only the two assignable roles to an organization administrator without role.read', async () => {
+    // 组织管理员（org.user.manage，但无 role.read）：新增人员弹窗必须能选到
+    // 「组织管理员/普通用户」，且不得看到其它角色。
+    permissions.getCapabilities.mockResolvedValue(['org.read', 'org.user.manage']);
+    mockPrisma.role.findMany.mockResolvedValue([
+      { id: 'r-org', name: '组织管理员', permissions: [], _count: { users: 2 } },
+      { id: 'r-basic', name: '普通用户', permissions: [], _count: { users: 9 } },
+      { id: 'r-ind', name: '行业库管理员', permissions: [], _count: { users: 1 } },
+    ]);
+    const result = await controller.getAllData({});
+    expect(result.roles.map((role: any) => role.name).sort()).toEqual(['普通用户', '组织管理员'].sort());
+  });
 });

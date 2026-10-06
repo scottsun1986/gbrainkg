@@ -52,7 +52,7 @@ export class OpenApiGuard implements CanActivate {
       request.credential = verified.credential;
 
       // 凭证鉴权不经过 AuthService.userIdFromRequest，需显式写入请求上下文，
-      // 否则 RLS 事务以空 user_id 作用域执行，写入会被行级安全策略拒绝。
+      // 供应用层授权与审计关联请求用户。
       setRequestContextUser(verified.user.id);
 
       // 凭证级限流：仅在鉴权成功后按 appId 计数（凭证路径是对外的开放 API 入口）。

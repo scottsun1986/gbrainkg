@@ -103,16 +103,8 @@ groups:
           summary: 'Ingestion queue backlog > 500'
           description: 'Parser/worker cannot keep up. depth={{ $value }}'
 
-  - name: gbrainkg-rls
-    rules:
-      - alert: RlsNotEnforced
-        expr: rls_enforce{job="gbrainkg-api"} == 0
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: 'RLS_ENFORCE is not active on an instance'
-          description: '{{ $labels.instance }} is running without application RLS enforcement.'
+  # RLS removed: authorization is application-layer, so there is no per-instance
+  # RLS_enforce gauge to alert on any more.
 
   # Fallback: keep ingestion_queue_depth queryable (sample 0) until the API build
   # that calls setIngestionQueueDepth() reaches prod. `absent()` matches only the

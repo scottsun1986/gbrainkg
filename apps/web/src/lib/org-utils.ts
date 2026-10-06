@@ -43,6 +43,32 @@ export function flattenOrgTree(
   ];
 }
 
+export interface FlatOrgNodeWithParent extends FlatOrgNode {
+  parentId: string | null;
+}
+
+/** Flatten an org tree while preserving each node's parentId (for hierarchy-aware pickers). */
+export function flattenOrgTreeWithParent(
+  nodeOrNodes: OrgTreeLike | OrgTreeLike[] | null | undefined,
+  parentId: string | null = null,
+): FlatOrgNodeWithParent[] {
+  if (!nodeOrNodes) return [];
+  if (Array.isArray(nodeOrNodes)) {
+    return nodeOrNodes.flatMap((node) => flattenOrgTreeWithParent(node, parentId));
+  }
+  const id = String(nodeOrNodes.id ?? '');
+  return [
+    {
+      id,
+      name: String(nodeOrNodes.name ?? ''),
+      path: String(nodeOrNodes.path ?? nodeOrNodes.name ?? ''),
+      canManage: Boolean(nodeOrNodes.canManage),
+      parentId: nodeOrNodes.parentId ?? parentId,
+    },
+    ...(nodeOrNodes.children || []).flatMap((child) => flattenOrgTreeWithParent(child, id)),
+  ];
+}
+
 /** Recursively collect node ids of a subtree (including the node itself). */
 export function getSubtreeOrgIds(
   nodeOrNodes: OrgTreeLike | OrgTreeLike[] | null | undefined,

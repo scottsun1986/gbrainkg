@@ -109,8 +109,12 @@ export function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities =
   const orgOptions = useMemo(() => flattenOrgTree(orgTrees), [orgTrees]);
   const canCreateRoot = hasCapability('*', capabilities);
   const tabRules = [
-    {k:'org', l:'组织架构', ic:'users', permission:'org.read'},
-    {k:'users', l:'人员管理', ic:'user', permission:'org.user.read'},
+    // 行业库创建者/管理员需查看组织树全貌以选择授权组织，但不具备任何组织操作能力
+    // （OrgPanel 的按钮由节点 canManage/canCreateChild 控制，这些角色恒为 false）。
+    {k:'org', l:'组织架构', ic:'users', permission:'org.read', alternativePermission:'kb.industry.read'},
+    // 行业库创建者/管理员可只读查看完整用户树（业务规则 3.5-6）；操作仍由
+    // UsersPanel 的 canManage / 每行 canManage 控制。
+    {k:'users', l:'人员管理', ic:'user', permission:'org.user.read', alternativePermission:'kb.industry.read'},
     {k:'roles', l:'角色管理', ic:'shield', permission:'role.read'},
     // 创建者即使已把内容管理员转交给别人，仍需保留设置管理员和删除库的入口。
     // 资源管理员但没有行业库角色时仍不会因此获得整个管理菜单。
@@ -122,11 +126,27 @@ export function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities =
     {k:'status', l:'系统运行监控', ic:'activity', permission:'audit.read', alternativePermission:'system.settings.read'},
   ];
   const availableTabs = tabRules.filter(item => hasCapability(item.permission, capabilities) || (item.alternativePermission && hasCapability(item.alternativePermission, capabilities))).map(item => item.k);
+  // 首次可用时选定默认页：行业库角色默认进入「行业库管理」，而不是只读的「组织架构」；
+  // 之后仅在当前页已不可用时回退，用户主动点击「组织架构」可正常查看。
+  const tabInitialized = useRef(false);
   useEffect(() => {
-    if (!availableTabs.length || availableTabs.includes(tab)) return;
-    const timer = setTimeout(() => setTab(availableTabs[0]), 0);
-    return () => clearTimeout(timer);
-  }, [availableTabs.join(','), tab]);
+    if (!availableTabs.length) return;
+    if (!tabInitialized.current) {
+      tabInitialized.current = true;
+      const canManageOrg = hasCapability('org.read', capabilities);
+      const preferIndustry = !canManageOrg && availableTabs.includes('industry');
+      const preferred = initialTab || (preferIndustry ? 'industry' : availableTabs[0]);
+      if (preferred !== tab && availableTabs.includes(preferred)) {
+        const timer = setTimeout(() => setTab(preferred), 0);
+        return () => clearTimeout(timer);
+      }
+      return;
+    }
+    if (!availableTabs.includes(tab)) {
+      const timer = setTimeout(() => setTab(availableTabs[0]), 0);
+      return () => clearTimeout(timer);
+    }
+  }, [availableTabs.join(','), tab, capabilities, initialTab]);
 
   const toggleNode = (id: string) => setExpandedIds(s => { const ns = new Set(s); ns.has(id) ? ns.delete(id) : ns.add(id); return ns; });
 
@@ -275,14 +295,14 @@ export function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities =
         <h5>管理后台</h5>
         <div className="a-nav">
           <div className="nav-section" style={{padding:'8px 12px',margin:0,fontSize:10,color:'var(--ink-4)',letterSpacing:.6,textTransform:'uppercase',fontWeight:600}}>组织与人员</div>
-          {tabRules.slice(0,3).filter(it => hasCapability(it.permission, capabilities)).map(it=>(
+          {tabRules.slice(0,3).filter(it => hasCapability(it.permission, capabilities) || (it.alternativePermission && hasCapability(it.alternativePermission, capabilities))).map(it=>(
             <div key={it.k} className={`a-nav-i ${tab===it.k?'active':''}`} onClick={()=>setTab(it.k)}>
               <Icon name={it.ic} size={14} className="a-ic"/>
               <span>{it.l}</span>
             </div>
           ))}
           <div className="nav-section" style={{padding:'8px 12px',margin:'12px 0 0',fontSize:10,color:'var(--ink-4)',letterSpacing:.6,textTransform:'uppercase',fontWeight:600}}>知识与权限</div>
-          {tabRules.slice(3,5).filter(it => hasCapability(it.permission, capabilities)).map(it=>(
+          {tabRules.slice(3,5).filter(it => hasCapability(it.permission, capabilities) || (it.alternativePermission && hasCapability(it.alternativePermission, capabilities))).map(it=>(
             <div key={it.k} className={`a-nav-i ${tab===it.k?'active':''}`} onClick={()=>setTab(it.k)}>
               <Icon name={it.ic} size={14} className="a-ic"/>
               <span>{it.l}</span>

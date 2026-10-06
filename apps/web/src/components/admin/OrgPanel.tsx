@@ -3,31 +3,33 @@ import React, { useState, useMemo } from 'react';
 import { Icon } from '@/components/common/Icon';
 import { Modal } from '@/components/common/Modal';
 import { ConfirmModal } from '@/components/common/ConfirmModal';
-import { TagPicker } from '@/components/common/TagPicker';
 import { API_BASE_URL, apiHeaders } from '@/lib/api';
 import { appStore } from '@/lib/app-store';
-import { errorMessage, apiMessage, asRecord, asArray, str, num, bool } from '@/lib/errors';
 import { emitToast, emitDataRefresh, emitAdminDataUpdated } from '@/lib/app-events';
 import { hasCapability } from '@/lib/capabilities';
-import { flattenOrgTree, getSubtreeOrgIds, countSubtreeUsers } from '@/lib/org-utils';
-import type { OrgTreeNode, TagItem, UserRow, GrantRow } from '@/types';
+import { flattenOrgTree, flattenOrgTreeWithParent, getSubtreeOrgIds, countSubtreeUsers } from '@/lib/org-utils';
+import { fetchIndustrySubjects, type SubjectOption, type SubjectUser, type SubjectOrg } from '@/lib/industry-subjects';
+import { UserTransferTree } from '@/components/common/UserTransferTree';
+import type { OrgTreeNode, GrantRow } from '@/types';
 
 export function AddOrgModal({parent, orgOptions = [], canCreateRoot = false, onAdd, onClose}: { parent: OrgTreeNode | null; orgOptions?: Array<OrgTreeNode | { id: string; name: string; path: string; canManage?: boolean }>; canCreateRoot?: boolean; onAdd: (name: string, parentId: string | null, adminUserIds: string[]) => void | Promise<boolean | void>; onClose: () => void }){
   const [name, setName] = useState('');
-  const [admins, setAdmins] = useState<TagItem[]>([]);
+  const [adminIds, setAdminIds] = useState<string[]>([]);
   const initialParentId = parent?.id || '';
   const [parentId, setParentId] = useState(initialParentId);
   const selectableParents = orgOptions.filter((option) => option.canManage || option.id === initialParentId);
+  const candidateUsers = appStore.USERS.filter(u => u.status !== 'disabled').map(u => ({ id: u.id, name: u.name, org: u.org, kw: u.initials, orgIds: u.orgIds }));
+  const orgTree = flattenOrgTreeWithParent(appStore.ORG_TREES.length ? appStore.ORG_TREES : appStore.ORG_TREE).map(o => ({ id: o.id, name: o.name, parentId: o.parentId }));
   return (
-    <Modal title="新增组织" onClose={onClose} foot={
+    <Modal title="新增组织" onClose={onClose} wide foot={
       <>
         <button className="btn" onClick={onClose}>取消</button>
-        <button className="btn primary" disabled={!name.trim() || (!parentId && !canCreateRoot)} onClick={()=>onAdd(name.trim(), parentId || null, admins.map(item=>item.id))}>创建</button>
+        <button className="btn primary" disabled={!name.trim() || (!parentId && !canCreateRoot)} onClick={()=>onAdd(name.trim(), parentId || null, adminIds)}>创建</button>
       </>
     }>
       <div className="field">
         <label>组织名称<span className="req">*</span></label>
-        <input autoFocus value={name} onChange={e=>setName(e.target.value)} placeholder="如：合规三组 / 华东分部" onKeyDown={e=>{if(e.key==='Enter' && name.trim() && (parentId || canCreateRoot)) onAdd(name.trim(), parentId || null, admins.map(item=>item.id));}}/>
+        <input autoFocus value={name} onChange={e=>setName(e.target.value)} placeholder="如：合规三组 / 华东分部" onKeyDown={e=>{if(e.key==='Enter' && name.trim() && (parentId || canCreateRoot)) onAdd(name.trim(), parentId || null, adminIds);}}/>
       </div>
       <div className="field">
         <label>挂载到组织<span className="req">*</span></label>
@@ -42,8 +44,8 @@ export function AddOrgModal({parent, orgOptions = [], canCreateRoot = false, onA
       </div>
       <div className="field">
         <label>组织管理员（可选）</label>
-        <TagPicker placeholder="创建时直接指定管理员..." items={appStore.USERS.map(u=>({id:u.id,n:u.name,sub:u.org,kw:u.initials}))} selected={admins} setSelected={setAdmins}/>
-        <div className="field-hint">管理员将同时成为该组织知识库管理员；上级组织管理员自动拥有本组织及下级组织的管理权限。被选人员还需具备“组织管理员”角色，角色可在人员/角色管理中配置。</div>
+        <UserTransferTree users={candidateUsers} orgs={orgTree} selectedIds={adminIds} onChange={setAdminIds} leftTitle="可选人员" rightTitle="组织管理员" />
+        <div className="field-hint">管理员将同时成为该组织知识库管理员；上级组织管理员自动拥有本组织及下级组织的管理权限。被选人员还需具备“组织管理员”角色，角色可在人员/角色管理中配置。仅可选择未停用人员。</div>
       </div>
       <div style={{padding:12,background:'var(--surface-2)',borderRadius:7,fontSize:12,color:'var(--ink-3)',lineHeight:1.6}}>
         <b style={{color:'var(--ink)'}}>继承规则</b>：{parentId ? '新组织将挂到所选组织之下，其成员自动继承上级组织的可见范围；' : '新组织将作为组织树根节点；'}可在创建后为该组织单独设置知识库管理员。
@@ -211,17 +213,19 @@ export function EditOrgModal({node, orgOptions = [], canCreateRoot = false, onSa
 
 /* 组织节点管理员设置（每一级组织都可设置；建库后自动生效） */
 export function OrgAdminModal({node, onClose, onSaved}: { node: OrgTreeNode; onClose: () => void; onSaved?: () => void }){
-  const pickedInit = (node.admins||[]).map(nm => appStore.USERS.find(u=>u.name===nm)).filter((u): u is UserRow => Boolean(u)).map(u=>({id:u.id,n:u.name,sub:u.org}));
-  const [picked, setPicked] = useState<TagItem[]>(pickedInit);
+  const pickedInit = (node.admins||[]).map(nm => appStore.USERS.find(u=>u.name===nm)?.id).filter((id): id is string => Boolean(id));
+  const [pickedIds, setPickedIds] = useState<string[]>(pickedInit);
+  const candidateUsers = appStore.USERS.filter(u => u.status !== 'disabled').map(u => ({ id: u.id, name: u.name, org: u.org, kw: u.initials, orgIds: u.orgIds }));
+  const orgTree = flattenOrgTreeWithParent(appStore.ORG_TREES.length ? appStore.ORG_TREES : appStore.ORG_TREE).map(o => ({ id: o.id, name: o.name, parentId: o.parentId }));
   const hasKb = node.kbs && node.kbs.length>0;
   const save = async () => {
-    const response = await fetch(`${API_BASE_URL}/api/v1/admin/orgs/${node.id}/admins`,{method:'POST',headers:{'Content-Type':'application/json',...apiHeaders()},body:JSON.stringify({userIds:picked.map(p=>p.id)})});
+    const response = await fetch(`${API_BASE_URL}/api/v1/admin/orgs/${node.id}/admins`,{method:'POST',headers:{'Content-Type':'application/json',...apiHeaders()},body:JSON.stringify({userIds:pickedIds})});
     const result = await response.json().catch(()=>({}));
     if (!response.ok) { window.dispatchEvent(new CustomEvent('app-toast',{detail:result.message || '保存失败'})); return; }
     window.dispatchEvent(new CustomEvent('app-toast',{detail:'组织管理员设置已保存'})); onSaved?.();
   };
   return (
-    <Modal title={`知识库管理员 · ${node.name}`} onClose={onClose} foot={
+    <Modal title={`知识库管理员 · ${node.name}`} onClose={onClose} wide foot={
       <>
         <button className="btn" onClick={onClose}>取消</button>
         <button className="btn primary" onClick={save}>保存设置</button>
@@ -238,9 +242,9 @@ export function OrgAdminModal({node, onClose, onSaved}: { node: OrgTreeNode; onC
         </div>
       )}
       <div className="field">
-        <label>管理员（{picked.length} 人）</label>
-        <TagPicker placeholder="搜索并选择管理员..." items={appStore.USERS.map(u=>({id:u.id,n:u.name,sub:u.org,kw:u.initials}))} selected={picked} setSelected={setPicked}/>
-        <div className="field-hint">建议至少 2 人，避免单人离职导致知识库无人维护。任免记录进入审计日志。</div>
+        <label>管理员（{pickedIds.length} 人）</label>
+        <UserTransferTree users={candidateUsers} orgs={orgTree} selectedIds={pickedIds} onChange={setPickedIds} leftTitle="可选人员" rightTitle="组织管理员" />
+        <div className="field-hint">建议至少 2 人，避免单人离职导致知识库无人维护。任免记录进入审计日志。仅可选择未停用人员。</div>
       </div>
       <div className="field">
         <label>可见范围预览</label>
@@ -267,13 +271,78 @@ export function OrgAdminModal({node, onClose, onSaved}: { node: OrgTreeNode; onC
 export function GrantPanel({kbId, setKbId}: { kbId: string; setKbId: (id: string) => void }){
   const [grantTab, setGrantTab] = useState('user');
   const [subjectId, setSubjectId] = useState('');
+  const [pickedUserIds, setPickedUserIds] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
   const [expiresAt, setExpiresAt] = useState('');
   const [search, setSearch] = useState('');
   const [revokingGrant, setRevokingGrant] = useState<GrantRow | null>(null);
+  // 授权候选主体必须是“任何”用户/组织/角色，而管理后台的 USERS/ROLES/ORGS 清单按
+  // 操作者组织范围裁剪（B-2 语义），因此单独拉取全量目录；失败时降级到已有清单。
+  const [subjects, setSubjects] = useState<{users: SubjectUser[]; roles: SubjectOption[]; orgs: SubjectOrg[]}>({users: [], roles: [], orgs: []});
+
+  React.useEffect(() => {
+    let cancelled = false;
+    fetchIndustrySubjects().then((catalog) => { if (!cancelled && catalog) setSubjects(catalog); }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
+
+  const roleOptions = useMemo(() => (subjects.roles.length
+    ? subjects.roles.map((role) => ({ id: role.id, label: `${role.name} (${role.sub || '0 人'})` }))
+    : appStore.ROLES.map((role) => ({ id: role.id, label: `${role.name} (${role.users || 0} 人)` }))),
+    [subjects]);
+  const orgOptions = useMemo(() => (subjects.orgs.length
+    ? subjects.orgs.map((org) => ({ id: org.id, label: org.name }))
+    : flattenOrgTree(appStore.ORG_TREES.length ? appStore.ORG_TREES : appStore.ORG_TREE).map((o) => ({ id: o.id, label: o.path }))),
+    [subjects]);
+  const subjectNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    subjects.users.forEach((user) => map.set(`user:${user.id}`, user.name));
+    subjects.roles.forEach((role) => map.set(`role:${role.id}`, role.name));
+    subjects.orgs.forEach((org) => map.set(`org:${org.id}`, org.name));
+    return map;
+  }, [subjects]);
+  const grantName = (grant: GrantRow) => subjectNameById.get(`${grant.subjectType}:${grant.subjectId}`) || grant.subj;
+
+  // 穿梭树候选：全量目录（失败降级到已加载清单），排除该库已授权的用户，避免重复签发。
+  const grantedUserIds = useMemo(
+    () => new Set(appStore.GRANTS.filter((g) => g.kbId === kbId && g.subjectType === 'user').map((g) => g.subjectId)),
+    [kbId, appStore.GRANTS],
+  );
+  const treeUsers = useMemo(() => {
+    const source = subjects.users.length
+      ? subjects.users.map((u) => ({ id: u.id, name: u.name, org: u.sub, kw: u.kw, orgIds: u.orgIds }))
+      : appStore.USERS.filter((u) => u.status !== 'disabled').map((u) => ({ id: u.id, name: u.name, org: u.org, kw: u.initials, orgIds: u.orgIds }));
+    return source.filter((u) => !grantedUserIds.has(u.id));
+  }, [subjects, grantedUserIds]);
+  const treeOrgs = useMemo(
+    () => (subjects.orgs.length
+      ? subjects.orgs.map((o) => ({ id: o.id, name: o.sub || o.name, parentId: o.parentId ?? null }))
+      : flattenOrgTreeWithParent(appStore.ORG_TREES.length ? appStore.ORG_TREES : appStore.ORG_TREE).map((o) => ({ id: o.id, name: o.name, parentId: o.parentId }))),
+    [subjects],
+  );
 
   const addGrant = async () => {
-    if (!kbId || !subjectId) return;
+    if (!kbId) return;
     const expiry = expiresAt ? new Date(Date.now() + Number(expiresAt) * 86400000).toISOString() : undefined;
+    if (grantTab === 'user') {
+      if (!pickedUserIds.length || saving) return;
+      setSaving(true);
+      let ok = 0; let failed = 0;
+      for (const subjectUserId of pickedUserIds) {
+        const response = await fetch(`${API_BASE_URL}/api/v1/admin/grants`,{
+          method:'POST',
+          headers:{'Content-Type':'application/json',...apiHeaders()},
+          body:JSON.stringify({kbId,subjectType:'user',subjectId:subjectUserId,expiresAt:expiry})
+        }).catch(() => null);
+        if (response?.ok) ok += 1; else failed += 1;
+      }
+      setSaving(false);
+      setPickedUserIds([]);
+      window.dispatchEvent(new CustomEvent('app-toast',{detail: failed ? `已签发 ${ok} 条，${failed} 条失败` : `已为 ${ok} 名人员签发授权`}));
+      window.dispatchEvent(new CustomEvent('app-data-refresh'));
+      return;
+    }
+    if (!subjectId) return;
     const response = await fetch(`${API_BASE_URL}/api/v1/admin/grants`,{
       method:'POST',
       headers:{'Content-Type':'application/json',...apiHeaders()},
@@ -293,7 +362,7 @@ export function GrantPanel({kbId, setKbId}: { kbId: string; setKbId: (id: string
   const filteredGrants = currentGrants.filter(g => {
     if (!search) return true;
     const q = search.toLowerCase();
-    return (g.subj || '').toLowerCase().includes(q) || (g.scope || '').toLowerCase().includes(q);
+    return grantName(g).toLowerCase().includes(q) || (g.scope || '').toLowerCase().includes(q);
   });
 
   const selectedKbObj = appStore.INDUSTRY_KBS.find(k => k.id === kbId) || appStore.INDUSTRY_KBS[0];
@@ -307,7 +376,7 @@ export function GrantPanel({kbId, setKbId}: { kbId: string; setKbId: (id: string
         </div>
       </div>
 
-      <div className="split-layout-container">
+      <div className="split-layout-container grant-layout">
         {/* Left: Add Grant Wizard Card */}
         <div className="split-card">
           <div className="split-card-header">
@@ -343,6 +412,7 @@ export function GrantPanel({kbId, setKbId}: { kbId: string; setKbId: (id: string
               >
                 人员
               </button>
+
               <button
                 type="button"
                 className={`segmented-btn ${grantTab==='role'?'active':''}`}
@@ -362,26 +432,30 @@ export function GrantPanel({kbId, setKbId}: { kbId: string; setKbId: (id: string
 
           <div className="field">
             <label>3️⃣ 选择具体{grantTab==='user'?'人员':grantTab==='role'?'角色':'组织'}<span className="req">*</span></label>
-            <select value={subjectId} onChange={e=>setSubjectId(e.target.value)}>
-              <option value="">点击检索并选择{grantTab==='user'?'人员':grantTab==='role'?'角色':'组织'}…</option>
-              {grantTab==='user' && appStore.USERS.filter(u=>u.status!=='disabled').map(u=>(
-                <option key={u.id} value={u.id}>
-                  {String(u.name)} (@{u.initials}) · {u.org || '全公司'}
-                </option>
-              ))}
-              {grantTab==='role' && appStore.ROLES.map(r=>(
-                <option key={r.id} value={r.id}>
-                  {r.name} ({r.users || 0} 人)
-                </option>
-              ))}
-              {grantTab==='org' && flattenOrgTree(appStore.ORG_TREES.length ? appStore.ORG_TREES : appStore.ORG_TREE).map((o)=>(
-                <option key={o.id} value={o.id}>
-                  {o.path}
-                </option>
-              ))}
-            </select>
+            {grantTab==='user' ? (
+              <UserTransferTree
+                users={treeUsers}
+                orgs={treeOrgs}
+                selectedIds={pickedUserIds}
+                onChange={setPickedUserIds}
+                leftTitle="可选人员"
+                rightTitle="已选人员"
+                height={420}
+                emptyHint={subjects.users.length === 0 && treeUsers.length === 0 ? '暂无可选人员（加载中或已全部授权）' : undefined}
+              />
+            ) : (
+              <select value={subjectId} onChange={e=>setSubjectId(e.target.value)}>
+                <option value="">点击检索并选择{grantTab==='role'?'角色':'组织'}…</option>
+                {grantTab==='role' && roleOptions.map(r=>(
+                  <option key={r.id} value={r.id}>{r.label}</option>
+                ))}
+                {grantTab==='org' && orgOptions.map(o=>(
+                  <option key={o.id} value={o.id}>{o.label}</option>
+                ))}
+              </select>
+            )}
             <div className="field-hint">
-              {grantTab==='org' ? '组织授权将自动包含该节点下全部直属与递归子部门成员。' : grantTab==='role' ? '绑定该角色的所有当前及未来成员均自动获得访问权。' : '单人授权仅对该成员账号独立生效。'}
+              {grantTab==='org' ? '组织授权将自动包含该节点下全部直属与递归子部门成员。' : grantTab==='role' ? '绑定该角色的所有当前及未来成员均自动获得访问权。' : '可穿梭多选人员，确认后逐人签发授权；已授权的用户不再出现在候选列表。'}
             </div>
           </div>
 
@@ -397,11 +471,11 @@ export function GrantPanel({kbId, setKbId}: { kbId: string; setKbId: (id: string
 
           <button
             className="btn primary"
-            disabled={!subjectId || !kbId}
+            disabled={!kbId || saving || (grantTab==='user' ? pickedUserIds.length===0 : !subjectId)}
             style={{width:'100%',justifyContent:'center',padding:'8px 16px',marginTop:4}}
             onClick={addGrant}
           >
-            <Icon name="plus" size={12}/> 确认并签发授权规则
+            <Icon name="plus" size={12}/> {saving ? '签发中…' : grantTab==='user' && pickedUserIds.length>1 ? `确认为 ${pickedUserIds.length} 名人员签发` : '确认并签发授权规则'}
           </button>
         </div>
 
@@ -460,7 +534,7 @@ export function GrantPanel({kbId, setKbId}: { kbId: string; setKbId: (id: string
                           </div>
                         )}
                         <div>
-                          <div style={{fontWeight:600,color:'var(--ink)',fontSize:'13px'}}>{String(g.subj)}</div>
+                          <div style={{fontWeight:600,color:'var(--ink)',fontSize:'13px'}}>{grantName(g)}</div>
                           <div style={{fontSize:'11.5px',color:'var(--ink-3)',marginTop:2}}>{g.scope}</div>
                         </div>
                       </div>
@@ -506,7 +580,7 @@ export function GrantPanel({kbId, setKbId}: { kbId: string; setKbId: (id: string
           title="撤销知识库授权"
           msg={
             <>
-              确认撤销 <b>【{revokingGrant.subj}】</b> 对 <b>【{selectedKbObj?.name || '当前行业库'}】</b> 的访问权限？
+              确认撤销 <b>【{grantName(revokingGrant)}】</b> 对 <b>【{selectedKbObj?.name || '当前行业库'}】</b> 的访问权限？
               撤销后，该主体对应的人员在大脑问答与检索中将不再能访问本库知识。
             </>
           }

@@ -1,14 +1,15 @@
 "use client";
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Icon } from '@/components/common/Icon';
 import { Modal } from '@/components/common/Modal';
 import { ConfirmModal } from '@/components/common/ConfirmModal';
-import { TagPicker } from '@/components/common/TagPicker';
+import { UserTransferTree } from '@/components/common/UserTransferTree';
 import { API_BASE_URL, apiHeaders } from '@/lib/api';
 import { appStore } from '@/lib/app-store';
 import { errorMessage, apiMessage, asRecord, asArray, str, num, bool } from '@/lib/errors';
 import { emitToast, emitDataRefresh } from '@/lib/app-events';
-import type { IndustryKbRow, TagItem, UserRow } from '@/types';
+import { fetchIndustrySubjects, type SubjectUser, type SubjectOrg } from '@/lib/industry-subjects';
+import type { IndustryKbRow } from '@/types';
 
 export function TextKnowledgeModal({onClose, onSave}: { onClose: () => void; onSave: (payload: { title: string; content: string }) => void }){
   const [title, setTitle] = useState('');
@@ -194,37 +195,47 @@ export function IndustryKBPanel({onOpenGrant, canCreate = false}: { onOpenGrant:
 }
 
 export function NewIndustryKBModal({onClose, onSaved}: { onClose: () => void; onSaved?: () => void }){
-  const [admins, setAdmins] = useState<TagItem[]>([]);
+  const [adminIds, setAdminIds] = useState<string[]>([]);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
+  // 行业库管理员可指定“任意”用户，候选范围不随操作者组织范围收敛；失败时降级到已加载清单。
+  const [candidate, setCandidate] = useState<{ users: SubjectUser[]; orgs: SubjectOrg[] }>({ users: [], orgs: [] });
+  useEffect(() => {
+    let cancelled = false;
+    fetchIndustrySubjects().then((catalog) => { if (!cancelled && catalog) setCandidate({ users: catalog.users, orgs: catalog.orgs }); }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
+  const adminUsers = useMemo(() => (candidate.users.length
+    ? candidate.users.map((u) => ({ id: u.id, name: u.name, org: u.sub, kw: u.kw, orgIds: u.orgIds }))
+    : appStore.USERS.filter((u) => u.status !== 'disabled').map((u) => ({ id: u.id, name: u.name, org: u.org, kw: u.initials, orgIds: u.orgIds }))),
+    [candidate]);
+  const adminOrgs = useMemo(() => candidate.orgs.map((o) => ({ id: o.id, name: o.sub || o.name, parentId: o.parentId ?? null })), [candidate]);
   const save = async () => {
-    if (!name.trim() || !description.trim() || !admins.length) return;
+    if (!name.trim() || !description.trim() || !adminIds.length) return;
     setSaving(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/admin/kbs`, {method:'POST',headers:{'Content-Type':'application/json',...apiHeaders()},body:JSON.stringify({name,description,type:'industry'})});
+      const response = await fetch(`${API_BASE_URL}/api/v1/admin/kbs`, {method:'POST',headers:{'Content-Type':'application/json',...apiHeaders()},body:JSON.stringify({name,description,type:'industry',adminUserIds:adminIds})});
       const result = await response.json().catch(()=>({}));
       if (!response.ok) throw new Error(result.message || '创建失败');
       if (!result.knowledgeBase?.id) throw new Error('创建响应缺少知识库 ID');
-      const adminResponse = await fetch(`${API_BASE_URL}/api/v1/admin/kbs/${result.knowledgeBase.id}/admins`,{method:'POST',headers:{'Content-Type':'application/json',...apiHeaders()},body:JSON.stringify({userIds:admins.map(a=>a.id)})});
-      if (!adminResponse.ok) throw new Error('知识库已创建，但管理员分配失败；请在库管理中重新设置管理员');
       window.dispatchEvent(new CustomEvent('app-toast',{detail:'行业知识库已创建'})); onSaved?.();
     } catch(error) { window.dispatchEvent(new CustomEvent('app-toast',{detail:errorMessage(error) || '创建失败'})); }
     finally { setSaving(false); }
   };
   return (
-    <Modal title="新建行业知识库" onClose={onClose} foot={
+    <Modal title="新建行业知识库" onClose={onClose} wide foot={
       <>
         <button className="btn" onClick={onClose}>取消</button>
-        <button className="btn primary" disabled={saving || !name.trim() || !description.trim() || !admins.length} onClick={save}><Icon name="plus" size={12}/> {saving?'创建中…':'创建并初始化'}</button>
+        <button className="btn primary" disabled={saving || !name.trim() || !description.trim() || !adminIds.length} onClick={save}><Icon name="plus" size={12}/> {saving?'创建中…':'创建并初始化'}</button>
       </>
     }>
       <div className="field"><label>库名称<span className="req">*</span></label><input value={name} onChange={e=>setName(e.target.value)} placeholder="如：跨境贸易合规库 / AI 治理与伦理库"/></div>
       <div className="field"><label>库描述<span className="req">*</span></label><textarea value={description} onChange={e=>setDescription(e.target.value)} placeholder="说明本库的范围、用途、收录规范"/></div>
       <div className="field">
         <label>管理员（1 人或多人）<span className="req">*</span></label>
-        <TagPicker placeholder="搜索并选择管理员..." items={appStore.USERS.map(u=>({id:u.id,n:u.name,sub:u.org,kw:u.initials}))} selected={admins} setSelected={setAdmins}/>
-        <div className="field-hint">管理员拥有该库的全部维护权限：上传/编辑/删除文档、设置授权主体。</div>
+        <UserTransferTree users={adminUsers} orgs={adminOrgs} selectedIds={adminIds} onChange={setAdminIds} leftTitle="可选人员" rightTitle="管理员" />
+        <div className="field-hint">管理员拥有该库的全部维护权限：上传/编辑/删除文档、设置授权主体。可选择任意未停用人员。</div>
       </div>
       <div className="warn-strip"><Icon name="alert" size={12}/>创建后可立即上传文档；文档解析和大脑编译由后台异步完成。</div>
     </Modal>
@@ -232,28 +243,49 @@ export function NewIndustryKBModal({onClose, onSaved}: { onClose: () => void; on
 }
 
 export function KBAdminModal({kb, onClose, onSaved}: { kb: IndustryKbRow; onClose: () => void; onSaved?: () => void }){
-  const currentAdmins = appStore.USERS.filter(u => kb.admins.some(a=>a.n===u.name));
-  const [picked, setPicked] = useState<TagItem[]>(currentAdmins.map(u=>({id:u.id,n:u.name,sub:u.org})));
-  const remove = currentAdmins.filter(u => !picked.find(p=>p.id===u.id));
+  // 现有管理员以库上携带的 userId 为准：行业库创建者的可见用户清单可能被收敛，
+  // 按姓名反查会漏掉不在清单内的现任管理员，导致保存时被误移除。
+  const initialAdmins = (kb.admins || [])
+    .filter((a) => a.id)
+    .map((a) => ({ id: String(a.id), name: a.n || '', org: a.org || '' }));
+  const [pickedIds, setPickedIds] = useState<string[]>(initialAdmins.map((a) => a.id));
+  const [candidate, setCandidate] = useState<{ users: SubjectUser[]; orgs: SubjectOrg[] }>({ users: [], orgs: [] });
+  useEffect(() => {
+    let cancelled = false;
+    fetchIndustrySubjects().then((catalog) => { if (!cancelled && catalog) setCandidate({ users: catalog.users, orgs: catalog.orgs }); }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
+  // 候选 = 全量未停用用户 ∪ 现任管理员（含已停用者，便于移除）。
+  const adminUsers = useMemo(() => {
+    const base: Array<{ id: string; name: string; org?: string; kw?: string; orgIds?: string[] }> = candidate.users.length
+      ? candidate.users.map((u) => ({ id: u.id, name: u.name, org: u.sub, kw: u.kw, orgIds: u.orgIds }))
+      : appStore.USERS.filter((u) => u.status !== 'disabled').map((u) => ({ id: u.id, name: u.name, org: u.org, kw: u.initials, orgIds: u.orgIds }));
+    const map = new Map(base.map((u) => [u.id, u]));
+    initialAdmins.forEach((a) => { if (!map.has(a.id)) map.set(a.id, { id: a.id, name: a.name, org: a.org, kw: undefined }); });
+    return [...map.values()];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidate, kb.admins]);
+  const adminOrgs = useMemo(() => candidate.orgs.map((o) => ({ id: o.id, name: o.sub || o.name, parentId: o.parentId ?? null })), [candidate]);
+  const remove = initialAdmins.filter(a => !pickedIds.includes(a.id));
   const save = async () => {
-    const response = await fetch(`${API_BASE_URL}/api/v1/admin/kbs/${kb.id}/admins`,{method:'POST',headers:{'Content-Type':'application/json',...apiHeaders()},body:JSON.stringify({userIds:picked.map(p=>p.id)})});
+    const response = await fetch(`${API_BASE_URL}/api/v1/admin/kbs/${kb.id}/admins`,{method:'POST',headers:{'Content-Type':'application/json',...apiHeaders()},body:JSON.stringify({userIds:pickedIds})});
     const result = await response.json().catch(()=>({}));
     if (!response.ok) { window.dispatchEvent(new CustomEvent('app-toast',{detail:result.message || '保存失败'})); return; }
     window.dispatchEvent(new CustomEvent('app-toast',{detail:'管理员设置已保存'})); onSaved?.();
   };
   return (
-    <Modal title={`管理员设置 · ${kb.name}`} onClose={onClose} foot={
+    <Modal title={`管理员设置 · ${kb.name}`} onClose={onClose} wide foot={
       <>
         <button className="btn" onClick={onClose}>取消</button>
-        <button className="btn primary" onClick={save}>保存设置</button>
+        <button className="btn primary" disabled={!pickedIds.length} onClick={save}>保存设置</button>
       </>
     }>
       <div style={{fontSize:12.5,color:'var(--ink-3)',marginBottom:14,lineHeight:1.5}}>
         管理员拥有该库的<strong style={{color:'var(--ink)'}}>全部维护权限</strong>：上传 / 编辑 / 删除文档、设置授权主体、配置检索参数。支持多人共管，任免均有审计记录。
       </div>
       <div className="field">
-        <label>当前管理员（{picked.length} 人）</label>
-        <TagPicker placeholder="搜索并添加管理员..." items={appStore.USERS.map(u=>({id:u.id,n:u.name,sub:u.org,kw:u.initials}))} selected={picked} setSelected={setPicked}/>
+        <label>管理员（{pickedIds.length} 人）</label>
+        <UserTransferTree users={adminUsers} orgs={adminOrgs} selectedIds={pickedIds} onChange={setPickedIds} leftTitle="可选人员" rightTitle="管理员" />
       </div>
       {remove.length>0 && (
         <div className="warn-strip">
@@ -267,4 +299,3 @@ export function KBAdminModal({kb, onClose, onSaved}: { kb: IndustryKbRow; onClos
     </Modal>
   );
 }
-

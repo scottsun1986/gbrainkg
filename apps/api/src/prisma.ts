@@ -2,9 +2,8 @@ import { PrismaClient } from '@prisma/client';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { withRlsContext } from './db/rls-prisma';
 
-// Prefer the NOBYPASSRLS runtime role (RLS-enforced) when provided.
+// Prefer the dedicated runtime role (DATABASE_URL_APP) when provided.
 if (process.env.DATABASE_URL_APP && !process.env.LLMWIKI_FORCE_MIGRATOR_URL) {
   process.env.DATABASE_URL = process.env.DATABASE_URL_APP;
 }
@@ -96,19 +95,12 @@ const prismaGlobal = globalThis as typeof globalThis & {
 };
 
 export function getPrismaClient(): PrismaClient {
-  if (process.env.CORE_AUTH_ENFORCE === '1' && process.env.RLS_ENFORCE !== '1') throw new Error('CORE_AUTH_ENFORCE requires RLS_ENFORCE=1');
   if (!prismaGlobal.__llmwikiPrisma) {
-    if (process.env.RLS_ENFORCE === '1' && !process.env.LLMWIKI_FORCE_MIGRATOR_URL) {
-      if (!process.env.DATABASE_URL_APP) {
-        throw new Error('RLS_ENFORCE=1 requires DATABASE_URL_APP (a dedicated NOBYPASSRLS runtime role)');
-      }
-      process.env.DATABASE_URL = withConnectionPoolParams(process.env.DATABASE_URL_APP);
-    }
+    // 行级安全(RLS)已移除，权限语义全部由应用层裁决，不再包装 RLS 事务代理，
+    // 运行时改用普通 Prisma 客户端。
     const raw = new PrismaClient();
     prismaGlobal.__llmwikiPrismaRaw = raw;
-    prismaGlobal.__llmwikiPrisma = process.env.RLS_ENFORCE === '1' && !process.env.LLMWIKI_FORCE_MIGRATOR_URL
-      ? withRlsContext(raw)
-      : raw;
+    prismaGlobal.__llmwikiPrisma = raw;
   }
   return prismaGlobal.__llmwikiPrisma;
 }

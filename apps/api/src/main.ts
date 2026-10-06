@@ -9,7 +9,6 @@ import * as express from 'express';
 import { requestIdMiddleware } from './observability/request-id.middleware';
 import { metricsMiddleware } from './observability/metrics.middleware';
 import { createLogger, resolveLogFormat } from './observability/json-logger';
-import { getPrismaClient } from './prisma';
 import { assertStartupPortAvailable } from './startup-port';
 import { retrievalConfigFingerprint } from './retrieval/retrieval-config';
 // compression 是旧式 CJS 导出（无 default），tsconfig 未开启 esModuleInterop，
@@ -34,14 +33,6 @@ async function bootstrap() {
   const port = Number(process.env.PORT || 3000);
   await assertStartupPortAvailable(port);
   process.env.API_RELEASE_FINGERPRINT = compiledApiIdentity(__dirname);
-  if (process.env.RLS_ENFORCE === '1') {
-    if (process.env.LLMWIKI_FORCE_MIGRATOR_URL) {
-      throw new Error('API cannot start with RLS_ENFORCE=1 and LLMWIKI_FORCE_MIGRATOR_URL');
-    }
-    // Refuse to serve traffic if the runtime role bypasses RLS or carries the
-    // legacy app.service=on default. The Prisma wrapper verifies the role.
-    await getPrismaClient().$queryRaw`SELECT 1`;
-  }
   // LOG_FORMAT=json（默认）输出结构化 JSON 日志；pretty 保留 Nest 默认着色日志。
   const logFormat = resolveLogFormat(process.env.LOG_FORMAT);
   const logger = createLogger(logFormat);

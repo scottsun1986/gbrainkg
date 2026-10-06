@@ -288,13 +288,13 @@ DB_PASS=$DB_PASS
 DB_NAME=llmwiki
 DATABASE_URL=postgresql://llmwiki:$DB_PASS@127.0.0.1:5432/llmwiki?schema=public
 GBRAIN_DATABASE_URL=postgresql://llmwiki:$DB_PASS@127.0.0.1:5432/llmwiki?schema=public
-# 运行时角色（NOBYPASSRLS）连接串：API 运行时应优先使用本串，使 RLS 租户隔离生效。
+# 运行时角色连接串：API 运行时应优先使用本串，避免请求流量使用迁移角色。
 # 迁移/GBrain 继续使用上方 DATABASE_URL / GBRAIN_DATABASE_URL（llmwiki, BYPASSRLS）。
 DB_USER_APP=llmwiki_app
 DB_PASS_APP=$APP_DB_PASS
 DATABASE_URL_APP=postgresql://llmwiki_app:$APP_DB_PASS@127.0.0.1:5432/llmwiki?schema=public
-# RLS_ENFORCE=1：所有 Prisma 查询使用事务内用户/服务上下文；启动时校验运行时角色。
-RLS_ENFORCE=1
+# RLS 已移除（RLS_ENFORCE 退役）；鉴权与资源范围由应用层负责。
+RLS_ENFORCE=0
 
 REDIS_HOST=127.0.0.1
 REDIS_PORT=6379

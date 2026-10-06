@@ -18,7 +18,7 @@ for p in [Path('apps/api/.env')]:
 values.update(os.environ)
 active=[k for k in flags if values.get(k) in ('true','1')]
 if os.environ.get('RELEASE_GATE_PROFILE')=='quality-first':
- expected={'ALLOW_UNVERSIONED_EMBEDDING_PUBLICATION':'true','RLS_ENFORCE':'1','CORE_AUTH_ENFORCE':'1','CORE_VERSIONING_ENABLED':'1','CORE_GRAPH_INCREMENTAL_ENABLED':'1','ADAPTIVE_RETRIEVAL_ENABLED':'true','RETRIEVAL_QUALITY_PROFILE':'quality-first','BGE_M3_HYBRID_ENABLED':'false','BGE_M3_MAXSIM_ENABLED':'false','BGE_M3_LATE_CHUNKING_ENABLED':'false'}
+ expected={'ALLOW_UNVERSIONED_EMBEDDING_PUBLICATION':'true','RLS_ENFORCE':'0','CORE_AUTH_ENFORCE':'1','CORE_VERSIONING_ENABLED':'1','CORE_GRAPH_INCREMENTAL_ENABLED':'1','ADAPTIVE_RETRIEVAL_ENABLED':'true','RETRIEVAL_QUALITY_PROFILE':'quality-first','BGE_M3_HYBRID_ENABLED':'false','BGE_M3_MAXSIM_ENABLED':'false','BGE_M3_LATE_CHUNKING_ENABLED':'false'}
  if any(values.get(k)!=v for k,v in expected.items()):raise SystemExit('FAIL: local quality-first configuration mismatch')
  import json,urllib.request
  ready=json.load(urllib.request.urlopen(os.environ.get('API_BASE','http://127.0.0.1:3202')+'/ready'));runtime=ready['knowledgeProfile']

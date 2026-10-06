@@ -22,18 +22,17 @@ async function main(): Promise<void> {
       'SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = $1) AS exists', role,
     );
     if (!existing[0]?.exists) {
-      await prisma.$executeRawUnsafe(`CREATE ROLE ${qRole} LOGIN NOBYPASSRLS NOSUPERUSER PASSWORD ${quoteLiteral(password)}`);
+      await prisma.$executeRawUnsafe(`CREATE ROLE ${qRole} LOGIN NOSUPERUSER PASSWORD ${quoteLiteral(password)}`);
     } else {
-      await prisma.$executeRawUnsafe(`ALTER ROLE ${qRole} LOGIN NOBYPASSRLS NOSUPERUSER PASSWORD ${quoteLiteral(password)}`);
+      await prisma.$executeRawUnsafe(`ALTER ROLE ${qRole} LOGIN NOSUPERUSER PASSWORD ${quoteLiteral(password)}`);
     }
-    await prisma.$executeRawUnsafe(`ALTER ROLE ${qRole} RESET "app.service"`);
     await prisma.$executeRawUnsafe(`GRANT CONNECT ON DATABASE ${qDb} TO ${qRole}`);
     await prisma.$executeRawUnsafe(`GRANT USAGE ON SCHEMA public TO ${qRole}`);
     await prisma.$executeRawUnsafe(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${qRole}`);
     await prisma.$executeRawUnsafe(`GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO ${qRole}`);
     await prisma.$executeRawUnsafe(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${qRole}`);
     await prisma.$executeRawUnsafe(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO ${qRole}`);
-    process.stdout.write(`Runtime database role ${role} provisioned with NOBYPASSRLS.\n`);
+    process.stdout.write(`Runtime database role ${role} provisioned (RLS removed; authorization is application-layer).\n`);
   } finally {
     await prisma.$disconnect();
   }

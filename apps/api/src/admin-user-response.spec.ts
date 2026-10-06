@@ -134,16 +134,16 @@ describe('admin data permission matrix (kb.industry.read only)', () => {
     ]);
   });
 
-  it('returns only industry-linked org nodes, not the full org tree', async () => {
+  it('returns the full org tree read-only to industry roles', async () => {
     const data = await buildIndustryOnlyController().getAllData({} as any, '1', '20', '1', '0');
-    expect(data.orgs).toHaveLength(1);
-    expect(data.orgs[0].id).toBe('org-industry');
+    expect(data.orgs.map((org: any) => org.id).sort()).toEqual(['org-industry', 'org-unrelated']);
+    expect(data.orgs.every((org: any) => !org.canManage && !org.canCreateChild && !org.canSetAdmin)).toBe(true);
   });
 
-  it('scopes the user directory to self (no org.read capability)', async () => {
+  it('exposes the full user tree read-only to industry roles', async () => {
     const data = await buildIndustryOnlyController().getAllData({} as any, '1', '20', '1', '0');
-    expect(data.users).toHaveLength(1);
-    expect(data.users[0].id).toBe('operator');
+    expect(data.users.map((user: any) => user.id).sort()).toEqual(['operator', 'user-2']);
+    expect(data.users.every((user: any) => user.canManage === false)).toBe(true);
   });
 
   it('returns an empty role list without role.read', async () => {

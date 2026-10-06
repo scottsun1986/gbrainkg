@@ -170,6 +170,19 @@ export class PermissionService implements OnModuleInit {
     return value;
   }
 
+  /**
+   * 超级管理员是最高的受保护身份，仅用于少数只能由它完成的动作（如授予“行业库创建者”
+   * 角色）。系统管理员（`system_admin`）虽有 `*`，但不是超级管理员，二者不可混同。
+   */
+  async isSuperAdmin(userId: string): Promise<boolean> {
+    return Boolean(
+      await this.prisma.userRole.findFirst({
+        where: { userId, role: { code: 'super_admin' } },
+        select: { userId: true },
+      }),
+    );
+  }
+
   async getRolePermissions(userId: string): Promise<Set<string>> {
     const ttl = PermissionService.PERM_TTL_MS;
     const cached = this.rolePermissionsCache.get(userId);

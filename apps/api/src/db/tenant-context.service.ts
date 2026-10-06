@@ -1,58 +1,43 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { getPrismaClient } from '../prisma';
-import { getRequestContext } from '../observability/request-context';
 
 type Tx = Prisma.TransactionClient;
 
 /**
- * RLS 会话上下文。请求路径用 forUser 固定 app.user_id；
- * 后台任务（ingest/embed/graph/brain）必须显式 forService，否则 fail-closed。
- * 仅在 RLS_ENFORCE=1 且运行时角色 NOBYPASSRLS 时真正拦截；否则行为等价于直接回调。
+ * 数据库事务上下文助手。
+ *
+ * 行级安全(RLS)已移除，权限语义完全由应用层负责。此处保留原有函数签名以
+ * 兼容既有调用点，但不再设置 RLS 会话 GUC（app.user_id / app.service /
+ * app.as_of），也不再做 service/user 上下文校验——每个入口只提供一个普通
+ * 只读或读写事务。
+ *
+ * 安全边界：调用方必须在应用层独立完成鉴权与资源范围裁剪，数据库不再提供
+ * 任何兜底隔离（参见 docs/RLS-BOUNDARIES.md）。
  */
 @Injectable()
 export class TenantContextService {
-  private readonly logger = new Logger(TenantContextService.name);
   private readonly prisma: PrismaClient;
-  private readonly enforce: boolean;
 
   constructor() {
     this.prisma = getPrismaClient();
-    this.enforce = String(process.env.RLS_ENFORCE ?? '').toLowerCase() === '1';
   }
 
-  get isEnforced(): boolean {
-    return this.enforce;
+  private run<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
+    return this.prisma.$transaction(fn, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
   }
 
-  private async apply(tx: Tx, userId: string | null, service: boolean) {
-    const uid = userId ?? '';
-    const svc = service ? 'on' : 'off';
-    await tx.$executeRaw`SELECT set_config('app.user_id', ${uid}, true)`;
-    await tx.$executeRaw`SELECT set_config('app.service', ${svc}, true)`;
-    if (this.enforce && !service && !userId) {
-      throw new Error('TenantContext: refusing query without user or service context');
-    }
-  }
-
-  async forUser<T>(userId: string, fn: (tx: Tx) => Promise<T>): Promise<T> {
-    return this.prisma.$transaction(async (tx) => {
-      await this.apply(tx, userId, false);
-      return fn(tx);
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
+  async forUser<T>(_userId: string, fn: (tx: Tx) => Promise<T>): Promise<T> {
+    return this.run(fn);
   }
 
   async forService<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
-    if (getRequestContext() && !getRequestContext()?.servicePrincipal) throw new Error('Cannot promote request to service');
-    return this.prisma.$transaction(async (tx) => {
-      await this.apply(tx, null, true);
-      return fn(tx);
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
+    return this.run(fn);
   }
 
   /** 只读、短查询用；长事务请用 forUser/forService。 */
-  async forUserRead<T>(userId: string, fn: (tx: Tx) => Promise<T>): Promise<T> {
-    return this.forUser(userId, fn);
+  async forUserRead<T>(_userId: string, fn: (tx: Tx) => Promise<T>): Promise<T> {
+    return this.run(fn);
   }
 }
 
@@ -74,22 +59,12 @@ export function formatVectorValues(
 
 type RawCapable = {
   $transaction?: (fn: (tx: any) => Promise<any>, opts?: any) => Promise<any>;
-  $executeRaw?: (strings: TemplateStringsArray, ...values: any[]) => Promise<any>;
   [key: string]: any;
 };
 
 /**
- * 后台/维护路径的 RLS 上下文：在事务内 set_config('app.service','on')，
- * 与 TenantContextService.forService 语义一致，但不依赖 Nest DI。
- *
- * 请求路径修正：该 helper 也被请求内的检索臂调用（BGE-M3 稀疏召回、语义缓存
- * 查询等）。此前它无条件覆写为 service 上下文，等于把请求用户的 RLS 上下文
- * 降级为 service（绕过行级权限），文档级 ACL 只剩应用层一道防线。现在：存在
- * 请求用户时保留该用户上下文（service='off'），只有真正的后台任务才使用
- * service 上下文。
- *
- * 仅当客户端同时具备 $transaction + $executeRaw 时才开启事务作用域；
- * 单测替身（缺少其中任一原语）直接执行回调，保持既有 mock 断言不变。
+ * 通用事务包装：可用时在事务内执行回调，否则直接执行（单测替身通常缺少
+ * $transaction，直接降级执行以保持既有 mock 断言不变）。
  *
  * 返回 Promise<any>：调用点多为 tagged-template 原始 SQL（本身 any），
  * 泛型推断会把 T 塌成 unknown/{} 并破坏既有 `.filter` 等链式调用。
@@ -98,115 +73,39 @@ export async function withServiceContext(
   prisma: RawCapable | null | undefined,
   fn: (client: any) => Promise<any>,
 ): Promise<any> {
-  if (!prisma || typeof prisma.$transaction !== 'function' || typeof prisma.$executeRaw !== 'function') {
-    return fn(prisma);
-  }
-  return prisma.$transaction(async (tx: any) => {
-    if (!tx || typeof tx.$executeRaw !== 'function') {
-      return fn(prisma);
-    }
-    const context = getRequestContext();
-    const requestUserId = context?.userId;
-    if (context && !context.servicePrincipal) {
-      // 请求内调用：保留用户上下文，RLS 策略按请求用户判定。
-      await tx.$executeRaw`SELECT set_config('app.user_id', ${requestUserId || ''}, true), set_config('app.service', 'off', true), set_config('app.as_of', ${new Date(context?.asOf ?? Date.now()).toISOString()}, true)`;
-    } else {
-      await tx.$executeRaw`SELECT set_config('app.user_id', '', true), set_config('app.service', 'on', true), set_config('app.as_of', ${new Date(context?.asOf ?? Date.now()).toISOString()}, true)`;
-    }
-    if (context?.artifactInputs) await tx.$executeRaw`SELECT set_config('app.artifact_inputs', ${context.artifactInputs}, true)`;
-    return fn(tx);
-  }, { isolationLevel: 'ReadCommitted' });
+  if (!prisma || typeof prisma.$transaction !== 'function') return fn(prisma);
+  return prisma.$transaction((tx: any) => fn(tx), { isolationLevel: 'ReadCommitted' });
 }
 
-/**
- * 已授权管理面清单的只读 RLS 上下文：显式 service 范围（app.service='on'）。
- *
- * 为什么管理面不能用请求用户上下文跑清单：清单查询大量使用跨用户的
- * to-one include（OrgNode.admins.user、KbAdmin.user、CompileJob.user）。
- * 行级策略一旦按"请求用户可见行"过滤被 join 的 User，Prisma 的 required
- * relation 就会得到 null 并抛 "Inconsistent query result" 直接 500
- * （2026-10-06 E2E BUG-3：子组织管理员 /admin/data 必现）。
- *
- * 安全边界：调用方必须在应用层完成授权与范围裁剪。admin.controller 的
- * getAllData 已经按 capabilities / managedOrgIds / visibleKbs 收敛
- * directoryUsers、orgs、grants、documents——那些应用层裁剪是权威语义
- * （组织管理员=本级+下级），不要依赖 RLS 在这里做二次过滤。
- */
+/** 管理面清单读入口。原为显式 service RLS 范围，现为普通事务。 */
 export async function withAdminInventory(
   prisma: RawCapable | null | undefined,
   fn: (client: any) => Promise<any>,
 ): Promise<any> {
-  return withElevatedContext(prisma, fn, true);
+  return withServiceContext(prisma, fn);
 }
 
-/** 内部授权计算只读入口。关系数据仅用于权限裁决，不直接返回用户清单。 */
+/** 内部授权计算只读入口。原为显式提权 RLS 读，现为普通事务。 */
 export async function withPermissionRead<T>(
   prisma: RawCapable | null | undefined,
   fn: (client: any) => Promise<T>,
 ): Promise<T> {
-  return withElevatedContext(prisma, fn, true);
+  return withServiceContext(prisma, fn);
 }
 
 /**
- * Authentication-only database context.
- *
- * Reads that decide *whether* an identity authenticates (login by username,
- * JWT subject status, OIDC binding, MFA challenge, MCP app credentials) run
- * before `app.user_id` is known, so no user-scoped RLS policy can authorize
- * them. They run here with `app.service=on` inside one transaction.
- *
- * This deliberately skips `forService`'s "cannot promote a request to service"
- * guard: that guard protects request-scoped business work, whereas these call
- * sites only read identity rows to decide authentication and never run
- * caller-supplied logic on the result. Keep it confined to authentication —
- * every new use widens the hole in user-scoped isolation.
+ * 认证阶段的数据库入口。原用于在 app.user_id 尚未确定时读取身份行；移除
+ * RLS 后与普通事务一致，保留签名供既有调用点使用。
  */
 export async function runAsAuth<T>(work: (tx: Tx) => Promise<T>): Promise<T> {
   const prisma = getPrismaClient();
-  return prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT set_config('app.user_id', '', true)`;
-    await tx.$executeRaw`SELECT set_config('app.service', 'on', true)`;
-    return work(tx);
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
+  return prisma.$transaction(work, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
 }
 
-/**
- * Service-identity transaction for a *system* write that a request legitimately
- * triggers.
- *
- * Why this exists: `withServiceContext` deliberately keeps the caller's USER
- * identity inside a request (`app.service='off'`), and `runAsService` refuses to
- * promote a request identity at all. Neither can write tables whose RLS policies
- * are service-only — yet several request-reachable flows must write exactly
- * those tables (version/index artifacts), because they are system-owned derived
- * data. `POST /api/v1/documents/:id/versions` failed with a 42501 on
- * `DocumentVersionLink` for precisely this reason.
- *
- * The caller MUST have authorized the user against the target resource before
- * calling this: everything written inside runs as the service identity and is
- * therefore NOT constrained by the user's row visibility. Keep the body limited
- * to derived/system artifacts — never to a user-scoped decision.
- */
+/** 系统产物写入入口。原以 service 身份绕过 RLS 写入派生/系统数据。 */
 export async function withSystemWrite<T>(
   prisma: RawCapable | null | undefined,
   fn: (client: any) => Promise<T>,
 ): Promise<T> {
-  return withElevatedContext(prisma, fn, false);
-}
-
-async function withElevatedContext<T>(
-  prisma: RawCapable | null | undefined,
-  fn: (client: any) => Promise<T>,
-  readOnly: boolean,
-): Promise<T> {
-  if (!prisma || typeof prisma.$transaction !== 'function' || typeof prisma.$executeRaw !== 'function') {
-    return fn(prisma);
-  }
-  return prisma.$transaction(async (tx: any) => {
-    if (!tx || typeof tx.$executeRaw !== 'function') return fn(prisma);
-    if (readOnly) await tx.$executeRaw`SET TRANSACTION READ ONLY`;
-    const context = getRequestContext();
-    await tx.$executeRaw`SELECT set_config('app.user_id', '', true), set_config('app.service', 'on', true), set_config('app.as_of', ${new Date(context?.asOf ?? Date.now()).toISOString()}, true)`;
-    return fn(tx);
-  }, { isolationLevel: 'ReadCommitted' });
+  return withServiceContext(prisma, fn);
 }

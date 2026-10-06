@@ -45,6 +45,9 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
   const [filter, setFilter] = useState('all');
   const filtered = filter==='all' ? appStore.KNOWLEDGE_BASES : appStore.KNOWLEDGE_BASES.filter(k=>k.type===filter);
   const [sel, setSel] = useState<KbInfo | null>(null);
+  // 再次点击已选中的库卡片时强制重拉文档列表：sel 未变化不会触发加载
+  // effect，外部新入库(API/其他会话上传)将不可见(2026-10-06 R3 E2E OBS-7)。
+  const [libRefreshTick, setLibRefreshTick] = useState(0);
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
   const [tab, setTab] = useState('docs');
   const [docs, setDocs] = useState<DocRow[]>([]);
@@ -103,7 +106,21 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
       if (search && String(search).trim()) params.set('search', String(search).trim());
       if (status && status !== 'all') params.set('status', String(status));
       const response = await fetch(`${API_BASE_URL}/api/v1/kbs/${kbId}/documents?${params.toString()}`, {headers:apiHeaders(), signal: controller.signal});
-      if (!response.ok) throw new Error('文档列表加载失败');
+      if (!response.ok) {
+        // 知识库已不存在/已归档/无权限(404):本地列表是陈旧数据。静默刷新库
+        // 清单并清空选中,而不是反复弹「文档列表加载失败」——轮询器与重复
+        // 点击会让该 toast 刷屏(2026-10-06 用户反馈)。
+        if (response.status === 404) {
+          if (request === documentRequestRef.current) {
+            setDocs([]); setDocsTotal(0); setDocsStatusCounts({});
+            setSel(null);
+            window.dispatchEvent(new CustomEvent('app-data-refresh'));
+            emitToast('该知识库已不存在或已归档，列表已刷新');
+          }
+          return;
+        }
+        throw new Error('文档列表加载失败');
+      }
       const result = await response.json();
       if (request !== documentRequestRef.current) return;
       const items: DocumentListItem[] = result.items || [];
@@ -344,7 +361,7 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
       docSearch ? 300 : 0,
     );
     return () => { clearTimeout(timer); ++documentRequestRef.current; documentControllerRef.current?.abort(); };
-  }, [hasBeenActive, current?.id, docPage, docPageSize, docSearch, docStatusFilter]);
+  }, [hasBeenActive, current?.id, docPage, docPageSize, docSearch, docStatusFilter, libRefreshTick]);
 
   useEffect(() => {
     const refresh = () => {
@@ -429,7 +446,7 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
         </div>
         <div className="lib-body">
           {filtered.length ? filtered.map(k=>(
-            <div key={k.id} className={`kb-card ${current?.id===k.id?'active':''}`} onClick={()=>{ setSel(k); setMobileDetailOpen(true); }}>
+            <div key={k.id} className={`kb-card ${current?.id===k.id?'active':''}`} onClick={()=>{ if (sel?.id === k.id) setLibRefreshTick((t) => t + 1); setSel(k); setMobileDetailOpen(true); }}>
               <div className="row1">
                 <span className="nm">{k.name}</span>
                 {TYPE_BADGE(k.type)}

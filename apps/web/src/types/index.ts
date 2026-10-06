@@ -14,8 +14,10 @@ export interface OrgNodeRef {
 }
 
 export interface KbAdminRef {
+  id?: string;
   n?: string;
   i?: string;
+  org?: string;
 }
 
 export interface KbInfo {

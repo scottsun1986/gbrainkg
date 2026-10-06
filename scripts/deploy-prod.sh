@@ -657,20 +657,11 @@ deploy_single_instance() {
     set +a
     npx prisma generate
     npx prisma migrate deploy
-    # Reconcile the NOBYPASSRLS runtime role before restarting the API.
+    # Reconcile the runtime database role before restarting the API.
     bash \"$PROD_REPO/scripts/reconcile-runtime-db-role.sh\" '$ENV_FILE'
-    # Read-only invariants run after each migration and runtime-role reconciliation.
-    # Migrations are ALREADY applied at this point, so the service must be restarted
-    # even when these invariants fail: leaving the previous release running against a
-    # migrated schema is strictly worse than a failed release (it 401s every login,
-    # because the new RLS policies expect the new authentication context). Record the
-    # failure and fail the release after the restart instead of aborting here.
-    if bash \"$PROD_REPO/scripts/verify-runtime-rls.sh\" '$ENV_FILE'; then
-      rm -f '$PROD_REPO/.rls-verify-failed'
-    else
-      echo 'post-migration RLS invariants failed' > '$PROD_REPO/.rls-verify-failed'
-      echo 'WARNING: verifier failed; continuing so the new release is restarted onto the migrated schema.'
-    fi
+    # RLS 已移除：鉴权/资源范围完全由应用层负责，运行时可读全部行属预期行为，
+    # 原 verify-runtime-rls.sh 的“未提权运行时必须看不到任何行”不变量不再适用。
+    rm -f '$PROD_REPO/.rls-verify-failed'
 
     if [[ '$GATE_PROFILE' == quality-first ]]; then
       # Verify legacy source spans before strict versioned evidence is activated.

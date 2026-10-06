@@ -1,5 +1,5 @@
 import { uploadRoot as resolveUploadRoot } from './storage/upload-paths';
-import { withAdminInventory } from './db/tenant-context.service';
+import { withAdminInventory, withPermissionRead } from './db/tenant-context.service';
 import {
   BadRequestException,
   Body,
@@ -18,6 +18,7 @@ import {
 } from "@nestjs/common";
 import { getPrismaClient } from "./prisma";
 import { PermissionService } from "./permission/permission.service";
+import { PERMISSIONS } from "./permission/permissions";
 import { AuthService } from "./auth/auth.service";
 import { BrainCompilerService } from "./brain-compiler/brain-compiler.service";
 import { ModelConfigService } from "./model-config.service";
@@ -72,6 +73,7 @@ function boundedInteger(value: unknown, field: string, min: number, max: number)
 const PROTECTED_ROLE_CODES = new Set(['super_admin', 'system_admin']);
 const ORG_ADMIN_ROLE_NAME = "组织管理员";
 const BASIC_USER_ROLE_NAME = "普通用户";
+const INDUSTRY_CREATOR_ROLE_NAME = "行业库创建者";
 
 // `*` 就是 auth.guard 判定"系统管理员"的依据，因此把通配权限授给受保护角色以外的
 // 任何角色，等同于把所有持有者静默提升为系统管理员。种子角色（普通用户、组织管理员
@@ -552,6 +554,10 @@ export class AdminController {
     const canReadIndustry =
       isSystemAdmin || capabilities.includes("kb.industry.read");
     const canReadRoles = isSystemAdmin || capabilities.includes("role.read");
+    // 组织管理员即使没有 role.read，也需要拿到其可授予的两个角色（业务规则 3.5-2），
+    // 否则“新增人员”弹窗的角色选择器为空，无法为人员赋予角色。
+    const canAssignOrgRoles =
+      !isSystemAdmin && capabilities.includes(PERMISSIONS.ORG_USER_MANAGE);
     const canReadAudit = isSystemAdmin || capabilities.includes("audit.read");
     // 某个行业库管理员即使没有“行业库管理员”角色，也需要能通过知识库
     // 页面维护自己负责的库；但这不应让他看到行业库管理菜单。
@@ -592,7 +598,9 @@ export class AdminController {
       // 分区模式下只执行审计链路必需的查询，跳过全量清单。
       const users = wantAudit
         ? await (db as any).user.findMany({
-            where: isSystemAdmin ? undefined : {
+            // 行业库创建者/管理员（kb.industry.read）按业务规则 3.5-6 需要看到完整
+            // 用户树（只读）；组织管理员仍收敛到管辖子树 ∪ 本人。
+            where: isSystemAdmin || canReadIndustry ? undefined : {
               OR: [
                 { id: adminId },
                 ...(canReadOrg ? [{ orgs: { some: { orgNodeId: { in: [...managedOrgIds] } } } }] : []),
@@ -627,15 +635,21 @@ export class AdminController {
         : [];
       const industryScopeKbs = kbs.filter((kb: any) => kb.type === "industry" &&
         (isSystemAdmin || kb.ownerUserId === adminId || kb.admins.some((admin: any) => admin.userId === adminId)));
+      const industryLinkedOrgNodeIds = new Set(
+        industryScopeKbs
+          .map((kb: any) => kb.orgNodeId)
+          .filter((id: any): id is string => typeof id === "string"),
+      );
       const allOrgs = !fieldsMode
         ? await (db as any).orgNode.findMany({
         where: {
           status: "active",
-          ...(isSystemAdmin ? {} : { id: { in: [...new Set([
-            ...(canReadOrg ? [...managedOrgIds] : []),
-            ...(canReadOrg || canReadIndustry ? industryScopeKbs
-              .map((kb: any) => kb.orgNodeId).filter(Boolean) : []),
-          ])] } }),
+          // 行业库管理/创建角色（kb.industry.read）按业务规则 3.5 看到完整组织树
+          // （只读，操作能力由下方 canManage 决定）；组织管理员（无行业库角色）
+          // 收敛到管辖子树 ∪ 行业库关联节点。
+          ...(isSystemAdmin || canReadIndustry
+            ? {}
+            : { id: { in: [...new Set([...managedOrgIds, ...industryLinkedOrgNodeIds])] } }),
         },
         include: {
           admins: {
@@ -737,17 +751,12 @@ export class AdminController {
           hasSecretKey: Boolean(secretKeyEncrypted),
         }),
       );
-      // B-2: kb.industry.read 只解锁行业库关联的组织节点，绝不放行全量组织树。
-      // 全量组织树仍由 org.read / org.user.read 控制。
-      const industryLinkedOrgNodeIds = new Set(
-        industryScopeKbs
-          .map((kb: any) => kb.orgNodeId)
-          .filter((id: any): id is string => typeof id === "string"),
-      );
-      // 2026-10-06 E2E BUG-2 修正：组织管理员是节点级角色——组织树同样收敛到
-      // 其管辖子树（本级+下级），不再因持 org.read 输出全量组织；行业库管理
-      // 视角保持 B-2 语义（仅行业库关联的组织节点）。
-      const orgs = (isSystemAdmin
+      // 组织管理员是节点级角色——组织树收敛到其管辖子树（本级+下级）∪ 行业库
+      // 关联节点，不因持 org.read 输出全量组织。行业库管理/创建角色（业务规则
+      // 3.5）需要“看到完整组织树但不能操作”：输出全量组织；对纯行业库角色
+      // managedOrgIds 为空，canManage/canCreateChild/canSetAdmin 恒为 false；
+      // 若同时是组织管理员，则仅在其管辖子树内保留操作能力。
+      const orgs = (isSystemAdmin || canReadIndustry
         ? allOrgs
         : canReadOrg
           ? allOrgs.filter(
@@ -755,9 +764,7 @@ export class AdminController {
                 managedOrgIds.has(org.id) ||
                 industryLinkedOrgNodeIds.has(org.id),
             )
-          : canReadIndustry
-            ? allOrgs.filter((org: any) => industryLinkedOrgNodeIds.has(org.id))
-            : []
+          : []
       ).map((org: any) => ({
         ...org,
         canManage: isSystemAdmin || managedOrgIds.has(org.id),
@@ -781,12 +788,13 @@ export class AdminController {
               [...readableKbs, ...industryScopeKbs].map((kb: any) => [kb.id, kb]),
             ).values(),
           ];
-      // B-2: 用户目录按 org.read / org.user.read 输出全量；行业库阅读能力
-      // （kb.industry.read / 行业库管理员）不再放行全量用户清单。
-      // 2026-10-06 E2E BUG-2 修正：组织管理员是节点级角色——目录必须收敛到
-      // 其管辖子树（本级+下级）成员，而不是持 org.read 即全量。全量目录只
-      // 属于系统管理员/超级管理员；行业库视角仍只见自己（无组织管辖范围）。
-      const directoryUsers = isSystemAdmin
+      // 用户目录可见范围（业务规则 3.5）：
+      // - 系统管理员：全量；
+      // - 行业库创建者/管理员（kb.industry.read）：全量用户树（只读，canManage
+      //   仍按 managedOrgIds 判定）；
+      // - 组织管理员：收敛到管辖子树（本级+下级）成员 ∪ 本人；
+      // - 其他：仅本人。
+      const directoryUsers = isSystemAdmin || canReadIndustry
         ? users
         : users.filter(
             (user: any) =>
@@ -958,14 +966,22 @@ export class AdminController {
         })(),
         users: safeUsers,
         orgs,
-        // B-2: 角色清单按 role.read 输出，未持能力者返回空清单。
-        roles: canReadRoles
-          ? roles.map(({ _count, ...role }: any) => ({
-              ...role,
-              users: _count.users,
-              perms: Array.isArray(role.permissions) ? role.permissions : [],
-            }))
-          : [],
+        // 角色清单：role.read 输出全量；组织管理员仅输出其可授予的「组织管理员/普通用户」；
+        // 其余无角色相关能力者返回空清单（B-2 语义）。
+        roles: (canReadRoles
+          ? roles
+          : canAssignOrgRoles
+            ? roles.filter(
+                (role: any) =>
+                  role.name === ORG_ADMIN_ROLE_NAME ||
+                  role.name === BASIC_USER_ROLE_NAME,
+              )
+            : []
+        ).map(({ _count, ...role }: any) => ({
+          ...role,
+          users: _count?.users ?? 0,
+          perms: Array.isArray(role.permissions) ? role.permissions : [],
+        })),
         kbs: visibleKbs.map(({ _count, ...kb }: any) => ({
           ...kb,
           documentCount: _count.documents,
@@ -2054,7 +2070,7 @@ export class AdminController {
     const operatorId = await this.authService.userIdFromRequest(req);
     const exists = await this.prisma.user.findUnique({
       where: { id },
-      include: { orgs: true },
+      include: { orgs: true, roles: { include: { role: true } } },
     });
     if (!exists) throw new NotFoundException("User not found.");
     if (!(await this.permissionService.canManageUser(operatorId, id)))
@@ -2091,7 +2107,24 @@ export class AdminController {
           new Set<string>(body.roleIds.map((item: string) => String(item))),
         )
       : undefined;
-    if (roleIds) await this.validateAssignableRoles(operatorId, roleIds);
+    if (roleIds) {
+      await this.validateAssignableRoles(operatorId, roleIds);
+      // 非系统管理员（组织管理员）只能授予「组织管理员/普通用户」，因此不得借
+      // “全量替换角色”移除目标用户已有的、其无权授予的角色（如行业库管理员）。
+      if (!(await this.permissionService.isSystemAdmin(operatorId))) {
+        const submitted = new Set(roleIds);
+        const protectedExistingRole = (exists.roles || []).find(
+          (entry: any) =>
+            !submitted.has(entry.roleId) &&
+            entry.role?.name !== ORG_ADMIN_ROLE_NAME &&
+            entry.role?.name !== BASIC_USER_ROLE_NAME,
+        );
+        if (protectedExistingRole)
+          throw new ForbiddenException(
+            "组织管理员不能移除其无权授予的角色。",
+          );
+      }
+    }
     const orgIds: string[] | undefined = Array.isArray(body?.orgIds)
       ? Array.from(
           new Set<string>(body.orgIds.map((item: string) => String(item))),
@@ -2204,23 +2237,50 @@ export class AdminController {
     return { user: safeAdminUser(user) };
   }
 
+  /**
+   * 角色授予边界（业务强约束）：
+   * - 受保护身份（系统管理员/超级管理员，或携带 `*` 的角色）只能由系统管理员授予；
+   * - “行业库创建者”只能由超级管理员授予；
+   * - 组织管理员（非系统管理员）只能授予“组织管理员/普通用户”。
+   *
+   * 逐角色判定而不是整体放行/拦截：一次提交里混入越权角色时，必须整单拒绝。
+   */
   private async validateAssignableRoles(operatorId: string, roleIds: string[]) {
-    if (await this.permissionService.isSystemAdmin(operatorId)) return;
     if (!roleIds || !roleIds.length) return;
     const roles = await this.prisma.role.findMany({
       where: { id: { in: roleIds } },
       select: { id: true, name: true, code: true, builtin: true, permissions: true },
     });
-    if (
-      roles.some(
-        (role) =>
-          PROTECTED_ROLE_CODES.has(role.code || '') ||
-          (Array.isArray(role.permissions) && role.permissions.includes("*")),
-      )
-    ) {
-      throw new ForbiddenException(
-        "只有系统管理员才可以赋予或操作超级管理员/系统管理员角色。",
-      );
+    const isSuperAdmin = await this.permissionService.isSuperAdmin(operatorId);
+    const isSystemAdmin =
+      isSuperAdmin || (await this.permissionService.isSystemAdmin(operatorId));
+    for (const role of roles) {
+      const isProtectedRole =
+        PROTECTED_ROLE_CODES.has(role.code || '') ||
+        (Array.isArray(role.permissions) && role.permissions.includes("*"));
+      if (isProtectedRole) {
+        if (!isSystemAdmin)
+          throw new ForbiddenException(
+            "只有系统管理员才可以赋予或操作超级管理员/系统管理员角色。",
+          );
+        continue;
+      }
+      if (role.name === INDUSTRY_CREATOR_ROLE_NAME) {
+        if (!isSuperAdmin)
+          throw new ForbiddenException(
+            "只有超级管理员才可以授予“行业库创建者”角色。",
+          );
+        continue;
+      }
+      if (
+        !isSystemAdmin &&
+        role.name !== ORG_ADMIN_ROLE_NAME &&
+        role.name !== BASIC_USER_ROLE_NAME
+      ) {
+        throw new ForbiddenException(
+          "组织管理员只能授予“组织管理员”或“普通用户”角色。",
+        );
+      }
     }
   }
 
@@ -2342,6 +2402,11 @@ export class AdminController {
           "You can only create organization knowledge bases within your managed scope.",
         );
     }
+    const adminUserIds = type === "personal"
+      ? []
+      : body?.adminUserIds === undefined
+        ? [adminId]
+        : await this.validateKbAdminUserIds(body.adminUserIds);
     const kb = await this.prisma.knowledgeBase.create({
       data: {
         name,
@@ -2352,22 +2417,12 @@ export class AdminController {
         ownerUserId:
           type === "personal" || type === "industry" ? adminId : undefined,
         admins:
-          type === "personal" ? undefined : { create: [{ userId: adminId }] },
+          type === "personal" ? undefined : { create: adminUserIds.map((userId) => ({ userId })) },
       },
       include: {
-        admins: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                username: true,
-                displayName: true,
-                email: true,
-                status: true,
-              },
-            },
-          },
-        },
+        // Do not join required User relations: an assigned administrator may
+        // be outside the creator's user-row visibility under RLS.
+        admins: true,
         _count: { select: { documents: true } },
       },
     });
@@ -2434,29 +2489,129 @@ export class AdminController {
       throw new ForbiddenException(
         "Knowledge base administrator permission required.",
       );
-    const submittedIds = Array.isArray(body?.userIds) ? body.userIds : [];
+    const userIds = await this.validateKbAdminUserIds(body?.userIds);
+    await this.prisma.$transaction(async (tx) => {
+      // Serialize replacements for this resource; concurrent submissions must
+      // not merge two independently chosen administrator sets.
+      await tx.$queryRaw`SELECT id FROM "KnowledgeBase" WHERE id = ${id}::uuid FOR UPDATE`;
+      // Preserve the assigning administrator's authority until all replacement
+      // rows exist. Deleting the caller first would revoke their insert rights.
+      await tx.kbAdmin.createMany({
+        data: userIds.map((userId: string) => ({ kbId: id, userId })),
+        skipDuplicates: true,
+      });
+      await tx.kbAdmin.deleteMany({ where: { kbId: id, userId: { notIn: userIds } } });
+    });
+    await this.scheduleAccessReconciliation();
+    return { ok: true };
+  }
+
+  private async validateKbAdminUserIds(submitted: unknown): Promise<string[]> {
+    const submittedIds = Array.isArray(submitted) ? submitted : [];
     if (submittedIds.some((value: unknown) => typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value))) {
       throw new BadRequestException('Administrator IDs must be UUIDs.');
     }
     const userIds = [...new Set<string>(submittedIds)];
     if (!userIds.length)
       throw new BadRequestException("At least one administrator is required.");
-    const activeUsers = await this.prisma.user.findMany({
+    const activeUsers = await withPermissionRead(this.prisma, (db) => db.user.findMany({
       where: { id: { in: userIds }, status: "active" },
       select: { id: true },
-    });
+    })) as Array<{ id: string }>;
     if (activeUsers.length !== new Set(userIds).size)
       throw new BadRequestException(
         "Knowledge base administrators must be active users.",
       );
-    await this.prisma.$transaction(async (tx) => {
-      await tx.kbAdmin.deleteMany({ where: { kbId: id } });
-      await tx.kbAdmin.createMany({
-        data: userIds.map((userId: string) => ({ kbId: id, userId })),
-      });
-    });
-    await this.scheduleAccessReconciliation();
-    return { ok: true };
+    return userIds;
+  }
+
+  /**
+   * 行业库候选主体目录（人员/角色/组织）。
+   *
+   * 业务要求：行业库授权面向“任何”用户、组织、角色，行业库创建者也可指定“任意”
+   * 用户为库管理员，候选范围不得收敛到操作者自身管理范围。管理后台的
+   * USERS/ROLES/ORGS 清单是按操作者组织范围裁剪的（B-2 安全语义），不能用于这些
+   * 选择场景，因此单列一个用途明确的目录接口：
+   * - 人员：全部未停用用户；组织：全部未停用组织（授权自动级联子组织）；
+   * - 角色：全部角色。
+   * 仅系统管理员或身处行业库管理/创建/授权链路的角色可读。
+   */
+  @Get("industry-subjects")
+  async listIndustrySubjects(@Req() req: any) {
+    const userId = await this.authService.userIdFromRequest(req);
+    const isSystemAdmin = await this.permissionService.isSystemAdmin(userId);
+    if (!isSystemAdmin) {
+      const capabilities = await this.permissionService.getCapabilities(userId);
+      const canPickIndustrySubjects = [
+        PERMISSIONS.INDUSTRY_READ,
+        PERMISSIONS.INDUSTRY_CREATE,
+        PERMISSIONS.INDUSTRY_MANAGE,
+        PERMISSIONS.INDUSTRY_GRANT,
+      ].some((permission) => capabilities.includes(permission));
+      if (!canPickIndustrySubjects) {
+        throw new ForbiddenException(
+          "Industry knowledge base permission required.",
+        );
+      }
+    }
+    const { users, roles, orgs } = await withPermissionRead(
+      this.prisma,
+      async (db: any) => {
+        const [rawUsers, rawRoles, rawOrgs] = await Promise.all([
+          db.user.findMany({
+            where: { status: "active" },
+            select: {
+              id: true,
+              displayName: true,
+              username: true,
+              orgs: {
+                select: {
+                  orgNode: {
+                    select: { id: true, name: true, path: true, parentId: true },
+                  },
+                },
+              },
+            },
+            orderBy: { createdAt: "asc" },
+          }),
+          db.role.findMany({
+            select: { id: true, name: true, _count: { select: { users: true } } },
+            orderBy: { name: "asc" },
+          }),
+          db.orgNode.findMany({
+            where: { status: "active" },
+            select: { id: true, name: true, path: true, parentId: true },
+            orderBy: [{ path: "asc" }, { sort: "asc" }],
+          }),
+        ]);
+        return { users: rawUsers, roles: rawRoles, orgs: rawOrgs };
+      },
+    );
+    return {
+      users: users.map((user: any) => ({
+        id: user.id,
+        displayName: user.displayName,
+        username: user.username,
+        org: (user.orgs || [])
+          .map((membership: any) => membership.orgNode?.name)
+          .filter(Boolean)
+          .join("、"),
+        orgIds: (user.orgs || [])
+          .map((membership: any) => membership.orgNode?.id)
+          .filter((id: any): id is string => typeof id === "string"),
+      })),
+      roles: roles.map((role: any) => ({
+        id: role.id,
+        name: role.name,
+        users: role._count?.users ?? 0,
+      })),
+      orgs: orgs.map((org: any) => ({
+        id: org.id,
+        name: org.name,
+        path: org.path,
+        parentId: org.parentId ?? null,
+      })),
+    };
   }
 
   @Post("grants")

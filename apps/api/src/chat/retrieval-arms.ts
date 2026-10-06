@@ -4,7 +4,7 @@ import { VerifiedLateChunking } from '../embedding/verified-late-chunking';
 import { rethrowAuthorizationFailure } from '../permission/authorization-revision';
 import { getRequestContext } from '../observability/request-context';
 import { currentQueryExecution } from '../retrieval/query-execution';
-import { embeddingFingerprint, reusableEmbeddingIdentity } from '../embedding/model-fingerprint';
+import { embeddingFingerprint } from '../embedding/model-fingerprint';
 import { filterRescueHits, pickRescueTargets, RescueChunk } from './section-rescue';
 import { recordFailopen } from '../observability/failopen';
 import { Logger } from "@nestjs/common";
@@ -1136,7 +1136,6 @@ export class RetrievalArmsService {
     if (!vector || !vector.length) return [];
     const config = await this.embeddingService.getConfig?.();
     const fingerprint = config ? embeddingFingerprint(config) : null;
-    if ((!fingerprint || !config || !reusableEmbeddingIdentity(config)) && process.env.RLS_ENFORCE === '1') return [];
     const literal = `[${vector.join(',')}]`;
     const minScore = Number(process.env.VECTOR_MIN_SCORE || 0.30);
     // Measured on a 100k-chunk corpus with a 1-of-40-KB filter (see

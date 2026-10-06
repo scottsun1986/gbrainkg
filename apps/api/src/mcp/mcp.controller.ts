@@ -144,8 +144,7 @@ export class McpController implements OnModuleDestroy {
       }
 
       // 凭证鉴权不经过 AuthService.userIdFromRequest，必须显式把用户写入请求
-      // 上下文，否则 RLS 事务会以空 user_id + service=off 作用域执行，
-      // 导致 Conversation/Message 等写入触发 "row-level security policy" 42501。
+      // 上下文，供应用层授权与审计关联请求用户。
       setRequestContextUser(verified.user.id);
 
       const rate = this.rateLimitService.check(String(appId).trim());

@@ -10,7 +10,7 @@ export function runAsService<T>(purpose: string, work: () => Promise<T>, kbId?: 
   return runWithRequestContext({ requestId: previous?.requestId || randomUUID(),
     instanceId: instanceIdentity(), servicePrincipal: purpose,
     artifactInputs: previous?.artifactInputs }, async () => {
-    if (kbId && (process.env.RLS_ENFORCE === '1' || process.env.CORE_AUTH_ENFORCE === '1')) {
+    if (kbId && process.env.CORE_AUTH_ENFORCE === '1') {
       const rows = await getPrismaClient().$queryRaw<Array<{ documentId: string; versionId: string | null; sourceHash: string }>>`
         SELECT id::text AS "documentId", "activeVersionId"::text AS "versionId",
           COALESCE("contentHash",'') || ':' || version::text AS "sourceHash"

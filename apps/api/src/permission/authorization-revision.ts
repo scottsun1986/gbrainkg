@@ -11,7 +11,7 @@ export interface AuthorizationSnapshot {
 }
 
 export function authorizationEnforced(): boolean {
-  return process.env.CORE_AUTH_ENFORCE === '1' || process.env.RLS_ENFORCE === '1';
+  return process.env.CORE_AUTH_ENFORCE === '1';
 }
 
 /** Primary database read: notifications and Scope epochs are not the authority. */

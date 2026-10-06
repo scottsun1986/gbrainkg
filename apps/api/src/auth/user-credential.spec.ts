@@ -6,18 +6,12 @@ import type { UserCredentialService as UserCredentialServiceType } from './user-
 // A developer's default database can lag the migration history, so the target
 // can be redirected to an isolated, fully migrated database with
 // USER_CREDENTIAL_TEST_DATABASE_URL without touching the shared local one.
-// prisma.ts rewrites DATABASE_URL from DATABASE_URL_APP, so that override is
-// set to the same isolated runtime target when RLS is enabled; otherwise it
-// is cleared. Fixture provisioning uses an explicit authentication context.
+// RLS has been removed, so no runtime-role override is needed.
 const previousDatabaseUrl = process.env.DATABASE_URL;
 const previousAppUrl = process.env.DATABASE_URL_APP;
 if (process.env.USER_CREDENTIAL_TEST_DATABASE_URL) {
   process.env.DATABASE_URL = process.env.USER_CREDENTIAL_TEST_DATABASE_URL;
-  if (process.env.RLS_ENFORCE === '1') {
-    process.env.DATABASE_URL_APP = process.env.USER_CREDENTIAL_TEST_DATABASE_URL;
-  } else {
-    delete process.env.DATABASE_URL_APP;
-  }
+  delete process.env.DATABASE_URL_APP;
 }
 const { UserCredentialService } = require('./user-credential.service');
 const { getPrismaClient } = require('../prisma');
@@ -72,16 +66,7 @@ describe('UserCredentialService', () => {
   });
 
   async function withFixtureUser(work: () => Promise<void>) {
-    if (process.env.RLS_ENFORCE === '1') {
-      // Let the runtime proxy scope individual operations; credential auth may
-      // open its own transaction and must see committed lifecycle changes.
-      return runWithRequestContext({ requestId: 'credential-fixture', userId: testUserId }, work);
-    }
-    await prisma.$transaction(async (tx: any) => {
-      await tx.$executeRaw`SELECT set_config('app.user_id', ${testUserId}, true), set_config('app.service', 'off', true)`;
-      (service as any).prisma = tx;
-      try { await work(); } finally { (service as any).prisma = prisma; }
-    });
+    return work();
   }
 
   it('should auto-create default credential if user has none, and list credentials', async () => withFixtureUser(async () => {

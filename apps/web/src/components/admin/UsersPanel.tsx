@@ -570,8 +570,16 @@ export function UserFormModal({target, orgOptions = [], capabilities = [], onClo
   const [roles, setRoles] = useState<TagItem[]>(isEdit && target ? appStore.ROLES.filter(r=>target.roles.includes(r.name)).map(r=>({id:r.id,n:r.name,sub:`${r.users} 人`})) : []);
 
   const assignableRoles = useMemo(() => {
-    if (isSysAdmin) return appStore.ROLES;
-    return appStore.ROLES.filter(r => !r.builtin && r.name !== '超级管理员' && r.name !== '系统管理员');
+    if (isSysAdmin) {
+      // 受保护身份不可在此授予；“行业库创建者”只能由超级管理员授予。
+      return appStore.ROLES.filter(r =>
+        !r.builtin &&
+        r.name !== '超级管理员' &&
+        r.name !== '系统管理员' &&
+        (appStore.IS_SUPER_ADMIN || r.name !== '行业库创建者'));
+    }
+    // 组织管理员只能授予“组织管理员/普通用户”。
+    return appStore.ROLES.filter(r => r.name === '组织管理员' || r.name === '普通用户');
   }, [isSysAdmin]);
 
   const save = async () => {
@@ -651,7 +659,7 @@ export function UserFormModal({target, orgOptions = [], capabilities = [], onClo
         <div className="field-hint">
           {isSysAdmin
             ? '角色决定默认权限范围；额外授权可在「权限授权」单独配置。'
-            : '组织管理员可为本组织人员赋予组织管理员或普通用户等角色。'}
+            : '组织管理员仅可为本组织人员赋予“组织管理员”或“普通用户”角色。'}
         </div>
       </div>
       <div className="field">
