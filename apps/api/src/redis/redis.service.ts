@@ -78,6 +78,13 @@ export class RedisService implements OnModuleDestroy {
     }
   }
 
+  /** Correctness-critical queues must fail closed when Redis is unavailable. */
+  async evalDurable(script: string, keys: string[], args: string[] = []): Promise<any> {
+    const client = await this.connect();
+    if (!client) throw new Error('Persistent queue storage unavailable');
+    return client.eval(script, keys.length, ...keys.map(key => this.key(key)), ...args);
+  }
+
   /** True when a Redis round trip is currently possible. */
   async ping(): Promise<boolean> {
     const client = await this.connect();

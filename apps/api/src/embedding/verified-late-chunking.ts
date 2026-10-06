@@ -6,6 +6,7 @@ import { withServiceContext } from '../db/tenant-context.service';
 import { instanceIdentity } from '../observability/instance-identity';
 import { requestFetch } from '../retrieval/request-signal';
 import { assertRequestAuthorization } from '../permission/authorization-revision';
+import { uploadRoot } from '../storage/upload-paths';
 
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 type Block = { id: string; charStart: number; charEnd: number };
@@ -62,7 +63,7 @@ export class VerifiedLateChunking {
     const contract = await this.contract();
     const version = await this.db.documentVersion.findUniqueOrThrow({ where: { id: versionId }, include: { blocks: { orderBy: { ord:'asc' } }, document: true } });
     if (version.document.activeVersionId !== versionId) throw new Error('Late version superseded');
-    const root = resolve(process.env.UPLOAD_ROOT || '/tmp/llmwiki/uploads'), path=resolve(root,version.mdPath);
+    const root = uploadRoot(), path=resolve(root,version.mdPath);
     if (!path.startsWith(root+sep) || (await stat(path)).size > 32*1024*1024) throw new Error('Invalid shared-context source');
     const text = await readFile(path,'utf8');
     const vectors: Array<{ id:string; embedding:number[]; windowHash:string }> = [];

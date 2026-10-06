@@ -1,3 +1,4 @@
+import { positiveNumber } from '../config-numbers';
 import { requestFetch } from '../retrieval/request-signal';
 import { rethrowAuthorizationFailure as throwAuthorizationFailure } from '../permission/authorization-revision';
 import { IndexedMarkdownChunk } from './markdown-chunker';
@@ -70,10 +71,10 @@ const MAX_CONTEXT_DESC_CHARS = 200;
 // cliff that skipped whole documents above the limit (a 300/301 behaviour
 // flip), over-budget documents are section-stratified sampled down to this
 // budget and the remaining chunks are marked contextual_skipped.
-const MAX_ENRICH_CHUNKS = Number(process.env.CONTEXTUAL_RETRIEVAL_MAX_CHUNKS || 300);
+const MAX_ENRICH_CHUNKS = positiveNumber(process.env.CONTEXTUAL_RETRIEVAL_MAX_CHUNKS, 300);
 // Sliding-window context: each request carries only the neighbouring text
 // around the chunk (plus title and section path), not the whole document.
-const NEIGHBOR_CONTEXT_CHARS = Number(process.env.CONTEXTUAL_RETRIEVAL_NEIGHBOR_CHARS || 1500);
+const NEIGHBOR_CONTEXT_CHARS = positiveNumber(process.env.CONTEXTUAL_RETRIEVAL_NEIGHBOR_CHARS, 1500);
 
 /**
  * Pick the indices to enrich when the document is over budget. The first
@@ -142,10 +143,10 @@ export async function enrichChunksWithContext(
     return chunks;
   }
 
-  const concurrency = options?.concurrency ?? 4;
-  const timeoutMs = options?.timeoutMs ?? 30_000;
-  const maxAttempts = 1 + Math.max(0, options?.retries ?? 1);
-  const targetBatchSize = Math.max(1, options?.batchSize ?? Number(process.env.CONTEXTUAL_RETRIEVAL_BATCH_SIZE || 1));
+  const concurrency = Math.floor(positiveNumber(options?.concurrency, 4));
+  const timeoutMs = positiveNumber(options?.timeoutMs, 30_000);
+  const maxAttempts = 1 + Math.max(0, positiveNumber(options?.retries, 1, 0));
+  const targetBatchSize = Math.floor(positiveNumber(options?.batchSize ?? process.env.CONTEXTUAL_RETRIEVAL_BATCH_SIZE, 1));
 
   const enrichedChunks: IndexedMarkdownChunk[] = [...chunks];
   const revision = config.deploymentRevision || process.env.CONTEXTUAL_LLM_DEPLOYMENT_REVISION;

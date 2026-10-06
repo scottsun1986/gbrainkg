@@ -24,22 +24,17 @@ export class OpenApiGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
     const headers = request.headers || {};
-    const query = request.query || {};
 
     // 1. Primary auth route: X-App-Id & X-App-Secret headers
     const appId =
       headers['x-app-id'] ||
       headers['app-id'] ||
-      headers['x-appid'] ||
-      query.app_id ||
-      query.appId;
+      headers['x-appid'];
 
     const appSecret =
       headers['x-app-secret'] ||
       headers['app-secret'] ||
-      headers['x-appsecret'] ||
-      query.app_secret ||
-      query.appSecret;
+      headers['x-appsecret'];
 
     if (appId && appSecret) {
       const verified = await this.userCredentialService.verifyCredential(
@@ -92,7 +87,7 @@ export class OpenApiGuard implements CanActivate {
             orgs: { include: { orgNode: true } },
           },
         });
-        if (user) {
+        if (user && !(await this.authService.isPasswordChangeRequired(userId))) {
           request.user = {
             id: user.id,
             username: user.username,

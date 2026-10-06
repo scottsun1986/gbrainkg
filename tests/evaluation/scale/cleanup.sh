@@ -31,7 +31,9 @@ echo "== delete SCALE100K- / scale-bench-100k rows from public =="
 -- Prefer the dedicated KB first (documents cascade to chunks + lexical).
 DELETE FROM "KnowledgeBase" WHERE name IN ('scale-bench-100k', 'SCALE100K-scale-bench-100k');
 -- Belt-and-braces: any leftover synthetic docs still carrying the prefix.
-DELETE FROM "Document" WHERE title LIKE 'SCALE100K-%' OR mdPath LIKE '/synthetic/%';
+-- "mdPath" is case-sensitive and must stay quoted; unquoted it folded to
+-- mdpath and the whole statement failed, so this sweep never actually ran.
+DELETE FROM "Document" WHERE title LIKE 'SCALE100K-%' OR "mdPath" LIKE '/synthetic/%';
 SQL
 
 echo "cleanup complete"

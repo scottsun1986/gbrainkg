@@ -7,15 +7,21 @@ import type { Pagination } from '@/types';
 import { API_BASE_URL, apiHeaders } from '@/lib/api';
 import { appStore } from '@/lib/app-store';
 
-/**
- * System status telemetry is a server-defined nested JSON document whose
- * schema is still evolving.  `StatusNode` keeps property access ergonomic
- * without sprinkling `as any` across the render tree.
- */
-type StatusNode = { [key: string]: any };
+interface SystemTelemetry {
+  summary?: { healthStatus?: string; doclingStatus?: { online?: boolean; latencyMs?: number }; storageUsage?: { repoFormatted?: string }; outboxStatus?: { pending?: number } };
+  ingestionQuality?: { parseSuccessRate?: number; totalDocuments?: number; failedDocuments?: number; publishedDocuments?: number; totalChunks?: number; avgChunkLength?: number; embeddingDimensions?: number;
+    kbBreakdown?: Array<{ id: string; name: string; type: string; docsCount: number; chunksCount: number; failedDocsCount: number }>;
+    failedDocsList?: Array<{ id: string; title: string; kbId: string; kbName: string; error?: string }>;
+    pagination?: { kbBreakdown?: Pagination; failedDocs?: Pagination } };
+  gbrainSources?: { sourcesCount?: number; pagination?: Pagination; sourcesList?: Array<{ sourceKey: string; kind: string; documentsCount: number; membersCount: number; lastSyncAt?: string }> };
+  scopeBrainQuality?: { scopesCount?: number; derivedPagesCount?: number; pagination?: Pagination; scopeList?: Array<{ id: string; fingerprint: string; strategy: string; membersCount: number; members?: Array<{ displayName?: string; username?: string }>; derivedPages?: Array<{ id: string; title: string; derivedCount: number }>; aclEpoch: number; knowledgeEpoch: number }> };
+  dreamMaintenance?: { durationsAvgSec?: number; health?: string; cron?: string; timezone?: string; pagination?: Pagination; runs?: Array<{ id: string; startedAt?: string; status: string; sourcesVisited?: number; sourcesSucceeded?: number; sourcesPartial?: number; queuedTopics?: number; durationMs?: number; sourceResults?: Array<{ sourceKey?: string; source?: string; status?: string; graphExtraction?: { status?: string; pagesProcessed?: number; linksCreated?: number }; expectedSkippedPhases?: string[]; failedPhases?: string[]; warningPhases?: string[] }> }> };
+  outboxAndQueues?: { outboxCounts?: { completed?: number; total?: number; pending?: number; failed?: number }; queueJobCounts?: { active?: number }; pagination?: Pagination; recentEvents?: Array<{ id: string; eventType: string; status: string; payload?: unknown; createdAt?: string; processedAt?: string }> };
+  ragAndModels?: { totalConversations?: number; totalMessages?: number; totalCitations?: number; activeModels?: Array<{ kind: string; modelName: string; providerName: string; isDefault: boolean; dimensions?: number; contextLen?: number; baseUrl?: string; testStatus?: string }>; runtime?: { routes?: Record<string, { modelName?: string; injected?: boolean }>; gbrain?: { poolSize?: number; scopeSynthesizeEnabled?: boolean; graphExtractEnabled?: boolean } } };
+}
 
 export function SystemStatusPanel({ capabilities = [] }: { capabilities?: string[] }){
-  const [data, setData] = useState<StatusNode | null>(appStore.SYSTEM_STATUS as StatusNode | null);
+  const [data, setData] = useState<SystemTelemetry | null>(appStore.SYSTEM_STATUS as SystemTelemetry | null);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('kbs');
   const [retryingDocId, setRetryingDocId] = useState<string | null>(null);
@@ -47,16 +53,18 @@ export function SystemStatusPanel({ capabilities = [] }: { capabilities?: string
   };
 
   useEffect(() => {
-    if (!data) fetchTelemetry();
+    if (data) return;
+    const timer = setTimeout(() => void fetchTelemetry(), 0);
+    return () => clearTimeout(timer);
   }, []);
 
-  const s = (data?.summary || {}) as StatusNode;
-  const inq = (data?.ingestionQuality || {}) as StatusNode;
-  const gbs = (data?.gbrainSources || {}) as StatusNode;
-  const scp = (data?.scopeBrainQuality || {}) as StatusNode;
-  const drm = (data?.dreamMaintenance || {}) as StatusNode;
-  const obx = (data?.outboxAndQueues || {}) as StatusNode;
-  const rag = (data?.ragAndModels || {}) as StatusNode;
+  const s = (data?.summary || {});
+  const inq = (data?.ingestionQuality || {});
+  const gbs = (data?.gbrainSources || {});
+  const scp = (data?.scopeBrainQuality || {});
+  const drm = (data?.dreamMaintenance || {});
+  const obx = (data?.outboxAndQueues || {});
+  const rag = (data?.ragAndModels || {});
 
   const fmt = (val: unknown) => val ? new Date(String(val)).toLocaleString('zh-CN') : '—';
   const statusLabels: Record<string, string> = { completed: '已完成', partial: '部分完成', failed: '失败', running: '执行中', healthy: '运行健康', degraded: '部分降级', warning: '存在告警' };
@@ -315,7 +323,7 @@ export function SystemStatusPanel({ capabilities = [] }: { capabilities?: string
               </tr>
             </thead>
             <tbody>
-              {(inq.kbBreakdown || []).map((kb: any) => (
+              {(inq.kbBreakdown || []).map((kb) => (
                 <tr key={kb.id}>
                   <td>
                     <div style={{ fontWeight: 600, color: 'var(--ink)' }}>{kb.name}</div>
@@ -344,10 +352,10 @@ export function SystemStatusPanel({ capabilities = [] }: { capabilities?: string
               ))}
             </tbody>
           </table>
-          {inq.failedDocsList?.length > 0 && (
+          {!!inq.failedDocsList?.length && (
             <div style={{ marginTop: 16, padding: 14, border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: 8, background: 'rgba(239, 68, 68, 0.05)' }}>
               <div style={{ fontWeight: 600, color: 'var(--red)', fontSize: 12, marginBottom: 8 }}>⚠️ 解析失败文档清单</div>
-              {inq.failedDocsList.map((d: any) => (
+              {inq.failedDocsList?.map((d) => (
                 <div key={d.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, padding: '6px 0', borderBottom: '1px solid rgba(239, 68, 68, 0.1)' }}>
                   <div>
                     <b>{d.title}</b> ({d.kbName}) - <span style={{ color: 'var(--red)' }}>{d.error}</span>
@@ -360,7 +368,7 @@ export function SystemStatusPanel({ capabilities = [] }: { capabilities?: string
             </div>
           )}
           <PaginationBar pagination={inq.pagination?.kbBreakdown as Pagination | undefined} onChange={(page) => loadSectionPage('kbs', page)} label="个知识库" />
-          {inq.failedDocsList?.length > 0 && <PaginationBar pagination={inq.pagination?.failedDocs as Pagination | undefined} onChange={(page) => loadSectionPage('failedDocs', page)} label="个失败文档" />}
+          {!!inq.failedDocsList?.length && <PaginationBar pagination={inq.pagination?.failedDocs as Pagination | undefined} onChange={(page) => loadSectionPage('failedDocs', page)} label="个失败文档" />}
         </div>
       )}
 
@@ -380,7 +388,7 @@ export function SystemStatusPanel({ capabilities = [] }: { capabilities?: string
                 </tr>
               </thead>
               <tbody>
-                {(gbs.sourcesList || []).map((s: any) => (
+                {(gbs.sourcesList || []).map((s) => (
                   <tr key={s.sourceKey}>
                     <td><span style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--ink)' }}>{s.sourceKey}</span></td>
                     <td><span className={`badge ${s.kind === 'shared' ? 'ok' : 'purple'}`}>{s.kind === 'shared' ? '共享源' : '私密源'}</span></td>
@@ -409,19 +417,19 @@ export function SystemStatusPanel({ capabilities = [] }: { capabilities?: string
                 </tr>
               </thead>
               <tbody>
-                {(scp.scopeList || []).map((sc: any) => (
+                {(scp.scopeList || []).map((sc) => (
                   <tr key={sc.id}>
                     <td><span style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--ink)' }}>{sc.fingerprint}</span></td>
                     <td><span className={`badge ${sc.strategy === 'eager' ? 'ok' : 'purple'}`}>{sc.strategy === 'eager' ? 'Eager' : 'Lazy'}</span></td>
                     <td>
                       <div style={{ fontSize: 11.5, color: 'var(--ink-2)' }}>
-                        {sc.members?.map((m: any) => m.displayName || m.username).join(', ') || `${sc.membersCount} 人`}
+                        {sc.members?.map((m) => m.displayName || m.username).join(', ') || `${sc.membersCount} 人`}
                       </div>
                     </td>
                     <td>
                       {sc.derivedPages?.length ? (
                         <div>
-                          {sc.derivedPages.map((p: any) => (
+                          {sc.derivedPages.map((p) => (
                             <div key={p.id} style={{ fontSize: 11.5 }}>
                               <b>{p.title}</b> <span style={{ color: 'var(--ink-3)', fontSize: 10.5 }}>({p.derivedCount} 处溯源锚点)</span>
                             </div>
@@ -463,7 +471,7 @@ export function SystemStatusPanel({ capabilities = [] }: { capabilities?: string
                 </tr>
               </thead>
               <tbody>
-                {(drm.runs || []).map((r: any) => (
+                {(drm.runs || []).map((r) => (
                   <tr key={r.id}>
                     <td><span style={{ fontSize: 12 }}>{fmt(r.startedAt)}</span></td>
                     <td><b style={{ color: statusColors[(r.status as string) || ''] || 'var(--ink)', fontSize: 12 }}>{statusLabels[(r.status as string) || ''] || r.status}</b></td>
@@ -473,7 +481,7 @@ export function SystemStatusPanel({ capabilities = [] }: { capabilities?: string
                         <details style={{ marginTop: 5, fontSize: 10.5 }}>
                           <summary style={{ cursor: 'pointer', color: 'var(--ink-3)' }}>查看阶段明细</summary>
                           <div style={{ marginTop: 5, display: 'grid', gap: 3 }}>
-                            {r.sourceResults.slice(0, 12).map((source: any, index: number) => {
+                            {r.sourceResults.slice(0, 12).map((source, index: number) => {
                               const graph = source.graphExtraction || {};
                               const skipped = Array.isArray(source.expectedSkippedPhases) ? source.expectedSkippedPhases.length : 0;
                               return (
@@ -536,7 +544,7 @@ export function SystemStatusPanel({ capabilities = [] }: { capabilities?: string
                 </tr>
               </thead>
               <tbody>
-                {(obx.recentEvents || []).map((e: any) => (
+                {(obx.recentEvents || []).map((e) => (
                   <tr key={e.id}>
                     <td>
                       <span className="badge" style={{ fontFamily: 'monospace', fontSize: 11, padding: '2px 6px' }}>{e.eventType}</span>
@@ -592,7 +600,7 @@ export function SystemStatusPanel({ capabilities = [] }: { capabilities?: string
                 </tr>
               </thead>
               <tbody>
-                {(rag.activeModels || []).map((m: any, i: number) => (
+                {(rag.activeModels || []).map((m, i: number) => (
                   <tr key={i}>
                     <td>
                       <span className="badge" style={{ fontSize: 10.5 }}>
@@ -618,7 +626,7 @@ export function SystemStatusPanel({ capabilities = [] }: { capabilities?: string
               <div style={{ fontWeight: 600, marginBottom: 4 }}>百纳 实际运行态</div>
               <div style={{ color: 'var(--ink-2)' }}>
                 {['llm', 'embedding', 'rerank'].map((kind) => {
-                  const route = rag.runtime.routes?.[kind] || {};
+                  const route = rag.runtime?.routes?.[kind] || {};
                   return <span key={kind} style={{ marginRight: 16 }}>{kind === 'llm' ? 'LLM' : kind === 'embedding' ? 'Embedding' : 'Reranker'}：{route.modelName || '未配置'} {route.injected ? '已注入 百纳' : '未注入'}</span>;
                 })}
               </div>

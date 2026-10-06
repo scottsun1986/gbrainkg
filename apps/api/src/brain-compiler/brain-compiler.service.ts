@@ -10,6 +10,7 @@ import {
 import { InjectQueue } from "@nestjs/bullmq";
 import { Job, Queue, QueueEvents } from "bullmq";
 import { getPrismaClient } from "../prisma";
+import { withSystemWrite } from "../db/tenant-context.service";
 import { PermissionService } from "../permission/permission.service";
 import { BrainRepoAdapter } from "@llmwiki/gbrain-adapter";
 import { ModelConfigService } from "../model-config.service";
@@ -18,6 +19,7 @@ import { readCanonicalDocument } from "./canonical-document";
 import { sourceKeyForKnowledgeBase } from "./brain-source";
 
 import { BrainScopeService } from "./brain-scope.service";
+import { uploadRoot as resolveUploadRoot } from "../storage/upload-paths";
 import { BrainOutboxService } from "./brain-outbox.service";
 import { BrainBackupService } from "./brain-backup.service";
 import { getSharedBrainRepoAdapter } from "./brain-adapter.provider";
@@ -35,8 +37,7 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(BrainCompilerService.name);
   private prisma = getPrismaClient();
   private gbrain: BrainRepoAdapter;
-  private readonly uploadRoot =
-    process.env.UPLOAD_ROOT || "/tmp/llmwiki/uploads";
+  private readonly uploadRoot = resolveUploadRoot();
   private readonly maintenanceTimezone =
     process.env.GBRAIN_MAINTENANCE_TZ || "Asia/Shanghai";
   private queueEvents: QueueEvents;
@@ -78,7 +79,7 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
       this.logger.log(
         `Starting one-time GBrain migration for ${users.length} active user(s).`,
       );
-      await Promise.all(users.map((user) => this.syncUserBrainRepo(user.id)));
+      for (const user of users) await this.syncUserBrainRepo(user.id);
       this.logger.log("One-time GBrain migration completed.");
     }
     // Persisted repeat jobs keep dynamic ACLs fresh and run GBrain's official
@@ -144,17 +145,23 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
     // Runtime model config is applied once during module init (and on demand
     // elsewhere); refreshing it per user here multiplied by the whole user base
     // and was a major startup hazard.
-    const existing = await this.prisma.brainRepo.findUnique({
-      where: { userId },
-    });
+    const userRef = `gbrain://user/${userId}`;
     // BrainRepo 保留为旧版数据库兼容记录；真实检索 source 由
     // getUserSourceRefs() 计算，不再为每个用户复制一份完整大脑。
-    const userRef = `gbrain://user/${userId}`;
-    if (existing?.gitRepoUrl === userRef) return existing;
-    return this.prisma.brainRepo.upsert({
-      where: { userId },
-      create: { userId, gitRepoUrl: userRef, status: "active" },
-      update: { gitRepoUrl: userRef, status: "active" },
+    //
+    // The row is owned by the TARGET user, so it cannot be written under the
+    // CALLER's identity: `BrainRepo`'s policy requires userId = app_current_user_id(),
+    // and the callers here are an administrator creating a user, or a startup /
+    // maintenance sweep — never the target themselves. Treat it as what it is,
+    // system-owned provisioning, and write it with the service identity.
+    return withSystemWrite(this.prisma, async (tx: any) => {
+      const existing = await tx.brainRepo.findUnique({ where: { userId } });
+      if (existing?.gitRepoUrl === userRef) return existing;
+      return tx.brainRepo.upsert({
+        where: { userId },
+        create: { userId, gitRepoUrl: userRef, status: "active" },
+        update: { gitRepoUrl: userRef, status: "active" },
+      });
     });
   }
 
@@ -254,11 +261,11 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
       if (!sourceId) continue;
       desiredSourceIds.push(sourceId);
       if (!existingMemberSet.has(sourceId)) {
-        await db.brainSourceMember.upsert({
-          where: { sourceId_userId: { sourceId, userId } },
-          create: { sourceId, userId },
-          update: {},
-        });
+        // Atomic, idempotent membership write. Prisma's upsert is check-then-act,
+        // so two concurrent callers (a foreground sync plus a background sweep)
+        // both miss the row and then collide on BrainSourceMember_pkey — observed
+        // as `duplicate key value violates unique constraint` during a retry.
+        await db.$executeRaw`INSERT INTO "BrainSourceMember" ("sourceId", "userId") VALUES (${sourceId}::uuid, ${userId}::uuid) ON CONFLICT DO NOTHING`;
         existingMemberSet.add(sourceId);
       }
       refs.push(`gbrain://source/${definition.sourceKey}`);
@@ -384,11 +391,8 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
       },
     });
     if (userId) {
-      await db.brainSourceMember.upsert({
-        where: { sourceId_userId: { sourceId: source.id, userId } },
-        create: { sourceId: source.id, userId },
-        update: {},
-      });
+      // Same atomicity requirement as above.
+      await db.$executeRaw`INSERT INTO "BrainSourceMember" ("sourceId", "userId") VALUES (${source.id}::uuid, ${userId}::uuid) ON CONFLICT DO NOTHING`;
     }
     await this.gbrain.initializeSource(definition.sourceKey);
 
@@ -1216,6 +1220,7 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
   async triggerLazyCompileAndWait(
     userId: string,
     topicSlug: string,
+    timeoutMs = 5000,
   ): Promise<void> {
     this.logger.log(
       `Triggering IMMEDIATE lazy compile for user ${userId}, topic ${topicSlug}`,
@@ -1231,7 +1236,7 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
       { priority: CompilePriority.IMMEDIATE },
     );
 
-    await job.waitUntilFinished(this.queueEvents);
+    await job.waitUntilFinished(this.queueEvents, Math.max(1, timeoutMs));
   }
 
   /**

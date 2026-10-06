@@ -50,9 +50,13 @@ export class AdminGuard implements CanActivate {
       if (await this.authService.isMfaEnforcementBlocking(userId)) return false;
       const capabilities = await this.permissionService.getCapabilities(userId);
       // Allow regular users to create personal knowledge bases
+      // Compare the exact route (not a substring), tolerating a trailing slash:
+      // Express still dispatches POST /api/v1/admin/kbs/ here, and rejecting it
+      // would 403 legitimate personal-KB creation for capability-less users.
+      const requestPath = String(request.path || '').replace(/\/+$/, '') || '/';
       const isPersonalKbCreation =
         request.method === 'POST' &&
-        (request.path === '/api/v1/admin/kbs' || request.url?.includes('/admin/kbs')) &&
+        requestPath === '/api/v1/admin/kbs' &&
         request.body?.type === 'personal';
       if (!isPersonalKbCreation && !capabilities.includes('*') && !ADMIN_CAPABILITIES.some((permission) => capabilities.includes(permission))) return false;
       request.user = { id: userId, isAdmin: capabilities.includes('*') };

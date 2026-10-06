@@ -552,3 +552,16 @@ describe("hop probe planning", () => {
     expect(plan.fromBridgeSeed).toBe(false);
   });
 });
+
+ describe('top-rank guarantee relevance targets', () => {
+  it('checks the target citation after score order diverges from pool order', () => {
+    const selected = { docId: 'selected', score: 1 };
+    const relevant = { docId: 'relevant', score: 0.9 };
+    const unrelated = { docId: 'unrelated', score: 0.1 };
+    const isRelevant = jest.fn((citation: any) => citation.docId === 'relevant');
+    const result = planTopRankGuarantee({ pool: [unrelated, relevant, selected], selected: [selected], topDocs: 3, isRelevant });
+    expect(result.indices).toEqual([1]);
+    expect(result.docs).toEqual(['id:relevant']);
+    expect(isRelevant).toHaveBeenCalledWith(relevant);
+  });
+});

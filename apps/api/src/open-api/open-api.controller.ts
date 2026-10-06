@@ -1,3 +1,9 @@
+import { withAuthorizedRequest, authorizationEnforced } from '../permission/authorization-revision';
+import { withStrictOutputPermit } from '../permission/strict-output-permit';
+import { getRequestContext } from '../observability/request-context';
+import { withServiceContext } from '../db/tenant-context.service';
+import { DocumentAclService } from '../permission/document-acl.service';
+import { uploadRoot } from '../storage/upload-paths';
 import {
   BadRequestException,
   Body,
@@ -39,7 +45,7 @@ const R = (code: number, msg: string, data: any = null) => ({
 @Controller('open-api')
 export class OpenApiController {
   private readonly prisma = getPrismaClient();
-  private readonly uploadRoot = process.env.UPLOAD_ROOT || '/tmp/llmwiki/uploads';
+  private readonly uploadRoot = uploadRoot();
   private readonly logger = new Logger(OpenApiController.name);
 
   constructor(
@@ -303,6 +309,19 @@ export class OpenApiController {
    * 6. 智能对话问答 (Chat Completions)
    * 支持流式 SSE 或一次性 JSON 输出
    */
+  private async drainStrictResponse(res: Response, emit: () => unknown): Promise<void> {
+    if (res.writableEnded) throw new Error('Transport closed');
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = () => { clearTimeout(timer); res.off('finish', done); res.off('error', fail); res.off('close', closed); };
+      const done = () => { cleanup(); resolve(); };
+      const fail = (error: Error) => { cleanup(); reject(error); };
+      const closed = () => res.writableFinished ? done() : fail(new Error('Transport disconnected'));
+      const timer = setTimeout(() => fail(new Error('Transport drain timeout')), 5_000);
+      res.once('finish', done); res.once('error', fail); res.once('close', closed);
+      try { emit(); if (res.writableFinished) done(); } catch (error) { fail(error as Error); }
+    });
+  }
+
   @Post('v1/chat/completions')
   @UseGuards(OpenApiGuard)
   async chatCompletions(
@@ -316,6 +335,9 @@ export class OpenApiController {
     },
   ) {
     const userId = req.user.id;
+    if (process.env.KNOWLEDGE_STRICT_OUTPUT === "1" && !authorizationEnforced()) throw new BadRequestException("Strict output requires authorization enforcement");
+    return withAuthorizedRequest(userId, async snapshot => {
+    const outputContext = getRequestContext();
     const prompt = String(body?.prompt || '').trim();
     if (!prompt) {
       return res.status(400).json(R(400, 'prompt 不能为空'));
@@ -356,21 +378,14 @@ export class OpenApiController {
       effectiveKbIds = rawKbIds.length > 0
         ? rawKbIds.filter((id: string) => visibleKbs.includes(id))
         : visibleKbs;
-      conversation = await this.prisma.conversation.create({
-        data: {
-          userId,
-          title: prompt.slice(0, 80),
-          kbScope: effectiveKbIds,
-        },
-      });
     }
 
-    await this.prisma.message.create({
-      data: {
-        conversationId: conversation.id,
-        role: 'user',
-        content: prompt,
-      },
+    conversation = await withServiceContext(this.prisma, async tx => {
+      const target = conversation || await tx.conversation.create({
+        data: { userId, title: prompt.slice(0, 80), kbScope: effectiveKbIds },
+      });
+      await tx.message.create({ data: { conversationId: target.id, role: 'user', content: prompt } });
+      return target;
     });
 
     const wantsStream =
@@ -384,6 +399,56 @@ export class OpenApiController {
       effectiveKbIds,
       conversation.id,
     );
+
+    if (process.env.KNOWLEDGE_STRICT_OUTPUT === '1') {
+      const frames: string[] = [];
+      let bytes = 0;
+      let answer = '';
+      let citations: any[] = [];
+      let manifest: unknown = undefined;
+      await new Promise<void>((resolve, reject) => {
+        let subscription: any;
+        let stopped = false;
+        const disconnected = () => { stopped = true; subscription?.unsubscribe(); reject(new Error('Transport disconnected')); };
+        res.once('close', disconnected);
+        subscription = stream$.subscribe({
+          next: (event: any) => {
+            if (stopped) return;
+            const item = event?.data || event;
+            if (item?.type === 'done') manifest = item.dependency_manifest;
+            if (item?.type === 'delta' || item?.type === 'token') answer += item.content || item.token || '';
+            if (item?.type === 'citations') citations = item.citations || [];
+            if (item?.type === 'citation') citations.push(item.timeline_entry);
+            const frame = `data: ${JSON.stringify(item)}\n\n`;
+            bytes += Buffer.byteLength(frame);
+            if (bytes > 8 * 1024 * 1024) {
+              stopped = true;
+              subscription?.unsubscribe();
+              res.off('close', disconnected);
+              reject(new BadRequestException('OpenAPI output buffer capacity exceeded'));
+              return;
+            }
+            frames.push(frame);
+          },
+          error: (error: Error) => { res.off('close', disconnected); reject(error); },
+          complete: () => { res.off('close', disconnected); resolve(); },
+        });
+        if (stopped) subscription.unsubscribe();
+      });
+      manifest ??= outputContext?.evidenceDependencies;
+      await withStrictOutputPermit(userId, snapshot, async () => {
+        await this.prisma.message.create({ data: { conversationId: conversation.id, role: 'assistant', content: answer,
+          citationsSummary: citations, dependencyManifest: manifest as any, latencyMs: Date.now() - requestStartedAt } });
+        if (wantsStream) {
+          res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-cache, no-transform');
+          await this.drainStrictResponse(res, () => res.end(frames.join('') + 'data: [DONE]\n\n'));
+        } else {
+          await this.drainStrictResponse(res, () => res.status(200).json(R(200, '操作成功', { conversation_id: conversation.id, answer, citations })));
+        }
+      }, manifest);
+      return;
+    }
 
     if (wantsStream) {
       res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -410,7 +475,7 @@ export class OpenApiController {
           res.write(
             `data: ${JSON.stringify({
               type: 'error',
-              error: err?.message || 'Chat error',
+              error: '问答服务暂时不可用，请重试',
             })}\n\n`,
           );
           res.end();
@@ -496,6 +561,7 @@ export class OpenApiController {
         },
       });
     });
+    });
   }
 
   /**
@@ -537,6 +603,13 @@ export class OpenApiController {
 
     if (isArchiveFilename(originalName)) {
       const extractedFiles = await extractArchiveDocuments(file.buffer, originalName);
+      // Validate every entry before writing any of them. Checking inside the
+      // write loop left earlier entries already written, inserted and enqueued
+      // when a later one was rejected, so a mixed archive returned 400 while
+      // partially ingesting into the knowledge base.
+      if (extractedFiles.some((item) => !SUPPORTED_UPLOAD_EXTENSIONS.has(extname(item.filename).toLowerCase()))) {
+        throw new BadRequestException("Unsupported archive entry type");
+      }
       const createdDocs = [];
       for (const item of extractedFiles) {
         const childDocId = randomUUID();
@@ -620,16 +693,14 @@ export class OpenApiController {
   @UseGuards(OpenApiGuard)
   async getDocumentStatus(@Req() req: any, @Param('docId') docId: string) {
     const userId = req.user.id;
-    const doc = await this.prisma.document.findUnique({
-      where: { id: docId },
+    const visibleIds = await this.permissionService.getVisibleKnowledgeBases(userId);
+    const doc = await this.prisma.document.findFirst({
+      where: { id: docId, kbId: { in: visibleIds } },
       include: { kb: { select: { id: true, name: true } } },
     });
-    if (!doc) throw new NotFoundException('文档不存在');
+    if (!doc || !await new DocumentAclService(this.permissionService).isDocumentReadable(userId, docId)) throw new NotFoundException('文档不存在');
 
-    const visibleIds = await this.permissionService.getVisibleKnowledgeBases(userId);
-    if (!visibleIds.includes(doc.kbId)) {
-      throw new ForbiddenException('无权访问该文档状态');
-    }
+
 
     return R(200, '操作成功', {
       id: doc.id,

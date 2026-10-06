@@ -142,7 +142,7 @@ async function main(): Promise<void> {
         console.error('Feedback gate requires at least one converted case in strict mode.');
         process.exit(1);
       }
-      return;
+      process.exit(2);
     }
     const results: any[] = [];
     let failed = 0;

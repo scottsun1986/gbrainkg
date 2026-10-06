@@ -38,9 +38,9 @@ export class BrainOutboxService implements OnModuleInit, OnModuleDestroy {
   private dispatchCursor?: string;
 
   onModuleInit() {
-    this.dispatchTimer = setInterval(() => { void this.dispatchPending(); }, 5_000);
+    this.dispatchTimer = setInterval(() => { void this.dispatchPending().catch(error => this.logger.warn(`Outbox dispatch failed: ${String(error)}`)); }, 5_000);
     this.dispatchTimer.unref();
-    void this.dispatchPending();
+    void this.dispatchPending().catch(error => this.logger.warn(`Outbox dispatch failed: ${String(error)}`));
   }
 
   onModuleDestroy() {
@@ -123,11 +123,17 @@ export class BrainOutboxService implements OnModuleInit, OnModuleDestroy {
       let coreQueued = Number(counts[0].waiting || 0) + Number(counts[0].delayed || 0);
       let auxQueued = Number(counts[1].waiting || 0) + Number(counts[1].delayed || 0);
       await this.deadLetterExhausted();
-      const events = await this.prisma.brainChangeEvent.findMany({
+      const batch = await this.prisma.brainChangeEvent.findMany({
         where: { status: { in: ['pending', 'processing', 'failed'] }, retryCount: { lt: outboxMaxRetries() } },
         orderBy: { id: 'asc' }, take: 100,
         ...(this.dispatchCursor ? { cursor: { id: this.dispatchCursor }, skip: 1 } : {}),
       });
+      const urgent = await this.prisma.brainChangeEvent.findMany({
+        where: { eventType: { in: ['perm_revoke', 'doc_delete', 'doc_acl_change'] }, status: { in: ['pending', 'processing', 'failed'] }, retryCount: { lt: outboxMaxRetries() } },
+        orderBy: { createdAt: 'asc' }, take: 100,
+      });
+      const events = [...new Map([...urgent, ...batch].map(event => [event.id, event])).values()];
+      let interrupted = false;
       for (const event of events) {
         try {
           const isEnrichment = event.eventType === 'enrichment_request';
@@ -135,19 +141,29 @@ export class BrainOutboxService implements OnModuleInit, OnModuleDestroy {
           const queue = isAuxiliary ? this.auxiliaryQueue : isEnrichment ? this.enrichmentQueue : this.compilerQueue;
           const jobId = isAuxiliary ? `aux-outbox-${event.id}` : isEnrichment ? `enrichment-outbox-${event.id}` : `outbox-event-${event.id}`;
           const job = await queue.getJob(jobId);
+          const jobState = job ? await job.getState() : 'missing';
+          if (event.status === 'processing' && (jobState === 'missing' || jobState === 'failed' || jobState === 'completed')) {
+            const recovered = await this.prisma.brainChangeEvent.updateMany({
+              where: { id: event.id, status: 'processing', claimToken: event.claimToken,
+                ...(jobState === 'missing' ? { OR: [{ claimedAt: null }, { claimedAt: { lt: new Date(Date.now() - 30000) } }] } : {}),
+              },
+              data: { status: 'failed', claimToken: null, claimedAt: null, retryCount: { increment: 1 }, errorMessage: 'Worker lease ended before event completion' },
+            });
+            if (recovered.count !== 1) continue;
+          }
           if (!job) {
-            if (isEnrichment && coreQueued >= coreLimit) continue;
-            if (isAuxiliary && auxQueued >= auxLimit) continue;
+            if (isEnrichment && coreQueued >= coreLimit) { interrupted = true; continue; }
+            if (isAuxiliary && auxQueued >= auxLimit) { interrupted = true; continue; }
             await this.enqueueEvent(event.id, event.eventType, event.resourceId, event.payload);
             if (isEnrichment) coreQueued += 1;
             if (isAuxiliary) auxQueued += 1;
           } else {
-            const state = await job.getState();
+            const state = jobState;
             // Never steal an active or delayed BullMQ lease. BullMQ owns stalled
             // worker detection; replay only terminal jobs with unfinished DB state.
             if (state === 'failed' || state === 'completed') {
-              if (isEnrichment && coreQueued >= coreLimit) continue;
-              if (isAuxiliary && auxQueued >= auxLimit) continue;
+              if (isEnrichment && coreQueued >= coreLimit) { interrupted = true; continue; }
+              if (isAuxiliary && auxQueued >= auxLimit) { interrupted = true; continue; }
               await job.retry(state);
               if (isEnrichment) coreQueued += 1;
               if (isAuxiliary) auxQueued += 1;
@@ -156,10 +172,15 @@ export class BrainOutboxService implements OnModuleInit, OnModuleDestroy {
         } catch (error) {
           // One malformed event or terminal-job race must not starve later
           // events (including permission revocations) in this batch.
+          interrupted = true;
+          if (String(error).includes('Invalid enrichment outbox event')) {
+            await this.prisma.brainChangeEvent.updateMany({ where: { id: event.id, status: { in: ['pending', 'failed'] } },
+              data: { status: 'failed', retryCount: { increment: 1 }, errorMessage: 'Invalid enrichment outbox payload' } });
+          }
           this.logger.warn(`Outbox event ${event.id} dispatch failed: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
-      this.dispatchCursor = events.length === 100 ? events[events.length - 1].id : undefined;
+      this.dispatchCursor = !interrupted && batch.length === 100 ? batch[batch.length - 1].id : undefined;
     } catch {
       this.logger.warn('Outbox dispatch unavailable; durable pending events will be retried');
     } finally {

@@ -1,8 +1,14 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { mkdir, copyFile, rm } from 'node:fs/promises';
+import { basename, join } from 'node:path';
+import { uploadRoot, resolveUploadPath } from '../storage/upload-paths';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+import { enqueueDocumentParse } from './ingestion-queue';
+import { Injectable, Logger, ConflictException } from '@nestjs/common';
 import { getPrismaClient } from '../prisma';
 import { PrismaClient } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
-import { withServiceContext } from '../db/tenant-context.service';
+import { withSystemWrite } from '../db/tenant-context.service';
 
 export type VersionRelation = 'supersedes' | 'revision' | 'translation';
 
@@ -34,13 +40,22 @@ export class VersionChainService {
   private readonly logger = new Logger(VersionChainService.name);
 
   private readonly prisma: PrismaClient;
-  constructor() {
+  constructor(@InjectQueue("ingestion-queue") private readonly ingestionQueue: Queue) {
     this.prisma = getPrismaClient();
   }
 
   async createVersion(input: PublishNewVersionInput) {
     const relation = input.relation ?? 'supersedes';
-    return withServiceContext(this.prisma, async (tx) => {
+    const documentId = randomUUID();
+    let directory: string | undefined;
+    let doc;
+    try {
+      // Version publication writes system-owned artifacts (DocumentVersion,
+      // DocumentVersionLink, chunk projections, enrichment stages) whose policies
+      // are service-only. The endpoint has already authorised the caller against
+      // this document, so the write runs with the service identity.
+      doc = await withSystemWrite(this.prisma, async (tx) => {
+      await tx.$executeRaw`SELECT id FROM "KnowledgeBase" WHERE id = ${input.kbId}::uuid FOR UPDATE`;
       const previous = input.documentId
         ? await tx.document.findUnique({ where: { id: input.documentId } })
         : input.sourceExternalId
@@ -54,18 +69,29 @@ export class VersionChainService {
             })
           : null;
 
+      if (previous && previous.lifecycleStatus !== "current") throw new ConflictException("Document version has already been superseded");
+      directory = join(uploadRoot(), documentId);
+      await mkdir(directory, { recursive: true });
+      const sourceRaw = input.objectKey || previous?.rawFileOid;
+      if (!sourceRaw) throw new ConflictException("Original source file required for version creation");
+      const rawFileOid = join(directory, `raw${basename(sourceRaw).includes(".") ? basename(sourceRaw).slice(basename(sourceRaw).lastIndexOf(".")) : ".txt"}`);
+      await copyFile(resolveUploadPath(sourceRaw), rawFileOid);
+      const mdPath = `${documentId}/content.md`;
+      await copyFile(resolveUploadPath(input.mdPath), join(uploadRoot(), mdPath)).catch(error => {
+        if (error?.code !== "ENOENT") throw error;
+      });
       const nextVersion = previous ? previous.version + 1 : 1;
       const doc = await tx.document.create({
         data: {
-          id: randomUUID(),
+          id: documentId,
           kbId: input.kbId,
-          mdPath: input.mdPath,
+          mdPath,
           title: input.title,
           sourceType: input.sourceType,
           uploadedById: input.uploadedById,
           storageProvider: input.storageProvider ?? 'local',
-          objectKey: input.objectKey,
-          rawFileOid: input.objectKey,
+          objectKey: undefined,
+          rawFileOid,
           contentHash: input.contentHash,
           sourceExternalId: input.sourceExternalId,
           sensitivity: input.sensitivity ?? 'internal',
@@ -104,7 +130,13 @@ export class VersionChainService {
         `document version ${doc.id} v${nextVersion} ${previous ? `supersedes ${previous.id}` : 'created'}`,
       );
       return doc;
-    });
+      });
+    } catch (error) {
+      if (directory) await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+      throw error;
+    }
+    await enqueueDocumentParse(this.ingestionQueue, doc.id, doc.version, "upload");
+    return doc;
   }
 
   async listChain(documentId: string) {

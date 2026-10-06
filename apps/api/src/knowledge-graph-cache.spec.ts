@@ -1,5 +1,11 @@
 import { KnowledgeGraphController } from './knowledge-graph.controller';
 
+jest.mock('./permission/authorization-revision', () => ({
+  authorizationEnforced: () => true,
+  readAuthorizationSnapshot: async () => ({ revision: '42', policyVersion: 'core-auth-v1', expiresAt: Infinity }),
+  assertAuthorizationSnapshot: async () => undefined,
+}));
+
 /**
  * The graph snapshot cache is keyed by the caller's visible-KB set, so a fleet
  * of users with different scopes fills it. It used to `clear()` the whole map
@@ -9,19 +15,25 @@ import { KnowledgeGraphController } from './knowledge-graph.controller';
  */
 describe('knowledge-graph snapshot cache', () => {
   const build = () => {
+    const acl = { filterReadableDocuments: jest.fn(async () => new Set<string>()) };
     const ctrl: any = new KnowledgeGraphController(
       { userIdFromRequest: async () => 'u1' } as any,
       { getVisibleKnowledgeBases: async () => ['kb-1'] } as any,
+      undefined,
+      undefined,
+      undefined,
+      acl as any,
     );
     ctrl.buildGraph = jest.fn(async (cacheKey: string, ttl: number) => {
       ctrl.graphCache.set(cacheKey, {
         expiresAt: Date.now() + ttl,
         storedAt: Date.now(),
         fingerprint: 'f',
-        payload: { key: cacheKey },
+        payload: { key: cacheKey, nodes: [] },
       });
-      return { key: cacheKey };
+      return { key: cacheKey, nodes: [] };
     });
+    ctrl.documentAclService = acl;
     return ctrl;
   };
 
@@ -30,7 +42,7 @@ describe('knowledge-graph snapshot cache', () => {
       expiresAt: Date.now() + 60_000,
       storedAt: Date.now(),
       fingerprint: 'f',
-      payload: { key },
+      payload: { key, nodes: [] },
     });
   };
 
@@ -60,7 +72,7 @@ describe('knowledge-graph snapshot cache', () => {
 
   it('serves an expired snapshot as a cache hit and marks it stale', async () => {
     const ctrl = build();
-    const key = '1000|40|kb-1'; // limit | maxChunksPerDoc | visible KB ids
+    const key = 'u1|42|Infinity|1000|40|kb-1'; // userId | auth revision | expiry | limit | maxChunksPerDoc | visible KB ids
     seed(ctrl, key);
     // Age the snapshot past its TTL: the next read must take the
     // stale-while-revalidate path rather than rebuilding inline.

@@ -10,7 +10,7 @@ import { ChunkEmbeddingService } from "../embedding/chunk-embedding.service";
 
 const mockPrisma: any = {
   knowledgeBase: { findUnique: jest.fn() },
-  brainChangeEvent: { findUnique: jest.fn(), update: jest.fn() },
+  brainChangeEvent: { findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
   brainRepo: {
     findUnique: jest.fn(),
     update: jest.fn(),
@@ -90,6 +90,26 @@ describe("BrainCompilerProcessor", () => {
     expect(mockPrisma.brainChangeEvent.update).not.toHaveBeenCalled();
     expect(compilerService.syncKnowledgeBaseSource).not.toHaveBeenCalled();
     expect(compilerService.reconcileAccess).not.toHaveBeenCalled();
+  });
+
+  it('refuses to mutate an unfinished event after losing the queue lease', async () => {
+    mockPrisma.brainChangeEvent.findUnique.mockResolvedValue({ id: 'event-1', status: 'pending', eventType: 'perm_revoke' });
+    const job = { id: 'outbox-event-event-1', name: 'process-outbox-event', data: { eventId: 'event-1' }, extendLock: jest.fn().mockResolvedValue(0) };
+    await expect(processor.process(job as any, 'expired-token')).rejects.toThrow('BullMQ lease');
+    expect(mockPrisma.brainChangeEvent.updateMany).not.toHaveBeenCalled();
+    expect(compilerService.reconcileAccess).not.toHaveBeenCalled();
+  });
+
+  it('fences completion with both the queue lease and the atomic database claim token', async () => {
+    mockPrisma.brainChangeEvent.findUnique.mockResolvedValue({ id: 'event-1', status: 'processing', claimToken: 'old-token', eventType: 'unknown' });
+    mockPrisma.brainChangeEvent.updateMany.mockResolvedValue({ count: 1 });
+    const job = { id: 'outbox-event-event-1', name: 'process-outbox-event', data: { eventId: 'event-1' }, extendLock: jest.fn().mockResolvedValue(1) };
+    await expect(processor.process(job as any, 'new-token')).resolves.toMatchObject({ status: 'success' });
+    expect(job.extendLock).toHaveBeenCalledTimes(2);
+    expect(mockPrisma.brainChangeEvent.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { id: 'event-1', status: 'processing', claimToken: 'new-token' },
+      data: expect.objectContaining({ status: 'completed', claimToken: null }),
+    }));
   });
 
   it("should process a dirty job through READ, GATHER, WRITE, SYNC", async () => {

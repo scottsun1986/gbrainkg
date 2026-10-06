@@ -158,8 +158,9 @@ export interface OrgTreeNode {
   expanded?: boolean;
   canManage?: boolean;
   canCreateChild?: boolean;
+  canSetAdmin?: boolean;
   kbs: string[];
-  knowledgeBase: { id: string; name?: string; [key: string]: unknown } | null;
+  knowledgeBase: { id: string; name?: string; docCount?: number; [key: string]: unknown } | null;
   admins: string[];
   children: OrgTreeNode[];
   [key: string]: unknown;
@@ -238,6 +239,7 @@ export interface DocMeta {
   chunkCount?: number;
   parserEngine?: string;
   parserClassification?: string;
+  parserMetadata?: { embedded_image_count?: number; ocr_image_count?: number; ocr_words_result_num?: number; ocr_average_confidence?: number; ocr_provider?: string };
   qualityStatus?: string;
   qualityScore?: number;
   qualityIssues?: string[];

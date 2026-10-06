@@ -66,6 +66,7 @@ const mockPrisma: any = {
   },
   brainTopic: {
     findUnique: jest.fn(),
+    findMany: jest.fn().mockResolvedValue([]),
   },
   document: {
     findMany: jest.fn(),
@@ -268,19 +269,20 @@ describe("ChatService", () => {
       { id: "doc-1", kbId: "kb-1", aclMode: "inherit", title: "规则.md" },
     ]);
 
-    // 模拟主题是 dirty 的，触发懒编译
-    mockPrisma.brainTopic.findUnique.mockResolvedValue({
-      compileStatus: "dirty",
-    });
+    // 模拟主题是 dirty 的，触发懒编译（命中主题改为一次性 findMany 批量查询）
+    mockPrisma.brainTopic.findMany.mockResolvedValueOnce([
+      { topicSlug: "数据合规", compileStatus: "dirty" },
+    ]);
     mockCompilerService.triggerLazyCompileAndWait.mockResolvedValue(undefined);
 
     const stream$ = await service.handleChatStream("user-1", "测试问题");
     const events = await lastValueFrom(stream$.pipe(toArray()));
 
-    // 验证懒编译被调用
+    // 验证懒编译被调用（第三个参数为受 deadline 约束的等待上限）
     expect(mockCompilerService.triggerLazyCompileAndWait).toHaveBeenCalledWith(
       "user-1",
       "数据合规",
+      expect.any(Number),
     );
 
     // 验证流式事件输出

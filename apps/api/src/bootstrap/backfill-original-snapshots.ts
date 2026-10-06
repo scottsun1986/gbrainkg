@@ -5,9 +5,10 @@ import { getPrismaClient,disconnectPrismaClient } from '../prisma';
 import { runAsService } from '../db/service-principal';
 import { withServiceContext } from '../db/tenant-context.service';
 import { originalSpan } from '../ingestion/original-block-snapshot';
+import { uploadRoot } from '../storage/upload-paths';
 const hash=(text:string)=>createHash('sha256').update(text).digest('hex');
 async function main() {
- const root=await realpath(resolve(process.env.UPLOAD_ROOT || '/tmp/llmwiki/uploads'));
+ const root=await realpath(uploadRoot());
  const db=getPrismaClient();let cursor:string|undefined;
  const report={documents:0,created:0,existing:0,missingSources:[] as Array<{id:string;title:string}>};
  await runAsService('original-source-backfill',async()=>{

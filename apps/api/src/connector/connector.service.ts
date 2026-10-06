@@ -1,3 +1,4 @@
+import { uploadRoot } from '../storage/upload-paths';
 import {
   ConflictException,
   Injectable,
@@ -11,7 +12,7 @@ import { syncExternalAcl } from './external-acl';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { getPrismaClient } from '../prisma';
-import { withServiceContext } from '../db/tenant-context.service';
+import { withSystemWrite } from '../db/tenant-context.service';
 import { IngestionService } from '../ingestion/ingestion.service';
 import { GitConnector } from './git-connector';
 import { FeishuConnector } from './feishu-connector';
@@ -38,7 +39,7 @@ export class ConnectorService {
   private readonly logger = new Logger(ConnectorService.name);
   private readonly prisma = getPrismaClient();
   private readonly uploadRoot =
-    process.env.UPLOAD_ROOT || '/tmp/llmwiki/uploads';
+    uploadRoot();
   private readonly connectors: Map<string, EnterpriseConnector>;
   private readonly runningSyncs = new Set<string>();
 
@@ -54,6 +55,8 @@ export class ConnectorService {
       ['generic_webhook', this.webhook],
     ]);
   }
+
+  async onModuleDestroy(): Promise<void> { await this.webhook.close(); }
 
   getConnector(kind: string): EnterpriseConnector {
     const connector = this.connectors.get(kind);
@@ -147,8 +150,13 @@ export class ConnectorService {
     }
   }
 
+  // A connector sync is a system operation the endpoint merely triggers: it
+  // writes ConnectorRun records and external ACLs, whose RLS policies are
+  // service-only. `withServiceContext` keeps the CALLER's user identity inside a
+  // request, so it was denied here with a 42501 on ConnectorRun. The caller is
+  // authorised by the endpoint before we get here; the work itself is system-owned.
   private async syncLocked(sourceId: string): Promise<SyncRunSummary> {
-    const { source, run } = await withServiceContext(this.prisma, async (tx) => {
+    const { source, run } = await withSystemWrite(this.prisma, async (tx) => {
       // Serialize the check/create across API processes sharing this database.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${sourceId}, 0))`;
       const source = await tx.connectorSource.findUnique({ where: { id: sourceId } });
@@ -176,7 +184,7 @@ export class ConnectorService {
 
     try {
       const result = await connector.fetchChanges(
-        (source.config || {}) as Record<string, unknown>,
+        { ...((source.config || {}) as Record<string, unknown>), ...(source.kind === "generic_webhook" ? { sourceKey: source.id } : {}) },
         source.cursor ?? null,
       );
       fetched = result.changes.length;
@@ -202,7 +210,7 @@ export class ConnectorService {
 
       const status = failed > 0 ? 'failed' : 'success';
       const finishedAt = new Date();
-      await withServiceContext(this.prisma, async (tx) => {
+      await withSystemWrite(this.prisma, async (tx) => {
         await tx.connectorRun.update({
           where: { id: run.id },
           data: {
@@ -236,7 +244,7 @@ export class ConnectorService {
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await withServiceContext(this.prisma, async (tx) => {
+      await withSystemWrite(this.prisma, async (tx) => {
         await tx.connectorRun.update({
           where: { id: run.id },
           data: {
@@ -308,7 +316,7 @@ export class ConnectorService {
         ...(immutableVersionsEnabled() ? { ingestVersion: true, pendingContentHash: true } : {}) },
     });
     const enforceSourceAcl = (source.config as any)?.syncAcl === true || !!change.externalAcl || process.env.CORE_EXTERNAL_ACL_REQUIRED === '1' || process.env.CORE_AUTH_ENFORCE === '1';
-    if (existing && enforceSourceAcl) await withServiceContext(this.prisma, tx => syncExternalAcl(tx, existing.id, source.config, change));
+    if (existing && enforceSourceAcl) await withSystemWrite(this.prisma, tx => syncExternalAcl(tx, existing.id, source.config, change));
 
     if (change.aclOnly) return 'skipped';
 
@@ -326,7 +334,10 @@ export class ConnectorService {
 
     const existingRawPath = this.resolveRawPath(existing?.rawFileOid);
     if (immutableVersionsEnabled() && existing && existingRawPath) {
-      if (existing.pendingContentHash === contentHash) return 'skipped';
+      if (existing.pendingContentHash === contentHash) {
+        await this.ingestionService.enqueue(existing.id, 'connector-sync', existing.ingestVersion || existing.version, 3);
+        return 'ingested';
+      }
       const rawAbs = join(this.uploadRoot, existing.id, `input.${contentHash}.txt`);
       await mkdir(join(this.uploadRoot, existing.id), { recursive: true });
       await writeFile(rawAbs, content, 'utf8');
@@ -337,13 +348,16 @@ export class ConnectorService {
       return 'ingested';
     }
     if (existing && existingRawPath) {
-      await writeFile(existingRawPath, content, 'utf8');
+      const replacementPath = join(this.uploadRoot, existing.id, `input.${contentHash}.txt`);
+      await mkdir(join(this.uploadRoot, existing.id), { recursive: true });
+      await writeFile(replacementPath, content, 'utf8');
       const nextVersion = (existing.version || 1) + 1;
       await this.prisma.document.update({
         where: { id: existing.id },
         data: {
           title,
           contentHash,
+          rawFileOid: replacementPath,
           version: nextVersion,
           status: 'parsing',
         },
@@ -382,7 +396,7 @@ export class ConnectorService {
         ...(enforceSourceAcl ? { aclMode: 'restricted' } : {}),
       },
     });
-    if (enforceSourceAcl) await withServiceContext(this.prisma, tx => syncExternalAcl(tx, documentId, source.config, change));
+    if (enforceSourceAcl) await withSystemWrite(this.prisma, tx => syncExternalAcl(tx, documentId, source.config, change));
     await this.ingestionService.enqueue(documentId, 'connector-sync', 1, 3);
     return 'ingested';
   }

@@ -24,6 +24,15 @@ describe("model credentials", () => {
     expect(maskModelCredential(encrypted)).toBe("已配置 · 1234");
   });
 
+  it('reports key rotation or tampering instead of silently returning an empty credential', () => {
+    const encrypted = encryptModelCredential('secret');
+    const key = process.env.MODEL_CONFIG_KEY;
+    try {
+      process.env.MODEL_CONFIG_KEY = 'wrong-key';
+      expect(() => decryptModelCredential(encrypted)).toThrow('Unable to decrypt');
+    } finally { process.env.MODEL_CONFIG_KEY = key; }
+  });
+
   it("continues to read legacy plaintext during migration", () => {
     expect(decryptModelCredential(Buffer.from("legacy-key"))).toBe(
       "legacy-key",

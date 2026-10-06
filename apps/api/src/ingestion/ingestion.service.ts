@@ -1,3 +1,6 @@
+import { resolveUploadPath } from '../storage/upload-paths';
+import { enqueueDocumentParse } from './ingestion-queue';
+import { uploadRoot } from '../storage/upload-paths';
 import { runAsService } from '../db/service-principal';
 import { Injectable, Logger, OnModuleInit, Optional, Inject } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
@@ -38,7 +41,7 @@ export class IngestionService implements OnModuleInit {
   private readonly logger = new Logger(IngestionService.name);
   private readonly prisma = getPrismaClient();
   private readonly uploadRoot =
-    process.env.UPLOAD_ROOT || "/tmp/llmwiki/uploads";
+    uploadRoot();
   private readonly parserUrl = (
     process.env.PARSER_WORKER_URL || "http://127.0.0.1:8100"
   ).replace(/\/$/, "");
@@ -96,10 +99,8 @@ export class IngestionService implements OnModuleInit {
       Number(process.env.INGESTION_RECOVERY_AFTER_MS || 5 * 60 * 1000),
     );
     const staleBefore = new Date(Date.now() - recoveryAfterMs);
-    if (process.env.CORE_VERSIONING_ENABLED === '1') {
-      await this.prisma.$executeRaw`DELETE FROM "ModelArtifactCache" WHERE key IN (SELECT key FROM "ModelArtifactCache" WHERE "expiresAt"<now() LIMIT 1000)`;
-      await this.prisma.$executeRaw`DELETE FROM "ModelQuotaBucket" WHERE period<floor(extract(epoch FROM now())/60)-120`;
-    }
+    await this.prisma.$executeRaw`DELETE FROM "ModelArtifactCache" WHERE key IN (SELECT key FROM "ModelArtifactCache" WHERE "expiresAt"<now() LIMIT 1000)`;
+    await this.prisma.$executeRaw`DELETE FROM "ModelQuotaBucket" WHERE period<floor(extract(epoch FROM now())/60)-120`;
     if (immutableVersionsEnabled()) {
       const unparsed = await this.prisma.document.findMany({ where: {
         status: 'published', activeVersionId: { not: null }, buildingVersionId: null,
@@ -206,35 +207,7 @@ export class IngestionService implements OnModuleInit {
       }) : null;
       version = version ?? current?.ingestVersion ?? current?.version;
       if (!version) throw new Error(`Document ${documentId} no longer exists.`);
-      const jobId = `ingest-${documentId}-v${version}`;
-      if (typeof this.ingestionQueue?.getJob === "function") {
-        try {
-          const existing = await this.ingestionQueue.getJob(jobId);
-          if (existing) {
-            const state = await existing.getState().catch(() => "unknown");
-            if (["failed", "completed"].includes(state)) {
-              await existing.remove().catch(() => {});
-            }
-          }
-        } catch {
-          // Non-fatal if queue check fails
-        }
-      }
-      await this.ingestionQueue.add(
-        "parse-document",
-        { documentId, reason, expectedVersion: version },
-        {
-          jobId,
-          attempts: 3,
-          backoff: { type: "exponential", delay: 3_000 },
-          removeOnComplete: 200,
-          removeOnFail: 500,
-          // BullMQ: lower value = scheduled earlier. Small/quick jobs (e.g.
-          // negatives and light documents) use priority 1 so they are not
-          // head-of-line blocked behind long parses of large documents.
-          priority,
-        },
-      );
+      await enqueueDocumentParse(this.ingestionQueue, documentId, version, reason, priority);
     } catch (error) {
       await this.markFailed(
         documentId,
@@ -274,7 +247,7 @@ export class IngestionService implements OnModuleInit {
     if (!document.rawFileOid)
       throw new Error("Original upload is no longer available.");
     const targetVersion = expectedVersion ?? document.version;
-    const content = await readFile(document.rawFileOid);
+    const content = await readFile(resolveUploadPath(document.rawFileOid));
     const contentHash = createHash("sha256").update(content).digest("hex");
     const parsingClaim = await this.prisma.document.updateMany({
       where: { id: documentId, ...(immutableVersionsEnabled() ? { ingestVersion: targetVersion } : { version: targetVersion }) },
@@ -329,7 +302,7 @@ export class IngestionService implements OnModuleInit {
         `) : [];
         const matchingDoc = Array.isArray(matchingRows) ? matchingRows[0] : undefined;
         if (matchingDoc && matchingDoc.mdPath) {
-          const mdText = await readFile(join(this.uploadRoot, matchingDoc.mdPath), "utf8").catch(() => null);
+          const mdText = await readFile(resolveUploadPath(matchingDoc.mdPath), "utf8").catch(() => null);
           if (mdText && mdText.trim()) {
             parsed = {
               markdown: mdText,
@@ -677,6 +650,7 @@ export class IngestionService implements OnModuleInit {
     );
     await rename(pendingContentPath, contentPath);
     if (immutableVersionsEnabled()) {
+      try {
       const version = await new DocumentVersionStore(this.prisma).stage({
         documentId, kbId: document.kbId, number: targetVersion, sourceHash: contentHash,
         title: document.title, mdPath: relativeContentPath, parser: parserFingerprint,
@@ -688,6 +662,11 @@ export class IngestionService implements OnModuleInit {
         passed: qualityStatus === 'passed',
       });
       return { documentId, status: version.state, versionId: version.id, chunks: enrichedChunks.length, qualityStatus, qualityScore };
+      } catch (error) {
+        const referenced = await this.prisma.documentVersion.findFirst({ where: { mdPath: relativeContentPath }, select: { id: true } });
+        if (!referenced) await unlink(contentPath).catch(() => undefined);
+        throw error;
+      }
     }
     // The expectedVersion check at the top only fences queue-time. Re-check
     // inside the save transaction: a concurrent re-upload that bumped the
@@ -782,6 +761,8 @@ export class IngestionService implements OnModuleInit {
       );
     } catch (err) {
       await unlink(pendingContentPath).catch(() => undefined);
+      const referenced = await this.prisma.document.findFirst({ where: { mdPath: relativeContentPath }, select: { id: true } });
+      if (!referenced) await unlink(contentPath).catch(() => undefined);
       if (err instanceof SupersededVersionError) {
         this.logger.warn(`Skipping save for ${documentId}: ${err.message}`);
         return {

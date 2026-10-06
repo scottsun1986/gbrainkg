@@ -224,9 +224,17 @@ describe('ChunkEmbeddingService.embedDocumentChunks', () => {
 
   it('stores sparse and multi-vector representations without overwriting dense space', async () => {
     embedMock.isHybridEnabled.mockReturnValue(true);
-    mockPrisma.$queryRaw.mockResolvedValueOnce([
-      { id: '11111111-1111-4111-8111-111111111111', ord: 0, content: 'hybrid content' },
-    ]);
+    // The cursor loop reads pages until one comes back empty; the second page
+    // must be empty or the persisted implementation from an earlier test leaks
+    // in and the loop never terminates on this fixture.
+    let pages = 0;
+    mockPrisma.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+      if (!String(strings).includes('ord >')) return [];
+      pages += 1;
+      return pages === 1
+        ? [{ id: '11111111-1111-4111-8111-111111111111', ord: 0, content: 'hybrid content' }]
+        : [];
+    });
     embedMock.embedHybrid.mockResolvedValueOnce([{
       dense: [0.1, 0.2],
       sparse: { indices: [7, 9], values: [0.8, 0.3] },

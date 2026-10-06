@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Icon } from '@/components/common/Icon';
 import { PaginationBar } from '@/components/common/PaginationBar';
 import { UsersPanel } from '@/components/admin/UsersPanel';
@@ -23,18 +23,17 @@ export function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities =
   const [tab, setTab] = useState(initialTab || 'org');
   const [auditMeta, setAuditMeta] = useState(appStore.AUDIT_META);
   useEffect(()=>{
-    if (initialTab) setTab(initialTab);
+    if (!initialTab) return;
+    const timer = setTimeout(() => setTab(initialTab), 0);
+    return () => clearTimeout(timer);
   }, [initialTab]);
-  useEffect(() => setAuditMeta(appStore.AUDIT_META), [appStore.AUDIT.length, appStore.AUDIT_META.total, appStore.AUDIT_META.page]);
-  // Dream 遥测(~800KB)已从启动载荷剥离；首次进入审计页时按需拉取
   const dreamLazyRef = useRef(false);
-  useEffect(() => {
-    if (tab === 'audit' && !appStore.DREAM && capabilities.includes('*') && !dreamLazyRef.current) {
-      dreamLazyRef.current = true;
-      void loadAuditPage(1, true);
-    }
-  }, [tab]);
-  const loadAuditPage = async (page: number, includeDream = false) => {
+  const auditRequestRef = useRef(0);
+  const dreamRequestRef = useRef(0);
+  useEffect(() => () => { ++auditRequestRef.current; ++dreamRequestRef.current; }, []);
+  const loadAuditPage = useCallback(async (page: number, includeDream = false) => {
+    const request = ++auditRequestRef.current;
+    const dreamRequest = includeDream ? ++dreamRequestRef.current : dreamRequestRef.current;
     try {
       // fields 分区模式：只回审计行（首次进入审计页时附带 Dream 遥测），
       // 不再重传整个管理面清单 + systemStatus 遥测（原先每次翻页 ~1MB）。
@@ -42,42 +41,54 @@ export function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities =
       const response = await fetch(`${API_BASE_URL}/api/v1/admin/data?fields=${fields}&auditPage=${page}&auditLimit=20`, { headers: apiHeaders() });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || '审计日志加载失败');
+      if (request !== auditRequestRef.current) return;
       appStore.AUDIT = (result.audit || []).map((item: AuditRow) => ({ ...item, when: new Date(item.when).toLocaleString('zh-CN'), what: item.action, actor: item.actor }));
       appStore.AUDIT_META = result.auditPagination || { page, limit: 20, total: appStore.AUDIT.length, totalPages: 1 };
       setAuditMeta(appStore.AUDIT_META);
-      if (result.dream) appStore.DREAM = result.dream;
+      if (result.dream && dreamRequest === dreamRequestRef.current) { appStore.DREAM = result.dream; dreamLazyRef.current = true; }
     } catch (error) {
-      window.dispatchEvent(new CustomEvent('app-toast', { detail: errorMessage(error) || '审计日志加载失败' }));
+      if (request === auditRequestRef.current) emitToast(errorMessage(error, '审计日志加载失败'));
     }
-  };
+  }, []);
+  useEffect(() => {
+    if (tab !== 'audit' || !capabilities.includes('*') || appStore.DREAM || dreamLazyRef.current) return;
+    const timer = setTimeout(() => void loadAuditPage(1, true), 0);
+    return () => clearTimeout(timer);
+  }, [tab, capabilities, loadAuditPage]);
   const loadDreamPage = async (page: number) => {
+    const request = ++dreamRequestRef.current;
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/admin/data?fields=dream&dreamPage=${page}&auditLimit=20`, { headers: apiHeaders() });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || 'Dream 运行记录加载失败');
+      if (request !== dreamRequestRef.current) return;
       if (result.dream) appStore.DREAM = result.dream;
       setAuditMeta((current) => ({ ...current }));
     } catch (error) {
+      // Only the newest request may report: a stale page's failure must not
+      // toast over the page the user has already moved to.
+      if (request !== dreamRequestRef.current) return;
       window.dispatchEvent(new CustomEvent('app-toast', { detail: errorMessage(error) || 'Dream 运行记录加载失败' }));
     }
   };
   const [grantKb, setGrantKb] = useState(()=>appStore.INDUSTRY_KBS[0]?.id || '');
   // 组织树 state：支持无限层级新增与多根组织森林
-  const initOrgNode = (n: any): any => ({
+  const initOrgNode = (n: OrgTreeNode, path = 'root'): OrgTreeNode => ({
     ...n,
-    id: n.id || ('on_' + Math.random().toString(36).slice(2, 9)),
-    children: (n.children || []).map(initOrgNode),
+    id: n.id || `on_${path}`,
+    children: (n.children || []).map((child, index) => initOrgNode(child, `${path}.${index}`)),
   });
-  const [orgTrees, setOrgTrees] = useState<any[]>(() => {
+  const [orgTrees, setOrgTrees] = useState<OrgTreeNode[]>(() => {
     const raw = (appStore.ORG_TREES && appStore.ORG_TREES.length > 0) ? appStore.ORG_TREES : (appStore.ORG_TREE ? [appStore.ORG_TREE] : []);
-    return raw.map(initOrgNode);
+    return raw.map((node, index) => initOrgNode(node, String(index)));
   });
   const orgTree = orgTrees[0] || null;
 
   useEffect(() => {
-    const handleAdminDataUpdated = (e: any) => {
-      const trees = e.detail?.orgTrees || (appStore.ORG_TREES && appStore.ORG_TREES.length > 0 ? appStore.ORG_TREES : (appStore.ORG_TREE ? [appStore.ORG_TREE] : []));
-      setOrgTrees(trees.map(initOrgNode));
+    const handleAdminDataUpdated = (e: Event) => {
+      const trees = (e as CustomEvent<{ orgTrees?: OrgTreeNode[] }>).detail?.orgTrees || (appStore.ORG_TREES && appStore.ORG_TREES.length > 0 ? appStore.ORG_TREES : (appStore.ORG_TREE ? [appStore.ORG_TREE] : []));
+      setAuditMeta(appStore.AUDIT_META);
+      setOrgTrees(trees.map((node: OrgTreeNode, index: number) => initOrgNode(node, String(index))));
     };
     window.addEventListener('app-admin-data-updated', handleAdminDataUpdated);
     return () => window.removeEventListener('app-admin-data-updated', handleAdminDataUpdated);
@@ -86,15 +97,15 @@ export function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities =
   // 展开状态受控（新增子组织后自动展开父节点）
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => {
     const s = new Set<string>();
-    const walk = (n: any) => { if (n?.expanded) s.add(n.id); (n?.children || []).forEach(walk); };
+    const walk = (n: OrgTreeNode) => { if (n?.expanded) s.add(n.id); (n?.children || []).forEach(walk); };
     (orgTrees || []).forEach(walk);
     return s;
   });
-  const [adminModal, setAdminModal] = useState<any>(null); // 设置管理员的节点
-  const [addModal, setAddModal] = useState<any>(null);     // 新增子组织的父节点
-  const [renameModal, setRenameModal] = useState<any>(null); // 重命名组织
-  const [editModal, setEditModal] = useState<any>(null);   // 编辑组织
-  const [deleteModal, setDeleteModal] = useState<any>(null); // 删除组织
+  const [adminModal, setAdminModal] = useState<OrgTreeNode | null>(null); // 设置管理员的节点
+  const [addModal, setAddModal] = useState<OrgTreeNode | null>(null);     // 新增子组织的父节点
+  const [renameModal, setRenameModal] = useState<OrgTreeNode | null>(null); // 重命名组织
+  const [editModal, setEditModal] = useState<OrgTreeNode | null>(null);   // 编辑组织
+  const [deleteModal, setDeleteModal] = useState<OrgTreeNode | null>(null); // 删除组织
   const orgOptions = useMemo(() => flattenOrgTree(orgTrees), [orgTrees]);
   const canCreateRoot = hasCapability('*', capabilities);
   const tabRules = [
@@ -112,12 +123,14 @@ export function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities =
   ];
   const availableTabs = tabRules.filter(item => hasCapability(item.permission, capabilities) || (item.alternativePermission && hasCapability(item.alternativePermission, capabilities))).map(item => item.k);
   useEffect(() => {
-    if (availableTabs.length && !availableTabs.includes(tab)) setTab(availableTabs[0]);
+    if (!availableTabs.length || availableTabs.includes(tab)) return;
+    const timer = setTimeout(() => setTab(availableTabs[0]), 0);
+    return () => clearTimeout(timer);
   }, [availableTabs.join(','), tab]);
 
   const toggleNode = (id: string) => setExpandedIds(s => { const ns = new Set(s); ns.has(id) ? ns.delete(id) : ns.add(id); return ns; });
 
-  const addChildOrg = async (parentId: any, name: string, adminUserIds: string[] = []) => {
+  const addChildOrg = async (parentId: string | null, name: string, adminUserIds: string[] = []) => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/admin/orgs`, {
         method: 'POST',
@@ -131,7 +144,7 @@ export function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities =
       if (parentId) {
         setExpandedIds(s => new Set(s).add(parentId));
         setOrgTrees(trees => {
-          const rec = (n: any): any => {
+          const rec = (n: OrgTreeNode): OrgTreeNode => {
             if (n.id === parentId) {
               return {
                 ...n,
@@ -158,7 +171,7 @@ export function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities =
       return false;
     }
   };
-  const updateOrganization = async (node: any, name: string, parentId: any) => {
+  const updateOrganization = async (node: OrgTreeNode, name: string, parentId: string | null) => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/admin/orgs/${node.id}`, {
         method: 'PATCH',
@@ -179,7 +192,7 @@ export function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities =
       return false;
     }
   };
-  const renameOrganization = async (node: any, newName: string) => {
+  const renameOrganization = async (node: OrgTreeNode, newName: string) => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/admin/orgs/${node.id}`, {
         method: 'PATCH',
@@ -191,13 +204,13 @@ export function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities =
       const updated = result.organization;
       if (!updated) throw new Error('接口未返回更新后的组织');
 
-      const rewritePaths = (current: any, oldPath: string, nextPath: string): any => ({
+      const rewritePaths = (current: OrgTreeNode, oldPath: string, nextPath: string): OrgTreeNode => ({
         ...current,
         ...(current.id === node.id ? { ...current, ...updated } : {}),
         path: current.path === oldPath ? nextPath : current.path.startsWith(`${oldPath}/`) ? `${nextPath}${current.path.slice(oldPath.length)}` : current.path,
-        children: (current.children || []).map((child: any) => rewritePaths(child, oldPath, nextPath)),
+        children: (current.children || []).map((child: OrgTreeNode) => rewritePaths(child, oldPath, nextPath)),
       });
-      setOrgTrees((trees: any[]) => trees.map((tree: any) => rewritePaths(tree, node.path, updated.path)));
+      setOrgTrees((trees: OrgTreeNode[]) => trees.map((tree: OrgTreeNode) => rewritePaths(tree, node.path, updated.path)));
       setRenameModal(null);
       window.dispatchEvent(new CustomEvent('app-toast', { detail: `组织已成功重命名为「${updated.name}」` }));
       window.dispatchEvent(new CustomEvent('app-data-refresh'));
@@ -207,21 +220,21 @@ export function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities =
       return false;
     }
   };
-  const deleteOrganization = async (node: any, cascade: boolean = false) => {
+  const deleteOrganization = async (node: OrgTreeNode, cascade: boolean = false) => {
     try {
       const url = `${API_BASE_URL}/api/v1/admin/orgs/${node.id}${cascade ? '?cascade=true' : ''}`;
       const response = await fetch(url, { method: 'DELETE', headers: apiHeaders() });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || `API ${response.status}`);
-      setOrgTrees((trees: any[]) => {
-        const remove = (current: any): any => {
+      setOrgTrees((trees: OrgTreeNode[]) => {
+        const remove = (current: OrgTreeNode): OrgTreeNode | null => {
           if (!current) return null;
           if (current.id === node.id) return null;
-          return { ...current, children: (current.children || []).map(remove).filter(Boolean) };
+          return { ...current, children: (current.children || []).map(remove).filter((node): node is OrgTreeNode => node !== null) };
         };
-        return trees.map(remove).filter(Boolean);
+        return trees.map(remove).filter((node): node is OrgTreeNode => node !== null);
       });
-      appStore.ORG_TREES = (appStore.ORG_TREES || []).filter((t: any) => t.id !== node.id);
+      appStore.ORG_TREES = (appStore.ORG_TREES || []).filter((t: OrgTreeNode) => t.id !== node.id);
       setDeleteModal(null);
       window.dispatchEvent(new CustomEvent('app-toast', { detail: `组织「${node.name}」已删除` }));
       window.dispatchEvent(new CustomEvent('app-data-refresh'));
@@ -231,11 +244,11 @@ export function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities =
       return false;
     }
   };
-  const updateOrg = (id: string, updater: any) => setOrgTrees(trees => {
-    const walk = (node: any): any => node?.id === id ? updater(node) : ({...node, children:(node.children||[]).map(walk)});
+  const updateOrg = (id: string, updater: (node: OrgTreeNode) => OrgTreeNode) => setOrgTrees(trees => {
+    const walk = (node: OrgTreeNode): OrgTreeNode => node?.id === id ? updater(node) : ({...node, children:(node.children||[]).map(walk)});
     return trees.map(walk);
   });
-  const activateKb = async (node: any) => {
+  const activateKb = async (node: OrgTreeNode) => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/admin/orgs/${node.id}/knowledge-base/activate`, {method:'POST',headers:{'Content-Type':'application/json',...apiHeaders()},body:JSON.stringify({})});
       const result = await response.json().catch(()=>({}));
@@ -246,7 +259,7 @@ export function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities =
       window.dispatchEvent(new CustomEvent('app-data-refresh'));
     } catch (error: unknown) { window.dispatchEvent(new CustomEvent('app-toast',{detail:errorMessage(error) || '激活失败'})); }
   };
-  const deactivateKb = async (node: any) => {
+  const deactivateKb = async (node: OrgTreeNode) => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/admin/orgs/${node.id}/knowledge-base/deactivate`, {method:'POST',headers:apiHeaders()});
       const result = await response.json().catch(()=>({}));
@@ -293,11 +306,11 @@ export function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities =
             expandedIds={expandedIds}
             onToggle={toggleNode}
             setExpandedIds={setExpandedIds}
-            onAddChild={(n: any)=>setAddModal(n)}
-            onSetAdmin={(n: any)=>setAdminModal(n)}
-            onRename={(n: any)=>setRenameModal(n)}
-            onEdit={(n: any)=>setEditModal(n)}
-            onDelete={(n: any)=>setDeleteModal(n)}
+            onAddChild={(n: OrgTreeNode)=>setAddModal(n)}
+            onSetAdmin={(n: OrgTreeNode)=>setAdminModal(n)}
+            onRename={(n: OrgTreeNode)=>setRenameModal(n)}
+            onEdit={(n: OrgTreeNode)=>setEditModal(n)}
+            onDelete={(n: OrgTreeNode)=>setDeleteModal(n)}
             onActivateKb={activateKb}
             onDeactivateKb={deactivateKb}
             onManageKb={onManageKb}
@@ -347,7 +360,7 @@ export function AdminScreen({onOpenGrant, onManageKb, initialTab, capabilities =
         {addModal && <AddOrgModal parent={addModal} orgOptions={orgOptions} canCreateRoot={canCreateRoot} onAdd={async (name, parentId, adminUserIds)=>{if (await addChildOrg(parentId, name, adminUserIds)) setAddModal(null);}} onClose={()=>setAddModal(null)}/>}
         {renameModal && <RenameOrgModal node={renameModal} onSave={(newName: string)=>renameOrganization(renameModal, newName)} onClose={()=>setRenameModal(null)}/>}
         {editModal && <EditOrgModal node={editModal} orgOptions={orgOptions} canCreateRoot={canCreateRoot} onSave={(name, parentId)=>updateOrganization(editModal, name, parentId)} onClose={()=>setEditModal(null)}/>}
-        {deleteModal && <DeleteOrgModal node={deleteModal} onDelete={(node: any, cascade: boolean)=>deleteOrganization(node, cascade)} onClose={()=>setDeleteModal(null)}/>}
+        {deleteModal && <DeleteOrgModal node={deleteModal} onDelete={(node: OrgTreeNode, cascade: boolean)=>deleteOrganization(node, cascade)} onClose={()=>setDeleteModal(null)}/>}
       </div>
     </div>
   );

@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { createHmac, createPublicKey, createVerify, randomBytes, timingSafeEqual } from 'node:crypto';
 import { getPrismaClient } from '../prisma';
+import { runAsAuth } from '../db/tenant-context.service';
 import { AuthService } from './auth.service';
 import { authSigningSecret } from './auth-secret';
 
@@ -270,12 +271,8 @@ export class OidcService {
     });
     const payload = (await response.json().catch(() => ({}))) as any;
     if (!response.ok || !payload.access_token) {
-      this.logger.error(`OIDC token exchange failed: ${JSON.stringify(payload)}`);
-      throw new UnauthorizedException(
-        `OIDC token exchange failed: ${String(
-          payload.error_description || payload.error || response.status,
-        )}`,
-      );
+      this.logger.error(`OIDC token exchange failed (HTTP ${response.status})`);
+      throw new UnauthorizedException('OIDC token exchange failed.');
     }
     return payload;
   }
@@ -418,14 +415,14 @@ export class OidcService {
    * user. Always leaves with a local session (or an mfa ticket).
    */
   async matchOrProvisionUser(identity: OidcIdentity): Promise<string> {
-    const bySub = await this.prisma.user.findUnique({ where: { oidcSub: identity.sub } });
+    const bySub = await runAsAuth((tx) => tx.user.findUnique({ where: { oidcSub: identity.sub } }));
     if (bySub) {
       if (bySub.status !== 'active') {
         throw new UnauthorizedException('User is inactive or does not exist.');
       }
       return bySub.id;
     }
-    const byEmail = await this.prisma.user.findUnique({ where: { email: identity.email } });
+    const byEmail = await runAsAuth((tx) => tx.user.findUnique({ where: { email: identity.email } }));
     if (byEmail) {
       if (byEmail.status !== 'active') {
         throw new UnauthorizedException('User is inactive or does not exist.');
@@ -440,15 +437,15 @@ export class OidcService {
           'This email has a local account. Please sign in with your existing credentials or contact an administrator to link SSO.',
         );
       }
-      await this.prisma.user.update({
+      await runAsAuth((tx) => tx.user.update({
         where: { id: byEmail.id },
         data: { oidcSub: identity.sub },
-      });
+      }));
       this.authService.invalidateUserStatus(byEmail.id);
       return byEmail.id;
     }
     const username = await this.uniqueUsername(identity.username);
-    const created = await this.prisma.user.create({
+    const created = await runAsAuth((tx) => tx.user.create({
       data: {
         username,
         displayName: identity.displayName || username,
@@ -459,7 +456,7 @@ export class OidcService {
         source: 'oidc',
         oidcSub: identity.sub,
       },
-    });
+    }));
     return created.id;
   }
 
@@ -471,7 +468,7 @@ export class OidcService {
         .slice(0, 40) || 'oidc_user';
     let candidate = base;
     for (let i = 0; i < 5; i += 1) {
-      const clash = await this.prisma.user.findUnique({ where: { username: candidate } });
+      const clash = await runAsAuth((tx) => tx.user.findUnique({ where: { username: candidate } }));
       if (!clash) return candidate;
       candidate = `${base}_${randomBytes(3).toString('hex')}`;
     }
@@ -491,10 +488,10 @@ export class OidcService {
     const tokenPayload = await this.exchangeCode(config, endpoints, code);
     const identity = await this.resolveIdentity(tokenPayload, statePayload.nonce);
     const userId = await this.matchOrProvisionUser(identity);
-    const user = await this.prisma.user.findUnique({
+    const user = await runAsAuth((tx) => tx.user.findUnique({
       where: { id: userId },
       include: { roles: { include: { role: true } }, orgs: { include: { orgNode: true } } },
-    });
+    }));
     if (!user) throw new UnauthorizedException('User is inactive or does not exist.');
     if (user.mfaEnabled) {
       const { mfaToken, expiresIn } = this.authService.issueMfaToken(user.id);

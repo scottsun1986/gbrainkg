@@ -1,3 +1,6 @@
+import { uploadRoot as resolveUploadRoot, resolveUploadPath } from '../storage/upload-paths';
+import { createReadStream } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
 import { withServiceContext } from '../db/tenant-context.service';
 import {
   BadRequestException,
@@ -140,7 +143,7 @@ const INDEX_READINESS_VALUES = new Set([
 export class KnowledgeBaseController {
   private readonly prisma = getPrismaClient();
   private readonly uploadRoot =
-    process.env.UPLOAD_ROOT || "/tmp/llmwiki/uploads";
+    resolveUploadRoot();
   /**
    * 文档列表每次渲染要对多达 50 个文档做文件系统 stat（最多 2 次/文档），
    * 解析期间前端还会 2 秒轮询一次。文件大小只随文档行变更（updatedAt/
@@ -457,9 +460,13 @@ export class KnowledgeBaseController {
               }
             : {}),
         };
+    const candidates = await this.prisma.document.findMany({ where: { kbId }, select: { id: true } });
+    const readableIds = await new DocumentAclService(this.permissionService).filterReadableDocuments(userId, candidates.map(item => item.id), { visibleKbIds: visibleIds });
+    const readableScope = { id: { in: [...readableIds] } };
+    const listWhere = { AND: [where, readableScope] };
     const [items, total, statusGroups] = await withServiceContext(this.prisma, async (db: any) => Promise.all([
       (db as any).document.findMany({
-        where,
+        where: listWhere,
         select: {
           id: true,
           kbId: true,
@@ -484,13 +491,13 @@ export class KnowledgeBaseController {
         // settles (many documents can share the same updatedAt timestamp).
         orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
       }),
-      (db as any).document.count({ where }),
+      (db as any).document.count({ where: listWhere }),
       // Whole-KB status breakdown. The management page used to derive these
       // counters from the fetched page, so with server-side pagination they
       // would only ever reflect the current page (e.g. 10).
       (db as any).document.groupBy({
         by: ["status"],
-        where: { kbId },
+        where: { kbId, ...readableScope },
         _count: { _all: true },
       }),
     ]));
@@ -518,6 +525,7 @@ export class KnowledgeBaseController {
     const itemsWithStats = await Promise.all(
       items.map(async (item: any) => ({
         ...item,
+        rawFileOid: undefined,
         sizeBytes: await this.resolveDocumentSize(item),
         uploadedBy: item.uploadedById
           ? uploaderById.get(item.uploadedById) || null
@@ -557,7 +565,7 @@ export class KnowledgeBaseController {
     });
     if (!document) throw new NotFoundException("Document not found.");
     const uploadRoot =
-      process.env.UPLOAD_ROOT || "/tmp/llmwiki/uploads";
+      resolveUploadRoot();
     const mdFile = join(
       uploadRoot,
       document.mdPath || `${document.id}/content.md`,
@@ -807,8 +815,7 @@ export class KnowledgeBaseController {
     });
     if (!document?.rawFileOid)
       throw new NotFoundException("Original file not found.");
-    const bytes = await readFile(document.rawFileOid).catch(() => null);
-    if (!bytes) throw new NotFoundException("Original file not found.");
+    await stat(resolveUploadPath(document.rawFileOid)).catch(() => { throw new NotFoundException("Original file not found."); });
     const filename = encodeURIComponent(document.title).replace(/'/g, "%27");
     response.setHeader("Content-Type", contentTypeFor(document.title));
     response.setHeader(
@@ -829,7 +836,7 @@ export class KnowledgeBaseController {
         "sandbox; default-src 'none'; style-src 'unsafe-inline'",
       );
     }
-    response.send(bytes);
+    await pipeline(createReadStream(resolveUploadPath(document.rawFileOid)), response);
   }
 
   @Get(":kbId/documents/:docId/pdf-preview")
@@ -857,8 +864,7 @@ export class KnowledgeBaseController {
 
     // 1. If it is already a PDF, return directly
     if (ext === ".pdf") {
-      const bytes = await readFile(document.rawFileOid).catch(() => null);
-      if (!bytes) throw new NotFoundException("Original file not found.");
+      await stat(resolveUploadPath(document.rawFileOid)).catch(() => { throw new NotFoundException("Original file not found."); });
       const filename = encodeURIComponent(document.title).replace(/'/g, "%27");
       response.setHeader("Content-Type", "application/pdf");
       response.setHeader(
@@ -867,19 +873,20 @@ export class KnowledgeBaseController {
       );
       response.setHeader("X-Content-Type-Options", "nosniff");
       response.setHeader("X-Frame-Options", "SAMEORIGIN");
-      return response.send(bytes);
+      await pipeline(createReadStream(resolveUploadPath(document.rawFileOid)), response);
+      return;
     }
 
     // 2. For Office formats (PPT, PPTX, etc.), check or generate cached PDF preview
-    const cacheDir = dirname(document.rawFileOid);
+    const cacheDir = dirname(resolveUploadPath(document.rawFileOid));
     const cachedPdf = join(
       cacheDir,
       `converted_preview_v${document.version || 1}.pdf`,
     );
 
-    let pdfBytes: Buffer | null = await readFile(cachedPdf).catch(() => null);
+    let pdfReady = await stat(cachedPdf).then(() => true).catch(() => false);
 
-    if (!pdfBytes) {
+    if (!pdfReady) {
       try {
         await convertOfficeToPdf(document.rawFileOid, cachedPdf);
       } catch (err: any) {
@@ -887,10 +894,10 @@ export class KnowledgeBaseController {
           `Document conversion to PDF failed: ${err.message || err}`,
         );
       }
-      pdfBytes = await readFile(cachedPdf).catch(() => null);
+      pdfReady = await stat(cachedPdf).then(() => true).catch(() => false);
     }
 
-    if (!pdfBytes) {
+    if (!pdfReady) {
       throw new NotFoundException("Failed to generate PDF preview.");
     }
 
@@ -907,7 +914,7 @@ export class KnowledgeBaseController {
       "Content-Security-Policy",
       "default-src 'self'; object-src 'self' blob: data:; frame-src 'self' blob: data:; frame-ancestors 'self';",
     );
-    return response.send(pdfBytes);
+    await pipeline(createReadStream(cachedPdf), response);
   }
 
   @Get(":kbId/documents/:docId/preview-file")
@@ -942,8 +949,7 @@ export class KnowledgeBaseController {
     });
     if (!document?.rawFileOid)
       throw new NotFoundException("Original file not found.");
-    const bytes = await readFile(document.rawFileOid).catch(() => null);
-    if (!bytes) throw new NotFoundException("Original file not found.");
+    await stat(resolveUploadPath(document.rawFileOid)).catch(() => { throw new NotFoundException("Original file not found."); });
     response.setHeader("Content-Type", contentTypeFor(document.title));
     response.setHeader(
       "Content-Disposition",
@@ -964,6 +970,6 @@ export class KnowledgeBaseController {
         "sandbox; default-src 'none'; style-src 'unsafe-inline'",
       );
     }
-    response.send(bytes);
+    await pipeline(createReadStream(resolveUploadPath(document.rawFileOid)), response);
   }
 }

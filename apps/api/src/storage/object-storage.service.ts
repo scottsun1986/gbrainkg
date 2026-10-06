@@ -1,3 +1,4 @@
+import { uploadRoot } from './upload-paths';
 import { Injectable, Logger } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream, promises as fsp } from 'node:fs';
@@ -38,9 +39,7 @@ export class ObjectStorageService {
   private readonly minio: MinioConfig | null;
 
   constructor() {
-    this.localRoot = resolve(
-      process.env.UPLOAD_ROOT || join(process.cwd(), 'uploads'),
-    );
+    this.localRoot = uploadRoot();
     const endpoint = process.env.MINIO_ENDPOINT || '';
     const accessKey = process.env.MINIO_ACCESS_KEY || '';
     const secretKey = process.env.MINIO_SECRET_KEY || '';

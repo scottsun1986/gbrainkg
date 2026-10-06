@@ -11,7 +11,16 @@ export interface TagPickerProps {
 export function TagPicker({ placeholder, items, selected, setSelected }: TagPickerProps) {
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
-  const filtered = items.filter((it) => !selected.find((s) => s.id === it.id) && ((it.name || '').includes(q) || (it.n || '').includes(q)));
+  // 命中主显示名、副信息（组织/人数）与关键字段（如登录用户名 kw）；管理员
+  // 选择器传 kw=用户名，避免只按显示名搜索时“输 admin 找不到账号”（OBS-4）。
+  const needle = q.trim().toLowerCase();
+  const haystack = (it: TagItem) =>
+    [it.n, it.name, it.sub, it.org, it.kw]
+      .map((v) => (typeof v === 'string' ? v.toLowerCase() : ''))
+      .join('\n');
+  const filtered = items.filter(
+    (it) => !selected.find((s) => s.id === it.id) && (!needle || haystack(it).includes(needle)),
+  );
   return (
     <div style={{ position: 'relative' }}>
       <div className="tag-input" onClick={() => setOpen(true)}>

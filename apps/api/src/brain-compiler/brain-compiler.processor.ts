@@ -12,6 +12,7 @@ import { BrainOutboxService } from "./brain-outbox.service";
 import { readCanonicalDocument } from "./canonical-document";
 import { getSharedBrainRepoAdapter } from "./brain-adapter.provider";
 import { ChunkEmbeddingService } from "../embedding/chunk-embedding.service";
+import { uploadRoot as resolveUploadRoot } from "../storage/upload-paths";
 
 // Cross-source parallelism: different knowledge bases own different GBrain
 // repositories, so their syncs are independent. Same-source syncs remain
@@ -24,8 +25,7 @@ export class BrainCompilerProcessor extends WorkerHost {
   private readonly logger = new Logger(BrainCompilerProcessor.name);
   private prisma = getPrismaClient();
   private gbrain: BrainRepoAdapter;
-  private readonly uploadRoot =
-    process.env.UPLOAD_ROOT || "/tmp/llmwiki/uploads";
+  private readonly uploadRoot = resolveUploadRoot();
 
   constructor(
     private readonly permissionService: PermissionService,
@@ -42,11 +42,11 @@ export class BrainCompilerProcessor extends WorkerHost {
     this.gbrain = gbrainAdapter ?? getSharedBrainRepoAdapter();
   }
 
-  async process(job: Job<any, any, string>): Promise<any> {
-    return runAsService("brain-compiler", () => this.processInternal(job), undefined);
+  async process(job: Job<any, any, string>, token?: string): Promise<any> {
+    return runAsService("brain-compiler", () => this.processInternal(job, token), undefined);
   }
 
-  private async processInternal(job: Job<any, any, string>): Promise<any> {
+  private async processInternal(job: Job<any, any, string>, token?: string): Promise<any> {
     const db: any = this.prisma;
 
     // 1. 权限与组织对账任务
@@ -156,12 +156,20 @@ export class BrainCompilerProcessor extends WorkerHost {
       });
       if (!event) return { status: "skipped", reason: "Event not found" };
       if (event.status === 'completed') return { status: 'skipped', reason: 'Event already completed' };
-      if (event.status === 'processing') return { status: 'skipped', reason: 'event already processing' };
-
-      await db.brainChangeEvent.update({
-        where: { id: eventId },
-        data: { status: "processing" },
+      if (job.id !== `outbox-event-${eventId}`) throw new Error('Outbox event must use its canonical BullMQ job identity');
+      const claimToken = token || job.token;
+      const assertLease = async () => {
+        if (!claimToken || await job.extendLock(claimToken, 30000) !== 1) throw new Error('Outbox worker no longer owns the BullMQ lease');
+      };
+      await assertLease();
+      const claimed = await db.brainChangeEvent.updateMany({
+        where: { id: eventId, OR: [
+          { status: { in: ['pending', 'failed'] } },
+          { status: 'processing', OR: [{ claimToken: null }, { claimToken: { not: claimToken } }] },
+        ] },
+        data: { status: 'processing', claimToken, claimedAt: new Date() },
       });
+      if (claimed.count !== 1) return { status: 'skipped', reason: 'event not claimable' };
 
       try {
         const start = Date.now();
@@ -219,10 +227,12 @@ export class BrainCompilerProcessor extends WorkerHost {
           }
         }
 
-        await db.brainChangeEvent.update({
-          where: { id: eventId },
-          data: { status: "completed", processedAt: new Date() },
+        await assertLease();
+        const completed = await db.brainChangeEvent.updateMany({
+          where: { id: eventId, status: 'processing', claimToken },
+          data: { status: 'completed', processedAt: new Date(), claimToken: null, claimedAt: null },
         });
+        if (completed.count !== 1) throw new Error('Outbox claim was superseded');
 
         await this.outboxService.logOperation("sync", {
           phase: "outbox_event",
@@ -234,10 +244,10 @@ export class BrainCompilerProcessor extends WorkerHost {
         return { status: "success", eventId };
       } catch (err: any) {
         this.logger.error(`Failed to process Outbox Event [${eventId}]: ${err.message}`);
-        await db.brainChangeEvent.update({
-          where: { id: eventId },
+        await db.brainChangeEvent.updateMany({
+          where: { id: eventId, status: 'processing', claimToken },
           data: {
-            status: "failed",
+            status: "failed", claimToken: null, claimedAt: null,
             errorMessage: err.message,
             retryCount: { increment: 1 },
           },

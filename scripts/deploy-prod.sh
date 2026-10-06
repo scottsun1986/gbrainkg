@@ -14,8 +14,18 @@
 #   bash scripts/deploy-prod.sh --rollback <timestamp> --target=inst1
 #   bash scripts/deploy-prod.sh --rollback=list --target=inst1
 #
+# 【当前生产拓扑（2026-10-06 起）】
+#   生产环境只有 **一个** 实例：inst1（域名 knowledge.5gsailor.com / 20080 端口）。
+#   原 inst2 已整体下线并删除（服务、llmwiki_inst2 与 gbrain_inst2 数据库、代码目录、
+#   nginx 站点配置、/data/llmwiki-inst2 数据目录），因此后续发布直接用：
+#       bash scripts/deploy-prod.sh --target=inst1
+#   多实例参数（inst2/instN/--target=all）保留在脚本中仅作为历史能力，**当前不需要**，
+#   也不要在没有新客户实例被正式 provision 之前再启用。
+#   若将来确实要扩容，必须先读 deploy/MULTI_INSTANCE_GUIDE.md，并按 AGENTS.md 的
+#   隔离要求为新实例准备独立数据库（llmwiki_instN 与 gbrain_instN）与独立 Redis DB。
+#
 # 发布门禁 (P0):
-#   默认先执行 `GATE_STRICT=1 bash scripts/ci.sh`，失败即中止发布。
+#   默认先执行 `offline + functional checks; full profile adds strict quality checks`，失败即中止发布。
 #   可用 --skip-gate 显式跳过（打印警告）。
 #
 # 发布前快照 / 回滚 (P0):
@@ -99,7 +109,7 @@ Rollback options:
 
 Release gate (default ON):
   Default quality-first: the enabled-feature functional gate must pass before any rsync.
-  --gate-profile=full additionally requires official IR, feedback and A/B gates. On gate failure
+  --gate=full (alias --gate-profile=full) additionally requires official IR, feedback and A/B gates. On gate failure
   the deploy aborts. --skip-gate bypasses it (explicit, warned).
 
 Pre-release snapshot (always, before rsync):
@@ -129,7 +139,7 @@ while [[ $# -gt 0 ]]; do
       usage
       exit 0
       ;;
-    --gate-profile=*)
+    --gate=*|--gate-profile=*)
       GATE_PROFILE="${1#*=}"
       [[ "$GATE_PROFILE" == full || "$GATE_PROFILE" == baseline || "$GATE_PROFILE" == quality-first ]] || { echo "Invalid gate profile" >&2; exit 1; }
       shift
@@ -198,15 +208,18 @@ log() { echo "[deploy-prod $(date '+%F %T')] $*"; }
 # ---- 0. 发布门禁 (release gate) ----
 run_release_gate() {
   if [[ "$SKIP_GATE" == true ]]; then
-    log "WARNING: --skip-gate specified: SKIPPING release gate (GATE_STRICT=1 bash scripts/ci.sh)."
+    log "WARNING: --skip-gate specified: SKIPPING release gate (offline + functional checks; full profile adds strict quality checks)."
     log "WARNING: Production deploy proceeds WITHOUT automated test verification."
     return 0
   fi
   local gate_script=scripts/ci.sh
   if [[ "$GATE_PROFILE" == baseline ]]; then gate_script=scripts/release-baseline-gate.sh; fi
   if [[ "$GATE_PROFILE" == quality-first ]]; then gate_script=scripts/release-quality-first-gate.sh; fi
-  log "[gate] Running release gate profile=$GATE_PROFILE: GATE_STRICT=1 bash $gate_script ..."
-  if ! (cd "$LOCAL_ROOT" && GATE_STRICT=1 bash "$gate_script"); then
+  local gate_strict="${GATE_STRICT:-0}"
+  [[ "$GATE_PROFILE" == full ]] && gate_strict=1
+  [[ "$gate_strict" == 1 ]] && gate_script=scripts/ci.sh
+  log "[gate] Running release gate profile=$GATE_PROFILE strict=$gate_strict: bash $gate_script ..."
+  if ! (cd "$LOCAL_ROOT" && GATE_STRICT="$gate_strict" bash "$gate_script"); then
     log "ERROR: Release gate FAILED. Aborting production deploy (no rsync, no restart)."
     log "       Fix the failing layers, or re-run with --skip-gate to bypass (not recommended)."
     exit 1
@@ -282,7 +295,7 @@ instance_retrieval_config_hash() {
 
 check_retrieval_config_consistency() {
   local -A seen=()
-  local inst hash first_inst first_hash
+  local inst hash first_inst="" first_hash=""
   for inst in "${INSTANCES[@]}"; do
     hash="$(instance_retrieval_config_hash "$inst")"
     log "[$inst] retrieval config fingerprint: ${hash:-<empty>}"
@@ -646,6 +659,18 @@ deploy_single_instance() {
     npx prisma migrate deploy
     # Reconcile the NOBYPASSRLS runtime role before restarting the API.
     bash \"$PROD_REPO/scripts/reconcile-runtime-db-role.sh\" '$ENV_FILE'
+    # Read-only invariants run after each migration and runtime-role reconciliation.
+    # Migrations are ALREADY applied at this point, so the service must be restarted
+    # even when these invariants fail: leaving the previous release running against a
+    # migrated schema is strictly worse than a failed release (it 401s every login,
+    # because the new RLS policies expect the new authentication context). Record the
+    # failure and fail the release after the restart instead of aborting here.
+    if bash \"$PROD_REPO/scripts/verify-runtime-rls.sh\" '$ENV_FILE'; then
+      rm -f '$PROD_REPO/.rls-verify-failed'
+    else
+      echo 'post-migration RLS invariants failed' > '$PROD_REPO/.rls-verify-failed'
+      echo 'WARNING: verifier failed; continuing so the new release is restarted onto the migrated schema.'
+    fi
 
     if [[ '$GATE_PROFILE' == quality-first ]]; then
       # Verify legacy source spans before strict versioned evidence is activated.
@@ -695,6 +720,15 @@ deploy_single_instance() {
     sleep 3
     systemctl is-active '$API_SERVICE' '$WEB_SERVICE'
   "
+
+  # The restart above put the new code onto the migrated schema. Only now is it safe
+  # to fail the release for a failed post-migration invariant check: aborting earlier
+  # would have left the previous release running against a migrated schema.
+  if ssh "$PROD_HOST" "test -f '$PROD_REPO/.rls-verify-failed'"; then
+    log "ERROR: [$INST_NAME] post-migration RLS verification FAILED (the service was still restarted so schema and code stay consistent)."
+    log "       Rollback: bash scripts/rollback-release.sh previous --target=$INST_NAME"
+    exit 1
+  fi
 
   # 3.5 健康巡检与 GBrain 状态校验
   # 失败时不自动回滚（避免误伤），只打印可直接执行的回滚命令并以非零退出。

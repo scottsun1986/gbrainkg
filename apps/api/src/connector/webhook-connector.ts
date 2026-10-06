@@ -1,3 +1,4 @@
+import { RedisService } from '../redis/redis.service';
 import {
   ConnectorChange,
   EnterpriseConnector,
@@ -25,10 +26,12 @@ const MAX_QUEUE_PER_SOURCE = 1000;
 export class WebhookConnector implements EnterpriseConnector {
   readonly kind = 'generic_webhook';
 
-  private readonly pending = new Map<string, WebhookPayload[]>();
+  constructor(private readonly redis: RedisService = new RedisService()) {}
+
+  async close(): Promise<void> { await this.redis.onModuleDestroy(); }
 
   /** 入队一条 webhook 载荷。 */
-  enqueue(sourceKey: string, payload: WebhookPayload): WebhookPayload {
+  enqueue(sourceKey: string, payload: WebhookPayload): Promise<WebhookPayload> {
     const key = String(sourceKey || '').trim();
     if (!key) throw new Error('webhook sourceKey is required');
     const externalId = String(payload?.externalId || '').trim();
@@ -41,20 +44,19 @@ export class WebhookConnector implements EnterpriseConnector {
     }
     if (payload.externalAcl && (!payload.externalAcl.revision || !Array.isArray(payload.externalAcl.subjects) || payload.externalAcl.subjects.length > 1000 || payload.externalAcl.subjects.some(subject => !subject?.id || !subject?.type))) throw new Error('Invalid external ACL manifest');
     const item = { externalId, title, content, ...(payload.externalRevision ? { externalRevision:payload.externalRevision } : {}), ...(payload.externalAcl ? { externalAcl:payload.externalAcl } : {}), ...(payload.deleted ? { deleted:true } : {}) };
-    const list = this.pending.get(key) || [];
-    if (list.length >= MAX_QUEUE_PER_SOURCE) {
-      // Evict oldest: the newest payloads are the ones a stalled sync most
-      //  needs to catch up on, and dropping the tail would silently lose the
-      //  latest external state.
-      list.shift();
-    }
-    list.push(item);
-    this.pending.set(key, list);
-    return item;
+    return this.redis.evalDurable(`
+      -- append-webhook
+      if redis.call('LLEN', KEYS[1]) >= tonumber(ARGV[2]) then return redis.error_reply('Webhook queue capacity exhausted') end
+      local sequence = redis.call('INCR', KEYS[2])
+      local item = cjson.decode(ARGV[1])
+      item.sequence = sequence
+      redis.call('RPUSH', KEYS[1], cjson.encode(item))
+      return sequence
+    `, [`webhook:${key}:pending`, `webhook:${key}:sequence`], [JSON.stringify(item), String(MAX_QUEUE_PER_SOURCE)]).then(() => item);
   }
 
-  queueSize(sourceKey: string): number {
-    return (this.pending.get(String(sourceKey || '')) || []).length;
+  async queueSize(sourceKey: string): Promise<number> {
+    return this.redis.evalDurable("return redis.call('LLEN', KEYS[1])", [`webhook:${sourceKey}:pending`]);
   }
 
   async testConnection(_config: Record<string, unknown>): Promise<void> {
@@ -68,22 +70,28 @@ export class WebhookConnector implements EnterpriseConnector {
   ): Promise<FetchChangesResult> {
     const key = String(config.sourceKey ?? config.sourceId ?? '').trim();
     if (!key) throw new Error('webhook config requires sourceKey');
-    const items = this.pending.get(key) || [];
-    if (!items.length) {
-      return { changes: [], nextCursor: cursor };
-    }
-    // 一次性出队 → 同一 cursor 再拉不会重复得到这批（幂等）
-    this.pending.set(key, []);
-    const changes: ConnectorChange[] = items.map((item) => ({
-      externalId: item.externalId,
-      title: item.title,
-      content: item.content, externalRevision:item.externalRevision, externalAcl:item.externalAcl, deleted:item.deleted,
-      metadata: { via: 'generic_webhook' },
+    // Cursor is persisted only after every change is queued durably. A failed
+    // batch keeps its payloads; the next fetch retries the same sequence range.
+    const raw: string[] = await this.redis.evalDurable(`
+      -- fetch-webhook
+      local checkpoint = tonumber(ARGV[1]) or 0
+      while true do
+        local head = redis.call('LINDEX', KEYS[1], 0)
+        if not head or cjson.decode(head).sequence > checkpoint then break end
+        redis.call('LPOP', KEYS[1])
+      end
+      return redis.call('LRANGE', KEYS[1], 0, 999)
+    `, [`webhook:${key}:pending`], [cursor || '0']);
+    const items = raw.map(value => JSON.parse(value) as WebhookPayload & { sequence: number });
+    const changes: ConnectorChange[] = items.map(item => ({
+      externalId: item.externalId, title: item.title, content: item.content,
+      externalRevision: item.externalRevision, externalAcl: item.externalAcl,
+      deleted: item.deleted, metadata: { via: 'generic_webhook' },
     }));
-    const batchId = `${Date.now()}-${changes.length}`;
-    return { changes, nextCursor: batchId };
+    return { changes, nextCursor: items.length ? String(items[items.length - 1].sequence) : cursor };
+
   }
 }
 
-/** 进程内共享实例：webhook 入队与 sync 出队必须命中同一队列。 */
+/** Redis DB follows instance isolation; API processes share durable queue state. */
 export const webhookConnector = new WebhookConnector();

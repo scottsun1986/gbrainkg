@@ -6,6 +6,7 @@ import { EmbeddingService } from './embedding.service';
 import { indexableChunkText } from '../ingestion/chunk-text';
 import { formatVectorValues, withServiceContext } from '../db/tenant-context.service';
 import { embeddingFingerprint, hybridFingerprint, reusableEmbeddingIdentity } from './model-fingerprint';
+import { positiveNumber } from '../config-numbers';
 
 export interface EmbedDocumentChunksResult {
   requested: number;
@@ -26,8 +27,10 @@ export interface EmbedDocumentChunksResult {
 export class ChunkEmbeddingService {
   private readonly logger = new Logger(ChunkEmbeddingService.name);
   private readonly prisma = getPrismaClient();
-  private readonly writeBatchSize = Math.max(1, Number(process.env.CHUNK_EMBEDDING_WRITE_BATCH || 64));
-  private readonly readBatchSize = Math.max(1, Number(process.env.CHUNK_EMBEDDING_READ_BATCH || 64));
+  // A misspelled value must not become NaN: `Math.max(1, Number('8x'))` is NaN,
+  // which reaches the SQL as `LIMIT NaN` and fails the whole pass.
+  private readonly writeBatchSize = positiveNumber(process.env.CHUNK_EMBEDDING_WRITE_BATCH, 64);
+  private readonly readBatchSize = positiveNumber(process.env.CHUNK_EMBEDDING_READ_BATCH, 64);
 
   constructor(private readonly embeddingService: EmbeddingService) {}
 
@@ -123,19 +126,20 @@ export class ChunkEmbeddingService {
     if (!this.embeddingService.isHybridEnabled?.()) return { requested: 0, indexed: 0 };
     const config = await this.embeddingService.getConfig?.();
     const fingerprint = config ? hybridFingerprint(config) : null;
-    const rows: any = await withServiceContext(this.prisma, (tx) =>
-      tx.$queryRaw<Array<{ id: string; content: string; ord: number }>>`
-      SELECT c.id, c.content, c.ord
-      FROM "Chunk" c
-      WHERE c."documentId" = ${documentId}::uuid
-        AND (c.hybrid_indexed = false OR c.hybrid_fingerprint IS DISTINCT FROM ${fingerprint})
-      ORDER BY c.ord ASC
-    `);
-    if (!rows.length) return { requested: 0, indexed: 0 };
-
     let indexed = 0;
-    for (let start = 0; start < rows.length; start += this.readBatchSize) {
-      const slice = rows.slice(start, start + this.readBatchSize);
+    let requested = 0;
+    let lastOrd = -1;
+    while (true) {
+      const slice = await withServiceContext(this.prisma, (tx) =>
+        tx.$queryRaw<Array<{ id: string; content: string; ord: number }>>`
+          SELECT c.id, c.content, c.ord FROM "Chunk" c
+          WHERE c."documentId" = ${documentId}::uuid AND c.ord > ${lastOrd}
+            AND (c.hybrid_indexed = false OR c.hybrid_fingerprint IS DISTINCT FROM ${fingerprint})
+          ORDER BY c.ord ASC LIMIT ${this.readBatchSize}
+        `);
+      if (!slice.length) break;
+      requested += slice.length;
+      lastOrd = slice[slice.length - 1].ord;
       const representations = await this.embeddingService.embedHybrid(
         slice.map((row: any) => indexableChunkText(row.content)),
         'document',
@@ -206,7 +210,7 @@ export class ChunkEmbeddingService {
         }
       }
     }
-    return { requested: rows.length, indexed };
+    return { requested, indexed };
   }
 
   /**

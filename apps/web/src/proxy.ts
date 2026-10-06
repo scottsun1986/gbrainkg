@@ -1,22 +1,7 @@
 import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
 
-export function proxy(request: NextRequest) {
-  const token = request.cookies.get('llmwiki_token')?.value || 
-                request.headers.get('authorization')?.replace('Bearer ', '');
-  
-  const isLoginPage = request.nextUrl.pathname === '/login';
-  const isPublicPath = request.nextUrl.pathname.startsWith('/api/') || 
-                       request.nextUrl.pathname.startsWith('/_next/');
-  
-  if (isPublicPath) return NextResponse.next();
-  
-  // Don't redirect if already on login-ish path or if token exists
-  if (!token && !isLoginPage) {
-    // The SPA handles its own auth, so just let it through
-    // This is a soft guard; the real auth is in the API
-  }
-  
+export function proxy() {
+  // Authentication lives in AppShell and the API; fragment SSO must reach the SPA.
   // Add security headers
   const response = NextResponse.next();
   response.headers.set('X-Content-Type-Options', 'nosniff');

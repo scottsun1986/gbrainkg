@@ -1,4 +1,5 @@
 import { Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { runAsService } from '../db/service-principal';
 import { getPrismaClient } from '../prisma';
 import { authorizationEnforced } from '../permission/authorization-revision';
 import { validateEvidenceDependencies } from '../permission/evidence-dependencies';
@@ -51,7 +52,7 @@ export class ChatRunService implements OnModuleInit, OnModuleDestroy {
   async start(conversationId: string, userId: string): Promise<ChatRunView> {
     const controller = new AbortController();
     const run = await this.prisma.chatRun.create({
-      data: { conversationId, userId, status: 'running', stage: 'queued' },
+      data: { conversationId, userId, status: 'running', stage: 'queued', leaseExpiresAt: new Date(Date.now() + this.leaseMs()) },
       select: { id: true, conversationId: true },
     });
     this.controllers.set(run.id, controller);
@@ -80,11 +81,19 @@ export class ChatRunService implements OnModuleInit, OnModuleDestroy {
    * Polling is the only liveness signal available, so the lease is renewed here
    * and expires `CHAT_RUN_LEASE_MS` after the last poll.
    */
+  private leaseMs(): number {
+    const value = Number(process.env.CHAT_RUN_LEASE_MS ?? 300000);
+    return Number.isFinite(value) && value > 0 ? value : 300000;
+  }
+
   touch(runId: string): void {
+    void this.prisma.chatRun.updateMany({ where: { id: runId, status: 'running' },
+      data: { leaseExpiresAt: new Date(Date.now() + this.leaseMs()) },
+    }).catch(error => this.logger.warn(`Chat lease renewal failed: ${String(error)}`));
     const entry = this.controllers.get(runId);
     if (!entry) return;
     this.clearLease(runId);
-    const leaseMs = Number(process.env.CHAT_RUN_LEASE_MS || 5 * 60 * 1000);
+    const leaseMs = this.leaseMs();
     if (!(leaseMs > 0)) return;
     const timer = setTimeout(() => {
       this.leases.delete(runId);
@@ -233,15 +242,15 @@ export class ChatRunService implements OnModuleInit, OnModuleDestroy {
    * kill between the two would otherwise wait for the next restart).
    */
   onModuleInit() {
-    void this.reapStaleRuns().catch((error) => {
+    void runAsService('chat-run-reaper', () => this.reapStaleRuns()).catch((error) => {
       this.logger.warn(`stale chat run cleanup failed at startup: ${(error as Error).message}`);
     });
     const intervalMs = Number(process.env.CHAT_RUN_REAP_INTERVAL_MS || 15 * 60 * 1000);
     if (intervalMs > 0) {
       this.reapTimer = setInterval(() => {
-        void this.reapStaleRuns().catch(() => { /* retried next tick */ });
+        void runAsService('chat-run-reaper', () => this.reapStaleRuns()).catch(() => { /* retried next tick */ });
         // Same sweep clears out rows past the retention window.
-        void this.pruneOldRuns().catch(() => { /* retried next tick */ });
+        void runAsService('chat-run-pruner', () => this.pruneOldRuns()).catch(() => { /* retried next tick */ });
       }, intervalMs);
       this.reapTimer.unref?.();
     }
@@ -276,7 +285,9 @@ export class ChatRunService implements OnModuleInit, OnModuleDestroy {
   async reapStaleRuns(olderThanMs = Number(process.env.CHAT_RUN_STALE_MS || 10 * 60 * 1000)): Promise<number> {
     const cutoff = new Date(Date.now() - olderThanMs);
     const result = await this.prisma.chatRun.updateMany({
-      where: { status: 'running', startedAt: { lt: cutoff } },
+      where: { status: 'running', startedAt: { lt: cutoff }, id: { notIn: [...this.controllers.keys()] },
+        OR: [{ leaseExpiresAt: null }, { leaseExpiresAt: { lt: new Date() } }],
+      },
       data: { status: 'failed', errorMessage: '服务重启导致回答中断，请重新提问。', completedAt: new Date() },
     });
     return result.count;

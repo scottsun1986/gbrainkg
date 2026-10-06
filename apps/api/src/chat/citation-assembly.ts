@@ -534,7 +534,8 @@ export class CitationAssemblyService {
     // Rollout: guarantees exist only with RETRIEVAL_SOFT_FLOOR_ENABLED (P1-5).
     const minViableRelevance = Math.max(0.01, Number(process.env.RETRIEVAL_MIN_VIABLE_RELEVANCE || 0.10));
     const guaranteeDefault = hasSubQueries ? 0 : softFloorEnabled ? 6 : 0;
-    const defaultMinGroups = Math.max(0, Number(process.env.RETRIEVAL_MIN_FLOOR_GROUPS !== undefined ? process.env.RETRIEVAL_MIN_FLOOR_GROUPS : guaranteeDefault));
+    const configuredMinGroups = Number(process.env.RETRIEVAL_MIN_FLOOR_GROUPS ?? guaranteeDefault);
+    const defaultMinGroups = softFloorEnabled && Number.isFinite(configuredMinGroups) ? Math.max(0, configuredMinGroups) : 0;
     const minGuaranteedGroups = Math.max(0, defaultMinGroups);
     const viabilityOf = (g: (typeof allEntries)[number]) =>
       hasMeasured ? (g.measuredBest ?? -Infinity) : g.best;
@@ -697,9 +698,16 @@ export class CitationAssemblyService {
         // + 0.10 ≈ 0.49) outscore a 0.50-score same-document text chunk (≈0.36
         // before its redundancy penalty). Fixed bonuses do not scale with
         // relevance, so every loosening of the floor amplified noise straight
-        // into the context. Boosts now scale the relevance term itself.
-        const boostFactor = 1 + (isNovelDoc ? 0.15 : 0) + concreteBoost + tableBoost;
-        const value = lambda * g.best * boostFactor - (1 - lambda) * redundancy;
+        // into the context. Boosts now scale the relevance term itself —
+        // EXCEPT a small additive term for novel documents: purely
+        // multiplicative boosts demote mid-score cross-document evidence so
+        // hard that a qualifying sibling policy loses its slot to same-document
+        // bulk (P3-02 regression, V2 died at mmr_budget). +0.06 restores the
+        // cross-document push (0.5-score novel group ≈ 0.53 beats a 0.62
+        // same-doc group ≈ 0.45) while a 0.12-score noise chunk (≈0.18) still
+        // loses to everything relevant.
+        const boostFactor = 1 + concreteBoost + tableBoost + (isNovelDoc ? 0.15 : 0);
+        const value = lambda * g.best * boostFactor - (1 - lambda) * redundancy + (isNovelDoc ? 0.06 : 0);
         if (value > pickVal) { pickVal = value; pickIdx = i; }
       }
       if (pickIdx < 0) {
@@ -920,10 +928,12 @@ export class CitationAssemblyService {
     // at least RETRIEVAL_MULTISOURCE_COVERAGE_RATIO of the best group AND
     // discusses the same topic as already-selected evidence (character-bigram
     // affinity, corpus-agnostic — never a business rule), keep at least its
-    // best member. Gated behind RETRIEVAL_SOFT_FLOOR_ENABLED like the rest of
-    // the loosened set; 0 disables.
+    // best member. NOT gated behind the soft-floor flag: this is a recall
+    // correctness protection, not a loosened parameter set (the P3-02 gate
+    // failure showed the flag-off path losing a qualifying sibling document);
+    // set the ratio to 0 to disable.
     let multiSourceAdded = 0;
-    const multiSourceRatio = Math.max(0, Math.min(1, Number(process.env.RETRIEVAL_MULTISOURCE_COVERAGE_RATIO ?? (softFloorEnabled ? 0.35 : 0))));
+    const multiSourceRatio = Math.max(0, Math.min(1, Number(process.env.RETRIEVAL_MULTISOURCE_COVERAGE_RATIO ?? 0.35)));
     if (multiSourceRatio > 0 && selected.length) {
       const bigramsOf = (text: string): Set<string> => {
         const compact = String(text || '').replace(/\s+/g, '');
@@ -949,7 +959,11 @@ export class CitationAssemblyService {
           const representative = g.bestMember || g.members[0];
           if (!representative) continue;
           const tokens = costOf(representative);
-          if (usedTokens + tokens > opts.tokenBudget) continue;
+          // Same 20% over-budget allowance as the sub-query quota below: the
+          // coverage representative is ONE member, and refusing it at exactly
+          // 100% of the budget is how a qualifying sibling policy lost its
+          // only slot to same-document bulk (P3-02).
+          if (usedTokens + tokens > opts.tokenBudget * 1.2) continue;
           selected.push(representative);
           markReason(representative, 'multi_source');
           selectedSets.push({ tokens: tokenize(g.repText), docId, isSummary: g.isSummary });
@@ -1013,7 +1027,8 @@ export class CitationAssemblyService {
         // so the floor silently degrades to a ratio over normalised synthetic
         // scores. Making the mode explicit in the trace keeps that degradation
         // observable instead of discoverable only by reading the code.
-        floorMode: hasCalibrated ? 'calibrated' : 'relative',
+        floorMode: hasCalibrated ? 'calibrated' : getRequestContext()?.execution?.adaptive ? 'uncalibrated' : 'relative',
+        calibrationAvailable: hasCalibrated,
         guaranteedGroups: guaranteedKeys.size,
         measuredGroups: hasMeasured ? allEntries.filter((g) => g.measuredBest != null).length : undefined,
         syntheticFilled: hasMeasured ? syntheticFilled : undefined,

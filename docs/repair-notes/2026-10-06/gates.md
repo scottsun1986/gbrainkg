@@ -1,0 +1,28 @@
+# Release/test infrastructure reconciliation
+
+Development agent made code changes only; no tests/lint/build/deploy executed. Verification must run with Luna. Scope scripts (excluding reconcile-runtime-db-role.sh), workflows, tests/evaluation + functional, package selftest wiring, historical review notice.
+
+- C05/TI04: keep default quality-first functional release, strict defaults 0 per user. Add API/Web typecheck, lint, unit checks plus Prisma generate ahead of fingerprint. Parser/adapter/offline benchmark checks always run. Fingerprint now reuses only expensive live scenarios, includes strict/E2E settings and hashed principal token. --gate=full alias/--gate-profile=full or explicit GATE_STRICT=1 selects full CI and strict live checks. Removed duplicate run-core --unit which reran every unit layer; core integration remains.
+- M23/TI05/TI06/M84: new independent read-only verify-runtime-rls.sql checks named public tables exist, FORCE + enabled + policy, including ChatRun/AuthorizationState/ModelQuotaBucket and newly secured tables. Runtime verifier authenticates actual DATABASE_URL_APP and refuses BYPASS/superuser/membership escalation, checks fail-closed and service document count against migrator. Wired after migration + role reconcile in deploy-prod.sh, without executing production. rls-inspect returns nonzero on invariant violation and ON_ERROR_STOP is set. Named checks never accept a same-named table in another schema. Concurrent content mutation between the two count snapshots may cause safe fail/retry rather than falsely passing.
+- M59/TI07: independent runtime scoped-read comparison replaces discarded count; empty corpus explicitly records limited positive-read coverage instead of claiming deny-all behavior tested. Isolated seeded fixture run remains needed.
+- M60/TI08: new test-legacy-rls-security.sql wrapper has ON_ERROR_STOP, BEGIN and ROLLBACK around historical security asset. Run only isolated DB as fixture test; never production. Historical migrations/verify/security files untouched.
+- M55/M56/TI09: JSON threshold defaults now shared by Bash and direct TS entrypoint. Numeric invalid/out-of-range configs fail. No numeric threshold copies in workflows. Added selftest compares concrete shell/TS defaults, override preservation and malformed config rejection.
+- M57: side gates return skip=2, strict missing prerequisite=1; runner runtime/API failures always nonzero. Successful nonstrict report clearly says quality was not required. A/B runner formerly swallowed failures internally too; fixed root catch/login/fetch and no-samples distinct skip. Feedback no cases returns2 outside strict.
+- M58: requested ci-gate live layers invoke full SOTA script (public retrieval/end-to-end, no-answer rate and historical probe floors), then filtered ANN. Ordinary ci.sh does not initiate these paid live layers; requires GATE_STRICT=1 or CHECK_INTL=1. Skipped layers reported as skipped; no ALL LAYERS PASSED claim when absent.
+- TI02/TI03/TI10: removed duplicate broken automatic Quality Gate job chain. Quality Gate is now explicit workflow_dispatch on llmwiki-test runner and test environment, running unified strict CI including standard parser/adapter setup. Credentials validated in step env (no unsupported secrets reference in job condition). Test-specific secret names, no automatic production write-E2E. Scripts reject known production endpoints before evaluation; existing offline CI defaults GATE_STRICT0.
+- TI11 already fixed by parser owner with pytest.ini pythonpath; preserved.
+- TI12: evaluation CI now runs complete benchmark:selftest including SOTA results, 3 quality selftests, ANN selftest, shared threshold selftest and functional SSE regression. Node/pnpm dependencies installed.
+- TI01: historical e2e-web/enterprise sources cannot be restored from git; bytecode is not evidence of runnable source tests. No synthetic rebuilding or historical-pass claim. New regression tests are explicitly new assets with narrower scope.
+- M82: not a Prisma bug. migrate deploy records applied migrations and does not rerun index migration; IF NOT EXISTS is not obligatory for immutable one-time migration. Do not edit previously deployed SQL.
+- M83: false premise. Prisma identifies full directory name, both same-prefix migration names are distinguishable. Do not rename existing migrations.
+- Functional asset: KB004 expects current 400 reject behavior for >120-character names; fix KB003 actual fixture length to120; remove503 as success, remove unconditional `or True` injection assertion; SSE recognizes replace/error and rejects empty done as success. TLS certificate verification restored; no default predictable test password. Added offline mocked-SSE tests.
+- Historical retrieval-low-score review gets current-state notice, preserving original text. Existing user glmflash reports untouched.
+
+Suggested focused proof: bash -n scripts/{ci,deploy-prod,release-functional-gate,ab-gate,feedback-gate,verify-runtime-rls,rls-inspect}.sh tests/evaluation/{gate-thresholds,ci-gate}.sh; benchmark:selftest; mock shell runner failure/skip semantics; isolated migrated PostgreSQL runtime verifier + rollback legacy/new security fixtures; syntax validation both workflows. Do not run strict paid benchmarks unless user explicitly requests them; report as not executed this round.
+
+## 本轮复验跟进
+
+- 已将开发记录持久保存到本文件，不依赖 `/tmp` 作为最终归档。
+- 阶段 2 的 `benchmark:selftest` 在 SOTA 临时仓库 fixture 失败：测试仅复制旧 Bash 阈值文件，遗漏新增 JSON 真源，导致门禁启动前退出并产生 0 次运行。
+- 修改 `test_sota_gate_results.py`，将 Bash 加载器和 JSON 真源一起复制到临时仓库。保留三种执行情形的原成功/失败断言及三份新运行产物断言，不放宽测试。
+- 本次跟进未运行测试。须由 Luna 重跑 `benchmark:selftest` 与脚本语法检查；严格在线质量评测仍未执行。

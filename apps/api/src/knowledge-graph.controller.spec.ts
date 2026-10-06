@@ -4,6 +4,8 @@ import { ForbiddenException } from '@nestjs/common';
 const mockFindMany = jest.fn().mockResolvedValue([]);
 const mockAggregate = jest.fn().mockResolvedValue({ _count: 0, _max: { updatedAt: null } });
 const mockGetLinks = jest.fn();
+const mockReadable = jest.fn(async (_user: string, ids: string[]) => new Set(ids));
+jest.mock('./permission/authorization-revision', () => ({ readAuthorizationSnapshot: jest.fn().mockResolvedValue({ revision: 'test', expiresAt: Infinity }), assertAuthorizationSnapshot: jest.fn().mockResolvedValue(undefined) }));
 jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => ({ document: { findMany: mockFindMany, aggregate: mockAggregate } })) }));
 jest.mock('@llmwiki/gbrain-adapter', () => ({ BrainRepoAdapter: jest.fn(() => ({ getLinks: mockGetLinks })) }));
 
@@ -21,7 +23,7 @@ describe('graph rebuild authorization', () => {
       kb: { id: 'managed', name: 'Library', type: 'organization' }, chunks: [],
     }]);
     mockGetLinks.mockResolvedValueOnce([{ to: 'docs/deleted', title: 'PRIVATE_OLD_TITLE', context: 'PRIVATE_OLD_SNIPPET' }]);
-    const controller = new KnowledgeGraphController(auth as any, permission as any, graph as any);
+    const controller = new KnowledgeGraphController(auth as any, permission as any, graph as any, undefined, undefined, { filterReadableDocuments: mockReadable } as any);
     const result = await controller.getGraph({});
     expect(mockFindMany).toHaveBeenLastCalledWith(expect.objectContaining({ where: { kbId: { in: ['read-only', 'managed'] }, status: 'published' } }));
     expect(JSON.stringify(result)).not.toContain('PRIVATE_OLD');
@@ -29,13 +31,13 @@ describe('graph rebuild authorization', () => {
     expect(graph.buildCommunitiesForKb).not.toHaveBeenCalled();
   });
   it('rejects a visible but read-only library without database work', async () => {
-    const controller = new KnowledgeGraphController(auth as any, permission as any, graph as any);
+    const controller = new KnowledgeGraphController(auth as any, permission as any, graph as any, undefined, undefined, { filterReadableDocuments: mockReadable } as any);
     await expect(controller.reindexGraph({}, 'read-only')).rejects.toBeInstanceOf(ForbiddenException);
     expect(mockFindMany).not.toHaveBeenCalled();
     expect(graph.buildCommunitiesForKb).not.toHaveBeenCalled();
   });
   it('bulk rebuild includes only manageable libraries', async () => {
-    const controller = new KnowledgeGraphController(auth as any, permission as any, graph as any);
+    const controller = new KnowledgeGraphController(auth as any, permission as any, graph as any, undefined, undefined, { filterReadableDocuments: mockReadable } as any);
     const result = await controller.reindexGraph({});
     expect(result.kbs).toEqual(['managed']);
     expect(mockFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { kbId: { in: ['managed'] }, status: 'published' } }));
@@ -44,7 +46,7 @@ describe('graph rebuild authorization', () => {
   });
 
   it('serves repeat views from the content-aware cache without rescanning', async () => {
-    const controller = new KnowledgeGraphController(auth as any, permission as any, graph as any);
+    const controller = new KnowledgeGraphController(auth as any, permission as any, graph as any, undefined, undefined, { filterReadableDocuments: mockReadable } as any);
     const first = await controller.getGraph({});
     const scansAfterFirst = mockFindMany.mock.calls.length;
     expect(first.cached).toBeUndefined();
@@ -52,4 +54,18 @@ describe('graph rebuild authorization', () => {
     expect(second.cached).toBe(true);
     expect(mockFindMany.mock.calls.length).toBe(scansAfterFirst);
   });
+  it('rejects an authorization change while upstream link discovery is awaiting', async () => {
+    mockFindMany.mockResolvedValueOnce([{
+      id: 'doc-1', kbId: 'managed', aclMode: 'inherit', title: 'Current', updatedAt: new Date(),
+      kb: { id: 'managed', name: 'Library', type: 'organization' }, chunks: [],
+    }]);
+    mockGetLinks.mockImplementationOnce(async () => {
+      const { assertAuthorizationSnapshot } = await import('./permission/authorization-revision');
+      (assertAuthorizationSnapshot as jest.Mock).mockRejectedValueOnce(new ForbiddenException('Authorization changed'));
+      return [];
+    });
+    const controller = new KnowledgeGraphController(auth as any, permission as any, graph as any, undefined, undefined, { filterReadableDocuments: mockReadable } as any);
+    await expect(controller.getGraph({})).rejects.toThrow('Authorization changed');
+  });
+
 });

@@ -4,12 +4,13 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { getPrismaClient } from '../prisma';
+import { runAsAuth } from '../db/tenant-context.service';
 import { AuthService } from './auth.service';
 import {
   base32Decode,
   buildOtpauthUri,
   generateTotpSecret,
-  verifyTotp,
+  matchTotpCounter,
 } from './totp';
 
 export interface MfaSetupResult {
@@ -53,10 +54,10 @@ export class MfaService {
   }
 
   async getMfaStatus(userId: string): Promise<{ mfaEnabled: boolean }> {
-    const user = await this.prisma.user.findUnique({
+    const user = await runAsAuth((tx) => tx.user.findUnique({
       where: { id: userId },
       select: { mfaEnabled: true },
-    });
+    }));
     return { mfaEnabled: Boolean(user?.mfaEnabled) };
   }
 
@@ -82,7 +83,7 @@ export class MfaService {
     });
     const updated = await this.prisma.user.updateMany({
       where: { id: userId, status: 'active', mfaEnabled: false },
-      data: { mfaSecret: base32, mfaEnabled: false, mfaEnabledAt: null },
+      data: { mfaSecret: base32, mfaEnabled: false, mfaEnabledAt: null, mfaLastCounter: null },
     });
     if (updated.count !== 1) throw new BadRequestException('MFA state changed. Restart enrolment.');
     this.authService.invalidateUserStatus(userId);
@@ -120,12 +121,13 @@ export class MfaService {
     if (!user.mfaSecret) {
       throw new BadRequestException('MFA setup has not been started. Call /auth/mfa/setup first.');
     }
-    if (!verifyTotp(base32Decode(user.mfaSecret), code)) {
+    const counter = matchTotpCounter(base32Decode(user.mfaSecret), code);
+    if (counter === null) {
       throw new UnauthorizedException('Invalid TOTP code.');
     }
     const updated = await this.prisma.user.updateMany({
       where: { id: userId, status: 'active', mfaEnabled: false, mfaSecret: user.mfaSecret },
-      data: { mfaEnabled: true, mfaEnabledAt: new Date() },
+      data: { mfaEnabled: true, mfaEnabledAt: new Date(), mfaLastCounter: counter },
     });
     if (updated.count !== 1) throw new BadRequestException('MFA state changed. Restart enrolment.');
     this.authService.invalidateUserStatus(userId);
@@ -148,18 +150,17 @@ export class MfaService {
     const passwordOk = Boolean(
       password && user.passwordHash && this.authService.verifyPassword(password, user.passwordHash),
     );
-    const codeOk = Boolean(
-      code && user.mfaSecret && verifyTotp(base32Decode(user.mfaSecret), code),
-    );
-    if (!passwordOk && !codeOk) {
-      throw new UnauthorizedException(
-        'A valid password or TOTP code is required to disable MFA.',
-      );
+    const counter = code && user.mfaSecret ? matchTotpCounter(base32Decode(user.mfaSecret), code) : null;
+    if (!passwordOk && counter === null) {
+      throw new UnauthorizedException('A valid password or TOTP code is required to disable MFA.');
     }
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { mfaSecret: null, mfaEnabled: false, mfaEnabledAt: null },
+    const updated = await this.prisma.user.updateMany({
+      where: { id: userId, mfaEnabled: true, mfaSecret: user.mfaSecret,
+        ...(!passwordOk ? { OR: [{ mfaLastCounter: null }, { mfaLastCounter: { lt: counter! } }] } : {}),
+      },
+      data: { mfaSecret: null, mfaEnabled: false, mfaEnabledAt: null, mfaLastCounter: null },
     });
+    if (updated.count !== 1) throw new UnauthorizedException('MFA state changed or TOTP code was already used.');
     this.authService.invalidateUserStatus(userId);
     return { ok: true, mfaEnabled: false };
   }
@@ -174,9 +175,17 @@ export class MfaService {
     if (!user || user.status !== 'active' || !user.mfaEnabled || !user.mfaSecret) {
       throw new UnauthorizedException('MFA is not available for this account.');
     }
-    if (!verifyTotp(base32Decode(user.mfaSecret), code)) {
+    const counter = matchTotpCounter(base32Decode(user.mfaSecret), code);
+    if (counter === null) {
       throw new UnauthorizedException('Invalid TOTP code.');
     }
+    const consumed = await this.prisma.user.updateMany({
+      where: { id: userId, status: 'active', mfaEnabled: true, mfaSecret: user.mfaSecret,
+        OR: [{ mfaLastCounter: null }, { mfaLastCounter: { lt: counter } }],
+      },
+      data: { mfaLastCounter: counter },
+    });
+    if (consumed.count !== 1) throw new UnauthorizedException('TOTP code was already used or MFA state changed.');
     return this.authService.completeLogin(userId);
   }
 }

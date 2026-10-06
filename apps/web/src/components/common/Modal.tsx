@@ -13,14 +13,13 @@ export function Modal({ title, onClose, children, foot }: ModalProps) {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [onClose]);
   return (
     <div className="modal-mask" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>{title}</h3>
-          <span className="x" onClick={onClose}>×</span>
+          <button type="button" className="x" aria-label="关闭" onClick={onClose}>×</button>
         </div>
         <div className="modal-body">{children}</div>
         <div className="modal-foot">{foot}</div>

@@ -166,6 +166,7 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: Knowl
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
+  const [layoutRevision, setLayoutRevision] = useState(0);
   const [layout, setLayout] = useState<GraphLayout | null>(null);
   const [transform, setTransform] = useState({ x: 0, y: 0, k: 1 });
   const [types, setTypes] = useState<Record<string, boolean>>({ knowledge_base: true, document: true, concept: true });
@@ -338,7 +339,7 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: Knowl
       });
     }, 16);
     return () => clearTimeout(t);
-  }, [focusNodes, focusEdges, graph, localRoot, params.charge, params.link, canvasSize.w, canvasSize.h]);
+  }, [focusNodes, focusEdges, graph, localRoot, params.charge, params.link, canvasSize.w, canvasSize.h, layoutRevision]);
 
   const positions = useMemo(() => {
     const map = new Map<string, { x: number; y: number }>();
@@ -478,7 +479,7 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: Knowl
   };
 
   const resetView = () => { setTransform({ x: 0, y: 0, k: 1 }); };
-  const rerunLayout = () => setLayout(null);
+  const rerunLayout = () => { setLayout(null); setLayoutRevision(value => value + 1); };
 
   const lastFitKey = useRef('');
   useEffect(() => {

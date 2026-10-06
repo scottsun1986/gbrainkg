@@ -269,7 +269,7 @@ Output valid JSON format:
     // model round trip (and its own latency) for an identical prompt.
     const shared = await this.redisService?.getJson<string[]>(`agentic:expand:${cacheKey}`);
     if (Array.isArray(shared)) {
-      this.expansionCache.set(cacheKey, { terms: shared, expiresAt: Date.now() + 10 * 60 * 1000 });
+      this.rememberBounded(this.expansionCache, cacheKey, { terms: shared, expiresAt: Date.now() + 10 * 60 * 1000 });
       return shared;
     }
     try {
@@ -331,7 +331,7 @@ Output valid JSON format:
             .map((t: string) => t.trim())
             .slice(0, 6)
         : [];
-      this.expansionCache.set(cacheKey, { terms, expiresAt: Date.now() + 10 * 60 * 1000 });
+      this.rememberBounded(this.expansionCache, cacheKey, { terms, expiresAt: Date.now() + 10 * 60 * 1000 });
       if (terms.length) {
         await this.redisService?.setJson(`agentic:expand:${cacheKey}`, terms, 600);
       }
@@ -345,6 +345,13 @@ Output valid JSON format:
       this.logger.warn(`Query expansion failed: ${err instanceof Error ? err.message : String(err)}`);
       return [];
     }
+  }
+
+  private rememberBounded<T extends { expiresAt: number }>(cache: Map<string, T>, key: string, value: T): void {
+    cache.delete(key);
+    cache.set(key, value);
+    for (const [entryKey, entry] of cache) if (entry.expiresAt <= Date.now()) cache.delete(entryKey);
+    while (cache.size > 500) cache.delete(cache.keys().next().value!);
   }
 
   private readonly expansionCache = new Map<string, { terms: string[]; expiresAt: number }>();
@@ -374,7 +381,7 @@ Output valid JSON format:
       reasoning: string;
     }>(`agentic:plan:${cacheKey}`);
     if (shared && Array.isArray(shared.subQueries)) {
-      this.planCache.set(cacheKey, { plan: shared, expiresAt: Date.now() + 3600 * 1000 });
+      this.rememberBounded(this.planCache, cacheKey, { plan: shared, expiresAt: Date.now() + 3600 * 1000 });
       return shared;
     }
 
@@ -449,7 +456,7 @@ Output valid JSON:
         expansions,
         reasoning: parsed.reasoning || '',
       };
-      this.planCache.set(cacheKey, { plan: res, expiresAt: Date.now() + 3600 * 1000 });
+      this.rememberBounded(this.planCache, cacheKey, { plan: res, expiresAt: Date.now() + 3600 * 1000 });
       if (res.subQueries.length || res.expansions.length) {
         await this.redisService?.setJson(`agentic:plan:${cacheKey}`, res, 3600);
       }

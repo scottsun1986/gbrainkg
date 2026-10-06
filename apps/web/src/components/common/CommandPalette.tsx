@@ -33,8 +33,7 @@ export function CommandPalette({ open, onClose, onNav, onNewChat, onNewKb, onUpl
   const [highlight, setHighlight] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { if (open) { setQuery(''); setHighlight(0); setTimeout(() => inputRef.current?.focus(), 30); } }, [open]);
-  useEffect(() => { setQuery(initialQuery); setHighlight(0); }, [initialQuery]);
+  useEffect(() => { if (!open) return; const timer = setTimeout(() => { setQuery(initialQuery); setHighlight(0); inputRef.current?.focus(); }, 30); return () => clearTimeout(timer); }, [open, initialQuery]);
 
   const items = useMemo(() => {
     const q = query.trim().toLowerCase();

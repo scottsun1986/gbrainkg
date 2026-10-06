@@ -1,7 +1,7 @@
 import { runAsService } from '../db/service-principal';
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { getPrismaClient } from "../prisma";
-import { withServiceContext } from "../db/tenant-context.service";
+import { withServiceContext, withPermissionRead } from "../db/tenant-context.service";
 import {
   BASE_USER_PERMISSIONS,
   DEFAULT_ROLES,
@@ -49,10 +49,16 @@ export class PermissionService implements OnModuleInit {
     if (this.orgNodeListCache && this.orgNodeListCache.expiresAt > Date.now()) {
       return this.orgNodeListCache.nodes;
     }
-    const nodes = await this.prisma.orgNode.findMany({
-      where: { status: 'active' },
-      select: { id: true, parentId: true },
-    });
+    // 授权计算（管辖子树 BFS / 组织可见性向上继承）必须基于全量 active 组织图。
+    // 该查询若走请求用户的 RLS 上下文，组织管理员只能看到自己挂载链向上的
+    // 节点，子树 BFS 永远无法向下展开（2026-10-06 E2E BUG-2 复测发现的
+    // 第二层根因）；因此这里用 service 范围读取，结果仅用于 id 集合计算。
+    const nodes = (await withPermissionRead(this.prisma, (db: any) =>
+      db.orgNode.findMany({
+        where: { status: 'active' },
+        select: { id: true, parentId: true },
+      }),
+    )) as { id: string; parentId: string | null }[];
     if (ttl > 0) this.orgNodeListCache = { expiresAt: Date.now() + ttl, nodes };
     return nodes;
   }
@@ -259,10 +265,15 @@ export class PermissionService implements OnModuleInit {
   async canManageUser(userId: string, targetUserId: string): Promise<boolean> {
     if (await this.isSystemAdmin(userId)) return true;
     const managedOrgIds = await this.getManagedOrgIds(userId);
-    const targetOrgs = await this.prisma.userOrg.findMany({
-      where: { userId: targetUserId },
-      select: { orgNodeId: true },
-    });
+    // 目标用户的挂载关系必须以 service 范围读取：请求用户上下文下 UserOrg 的
+    // RLS 策略只放行本人行，组织管理员在此查任何下属成员都会得到空集，
+    // 导致"可管理"判定恒为 false（2026-10-06 E2E BUG-2 关联缺陷）。
+    const targetOrgs = (await withPermissionRead(this.prisma, (db: any) =>
+      db.userOrg.findMany({
+        where: { userId: targetUserId },
+        select: { orgNodeId: true },
+      }),
+    )) as Array<{ orgNodeId: string }>;
     return (
       targetOrgs.length > 0 &&
       targetOrgs.some((item) => managedOrgIds.has(item.orgNodeId))
@@ -719,7 +730,7 @@ export class PermissionService implements OnModuleInit {
   async revokeAccess(userId: string, kbId: string) {
     // 1. 数据库更新，删除 grant
     await this.prisma.industryGrant.deleteMany({
-      where: { subjectId: userId, kbId: kbId },
+      where: { subjectType: 'user', subjectId: userId, kbId },
     });
 
     this.logger.log(

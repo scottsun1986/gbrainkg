@@ -4,6 +4,12 @@ import { AuthService } from './auth.service';
 import { OidcService, readOidcEnvConfig, OidcIdentity } from './oidc.service';
 import { OidcController } from './oidc.controller';
 import { getPrismaClient } from '../prisma';
+// The authentication reads now run through the runAsAuth transaction client.
+// Hand the callback the same mocked client the specs spy on so those spies
+// (prisma.user.findFirst etc.) still intercept.
+jest.mock('../db/tenant-context.service', () => ({
+  runAsAuth: async (work: any) => work(require('../prisma').getPrismaClient()),
+}));
 
 const prisma = getPrismaClient();
 

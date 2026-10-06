@@ -249,8 +249,10 @@ describe("PermissionService", () => {
 
   it("should revoke access and delete grants", async () => {
     await service.revokeAccess("user-1", "kb-industry-1");
+    // Scoped to the user subject so a role/org grant whose subjectId happens to
+    // equal this user's UUID is not deleted along with it.
     expect(mockPrisma.industryGrant.deleteMany).toHaveBeenCalledWith({
-      where: { subjectId: "user-1", kbId: "kb-industry-1" },
+      where: { subjectType: "user", subjectId: "user-1", kbId: "kb-industry-1" },
     });
   });
 });

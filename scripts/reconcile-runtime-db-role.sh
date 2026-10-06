@@ -44,8 +44,17 @@ SELECT format('ALTER ROLE %I LOGIN NOBYPASSRLS NOSUPERUSER PASSWORD %L', :'app_r
 SELECT format('ALTER ROLE %I RESET "app.service"', :'app_role') \gexec
 SELECT format('GRANT CONNECT ON DATABASE %I TO %I', :'db_name', :'app_role') \gexec
 SELECT format('GRANT USAGE ON SCHEMA public TO %I', :'app_role') \gexec
-SELECT format('GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO %I', :'app_role') \gexec
+SELECT format('REVOKE SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public FROM %I', :'app_role') \gexec
+SELECT format('GRANT SELECT,INSERT,UPDATE,DELETE ON %I.%I TO %I', 'public', c.relname, :'app_role')
+FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+WHERE n.nspname='public' AND c.relkind IN ('r','p') AND c.relname=ANY(ARRAY['ActiveIndexGeneration','ArtifactDependency','ArtifactManifest','AuditLog','AuthorizationState','BlockArtifact','BrainChangeEvent','BrainDerivedPage','BrainMaintenanceRun','BrainOperationLog','BrainRepo','BrainScope','BrainScopeMember','BrainSource','BrainSourceDocument','BrainSourceMember','BrainTopic','ChatRun','Chunk','ChunkLexicalDoc','ChunkSparseEmbedding','Citation','CompileJob','ConnectorRun','ConnectorSource','ContextualPrefixCache','Conversation','Document','DocumentAcl','DocumentVersion','DocumentVersionLink','EmbeddingModelState','EnrichmentStage','FeedbackCase','GenerationVector','GraphCommunity','GraphEntity','GraphProjectionInput','GraphRelation','IndexGeneration','IndustryGrant','KbAdmin','KbLexicalStat','KbModelOverride','KnowledgeBase','LateContextVector','LexicalTermStat','Message','ModelArtifactCache','ModelConfig','ModelProvider','OrgAdmin','OrgNode','OriginalBlockSnapshot','RaptorNode','Role','SemanticCache','SystemSetting','User','UserCredential','UserOrg','UserRole']) \gexec
+-- Quota mutation goes through app_admit_model_call() (SECURITY DEFINER), but
+-- the recovery sweep also prunes expired buckets with a plain
+-- `DELETE ... WHERE period < ...`, and a WHERE clause needs SELECT. Granting
+-- SELECT is safe: the table's only policy is `app_is_service()`, so RLS still
+-- hides the rows outside a service context.
+SELECT format('GRANT SELECT,DELETE ON public."ModelQuotaBucket" TO %I', :'app_role') \gexec
 SELECT format('GRANT USAGE,SELECT,UPDATE ON ALL SEQUENCES IN SCHEMA public TO %I', :'app_role') \gexec
-SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO %I', :'migrate_role', :'app_role') \gexec
+SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public REVOKE SELECT,INSERT,UPDATE,DELETE ON TABLES FROM %I', :'migrate_role', :'app_role') \gexec
 SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT USAGE,SELECT,UPDATE ON SEQUENCES TO %I', :'migrate_role', :'app_role') \gexec
 SQL

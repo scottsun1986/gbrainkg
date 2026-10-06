@@ -8,6 +8,25 @@ import {
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 
+/** SQLSTATE 42501 includes grant errors, so only explicit policy text means RLS. */
+export function databaseVisibilityFailure(exception: unknown): Record<string, string> | null {
+  if (!(exception instanceof Error)) return null;
+  const error = exception as Error & { code?: string; meta?: { code?: string; message?: string; database_error?: string } };
+  const text = [error.message, error.meta?.message, error.meta?.database_error].filter(Boolean).join(' ');
+  const policyDenied = /row-level security|row level security/i.test(text);
+  const permissionDenied = error.code === '42501' || error.meta?.code === '42501' || /\b42501\b/.test(text);
+  if (policyDenied || permissionDenied) return {
+    event: policyDenied ? 'rls_policy_denied' : 'database_permission_denied',
+    sqlState: '42501',
+    ...(error.code && error.code !== '42501' ? { prismaCode: error.code } : {}),
+  };
+  if (/Inconsistent query result:.*required.*got\s+[`'"]?null/i.test(text)) {
+    // Also possible for broken relations: observation, never proof of RLS.
+    return { event: 'database_required_relation_missing' };
+  }
+  return null;
+}
+
 /**
  * Centralised Prisma exception mapping.
  *
@@ -69,6 +88,17 @@ export class PrismaExceptionFilter implements ExceptionFilter {
         statusCode: 503,
         message: "Database is busy, please retry shortly.",
         error: "Service Unavailable",
+      });
+      return;
+    }
+
+    const visibilityFailure = databaseVisibilityFailure(exception);
+    if (visibilityFailure) {
+      // No SQL, query args, body, or raw error payload in this alertable record.
+      this.logger.error(visibilityFailure);
+      response.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
+        statusCode: 500,
+        message: "Internal server error",
       });
       return;
     }

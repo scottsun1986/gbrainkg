@@ -6,10 +6,13 @@ export function useSideCollapsed(): [boolean, () => void] {
   const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
+    const timer = setTimeout(() => {
     try {
       const saved = window.localStorage.getItem('llmwiki_side_collapsed');
       if (saved === 'true') setCollapsed(true);
     } catch { /* ignore */ }
+    }, 0);
+    return () => clearTimeout(timer);
   }, []);
 
   const toggle = useCallback(() => {

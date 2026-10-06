@@ -6,6 +6,12 @@ that traditional OCR cannot understand (charts, flowcharts, architecture diagram
 from __future__ import annotations
 
 import base64
+import asyncio
+import math
+try:
+    from src.env_config import env_int, env_float
+except ImportError:
+    from env_config import env_int, env_float
 import logging
 import os
 import re
@@ -21,8 +27,8 @@ VLM_ENABLED = os.environ.get('VLM_ENABLED', '1').lower() not in {'0', 'false', '
 VLM_BASE_URL = os.environ.get('VLM_BASE_URL', '').rstrip('/')
 VLM_API_KEY = os.environ.get('VLM_API_KEY', '')
 VLM_MODEL = os.environ.get('VLM_MODEL', 'qwen2-vl-7b-instruct')
-VLM_TIMEOUT_SECONDS = float(os.environ.get('VLM_TIMEOUT_SECONDS', '30'))
-VLM_MAX_TOKENS = int(os.environ.get('VLM_MAX_TOKENS', '500'))
+VLM_TIMEOUT_SECONDS = env_float('VLM_TIMEOUT_SECONDS', 30)
+VLM_MAX_TOKENS = env_int('VLM_MAX_TOKENS', 500)
 
 
 def is_vlm_available() -> bool:
@@ -57,7 +63,10 @@ async def describe_image_with_vlm(
         return ''
     
     # Read and encode image
-    image_bytes = image_path.read_bytes()
+    if image_path.stat().st_size > 20 * 1024 * 1024:
+        logger.warning("Image exceeds VLM byte budget")
+        return ""
+    image_bytes = await asyncio.to_thread(image_path.read_bytes)
     if len(image_bytes) > 20 * 1024 * 1024:  # 20MB limit
         logger.warning('Image too large for VLM processing: %d bytes', len(image_bytes))
         return ''
@@ -68,7 +77,7 @@ async def describe_image_with_vlm(
                 '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp'}
     mime_type = mime_map.get(suffix, 'image/png')
     
-    base64_image = base64.b64encode(image_bytes).decode('utf-8')
+    base64_image = await asyncio.to_thread(lambda: base64.b64encode(image_bytes).decode('utf-8'))
     
     system_prompt = '''你是一个专业的文档分析助手。请分析图片中的视觉内容并生成结构化的文本描述。
 
@@ -156,23 +165,26 @@ async def describe_pdf_page_with_vlm(
     
     pdf_path = Path(pdf_path)
     try:
-        doc = fitz.open(str(pdf_path))
-        if page_number >= len(doc):
-            doc.close()
+        def render():
+            import tempfile
+            with fitz.open(str(pdf_path)) as doc:
+                if not 0 <= page_number < len(doc):
+                    return None
+                page = doc[page_number]
+                scale = min(dpi / 72, math.sqrt(8_000_000 / max(1, page.rect.width * page.rect.height)))
+                pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                    tmp_path = Path(tmp.name)
+                try:
+                    pix.save(str(tmp_path))
+                    return tmp_path
+                except BaseException:
+                    tmp_path.unlink(missing_ok=True)
+                    raise
+        tmp_path = await asyncio.to_thread(render)
+        if tmp_path is None:
             return ''
-        
-        page = doc[page_number]
-        # Render page to PNG image
-        mat = fitz.Matrix(dpi / 72, dpi / 72)
-        pix = page.get_pixmap(matrix=mat)
-        
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-            pix.save(tmp.name)
-            tmp_path = Path(tmp.name)
-        
-        doc.close()
-        
+
         try:
             description = await describe_image_with_vlm(
                 tmp_path,

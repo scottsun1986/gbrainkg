@@ -2,7 +2,7 @@
 # A/B 指标回流门禁：对比 control/treatment，treatment 显著劣化即失败。
 #
 # 用法:
-#   bash scripts/ab-gate.sh                     # 无凭据则跳过(退出 0)
+#   bash scripts/ab-gate.sh                     # 无凭据则跳过(退出 2)
 #   GATE_STRICT=1 bash scripts/ab-gate.sh       # 缺凭据/数据/服务异常均非零
 #
 # 凭据:
@@ -28,25 +28,18 @@ if [ -z "$TEST_PASSWORD" ]; then
     log "FAIL: strict mode requires live A/B validation credentials."
     exit 1
   fi
-  exit 0
+  exit 2
 fi
 
 export TEST_USER TEST_PASSWORD
 npx --yes tsx@4.23.13 tests/evaluation/ab-gate-runner.ts
 rc=$?
 
-if [ "$STRICT" = "1" ]; then
-  if [ "$rc" -ne 0 ]; then
-    log "FAIL: A/B gate failed (treatment degraded or runner error)"
-  else
-    log "PASS: A/B gate"
-  fi
-  exit "$rc"
-fi
-
 if [ "$rc" -ne 0 ]; then
-  log "WARNING: A/B runner exited $rc in report mode — not blocking."
+  log "FAIL: evaluation runner exited $rc"
+elif [ "$STRICT" = "1" ]; then
+  log "PASS: strict quality gate"
 else
-  log "done (report mode)."
+  log "Report completed; strict quality thresholds were not requested."
 fi
-exit 0
+exit "$rc"

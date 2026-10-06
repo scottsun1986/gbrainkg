@@ -5,7 +5,7 @@ set -euo pipefail
 ENV_FILE="${1:?env file required}"
 URL=$(grep -E '^DATABASE_URL=' "$ENV_FILE" | head -1 | cut -d= -f2- | tr -d "\"'")
 URL=$(printf '%s' "$URL" | sed 's/[?&]schema=[^&]*//')
-psql "$URL" -X -A -F' | ' -t <<'SQL'
+psql "$URL" -v ON_ERROR_STOP=1 -X -A -F' | ' -t <<'SQL'
 SELECT 'forced', count(*)::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
   WHERE n.nspname='public' AND c.relkind='r' AND c.relforcerowsecurity
 UNION ALL
@@ -15,7 +15,7 @@ UNION ALL
 SELECT 'policies_total', count(*)::text FROM pg_policies WHERE schemaname='public';
 SQL
 echo "--- core tables: relrowsecurity / relforcerowsecurity / policies ---"
-psql "$URL" -X -A -F' | ' -t <<'SQL'
+psql "$URL" -v ON_ERROR_STOP=1 -X -A -F' | ' -t <<'SQL'
 SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity,
        (SELECT count(*) FROM pg_policies p WHERE p.schemaname='public' AND p.tablename=c.relname)
 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
@@ -25,3 +25,5 @@ WHERE n.nspname='public' AND c.relkind='r'
                     'ConnectorSource','ConnectorRun')
 ORDER BY c.relname;
 SQL
+# Inspection must fail when its invariant is violated.
+psql "$URL" -v ON_ERROR_STOP=1 -X -f "$(dirname "$0")/verify-runtime-rls.sql"

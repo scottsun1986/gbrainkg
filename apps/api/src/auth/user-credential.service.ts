@@ -4,8 +4,9 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { setRequestContextUser } from '../observability/request-context';
 import { getPrismaClient } from '../prisma';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import {
   decryptModelCredential,
   encryptModelCredential,
@@ -221,7 +222,7 @@ export class UserCredentialService {
 
   async verifyCredential(appId: string, appSecret: string) {
     if (!appId || !appSecret) return null;
-    const credential = await this.prisma.userCredential.findUnique({
+    const query = (tx: typeof this.prisma) => tx.userCredential.findUnique({
       where: { appId },
       include: {
         user: {
@@ -232,21 +233,31 @@ export class UserCredentialService {
         },
       },
     });
+    const credential = process.env.RLS_ENFORCE === '1'
+      ? await this.prisma.$transaction(async tx => {
+          await tx.$executeRaw`SELECT set_config('app.auth_app_id', ${appId}, true), set_config('app.auth_secret_hash', ${this.hashSecret(appSecret.trim())}, true)`;
+          return query(tx as typeof this.prisma);
+        })
+      : await query(this.prisma);
 
     if (!credential || credential.status !== 'active') return null;
     if (credential.user.status !== 'active') return null;
 
     const providedHash = this.hashSecret(appSecret.trim());
-    if (providedHash !== credential.appSecretHash) {
+    const storedHash = Buffer.from(credential.appSecretHash, 'utf8');
+    const hash = Buffer.from(providedHash, 'utf8');
+    if (hash.length !== storedHash.length || !timingSafeEqual(hash, storedHash)) {
       // Fallback check against decrypted secret in case of legacy hash
       if (credential.appSecretEnc) {
         const plain = decryptModelCredential(Buffer.from(credential.appSecretEnc, 'utf8'));
-        if (plain !== appSecret.trim()) return null;
+        const expected = Buffer.from(this.hashSecret(plain), 'utf8');
+        if (!timingSafeEqual(hash, expected)) return null;
       } else {
         return null;
       }
     }
 
+    setRequestContextUser(credential.user.id);
     // Update lastUsedAt asynchronously without blocking
     this.prisma.userCredential
       .update({

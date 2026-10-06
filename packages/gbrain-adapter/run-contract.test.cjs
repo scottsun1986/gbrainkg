@@ -1,3 +1,6 @@
+// The version probe spawns an extra child; these contracts assert exact
+// process-pool accounting, so they opt out of it.
+process.env.GBRAIN_SKIP_VERSION_CHECK = '1';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { BrainRepoAdapter, structuralPassages } = require('./dist/index.js');
@@ -184,4 +187,54 @@ test('structuralPassages handles BOM and CRLF frontmatter but not indented body 
   const leadingRule = '---\n\n紧接水平线的正文。\n';
   const joinedRule = structuralPassages(leadingRule).map((section) => section.content).join('\n');
   assert.ok(joinedRule.includes('紧接水平线的正文。'));
+});
+
+test('source identities cannot escape source root', () => {
+  const adapter = new BrainRepoAdapter('/tmp/adapter-source-validation');
+  for (const source of ['../escape', '/absolute', 'a/b', 'a\\b', '.', '..']) {
+    assert.throws(() => adapter.getSourcePath(source), /Invalid GBrain source identity/);
+  }
+});
+
+test('push verifies TLS unless insecure mode is explicit', async () => {
+  const adapter = new BrainRepoAdapter('/tmp/adapter-tls');
+  adapter.configuredRemote = () => 'https://remote.example/source';
+  let args;
+  adapter.run = async input => { args = input; return { stdout: '', stderr: '' }; };
+  const original = process.env.GBRAIN_ALLOW_UNVERIFIED_REMOTE;
+  try {
+    delete process.env.GBRAIN_ALLOW_UNVERIFIED_REMOTE;
+    await adapter.pushSourceIfConfigured('one');
+    assert.equal(args.includes('--allow-unverified-remote'), false);
+    process.env.GBRAIN_ALLOW_UNVERIFIED_REMOTE = '1';
+    await adapter.pushSourceIfConfigured('one');
+    assert.equal(args.includes('--allow-unverified-remote'), true);
+  } finally {
+    if (original === undefined) delete process.env.GBRAIN_ALLOW_UNVERIFIED_REMOTE;
+    else process.env.GBRAIN_ALLOW_UNVERIFIED_REMOTE = original;
+  }
+});
+
+test('cached citations are independent and empty federation is not reranked', async () => {
+  const adapter = new BrainRepoAdapter('/tmp/adapter-cache-copy');
+  adapter.ensureSearchConfig = async () => {};
+  adapter.run = async () => ({ stdout: JSON.stringify([{ slug: 'docs/one', title: 'one', chunk_text: 'original' }]), stderr: '' });
+  const first = await adapter.query('gbrain://source/one', 'question', { operation: 'search' });
+  first.citations[0].snippet = 'mutated';
+  const cached = await adapter.query('gbrain://source/one', 'question', { operation: 'search' });
+  assert.equal(cached.citations[0].snippet, 'original');
+  const empty = await adapter.queryMany([], 'question');
+  assert.equal(empty.reranked, false);
+});
+
+test('embedding plane checks every reported vector column', async () => {
+  const original = process.env.GBRAIN_EMBEDDING_DIMENSIONS;
+  process.env.GBRAIN_EMBEDDING_DIMENSIONS = '1024';
+  const adapter = new BrainRepoAdapter('/tmp/adapter-plane');
+  adapter.run = async () => ({ stdout: 'Column: content_chunks.embedding 1024d\nColumn: summary_nodes.embedding 768d', stderr: '' });
+  try { await assert.rejects(adapter.assertEmbeddingPlane(), /embedding plane mismatch/); }
+  finally {
+    if (original === undefined) delete process.env.GBRAIN_EMBEDDING_DIMENSIONS;
+    else process.env.GBRAIN_EMBEDDING_DIMENSIONS = original;
+  }
 });

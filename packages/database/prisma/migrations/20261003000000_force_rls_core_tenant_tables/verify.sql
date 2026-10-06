@@ -56,7 +56,14 @@ BEGIN
     'DocumentAcl','DocumentVersionLink','Conversation','Message','Citation',
     'ConnectorSource','ConnectorRun'
   ] LOOP
-    IF NOT EXISTS (SELECT 1 FROM pg_class WHERE relname = t AND relkind = 'r') THEN
+    -- Scope the existence probe to public exactly like the RLS check below:
+    -- without the namespace filter a same-named table in any other schema
+    -- satisfied it, so a genuinely missing core table was reported SKIP and the
+    -- check silently stopped applying.
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relname = t AND c.relkind = 'r'
+    ) THEN
       RAISE NOTICE 'SKIP: table % not present in this database', t;
       CONTINUE;
     END IF;

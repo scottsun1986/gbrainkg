@@ -1080,6 +1080,12 @@ export class ChatService {
         cancellation.abort(inheritedCancellation?.reason);
         subscriber.error(new Error('Knowledge request cancelled'));
       };
+      const runCancellation = options?.runId ? this.chatRunService?.signalFor(options.runId) : undefined;
+      const cancelFromRun = () => { cancellation.abort(runCancellation?.reason); subscriber.error(runCancellation?.reason || new Error('Chat run cancelled')); };
+      inheritedCancellation?.addEventListener('abort', cancelFromTransport, { once: true });
+      runCancellation?.addEventListener('abort', cancelFromRun, { once: true });
+      if (inheritedCancellation?.aborted) cancelFromTransport();
+      if (runCancellation?.aborted) cancelFromRun();
       let authorizationMonitor: ReturnType<typeof setInterval> | undefined;
       // A non-streaming run's response is detached (it must survive the client
       // navigating away), which also means no transport close handler is ever
@@ -1148,6 +1154,7 @@ export class ChatService {
       }).catch(error => subscriber.error(error));
       return () => {
         inheritedCancellation?.removeEventListener('abort', cancelFromTransport);
+        runCancellation?.removeEventListener('abort', cancelFromRun);
         cancellation.abort();
         if (authorizationMonitor) clearInterval(authorizationMonitor);
       };
@@ -1642,7 +1649,10 @@ export class ChatService {
     ));
 
     const citations = Array.isArray(queryResult.citations) ? queryResult.citations : [];
-    citations.sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0));
+    const finiteScore = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : 0;
+    citations.sort((a: any, b: any) => finiteScore(b.score) - finiteScore(a.score)
+      || String(a.docId || a.documentId || '').localeCompare(String(b.docId || b.documentId || ''))
+      || String(a.chunkId || a.id || '').localeCompare(String(b.chunkId || b.id || '')));
     const selectedCitations = selectDiverseSearchCitations(citations, limit);
     const results = selectedCitations.map((c: any) => {
       const docId = c.docId || c.documentId || null;
@@ -4162,19 +4172,28 @@ export class ChatService {
 
     trace.start("lazy_compile", "主题页惰性编译", "检查命中主题页是否存在待编译变更");
     let lazyCompiled = 0;
+    let lazyAttempts = 0;
     const freshlyCompiledCards: any[] = [];
-    for (const topicSlug of hitTopics) {
-      const topicInfo = await this.prisma.brainTopic.findUnique({
-        where: {
-          brainRepoId_topicSlug: { brainRepoId: brainRepo.id, topicSlug },
-        },
-      });
+    const lazyDeadline = getRequestContext()?.execution?.deadline;
+    const topics = await this.prisma.brainTopic.findMany({
+      where: { brainRepoId: brainRepo.id, topicSlug: { in: [...new Set<string>(hitTopics)].slice(0, 8) } },
+    });
+    for (const topicInfo of topics) {
+      if (lazyAttempts >= 1 || lazyDeadline?.expired()) break;
+      const topicSlug = topicInfo.topicSlug;
       if (topicInfo && topicInfo.compileStatus === "dirty") {
         this.logger.log(
           `Topic ${topicSlug} is dirty, waiting for lazy compile...`,
         );
-        await this.compilerService.triggerLazyCompileAndWait(userId, topicSlug);
-        lazyCompiled += 1;
+        lazyAttempts += 1;
+        try {
+          await this.compilerService.triggerLazyCompileAndWait(userId, topicSlug, Math.min(5000, lazyDeadline?.remainingMs() ?? 5000));
+          lazyCompiled += 1;
+        } catch (error) {
+          rethrowAuthorizationFailure(error);
+          this.logger.warn(`Optional topic compile deferred: ${error instanceof Error ? error.message : String(error)}`);
+          continue;
+        }
 
         // Compile-and-Inject: Fetch newly compiled documents for this topic and inject into current citations
         try {
@@ -5678,6 +5697,7 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
         modelName,
       );
     } catch (error: any) {
+      rethrowAuthorizationFailure(error);
       trace.finish("llm_generation", "failed", `大模型请求失败：${String(error?.message || error).slice(0, 300)}`);
       subscriber.next({
         data: {

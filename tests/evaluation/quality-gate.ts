@@ -1,3 +1,4 @@
+import { gateThreshold } from './gate-thresholds';
 /**
  * RAG Quality Gate for CI/CD
  *
@@ -62,13 +63,13 @@ const DATASET_PATH = path.join(__dirname, 'golden-dataset.json');
 const RESULTS_DIR = path.join(__dirname, 'results');
 
 const THRESHOLDS = {
-  hitRate: parseFloat(process.env.GATE_HIT_RATE || '0.80'),
-  keywordCoverage: parseFloat(process.env.GATE_KEYWORD_COVERAGE || '0.75'),
-  permission: parseFloat(process.env.GATE_PERMISSION_RATE || '1.00'),
-  noAnswer: parseFloat(process.env.GATE_NO_HALLUCINATION || '0.90'),
-  faithfulness: parseFloat(process.env.GATE_FAITHFULNESS || '0.95'),
-  citationAccuracy: parseFloat(process.env.GATE_CITATION_ACCURACY || '0.90'),
-  contextPrecision: parseFloat(process.env.GATE_CONTEXT_PRECISION || '0.85'),
+  hitRate: gateThreshold('GATE_HIT_RATE'),
+  keywordCoverage: gateThreshold('GATE_KEYWORD_COVERAGE'),
+  permission: gateThreshold('GATE_PERMISSION_RATE'),
+  noAnswer: gateThreshold('GATE_NO_HALLUCINATION'),
+  faithfulness: gateThreshold('GATE_FAITHFULNESS'),
+  citationAccuracy: gateThreshold('GATE_CITATION_ACCURACY'),
+  contextPrecision: gateThreshold('GATE_CONTEXT_PRECISION'),
 };
 
 const colors = {

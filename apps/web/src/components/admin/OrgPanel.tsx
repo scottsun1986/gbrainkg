@@ -10,7 +10,7 @@ import { errorMessage, apiMessage, asRecord, asArray, str, num, bool } from '@/l
 import { emitToast, emitDataRefresh, emitAdminDataUpdated } from '@/lib/app-events';
 import { hasCapability } from '@/lib/capabilities';
 import { flattenOrgTree, getSubtreeOrgIds, countSubtreeUsers } from '@/lib/org-utils';
-import type { OrgTreeNode, TagItem, UserRow } from '@/types';
+import type { OrgTreeNode, TagItem, UserRow, GrantRow } from '@/types';
 
 export function AddOrgModal({parent, orgOptions = [], canCreateRoot = false, onAdd, onClose}: { parent: OrgTreeNode | null; orgOptions?: Array<OrgTreeNode | { id: string; name: string; path: string; canManage?: boolean }>; canCreateRoot?: boolean; onAdd: (name: string, parentId: string | null, adminUserIds: string[]) => void | Promise<boolean | void>; onClose: () => void }){
   const [name, setName] = useState('');
@@ -42,7 +42,7 @@ export function AddOrgModal({parent, orgOptions = [], canCreateRoot = false, onA
       </div>
       <div className="field">
         <label>组织管理员（可选）</label>
-        <TagPicker placeholder="创建时直接指定管理员..." items={appStore.USERS.map(u=>({id:u.id,n:u.name,sub:u.org}))} selected={admins} setSelected={setAdmins}/>
+        <TagPicker placeholder="创建时直接指定管理员..." items={appStore.USERS.map(u=>({id:u.id,n:u.name,sub:u.org,kw:u.initials}))} selected={admins} setSelected={setAdmins}/>
         <div className="field-hint">管理员将同时成为该组织知识库管理员；上级组织管理员自动拥有本组织及下级组织的管理权限。被选人员还需具备“组织管理员”角色，角色可在人员/角色管理中配置。</div>
       </div>
       <div style={{padding:12,background:'var(--surface-2)',borderRadius:7,fontSize:12,color:'var(--ink-3)',lineHeight:1.6}}>
@@ -57,7 +57,7 @@ export function RenameOrgModal({node, onSave, onClose}: { node: OrgTreeNode; onS
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const handleSubmit = async (e?: any) => {
+  const handleSubmit = async (e?: React.SyntheticEvent) => {
     if (e) e.preventDefault();
     const trimmed = name.trim();
     if (!trimmed) {
@@ -239,7 +239,7 @@ export function OrgAdminModal({node, onClose, onSaved}: { node: OrgTreeNode; onC
       )}
       <div className="field">
         <label>管理员（{picked.length} 人）</label>
-        <TagPicker placeholder="搜索并选择管理员..." items={appStore.USERS.map(u=>({id:u.id,n:u.name,sub:u.org}))} selected={picked} setSelected={setPicked}/>
+        <TagPicker placeholder="搜索并选择管理员..." items={appStore.USERS.map(u=>({id:u.id,n:u.name,sub:u.org,kw:u.initials}))} selected={picked} setSelected={setPicked}/>
         <div className="field-hint">建议至少 2 人，避免单人离职导致知识库无人维护。任免记录进入审计日志。</div>
       </div>
       <div className="field">
@@ -269,7 +269,7 @@ export function GrantPanel({kbId, setKbId}: { kbId: string; setKbId: (id: string
   const [subjectId, setSubjectId] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
   const [search, setSearch] = useState('');
-  const [revokingGrant, setRevokingGrant] = useState<any>(null);
+  const [revokingGrant, setRevokingGrant] = useState<GrantRow | null>(null);
 
   const addGrant = async () => {
     if (!kbId || !subjectId) return;
@@ -374,7 +374,7 @@ export function GrantPanel({kbId, setKbId}: { kbId: string; setKbId: (id: string
                   {r.name} ({r.users || 0} 人)
                 </option>
               ))}
-              {grantTab==='org' && flattenOrgTree(appStore.ORG_TREES.length ? appStore.ORG_TREES : appStore.ORG_TREE).map((o: any)=>(
+              {grantTab==='org' && flattenOrgTree(appStore.ORG_TREES.length ? appStore.ORG_TREES : appStore.ORG_TREE).map((o)=>(
                 <option key={o.id} value={o.id}>
                   {o.path}
                 </option>
@@ -542,7 +542,14 @@ export function OrgPanel({
   onDeactivateKb,
   onManageKb,
   canCreateRoot = false
-}: any){
+}: {
+  orgTrees?: OrgTreeNode[]; orgTree?: OrgTreeNode | null; expandedIds: Set<string>;
+  onToggle: (id: string) => void; setExpandedIds: React.Dispatch<React.SetStateAction<Set<string>>>;
+  onAddChild: (node: OrgTreeNode) => void; onSetAdmin: (node: OrgTreeNode) => void;
+  onRename: (node: OrgTreeNode) => void; onEdit: (node: OrgTreeNode) => void; onDelete: (node: OrgTreeNode) => void;
+  onActivateKb: (node: OrgTreeNode) => void; onDeactivateKb: (node: OrgTreeNode) => void;
+  onManageKb?: (id: string) => void; canCreateRoot?: boolean;
+}){
   const trees = useMemo(() => {
     if (orgTrees && orgTrees.length > 0) return orgTrees;
     if (orgTree) return [orgTree];
@@ -553,7 +560,7 @@ export function OrgPanel({
   const [nodeSearch, setNodeSearch] = useState('');
 
   // 递归查找选中节点
-  const findNode = (n: any, id: string): any => {
+  const findNode = (n: OrgTreeNode | null, id: string): OrgTreeNode | null => {
     if (!n) return null;
     if (n.id === id) return n;
     for (const c of (n.children || [])) {
@@ -573,11 +580,11 @@ export function OrgPanel({
 
   const flatNodes = useMemo(() => flattenOrgTree(trees), [trees]);
   const subtreeUserCount = useMemo(() => selectedNode ? countSubtreeUsers(selectedNode, appStore.USERS) : 0, [selectedNode]);
-  const directUsers = useMemo(() => selectedNode ? appStore.USERS.filter((u: any) => (u.orgNodes || []).some((on: any) => on.id === selectedNode.id) || (u.orgIds || []).includes(selectedNode.id)) : [], [selectedNode]);
+  const directUsers = useMemo(() => selectedNode ? appStore.USERS.filter((u) => (u.orgNodes || []).some((on) => on.id === selectedNode.id) || (u.orgIds || []).includes(selectedNode.id)) : [], [selectedNode]);
 
   const expandAll = () => {
     const s = new Set<string>();
-    const walk = (n: any) => { if (!n) return; s.add(n.id); (n.children || []).forEach(walk); };
+    const walk = (n: OrgTreeNode) => { if (!n) return; s.add(n.id); (n.children || []).forEach(walk); };
     trees.forEach(walk);
     setExpandedIds(s);
   };
@@ -597,7 +604,7 @@ export function OrgPanel({
           <button className="btn" onClick={expandAll}>⤢ 展开全部</button>
           <button className="btn" onClick={collapseAll}>⤡ 折叠全部</button>
           {canCreateRoot && (
-            <button className="btn primary" onClick={()=>onAddChild({id:null,name:'根组织'})}>
+            <button className="btn primary" onClick={()=>onAddChild({id:'',name:'根组织',path:'',children:[],admins:[],kbs:[],knowledgeBase:null})}>
               <Icon name="plus" size={12}/> 新增组织
             </button>
           )}
@@ -622,7 +629,7 @@ export function OrgPanel({
 
           <div className="org-tree-box">
             {trees.length > 0 ? (
-              trees.map((rootNode: any) => (
+              trees.map((rootNode) => (
                 <OrgTreeItem
                   key={rootNode.id}
                   node={rootNode}
@@ -715,7 +722,7 @@ export function OrgPanel({
                   <div style={{display:'flex',gap:8}}>
                     {selectedNode.canManage && (
                       <>
-                        <button className="btn primary" style={{fontSize:'12px'}} onClick={()=>onManageKb?.(selectedNode.knowledgeBase?.id)}>
+                        <button className="btn primary" style={{fontSize:'12px'}} onClick={()=>{ const id = selectedNode.knowledgeBase?.id; if (id) onManageKb?.(id); }}>
                           管理知识库文档
                         </button>
                         <button className="btn danger" style={{fontSize:'12px'}} onClick={()=>onDeactivateKb?.(selectedNode)}>
@@ -752,7 +759,7 @@ export function OrgPanel({
               <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
                 {(selectedNode.admins || []).length > 0 ? (
                   selectedNode.admins.map((nm: string, i: number) => {
-                    const u = appStore.USERS.find((user: any) => user.name === nm);
+                    const u = appStore.USERS.find((user) => user.name === nm);
                     return (
                       <div key={i} style={{display:'flex',alignItems:'center',gap:6,background:'var(--surface-2)',border:'1px solid var(--line-2)',padding:'4px 10px',borderRadius:6}}>
                         <div className="avatar" style={{width:22,height:22,fontSize:10,background:'#2563eb',color:'#fff'}}>
@@ -851,7 +858,7 @@ export function OrgTreeItem({node, depth, expandedIds, selectedNodeId, onSelect,
       </div>
       {open && hasChildren && (
         <div style={{borderLeft:'1px dashed var(--line-2)',marginLeft:`${15 + depth * 14}px`}}>
-          {node.children.map((c: any, i: number) => (
+          {node.children.map((c, i: number) => (
             <OrgTreeItem
               key={c.id || i}
               node={c}

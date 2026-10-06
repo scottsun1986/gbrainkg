@@ -8,16 +8,20 @@ export function useTheme(): [ThemeName | null, (next: ThemeName | ((prev: ThemeN
   const [theme, setTheme] = useState<ThemeName | null>(null);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem('llmwiki_theme');
+    const timer = setTimeout(() => {
+    let saved: string | null = null;
+    try { saved = window.localStorage.getItem('llmwiki_theme'); } catch { /* storage may be blocked */ }
     setTheme(saved === 'dark' || saved === 'light'
       ? saved
       : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+    }, 0);
+    return () => clearTimeout(timer);
   }, []);
 
   useEffect(() => {
     if (!theme) return;
     document.documentElement.dataset.theme = theme;
-    window.localStorage.setItem('llmwiki_theme', theme);
+    try { window.localStorage.setItem('llmwiki_theme', theme); } catch { /* theme remains usable without storage */ }
   }, [theme]);
 
   return [theme, setTheme];

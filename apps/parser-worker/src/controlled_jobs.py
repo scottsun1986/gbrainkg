@@ -55,6 +55,8 @@ class FairLimiter:
             if acquired or (future.done() and not future.cancelled()):
                 self.active -= 1
                 self.running[identity] -= 1
+                if not self.running[identity]:
+                    self.running.pop(identity, None)
             else:
                 future.cancel()
             self._dispatch()
@@ -72,11 +74,22 @@ async def run_process(argv: list[str], timeout: float):
                 os.killpg(process.pid, signal.SIGTERM)
             except ProcessLookupError:
                 pass
-            try:
-                await asyncio.wait_for(process.wait(), 2)
-            except asyncio.TimeoutError:
+            async def reap():
                 try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                await process.wait()
+                    await asyncio.wait_for(process.wait(), 2)
+                except asyncio.TimeoutError:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    await process.wait()
+            cleanup = asyncio.create_task(reap())
+            cancelled = False
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    cancelled = True
+            await cleanup
+            if cancelled:
+                raise asyncio.CancelledError

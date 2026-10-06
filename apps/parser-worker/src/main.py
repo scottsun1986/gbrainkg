@@ -4,18 +4,26 @@ import asyncio
 import base64
 import html
 import ipaddress
+import hashlib
+import shutil
+import socket
+from urllib.parse import urlsplit
 import logging
 import os
 import re
 import secrets
 import subprocess
+import signal
+import resource
 import sys
 try:
     from src.controlled_jobs import FairLimiter, run_process
     from src import artifact_cache
+    from src.env_config import env_int, env_float
 except (ImportError, ModuleNotFoundError):
     from controlled_jobs import FairLimiter, run_process
     import artifact_cache
+    from env_config import env_int, env_float
 import tempfile
 import time
 import uuid
@@ -41,16 +49,16 @@ UPLOAD_ROOT = Path(os.environ.get("UPLOAD_ROOT", "/tmp/llmwiki/parser"))
 MAX_FILE_BYTES = 200 * 1024 * 1024
 SUPPORTED_EXTENSIONS = {".md", ".txt", ".csv", ".html", ".htm", ".doc", ".docx", ".pdf", ".xls", ".xlsx", ".pptx", ".png", ".jpg", ".jpeg"}
 ANTIWORD_BIN = os.environ.get("ANTIWORD_BIN", "antiword")
-DOCLING_TIMEOUT_SECONDS = float(os.environ.get("DOCLING_TIMEOUT_SECONDS", "240"))
+DOCLING_TIMEOUT_SECONDS = env_float("DOCLING_TIMEOUT_SECONDS", 240)
 PDF_PARSE_MODE = os.environ.get("PDF_PARSE_MODE", "hybrid").lower()
 OCR_PROVIDER = os.environ.get("OCR_PROVIDER", "none").lower()
-OCR_TIMEOUT_SECONDS = float(os.environ.get("OCR_TIMEOUT_SECONDS", "900"))
-OCR_POLL_INTERVAL_SECONDS = float(os.environ.get("OCR_POLL_INTERVAL_SECONDS", "5"))
-OCR_MAX_FILE_BYTES = int(os.environ.get("OCR_MAX_FILE_BYTES", str(50 * 1024 * 1024)))
+OCR_TIMEOUT_SECONDS = env_float("OCR_TIMEOUT_SECONDS", 900)
+OCR_POLL_INTERVAL_SECONDS = env_float("OCR_POLL_INTERVAL_SECONDS", 5)
+OCR_MAX_FILE_BYTES = env_int("OCR_MAX_FILE_BYTES", 50 * 1024 * 1024)
 # Skip icons/decorative images that cannot hold searchable text. Size-only gate
 # so the threshold stays corpus-agnostic.
-OCR_IMAGE_MIN_SIDE = int(os.environ.get("OCR_IMAGE_MIN_SIDE", "64"))
-OCR_IMAGE_MIN_BYTES = int(os.environ.get("OCR_IMAGE_MIN_BYTES", str(2 * 1024)))
+OCR_IMAGE_MIN_SIDE = env_int("OCR_IMAGE_MIN_SIDE", 64)
+OCR_IMAGE_MIN_BYTES = env_int("OCR_IMAGE_MIN_BYTES", 2 * 1024)
 BAIDU_OCR_API_KEY = os.environ.get("BAIDU_OCR_API_KEY", "").strip()
 BAIDU_OCR_SECRET_KEY = os.environ.get("BAIDU_OCR_SECRET_KEY", "").strip()
 BAIDU_OCR_ENDPOINT = os.environ.get(
@@ -62,9 +70,9 @@ LOCAL_DOCLING_ENABLED = os.environ.get("LOCAL_DOCLING_ENABLED", "1").lower() not
     "no",
 }
 tasks: dict[str, dict[str, Any]] = {}
-MAX_TASKS = max(1, int(os.environ.get("PARSER_MAX_TASKS", "5000")))
+MAX_TASKS = max(1, env_int("PARSER_MAX_TASKS", 5000))
 MAX_RETAINED_BYTES = max(
-    1, int(os.environ.get("PARSER_MAX_RETAINED_BYTES", str(200 * 1024 * 1024)))
+    1, env_int("PARSER_MAX_RETAINED_BYTES", 200 * 1024 * 1024)
 )
 # Two independent limits:
 #  - MAX_TASKS bounds retained entries (finished results keep their markdown until
@@ -73,15 +81,29 @@ MAX_RETAINED_BYTES = max(
 # A hung task no longer occupies either forever: the cleanup sweep fails anything
 # still queued/processing after PARSER_TASK_STALE_SECONDS.
 MAX_INFLIGHT_TASKS = max(
-    1, int(os.environ.get("PARSER_MAX_INFLIGHT", str(MAX_TASKS)))
+    1, env_int("PARSER_MAX_INFLIGHT", 16)
 )
 # A queued/processing entry that never reaches a terminal state used to occupy
 # capacity forever: the sweep below only deleted completed/failed tasks, so a
 # hung parse permanently consumed a MAX_TASKS slot until the process restarted.
 PARSER_TASK_STALE_SECONDS = max(
-    60.0, float(os.environ.get("PARSER_TASK_STALE_SECONDS", "5400"))
+    60.0, env_float("PARSER_TASK_STALE_SECONDS", 5400)
 )
-LEGACY_WORD_MAX_BYTES = int(os.environ.get("LEGACY_WORD_MAX_BYTES", str(60 * 1024 * 1024)))
+LEGACY_WORD_MAX_BYTES = env_int("LEGACY_WORD_MAX_BYTES", 60 * 1024 * 1024)
+
+
+def safe_unlink(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        logger.warning("Parser temporary-file cleanup failed")
+
+
+def safe_error(error: BaseException) -> str:
+    # Never expose provider response bodies or URLs carrying OAuth credentials.
+    if isinstance(error, RuntimeError) and str(error) == "Image extraction requires configured OCR, VLM, or local Docling":
+        return str(error)
+    return f"Parser operation failed ({type(error).__name__})"
 
 
 def _module_available(name: str) -> bool:
@@ -108,7 +130,8 @@ def reserve_task(task_id: str, filename: str, parser_type: str) -> None:
     for t in tasks.values():
         if t.get("status") in ("queued", "processing"):
             in_flight += 1
-    if in_flight >= MAX_INFLIGHT_TASKS or len(tasks) >= MAX_TASKS:
+    upload_budget = env_int("PARSER_MAX_TEMP_BYTES", 1024 * 1024 * 1024)
+    if (in_flight + 1) * MAX_FILE_BYTES > upload_budget or in_flight >= MAX_INFLIGHT_TASKS or len(tasks) >= MAX_TASKS:
         raise HTTPException(status_code=503, detail="Parser capacity exhausted", headers={"Retry-After": "5"})
     tasks[task_id] = {"status": "queued", "filename": filename, "parser_type": parser_type, "created_at": time.time()}
 _torchvision_compat_lib = None
@@ -123,9 +146,9 @@ _baidu_access_tokens: dict[tuple[str, str], tuple[str, float]] = {}
 # timed-out conversion keeps consuming CPU/GPU until it finishes on its own.
 # Bound the number of concurrent Docling conversions so abandoned/timed-out
 # requests cannot pile up threads and model memory without limit.
-DOCLING_MAX_CONCURRENCY = max(1, int(os.environ.get("DOCLING_MAX_CONCURRENCY", "2")))
+DOCLING_MAX_CONCURRENCY = max(1, env_int("DOCLING_MAX_CONCURRENCY", 2))
 _docling_semaphore = asyncio.Semaphore(DOCLING_MAX_CONCURRENCY)
-_parse_limiter = FairLimiter(int(os.environ.get("PARSER_CONCURRENCY", "4")), int(os.environ.get("PARSER_QUEUE_LIMIT", "64")), int(os.environ.get("PARSER_PER_INSTANCE_CONCURRENCY", "2")))
+_parse_limiter = FairLimiter(env_int("PARSER_CONCURRENCY", 4), env_int("PARSER_QUEUE_LIMIT", 64), env_int("PARSER_PER_INSTANCE_CONCURRENCY", 2))
 
 
 try:
@@ -198,9 +221,10 @@ async def lifespan(app: FastAPI):
         )
     if not os.environ.get("AUTH_TOKEN"):
         logger.warning(
-            "AUTH_TOKEN is not configured: parser worker accepts unauthenticated "
-            "requests from loopback/internal Docker networks only. Set AUTH_TOKEN "
-            "before exposing this service on any external interface."
+            "AUTH_TOKEN is not configured: every request is rejected unless "
+            "PARSER_ALLOW_UNAUTHENTICATED_LOOPBACK=1 and the caller is loopback. "
+            "Internal Docker-network callers are no longer trusted implicitly. "
+            "Set AUTH_TOKEN before exposing this service."
         )
     cleanup_task = asyncio.create_task(periodic_cleanup())
     yield
@@ -219,9 +243,6 @@ app.add_middleware(
 
 security = HTTPBearer(auto_error=False)
 
-# Internal Docker bridge range; combined with loopback this is the only
-# unauthenticated reachability allowed when AUTH_TOKEN is not configured.
-_DOCKER_INTERNAL_NETWORK = ipaddress.ip_network("172.16.0.0/12")
 
 
 def _client_is_local_trusted(request: Request) -> bool:
@@ -232,7 +253,7 @@ def _client_is_local_trusted(request: Request) -> bool:
         client_ip = ipaddress.ip_address(client_host)
     except ValueError:
         return False
-    return client_ip.is_loopback or client_ip in _DOCKER_INTERNAL_NETWORK
+    return client_ip.is_loopback
 
 
 def verify_auth(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)):
@@ -243,12 +264,11 @@ def verify_auth(request: Request, credentials: HTTPAuthorizationCredentials = De
         if not credentials or not secrets.compare_digest(str(credentials.credentials), str(token)):
             raise HTTPException(status_code=401, detail="Invalid or missing authentication token")
         return
-    # Without AUTH_TOKEN the worker must not be wide open: only loopback and
-    # the internal Docker network may call it. Everything else gets 401.
-    if not _client_is_local_trusted(request):
+    # Unauthenticated loopback is an explicit development option only.
+    if os.environ.get("PARSER_ALLOW_UNAUTHENTICATED_LOOPBACK") != "1" or not _client_is_local_trusted(request):
         raise HTTPException(
             status_code=401,
-            detail="Parser worker authentication is not configured; only loopback/internal network callers are allowed",
+            detail="Parser worker authentication is not configured",
         )
 
 class ParseResponse(BaseModel):
@@ -283,11 +303,11 @@ def health_check():
 
 
 @app.get("/metrics")
-def metrics():
+def metrics(_auth: None = Depends(verify_auth)):
     total = len(tasks)
-    by_status = {}
-    by_engine = {}
-    by_classification = {}
+    by_status: dict[str, int] = {}
+    by_engine: dict[str, int] = {}
+    by_classification: dict[str, int] = {}
     for t in tasks.values():
         s = t.get('status', 'unknown')
         by_status[s] = by_status.get(s, 0) + 1
@@ -466,13 +486,19 @@ def extract_legacy_word(path: Path) -> str:
         )
     env = os.environ.copy()
     try:
-        result = subprocess.run(
-            [ANTIWORD_BIN, "-f", str(path)],
-            check=False,
-            capture_output=True,
-            timeout=120,
-            env=env,
-        )
+        with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+            child = subprocess.Popen([sys.executable, str(Path(__file__).with_name("antiword_job.py")), ANTIWORD_BIN, str(path), str(MAX_RETAINED_BYTES)], stdout=stdout,
+                                     stderr=stderr, env=env, start_new_session=True)
+            try:
+                child.wait(timeout=120)
+            except subprocess.TimeoutExpired:
+                os.killpg(child.pid, signal.SIGKILL)
+                child.wait()
+                raise
+            stdout.seek(0)
+            stderr.seek(0)
+            result = subprocess.CompletedProcess(child.args, child.returncode,
+                                                 stdout.read(MAX_RETAINED_BYTES), stderr.read(4096))
     except FileNotFoundError as exc:
         raise RuntimeError("Legacy .doc conversion is unavailable: antiword is not installed") from exc
     except subprocess.TimeoutExpired as exc:
@@ -652,11 +678,11 @@ def inspect_pdf_native(path: Path) -> dict[str, Any]:
             if re.search(r"\|\s*[-:]+\s*\|", txt):
                 complex_signals += 1
         result["has_complex_layout"] = complex_signals >= max(1, len(page_texts) // 4)
-        if result["native_quality"] == "good":
+        if page_texts:
             result["native_page_indexes"] = [
                 i
                 for i, txt in enumerate(page_texts)
-                if len(re.sub(r"\s+", "", txt)) >= 40
+                if len(re.sub(r"\s+", "", txt)) >= 40 and _pdf_native_quality(txt) == "good"
             ]
     except Exception as e:
         logger.warning(f"pypdf extraction failed for {path}: {e}")
@@ -685,7 +711,7 @@ def create_pdf_subset(path: Path, page_indexes: list[int]) -> Path:
         return subset_path
     except Exception:
         handle.close()
-        subset_path.unlink(missing_ok=True)
+        safe_unlink(subset_path)
         raise
 
 
@@ -747,18 +773,24 @@ def extract_excel(path: Path) -> str:
         sheets_md = []
         for sheetname in wb.sheetnames:
             sheet = wb[sheetname]
+            if sheet.max_row * sheet.max_column > 1_000_000:
+                wb.close()
+                raise ValueError("Excel sheet exceeds cell budget")
             # Forward-fill merged cells across the entire merged range so that
             # downstream retrieval and chunking preserve multi-row/multi-column category context.
-            try:
-                for merge_range in list(sheet.merged_cells.ranges):
+            # Guard each range separately: the previous sheet-wide try logged at
+            # debug and aborted every remaining range, so one malformed range
+            # silently dropped the rest of the sheet's merged-cell context.
+            for merge_range in list(sheet.merged_cells.ranges):
+                try:
                     min_col, min_row, max_col, max_row = merge_range.bounds
                     top_left_val = sheet.cell(row=min_row, column=min_col).value
                     sheet.unmerge_cells(range_string=str(merge_range))
                     for r in range(min_row, max_row + 1):
                         for c in range(min_col, max_col + 1):
                             sheet.cell(row=r, column=c, value=top_left_val)
-            except Exception as merge_err:
-                logger.debug(f"Excel unmerge notice for {sheetname}: {merge_err}")
+                except Exception as merge_err:
+                    logger.warning(f"Excel merged-cell forward fill skipped for {sheetname} {merge_range}: {merge_err}")
 
             rows = list(sheet.iter_rows(values_only=True))
             if not rows:
@@ -793,6 +825,8 @@ def extract_excel(path: Path) -> str:
                 table_lines.append("| " + " | ".join(cells) + " |")
             sheets_md.append("\n".join(table_lines))
         return "\n\n".join(sheets_md)
+    except ValueError:
+        raise
     except Exception as openpyxl_error:
         # openpyxl intentionally does not read the legacy BIFF .xls format.
         # Keep the lightweight xlrd route optional so production can support
@@ -808,6 +842,8 @@ def extract_excel(path: Path) -> str:
 
             sheets_md = []
             for sheet in workbook.sheets():
+                if sheet.nrows * sheet.ncols > 1_000_000:
+                    raise ValueError("Excel sheet exceeds cell budget")
                 if sheet.nrows == 0:
                     continue
                 grid = [
@@ -836,6 +872,8 @@ def extract_excel(path: Path) -> str:
                 lines.extend("| " + " | ".join(row) + " |" for row in rows[1:])
                 sheets_md.append("\n".join(lines))
             return "\n\n".join(sheets_md)
+        except ValueError:
+            raise
         except Exception as xlrd_error:
             logger.warning(f"Legacy Excel extraction failed for {path}: {xlrd_error}")
             return ""
@@ -959,7 +997,7 @@ async def convert_with_docling(path: Path) -> str:
             raise RuntimeError("Docling result exceeds artifact budget")
         return await asyncio.to_thread(output.read_text, encoding="utf-8")
     finally:
-        output.unlink(missing_ok=True)
+        safe_unlink(output)
         _docling_semaphore.release()
 
 
@@ -986,10 +1024,32 @@ async def _baidu_token(client: Any, api_key: str, secret_key: str, endpoint: str
     payload = response.json()
     token = str(payload.get("access_token") or "")
     if not token:
-        raise RuntimeError(f"Baidu OCR token request failed: {payload.get('error_description') or payload}")
+        raise RuntimeError("Baidu OCR token request failed")
     expires_in = int(payload.get("expires_in") or 2592000)
     _baidu_access_tokens[cache_key] = (token, now + max(expires_in, 300))
     return token
+
+
+async def download_ocr_markdown(client: Any, url: str) -> str:
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        raise RuntimeError("Invalid OCR artifact URL")
+    if not any(parsed.hostname == domain or parsed.hostname.endswith("." + domain) for domain in ("bcebos.com", "baidubce.com", "baidu.com")):
+        raise RuntimeError("Invalid OCR artifact host")
+    addresses = await asyncio.to_thread(socket.getaddrinfo, parsed.hostname, parsed.port or 443)
+    if not addresses or any(not ipaddress.ip_address(item[4][0]).is_global for item in addresses):
+        raise RuntimeError("Invalid OCR artifact destination")
+    # Redirects must never bypass destination validation.
+    async with client.stream("GET", url, follow_redirects=False, timeout=30) as response:
+        response.raise_for_status()
+        if response.status_code != 200:
+            raise RuntimeError("Invalid OCR artifact response")
+        chunks = bytearray()
+        async for chunk in response.aiter_bytes():
+            if len(chunks) + len(chunk) > min(MAX_RETAINED_BYTES, 20 * 1024 * 1024):
+                raise RuntimeError("OCR artifact exceeds budget")
+            chunks.extend(chunk)
+        return chunks.decode("utf-8").strip()
 
 
 async def convert_with_baidu_ocr(
@@ -1036,11 +1096,11 @@ async def convert_with_baidu_ocr(
         submitted = response.json()
         if int(submitted.get("error_code", 0) or 0) != 0:
             raise RuntimeError(
-                f"Baidu OCR submit failed: {submitted.get('error_msg') or submitted}"
+                "Baidu OCR submit failed"
             )
         task_id = str((submitted.get("result") or {}).get("task_id") or "")
         if not task_id:
-            raise RuntimeError(f"Baidu OCR did not return task_id: {submitted}")
+            raise RuntimeError("Baidu OCR did not return task_id")
 
         query_endpoint = f"{endpoint_base}/rest/2.0/brain/online/v2/parser/task/query"
         deadline = time.monotonic() + OCR_TIMEOUT_SECONDS
@@ -1053,6 +1113,9 @@ async def convert_with_baidu_ocr(
                 data={"task_id": task_id},
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             )
+            if status_response.status_code == 429 or status_response.status_code >= 500:
+                await asyncio.sleep(min(30, OCR_POLL_INTERVAL_SECONDS * 2))
+                continue
             status_response.raise_for_status()
             status_payload = status_response.json()
             detail = status_payload.get("result") or {}
@@ -1060,10 +1123,8 @@ async def convert_with_baidu_ocr(
             if status == "success":
                 markdown_url = str(detail.get("markdown_url") or "")
                 if not markdown_url:
-                    raise RuntimeError(f"Baidu OCR returned no markdown URL: {status_payload}")
-                markdown_response = await client.get(markdown_url)
-                markdown_response.raise_for_status()
-                markdown = markdown_response.text.strip()
+                    raise RuntimeError("Baidu OCR returned no markdown URL")
+                markdown = await download_ocr_markdown(client, markdown_url)
                 if not markdown:
                     raise RuntimeError("Baidu OCR returned empty Markdown")
                 return markdown, {
@@ -1073,7 +1134,7 @@ async def convert_with_baidu_ocr(
                 }
             if status == "failed":
                 raise RuntimeError(
-                    f"Baidu OCR task failed: {detail.get('task_error') or status_payload}"
+                    "Baidu OCR task failed"
                 )
         raise TimeoutError(f"Baidu OCR task timed out after {OCR_TIMEOUT_SECONDS:g} seconds")
 
@@ -1085,7 +1146,7 @@ async def convert_image_with_baidu_ocr(
     cache_key = None
     if revision and artifact_cache.instance_identity.get() != "legacy":
         blob = await asyncio.to_thread(path.read_bytes)
-        cache_key = artifact_cache.key(blob, {"provider": ocr_config.get("provider"), "endpoint": ocr_config.get("endpoint"), "revision": revision, "projection": "accurate-image-bbox-v1"})
+        cache_key = artifact_cache.key(blob, {"provider": ocr_config.get("provider"), "endpoint": ocr_config.get("endpoint"), "revision": revision, "credential": hashlib.sha256((str(ocr_config.get("api_key") or BAIDU_OCR_API_KEY) + "\0" + str(ocr_config.get("secret_key") or BAIDU_OCR_SECRET_KEY)).encode()).hexdigest(), "projection": "accurate-image-bbox-v1"})
         cached = await asyncio.to_thread(artifact_cache.read, cache_key)
         if cached:
             return cached[0], {**cached[1], "page_artifact_cache_hit": True}
@@ -1236,26 +1297,23 @@ async def ocr_image_parts_into_markdown(
     ocr_count = 0
     words_total = 0
     confidences: list[float] = []
-    result = markdown
+    replacements: dict[str, str] = {}
+    present = set(re.findall(r"<!-- image: [^\n>]+ -->", markdown))
 
     for position, image in enumerate(image_parts, start=1):
         key = str(image.get("key") or f"image-{position}")
         placeholder = f"<!-- image: {key} -->"
-        if placeholder not in result:
+        if placeholder not in present:
             continue
         blob = bytes(image.get("blob") or b"")
         if not blob:
-            result = result.replace(placeholder, f"<!-- image: {key} -->\n*(图片内容为空)*", 1)
+            replacements[placeholder] = f"<!-- image: {key} -->\n*(图片内容为空)*"
             continue
         if not is_image_ocr_worthy(blob):
-            result = result.replace(placeholder, f"<!-- image: {key} -->\n*(装饰性小图，跳过 OCR)*", 1)
+            replacements[placeholder] = f"<!-- image: {key} -->\n*(装饰性小图，跳过 OCR)*"
             continue
         if provider != "baidu":
-            result = result.replace(
-                placeholder,
-                f"<!-- image: {key} -->\n*(图片存在，当前未配置 OCR 接口)*",
-                1,
-            )
+            replacements[placeholder] = f"<!-- image: {key} -->\n*(图片存在，当前未配置 OCR 接口)*"
             continue
 
         ext = str(image.get("ext") or "png").lower().lstrip(".")
@@ -1280,26 +1338,14 @@ async def ocr_image_parts_into_markdown(
                             confidences.append(float(conf))
                         except (TypeError, ValueError):
                             pass
-                    result = result.replace(
-                        placeholder,
-                        f"### 图片文字\n\n{image_md.strip()}",
-                        1,
-                    )
+                    replacements[placeholder] = f"### 图片文字\n\n{image_md.strip()}"
                 else:
-                    result = result.replace(
-                        placeholder,
-                        f"<!-- image: {key} -->\n*(图片未识别到有效文字)*",
-                        1,
-                    )
+                    replacements[placeholder] = f"<!-- image: {key} -->\n*(图片未识别到有效文字)*"
             except Exception as ocr_err:
-                logger.warning("Embedded image OCR failed for %s: %s", key, ocr_err)
-                result = result.replace(
-                    placeholder,
-                    f"<!-- image: {key} -->\n*(图片 OCR 识别失败: {ocr_err})*",
-                    1,
-                )
+                logger.warning("Embedded image OCR failed for %s: %s", key, safe_error(ocr_err))
+                replacements[placeholder] = f"<!-- image: {key} -->\n*(图片 OCR 识别失败: {safe_error(ocr_err)})*"
         finally:
-            image_path.unlink(missing_ok=True)
+            safe_unlink(image_path)
 
     if ocr_count:
         metadata["ocr_provider"] = provider
@@ -1309,6 +1355,14 @@ async def ocr_image_parts_into_markdown(
             metadata["ocr_average_confidence"] = round(sum(confidences) / len(confidences), 4)
     else:
         metadata["ocr_image_count"] = 0
+    used: set[str] = set()
+    def replace_image(match):
+        placeholder = match.group(0)
+        if placeholder in used:
+            return placeholder
+        used.add(placeholder)
+        return replacements.get(placeholder, placeholder)
+    result = re.sub(r"<!-- image: [^\n>]+ -->", replace_image, markdown)
     return result, metadata
 
 
@@ -1472,6 +1526,7 @@ async def convert_pptx_without_docling(
         "embedded_image_count": len(image_parts),
     }
     ocr_extracted_count = 0
+    ocr_confidences: list[float] = []
     vlm_extracted_count = 0
 
     stem = Path(doc_title).stem if doc_title else path.stem
@@ -1494,10 +1549,8 @@ async def convert_pptx_without_docling(
                             )
                             for key, value in image_metadata.items():
                                 if key == "ocr_average_confidence" and value is not None:
-                                    previous = metadata.get(key)
-                                    metadata[key] = round(
-                                        (float(previous) * (position - 1) + float(value)) / position, 4
-                                    ) if previous is not None else value
+                                    ocr_confidences.append(float(value))
+                                    metadata[key] = round(sum(ocr_confidences) / len(ocr_confidences), 4)
                                 elif key.startswith("ocr_"):
                                     metadata[key] = metadata.get(key, 0) + value if isinstance(value, (int, float)) else value
                         else:
@@ -1505,12 +1558,12 @@ async def convert_pptx_without_docling(
                                 f"<!-- image: slide-{image['slide']}-picture-{image['shape']} -->\n*(图片区域 {image['shape']} 未识别到有效文字)*"
                             )
                     except Exception as ocr_err:
-                        logger.warning("Baidu OCR failed for slide %s image %s: %s", image["slide"], image["shape"], ocr_err)
+                        logger.warning("Baidu OCR failed for slide %s image %s: %s", image["slide"], image["shape"], safe_error(ocr_err))
                         image_by_slide.setdefault(int(image["slide"]), []).append(
-                            f"<!-- image: slide-{image['slide']}-picture-{image['shape']} -->\n*(图片区域 {image['shape']} OCR 识别失败: {ocr_err})*"
+                            f"<!-- image: slide-{image['slide']}-picture-{image['shape']} -->\n*(图片区域 {image['shape']} OCR 识别失败: {safe_error(ocr_err)})*"
                         )
                 finally:
-                    image_path.unlink(missing_ok=True)
+                    safe_unlink(image_path)
         elif is_vlm_available():
             for position, image in enumerate(image_parts, start=1):
                 temp = tempfile.NamedTemporaryFile(
@@ -1535,12 +1588,12 @@ async def convert_pptx_without_docling(
                                 f"<!-- image: slide-{image['slide']}-picture-{image['shape']} -->\n*(幻灯片图片区域 {image['shape']} 视觉解析为空)*"
                             )
                     except Exception as vlm_err:
-                        logger.warning("VLM analysis failed for slide %s image %s: %s", image["slide"], image["shape"], vlm_err)
+                        logger.warning("VLM analysis failed for slide %s image %s: %s", image["slide"], image["shape"], safe_error(vlm_err))
                         image_by_slide.setdefault(int(image["slide"]), []).append(
                             f"<!-- image: slide-{image['slide']}-picture-{image['shape']} -->\n*(幻灯片包含图片内容)*"
                         )
                 finally:
-                    image_path.unlink(missing_ok=True)
+                    safe_unlink(image_path)
         else:
             for image in image_parts:
                 image_by_slide.setdefault(int(image["slide"]), []).append(
@@ -1597,8 +1650,8 @@ async def convert_pdf_with_fallback(
                 )
                 return markdown, "docling-complex-layout", metadata
             except Exception as docling_err:
-                logger.warning(f"Docling layout conversion failed on {path.name}, falling back to native: {docling_err}")
-                metadata["docling_error"] = str(docling_err)
+                logger.warning(f"Docling layout conversion failed on {path.name}, falling back to native: {safe_error(docling_err)}")
+                metadata["docling_error"] = safe_error(docling_err)
         if PDF_PARSE_MODE in {"fast", "hybrid", "auto"}:
             # Native-text pages may still carry figures/charts whose labels are
             # only available through image OCR. Scan pages are handled by the
@@ -1646,11 +1699,11 @@ async def convert_pdf_with_fallback(
                 return markdown, "ocr-baidu-mixed-pages", ocr_metadata
             return markdown, f"ocr-{ocr_config.get('provider') or OCR_PROVIDER}", ocr_metadata
         except Exception as ocr_err:
-            logger.warning(f"Cloud OCR on {path.name} failed: {ocr_err}")
-            metadata["ocr_error"] = str(ocr_err)
+            logger.warning(f"Cloud OCR on {path.name} failed: {safe_error(ocr_err)}")
+            metadata["ocr_error"] = safe_error(ocr_err)
         finally:
             if ocr_subset_path:
-                ocr_subset_path.unlink(missing_ok=True)
+                safe_unlink(ocr_subset_path)
 
     if LOCAL_DOCLING_ENABLED:
         try:
@@ -1659,8 +1712,8 @@ async def convert_pdf_with_fallback(
             )
             return markdown, "docling-local", metadata
         except Exception as docling_err:
-            logger.warning(f"Local Docling on {path.name} failed/timed out: {docling_err}")
-            metadata["docling_error"] = str(docling_err)
+            logger.warning(f"Local Docling on {path.name} failed/timed out: {safe_error(docling_err)}")
+            metadata["docling_error"] = safe_error(docling_err)
 
     if native_md:
         enriched_md, metadata = await enrich_pdf_figures_with_ocr(
@@ -1683,8 +1736,8 @@ async def process_file(task_id: str, path: Path, parser_type: str, ocr_config: d
             await _process_file(task_id, path, parser_type, ocr_config)
     except (Exception, asyncio.CancelledError) as error:
         if task_id in tasks:
-            tasks[task_id].update(status="failed", error=str(error) or "Parse cancelled", finished_at=time.time())
-        path.unlink(missing_ok=True)
+            tasks[task_id].update(status="failed", error=safe_error(error), finished_at=time.time())
+        safe_unlink(path)
         if isinstance(error, asyncio.CancelledError):
             raise
     finally:
@@ -1706,7 +1759,7 @@ async def _process_file(
         # This execution service handles OCR and native/complex-layout fallback.
         if suffix in {".md", ".txt", ".csv", ".html", ".htm"}:
             content = await asyncio.to_thread(path.read_bytes)
-            task["markdown"] = extract_plaintext(path.name, content)
+            task["markdown"] = await asyncio.to_thread(extract_plaintext, path.name, content)
             task["engine"] = "plaintext"
         elif suffix == ".doc":
             task["conversion"] = "antiword"
@@ -1815,8 +1868,8 @@ async def _process_file(
                     task["markdown"] = md
                     task["engine"] = "docling-local"
                 except Exception as docling_error:
-                    logger.warning("Local Docling image conversion failed for %s: %s", path.name, docling_error)
-                    task["docling_error"] = str(docling_error)
+                    logger.warning("Local Docling image conversion failed for %s: %s", path.name, safe_error(docling_error))
+                    task["docling_error"] = safe_error(docling_error)
                     provider = str(ocr_config.get("provider") or OCR_PROVIDER).lower()
                     if provider == "baidu":
                         md, ocr_metadata = await convert_image_with_baidu_ocr(path, ocr_config)
@@ -1849,7 +1902,7 @@ async def _process_file(
 
         if not task.get("markdown", "").strip():
             raise RuntimeError("Extracted Markdown is empty")
-        task["markdown"] = normalize_markdown(
+        task["markdown"] = await asyncio.to_thread(normalize_markdown,
             task["markdown"].replace("\x00", "").replace("\u0000", ""),
             str(task.get("filename", "upload.md")),
         )
@@ -1871,10 +1924,10 @@ async def _process_file(
                         task_id,
                     )
             except Exception as vlm_err:
-                logger.warning("VLM enrichment failed for task %s: %s", task_id, vlm_err)
-                task["vlm_error"] = str(vlm_err)
+                logger.warning("VLM enrichment failed for task %s: %s", task_id, safe_error(vlm_err))
+                task["vlm_error"] = safe_error(vlm_err)
 
-        task.update(assess_content_quality(task["markdown"], suffix, task))
+        task.update(await asyncio.to_thread(assess_content_quality, task["markdown"], suffix, task))
         # Unification with the API publication gate: a quality rejection is a
         # "hold for review" signal, never a hard parser failure. Only a truly
         # empty extraction (handled above) fails. The API re-assesses quality
@@ -1891,11 +1944,11 @@ async def _process_file(
         )
     except Exception as exc:
         task["status"] = "failed"
-        task["error"] = f"Processing failed for {task.get('filename', 'unknown')}: {type(exc).__name__} ({exc})"
-        logger.error(f"Error processing file for task {task_id}: {exc}", exc_info=True)
+        task["error"] = safe_error(exc)
+        logger.error("Error processing task %s: %s", task_id, safe_error(exc))
     finally:
         try:
-            path.unlink(missing_ok=True)
+            safe_unlink(path)
         except Exception:
             pass
 
@@ -1953,10 +2006,12 @@ async def parse_document(
                 received_bytes += len(chunk)
                 if received_bytes > MAX_FILE_BYTES:
                     raise HTTPException(status_code=413, detail="File exceeds 200 MiB limit")
+                if shutil.disk_usage(UPLOAD_ROOT).free < len(chunk) + MAX_FILE_BYTES:
+                    raise HTTPException(status_code=503, detail="Parser temporary disk budget exhausted")
                 await asyncio.to_thread(handle.write, chunk)
-    except Exception:
+    except BaseException:
         tasks.pop(task_id, None)
-        path.unlink(missing_ok=True)
+        safe_unlink(path)
         raise
     # Credentials are request-scoped and deliberately not copied into tasks;
     # /parse/{task_id} must never expose them.
@@ -1981,6 +2036,7 @@ def parse_status(task_id: str, _auth: None = Depends(verify_auth)):
 async def execute_document(
     file: UploadFile = File(...),
     parser_type: str = "auto",
+    instance_id: str | None = Form(None),
     ocr_provider: str | None = Form(None),
     ocr_endpoint: str | None = Form(None),
     ocr_api_key: str | None = Form(None),
@@ -1995,8 +2051,9 @@ async def execute_document(
     """
     background = BackgroundTasks()
     accepted = await parse_document(
-        background, file, parser_type, ocr_provider, ocr_endpoint,
-        ocr_api_key, ocr_secret_key, _auth,
+        background_tasks=background, file=file, parser_type=parser_type, instance_id=instance_id,
+        ocr_provider=ocr_provider, ocr_endpoint=ocr_endpoint,
+        ocr_api_key=ocr_api_key, ocr_secret_key=ocr_secret_key, _auth=_auth,
     )
     try:
         await background()
@@ -2012,6 +2069,7 @@ async def ocr_embedded_images_endpoint(
     ocr_endpoint: str | None = Form(None),
     ocr_api_key: str | None = Form(None),
     ocr_secret_key: str | None = Form(None),
+    instance_id: str | None = Form(None),
     _auth: None = Depends(verify_auth),
 ):
     """OCR embedded images only; used after AnyDoc text extraction.
@@ -2023,41 +2081,51 @@ async def ocr_embedded_images_endpoint(
     filename = Path(file.filename or "upload.bin").name
     suffix = Path(filename).suffix.lower() or ".bin"
     path = UPLOAD_ROOT / f"ocr-embed-{uuid.uuid4()}{suffix}"
+    identity = instance_id if isinstance(instance_id, str) else "legacy"
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", identity):
+        raise HTTPException(status_code=400, detail="Invalid instance identity")
     try:
-        size = 0
-        with path.open("wb") as fh:
-            while True:
-                chunk = await file.read(1024 * 1024)
-                if not chunk:
-                    break
-                size += len(chunk)
-                if size > OCR_MAX_FILE_BYTES:
-                    raise HTTPException(
-                        status_code=413,
-                        detail=f"Embedded-image OCR upload exceeds {OCR_MAX_FILE_BYTES // (1024 * 1024)}MB limit",
-                    )
-                fh.write(chunk)
-        if size == 0:
-            raise HTTPException(status_code=400, detail="Empty upload")
-        ocr_config = {
-            "provider": (ocr_provider or OCR_PROVIDER).strip().lower(),
-            "endpoint": (ocr_endpoint or BAIDU_OCR_ENDPOINT).strip(),
-            "api_key": ocr_api_key or BAIDU_OCR_API_KEY,
-            "secret_key": ocr_secret_key or BAIDU_OCR_SECRET_KEY,
-        }
-        markdown, metadata = await ocr_embedded_images_fragments(path, ocr_config)
-        return {"markdown": markdown, **metadata}
+        async with _parse_limiter.slot(identity):
+            size = 0
+            with path.open("wb") as fh:
+                while True:
+                    chunk = await file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > OCR_MAX_FILE_BYTES:
+                        raise HTTPException(
+                            status_code=413,
+                            detail=f"Embedded-image OCR upload exceeds {OCR_MAX_FILE_BYTES // (1024 * 1024)}MB limit",
+                        )
+                    await asyncio.to_thread(fh.write, chunk)
+            if size == 0:
+                raise HTTPException(status_code=400, detail="Empty upload")
+            ocr_config = {
+                "provider": (ocr_provider or OCR_PROVIDER).strip().lower(),
+                "endpoint": (ocr_endpoint or BAIDU_OCR_ENDPOINT).strip(),
+                "api_key": ocr_api_key or BAIDU_OCR_API_KEY,
+                "secret_key": ocr_secret_key or BAIDU_OCR_SECRET_KEY,
+            }
+            identity_token = artifact_cache.instance_identity.set(identity)
+            try:
+                markdown, metadata = await ocr_embedded_images_fragments(path, ocr_config)
+            finally:
+                artifact_cache.instance_identity.reset(identity_token)
+            return {"markdown": markdown, **metadata}
+    except HTTPException:
+        raise
     except Exception as exc:
-        logger.error("Embedded-image OCR failed for %s: %s", filename, exc)
-        raise HTTPException(status_code=500, detail=f"Embedded-image OCR failed: {exc}")
+        logger.error("Embedded-image OCR failed for %s: %s", filename, safe_error(exc))
+        raise HTTPException(status_code=500, detail="Embedded-image OCR failed")
     finally:
-        path.unlink(missing_ok=True)
+        safe_unlink(path)
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8100)
 
-_maxsim_limiter = FairLimiter(int(os.environ.get('MAXSIM_GLOBAL_CONCURRENCY', '2')), queue_limit=16, per_instance=1)
+_maxsim_limiter = FairLimiter(env_int('MAXSIM_GLOBAL_CONCURRENCY', 2), queue_limit=16, per_instance=1)
 
 @app.post('/maxsim')
 async def shared_maxsim(request: Request, _auth: None = Depends(verify_auth)):
@@ -2077,8 +2145,10 @@ async def shared_maxsim(request: Request, _auth: None = Depends(verify_auth)):
         async with _maxsim_limiter.slot(identity):
             with tempfile.TemporaryDirectory(prefix='maxsim-') as directory:
                 source, target = Path(directory)/'input.json', Path(directory)/'output.json'
-                source.write_bytes(payload)
-                work = asyncio.create_task(run_process([sys.executable, str(Path(__file__).with_name('maxsim_job.py')), str(source), str(target)], float(os.environ.get('MAXSIM_TIMEOUT_SECONDS', '5'))))
+                await asyncio.to_thread(source.write_bytes, payload)
+                del payload
+                del data
+                work = asyncio.create_task(run_process([sys.executable, str(Path(__file__).with_name('maxsim_job.py')), str(source), str(target)], env_float('MAXSIM_TIMEOUT_SECONDS', 5)))
                 try:
                     while not work.done():
                         await asyncio.wait({work}, timeout=.1)
@@ -2086,7 +2156,7 @@ async def shared_maxsim(request: Request, _auth: None = Depends(verify_auth)):
                             work.cancel()
                             raise HTTPException(status_code=499, detail='MaxSim caller disconnected')
                     await work
-                    return json.loads(target.read_text(encoding='utf-8'))
+                    return json.loads(await asyncio.to_thread(target.read_text, encoding='utf-8'))
                 finally:
                     if not work.done():
                         work.cancel()

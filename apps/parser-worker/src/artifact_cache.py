@@ -4,13 +4,17 @@ import json
 import os
 import time
 import uuid
+try:
+    from src.env_config import env_int
+except ImportError:
+    from env_config import env_int
 from pathlib import Path
 from contextvars import ContextVar
 
 instance_identity: ContextVar[str] = ContextVar("parser_instance", default="legacy")
 ROOT = Path(os.environ.get("PARSER_ARTIFACT_CACHE", "/tmp/llmwiki/parser-artifacts"))
-MAX_BYTES = int(os.environ.get("PARSER_ARTIFACT_CACHE_MAX_BYTES", str(256 * 1024 * 1024)))
-TTL_SECONDS = int(os.environ.get("PARSER_ARTIFACT_CACHE_TTL_SECONDS", str(7 * 86400)))
+MAX_BYTES = env_int("PARSER_ARTIFACT_CACHE_MAX_BYTES", 256 * 1024 * 1024)
+TTL_SECONDS = env_int("PARSER_ARTIFACT_CACHE_TTL_SECONDS", 7 * 86400)
 
 def key(blob: bytes, contract: dict) -> str:
     payload = json.dumps([instance_identity.get(), contract], sort_keys=True, ensure_ascii=False).encode()

@@ -215,9 +215,9 @@ export function PersonalSettingsScreen({
     }
   };
 
-  const copyToClipboard = (text: string, label = '内容') => {
-    navigator.clipboard.writeText(text);
-    notify(`${label}已复制到剪贴板`, 'success');
+  const copyToClipboard = async (text: string, label = '内容') => {
+    try { await navigator.clipboard.writeText(text); notify(`${label}已复制到剪贴板`, 'success'); }
+    catch (error) { notify(errorMessage(error, '复制失败，请检查剪贴板权限'), 'error'); }
   };
 
   const handleChangePassword = async (e: React.FormEvent) => {

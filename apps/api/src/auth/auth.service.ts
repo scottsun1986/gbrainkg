@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { getPrismaClient } from '../prisma';
 import { setRequestContextUser } from '../observability/request-context';
+import { runAsAuth } from '../db/tenant-context.service';
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { authSigningSecret } from './auth-secret';
 
@@ -45,18 +46,29 @@ export class AuthService {
   ): Promise<{ active: boolean; mustChangePassword: boolean; mfaEnabled: boolean }> {
     const ttl = AuthService.USER_STATUS_TTL_MS;
     const cached = this.userStatusCache.get(userId);
-    if (cached && cached.expiresAt > Date.now()) return cached;
-    const user = await this.prisma.user.findUnique({
+    if (cached && cached.expiresAt > Date.now()) {
+      this.userStatusCache.delete(userId);
+      this.userStatusCache.set(userId, cached);
+      return cached;
+    }
+    this.userStatusCache.delete(userId);
+    const user = await runAsAuth((tx) => tx.user.findUnique({
       where: { id: userId },
       select: { status: true, mustChangePassword: true, mfaEnabled: true },
-    });
+    }));
     const entry = {
       expiresAt: Date.now() + ttl,
       active: user?.status === 'active',
       mustChangePassword: Boolean(user?.mustChangePassword),
       mfaEnabled: Boolean(user?.mfaEnabled),
     };
-    if (ttl > 0) this.userStatusCache.set(userId, entry);
+    if (ttl > 0) {
+      this.userStatusCache.set(userId, entry);
+      for (const [key, value] of this.userStatusCache) {
+        if (value.expiresAt <= Date.now()) this.userStatusCache.delete(key);
+      }
+      while (this.userStatusCache.size > 5000) this.userStatusCache.delete(this.userStatusCache.keys().next().value!);
+    }
     return entry;
   }
 
@@ -191,10 +203,10 @@ export class AuthService {
   }
 
   async login(username: string, password: string) {
-    const user = await this.prisma.user.findFirst({
+    const user = await runAsAuth((tx) => tx.user.findFirst({
       where: { OR: [{ username }, { email: username }], status: 'active' },
       include: { roles: { include: { role: true } }, orgs: { include: { orgNode: true } } },
-    });
+    }));
     if (!user?.passwordHash || !this.verifyPassword(password, user.passwordHash)) {
       throw new UnauthorizedException('Invalid username or password.');
     }
@@ -207,7 +219,7 @@ export class AuthService {
       return { mfaSetupRequired: true as const, mfaToken, expiresIn };
     }
     const { token, expiresIn } = this.issueAccessToken(user.id);
-    const { passwordHash: _passwordHash, mfaSecret: _mfaSecret, ...safeUser } = user;
+    const { passwordHash: _passwordHash, mfaSecret: _mfaSecret, mfaLastCounter: _mfaLastCounter, ...safeUser } = user;
     return { token, expiresIn, user: safeUser };
   }
 
@@ -220,7 +232,7 @@ export class AuthService {
       throw new UnauthorizedException('User is inactive or does not exist.');
     }
     const { token, expiresIn } = this.issueAccessToken(user.id);
-    const { passwordHash: _passwordHash, mfaSecret: _mfaSecret, ...safeUser } = user;
+    const { passwordHash: _passwordHash, mfaSecret: _mfaSecret, mfaLastCounter: _mfaLastCounter, ...safeUser } = user;
     return { token, expiresIn, user: safeUser };
   }
 

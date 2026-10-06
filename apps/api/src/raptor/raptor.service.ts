@@ -1,3 +1,5 @@
+import { runAsService } from '../db/service-principal';
+import { runOutsideRequestContext } from '../observability/request-context';
 import { requestFetch } from '../retrieval/request-signal';
 import { rethrowAuthorizationFailure as throwAuthorizationFailure } from '../permission/authorization-revision';
 import { Injectable, Logger, Optional } from '@nestjs/common';
@@ -87,15 +89,15 @@ export class RaptorService {
         const lockTtlMs = Math.max(60_000, Number(process.env.RAPTOR_GLOBAL_TREE_LOCK_MS || 15 * 60 * 1000));
         if (this.redisService) {
           const { acquired } = await this.redisService.withLock(`raptor:global:${kbId}`, lockTtlMs, async () => {
-            await this.buildKbGlobalTree(kbId);
+            await runOutsideRequestContext(() => runAsService('raptor-global-build', () => this.buildKbGlobalTree(kbId)));
           });
           if (!acquired) {
             this.logger.debug(`Skipping KB global tree for ${kbId}: another instance holds the build lock.`);
           }
         } else {
-          await this.buildKbGlobalTree(kbId);
+          await runOutsideRequestContext(() => runAsService('raptor-global-build', () => this.buildKbGlobalTree(kbId)));
         }
-      } catch (err) { throwAuthorizationFailure(err);
+      } catch (err) {
         this.logger.warn(`Debounced buildKbGlobalTree failed for KB ${kbId}: ${err instanceof Error ? err.message : String(err)}`);
       } finally {
         this.globalTreeRunningKbs.delete(kbId);
@@ -998,7 +1000,7 @@ export class RaptorService {
         // Nodes written before the embedding column existed (or with the
         // provider down) would pin this KB to keyword-only recall forever;
         // self-heal in the background.
-        void this.backfillNodeEmbeddings(kbIds[0]);
+        void this.backfillNodeEmbeddings(kbIds[0]).catch(error => this.logger.warn(`RAPTOR background embedding failed: ${error instanceof Error ? error.message : String(error)}`));
       }
       return hits;
     } catch (err) { throwAuthorizationFailure(err);

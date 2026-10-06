@@ -20,6 +20,7 @@ model User {
   // MFA/TOTP: base32 secret; mfaEnabled=false with a secret set means "pending setup verification"
   mfaSecret    String?
   mfaEnabled   Boolean    @default(false)
+  mfaLastCounter Int?
   mfaEnabledAt DateTime?
   // OIDC subject (iss + sub style identity) bound on first SSO login (JIT)
   oidcSub      String?    @unique
@@ -148,7 +149,7 @@ model IndustryGrant {
 
   kb          KnowledgeBase @relation(fields: [kbId], references: [id], onDelete: Cascade)
 
-  @@index([kbId, subjectType, subjectId])
+  @@unique([kbId, subjectType, subjectId])
   @@index([expiresAt])
 }
 
@@ -338,6 +339,7 @@ model DocumentAcl {
 
   document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
+  @@unique([documentId, subjectType, subjectId])
   @@index([documentId])
   @@index([subjectType, subjectId])
 }
@@ -423,6 +425,7 @@ model ChatRun {
   status         String    @default("running")  // running/completed/failed
   stage          String    @default("queued")   // queued/retrieving/reranking/generating/verifying/persisting
   errorMessage   String?
+  leaseExpiresAt DateTime?
   startedAt      DateTime  @default(now())
   completedAt    DateTime?
 
@@ -486,6 +489,9 @@ model Citation {
   document   Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
 
   @@index([messageId])
+  @@index([chunkId])
+  @@index([documentId])
+  @@index([kbId])
 }
 
 // 个人大脑
@@ -569,6 +575,7 @@ model BrainScope {
   knowledgeEpoch  Int      @default(1)
   strategy        String   @default("eager") // eager / lazy
   status          String   @default("active") // active / dirty / compiling / archived
+  compileStartedAt DateTime?
   lastCompileAt   DateTime?
   lastAccessAt    DateTime @default(now())
   createdAt       DateTime @default(now())
@@ -629,6 +636,8 @@ model BrainChangeEvent {
   status         String    @default("pending") // pending / processing / completed / failed
   affectedScopes Json?     @default("[]")
   retryCount     Int       @default(0)
+  claimToken     String?
+  claimedAt      DateTime?
   errorMessage   String?
   createdAt      DateTime  @default(now())
   processedAt    DateTime?

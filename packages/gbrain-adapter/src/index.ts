@@ -7,6 +7,24 @@ const { join, dirname, resolve, delimiter } = require('node:path');
 const { homedir, tmpdir } = require('node:os');
 const { spawn } = require('node:child_process');
 
+// Guard against unset/misspelled values (NaN) — the original defect was
+// `Math.max(N, Number(env))` producing NaN and timing every child out after
+// 1 ms. Falling back whenever the value is below the caller's floor also
+// silently discards valid configuration: the deployed
+// GBRAIN_COMMAND_TIMEOUT_MS=10000 was replaced by the 180_000 fallback instead
+// of the 30_000 clamp the floor implies. Keep the floor as a clamp; only a
+// non-finite value falls back.
+function envNumber(name: string, fallback: number, minimum = 1): number {
+  const value = Number(process.env[name]);
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(minimum, value);
+}
+
+function validateSourceId(sourceId: string): string {
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(sourceId)) throw new Error('Invalid GBrain source identity');
+  return sourceId;
+}
+
 export interface BrainEvidence {
   text: string;
   sourceFile?: string;
@@ -172,7 +190,11 @@ export function structuralPassages(markdown: string): Array<{ heading?: string; 
   let insideArticle = false;
   const flush = () => {
     const content = buffer.join('\n').trim();
-    if (content) sections.push({ heading: heading || undefined, content });
+    if (content) {
+      for (let offset = 0; offset < content.length; offset += 12_000) {
+        sections.push({ heading: heading || undefined, content: content.slice(offset, offset + 12_000) });
+      }
+    }
   };
   for (const line of lines) {
     const trimmed = line.trim();
@@ -189,6 +211,11 @@ export function structuralPassages(markdown: string): Array<{ heading?: string; 
       buffer = [line];
       insideArticle = isArticle;
     } else {
+      if (!trimmed && buffer.join("\n").length >= 12_000) {
+        flush();
+        buffer = [];
+        insideArticle = false;
+      }
       buffer.push(line);
     }
   }
@@ -219,7 +246,7 @@ function lexicalFeatures(value: string): Set<string> {
 function localizePassage(question: string, page: string, fallback: string): Passage {
   const queryFeatures = lexicalFeatures(question);
   const sections = structuralPassages(page);
-  const ranked = sections.map((section) => {
+  const ranked = sections.map((section, index) => {
     const text = `${section.heading || ''}\n${section.content}`;
     const features = lexicalFeatures(text);
     let matched = 0;
@@ -229,17 +256,17 @@ function localizePassage(question: string, page: string, fallback: string): Pass
     for (const feature of queryFeatures) if (headingFeatures.has(feature)) headingMatched += 1;
     // Boost heading match weight to prioritize explicitly targeted articles/clauses/sections
     const score = (matched / Math.max(1, queryFeatures.size)) + ((headingMatched / Math.max(1, queryFeatures.size)) * 1.5);
-    return { heading: section.heading, content: section.content, score };
+    return { heading: section.heading, content: section.content, score, index };
   }).sort((a, b) => b.score - a.score);
   const best = ranked[0];
   if (!best || best.score <= 0) return { content: fallback || page, score: 0 };
-  const index = sections.findIndex((section) => section.content === best.content);
+  const index = best.index;
   // Neighboring context is useful only when it independently supports the
   // question. Blindly appending both neighbors lets unrelated policy text
   // enter a precise answer. This is a generic evidence gate, not a clause
   // number special case.
   const adjacent = [sections[index - 1], sections[index + 1]]
-    .map((section) => ({ section, rank: ranked.find((item) => item.content === section?.content) }))
+    .map((section) => ({ section, rank: ranked.find((item) => item.index === sections.indexOf(section)) }))
     .filter((item) => item.section && item.rank && item.rank.score >= Math.max(0.05, best.score * 0.45))
     .map((item) => item.section!.content)
     .join('\n\n');
@@ -331,11 +358,42 @@ export function resolveGBrainHome(): string {
 }
 
 /** Production bridge to the official garrytan/gbrain CLI. */
+/**
+ * Lowest GBrain CLI version this adapter is known to work against.
+ *
+ * The adapter drives the upstream CLI through its command surface and parses its
+ * output, so an older build fails in ways that look like application bugs. This is
+ * a floor, not a pin — newer builds are accepted. Override with GBRAIN_MIN_VERSION
+ * when deliberately testing an older build.
+ */
+const GBRAIN_MIN_VERSION = '0.60.0';
+
+/**
+ * GBrain configuration keys written through `gbrain config set`.
+ *
+ * These identifiers belong to the upstream CLI, not to us. They are collected in
+ * one place so an upstream upgrade can be re-verified here: if GBrain renames or
+ * re-nests a key, the write below stores nothing and search silently degrades
+ * instead of erroring. Re-check this table against the installed CLI whenever the
+ * upstream version changes.
+ */
+const GBRAIN_CONFIG_KEYS = {
+  searchMode: 'search.mode',
+  searchExpansion: 'search.expansion',
+  rerankerModel: 'search.reranker.model',
+  rerankerEnabled: 'search.reranker.enabled',
+  chatModel: 'chat_model',
+  expansionModel: 'expansion_model',
+  /** Per-recipe provider base URL; the recipe segment is derived from the model id. */
+  providerBaseUrl: (recipe: string) => `provider_base_urls.${recipe}`,
+} as const;
+
 export class BrainRepoAdapter {
   private readonly gbrainBin = resolveGBrainBin();
   private readonly gbrainHome = resolveGBrainHome();
   private readonly sourceRoot: string;
   private searchConfigSignature = '';
+  private gbrainVersionChecked = false;
   private searchConfigPromise: Promise<void> | null = null;
   private queryCache = new Map<string, { expiresAt: number; result: BrainQueryResult }>();
   private sourceSyncLocks = new Map<string, Promise<void>>();
@@ -380,11 +438,57 @@ export class BrainRepoAdapter {
   private sourceId(repoPath: string): string {
     const match = /^gbrain:\/\/source\/(.+)$/.exec(repoPath);
     if (!match) throw new Error(`Invalid GBrain source reference: ${repoPath}`);
-    return match[1];
+    return validateSourceId(match[1]);
   }
 
   getSourcePath(sourceId: string): string {
-    return join(this.sourceRoot, sourceId);
+    return join(this.sourceRoot, validateSourceId(sourceId));
+  }
+
+  /**
+   * Fail fast when the installed GBrain CLI predates the version this adapter was
+   * written against.
+   *
+   * Detection is deliberately fail-open: `--version` is itself upstream surface, so
+   * when it is unavailable or unparseable we warn once and continue rather than
+   * blocking every gbrain operation on a check that could not run. Only a version
+   * that was read successfully AND is below the floor is fatal.
+   */
+  private async ensureGbrainVersion(): Promise<void> {
+    if (this.gbrainVersionChecked) return;
+    this.gbrainVersionChecked = true;
+    // The probe spawns a process, which perturbs the child-process quota and dedup
+    // contracts the adapter's own tests assert on. Those tests exercise the pool,
+    // not the version check, so they opt out explicitly.
+    if (process.env.GBRAIN_SKIP_VERSION_CHECK === '1') return;
+    const minimum = String(process.env.GBRAIN_MIN_VERSION || '').trim() || GBRAIN_MIN_VERSION;
+    let raw = '';
+    try {
+      // Bypass run(): the probe must not take a process-pool slot, or it queues
+      // behind real work (and behind a deliberately exhausted pool in tests) and
+      // never resolves.
+      const { stdout } = await this.executeProcess(['--version']);
+      raw = String(stdout || '');
+    } catch {
+      raw = '';
+    }
+    const actualMatch = raw.match(/(\d+)\.(\d+)\.(\d+)/);
+    if (!actualMatch) {
+      console.warn(`[gbrain-adapter] could not determine the installed GBrain CLI version (supported minimum ${minimum}); continuing without the compatibility check.`);
+      return;
+    }
+    const floorMatch = minimum.match(/(\d+)\.(\d+)\.(\d+)/);
+    const actual = [Number(actualMatch[1]), Number(actualMatch[2]), Number(actualMatch[3])];
+    const floor = floorMatch ? [Number(floorMatch[1]), Number(floorMatch[2]), Number(floorMatch[3])] : [0, 0, 0];
+    const older = actual[0] < floor[0]
+      || (actual[0] === floor[0] && actual[1] < floor[1])
+      || (actual[0] === floor[0] && actual[1] === floor[1] && actual[2] < floor[2]);
+    if (older) {
+      throw new Error(
+        `GBRAIN_VERSION_TOO_OLD: installed ${actual.join('.')} is below the supported minimum ${minimum}. ` +
+        `Upgrade the GBrain CLI, or set GBRAIN_MIN_VERSION to override deliberately.`,
+      );
+    }
   }
 
   private async run(args: string[], input?: string, signal?: AbortSignal): Promise<{ stdout: string; stderr: string }> {
@@ -421,6 +525,13 @@ export class BrainRepoAdapter {
   }
 
   private async executeProcess(args: string[], input?: string, signal?: AbortSignal): Promise<{ stdout: string; stderr: string }> {
+    // Probe the upstream version here rather than in run(): this keeps the request
+    // path (and its cancellation semantics and process-pool accounting) untouched,
+    // and callers that stub executeProcess — as the contract tests do — are not
+    // affected by a probe they never asked for.
+    if (!this.gbrainVersionChecked && args[0] !== '--version') {
+      await this.ensureGbrainVersion();
+    }
     signal?.throwIfAborted();
     // Run the CLI from a small, source-specific directory instead of inheriting
     // the API service's working directory.
@@ -516,8 +627,8 @@ export class BrainRepoAdapter {
       };
       const isSync = args[0] === 'sync';
       const timeoutMs = isSync
-        ? Math.max(30_000, Number(process.env.GBRAIN_SYNC_TIMEOUT_MS || 120_000))
-        : Math.max(30_000, Number(process.env.GBRAIN_COMMAND_TIMEOUT_MS || 180_000));
+        ? envNumber('GBRAIN_SYNC_TIMEOUT_MS', 120_000, 30_000)
+        : envNumber('GBRAIN_COMMAND_TIMEOUT_MS', 180_000, 30_000);
       let settled = false;
       const timer = setTimeout(() => {
         if (settled) return;
@@ -578,7 +689,7 @@ export class BrainRepoAdapter {
     const sourceFlag = args.indexOf('--source-id');
     const sourceId = sourceFlag >= 0 ? args[sourceFlag + 1] : undefined;
     const candidates = [
-      sourceId ? join(this.sourceRoot, sourceId) : '',
+      sourceId ? this.getSourcePath(sourceId) : '',
       this.gbrainHome,
     ].filter(Boolean);
     for (const candidate of candidates) {
@@ -684,12 +795,14 @@ export class BrainRepoAdapter {
     const expected = Number(process.env.GBRAIN_EMBEDDING_DIMENSIONS || '');
     if (!Number.isInteger(expected) || expected <= 0) return;
     const { stdout } = await this.run(['migrate', 'embeddings', '--status']);
-    const match = stdout.match(/Column:\s+content_chunks\.embedding\s+(\d+)d/i);
+    const matches = [...stdout.matchAll(/Column:\s+([\w]+\.[\w]*embedding[\w]*)\s+(\d+)d/gi)];
+    const match = matches.find((item) => item[1] === 'content_chunks.embedding');
     if (!match) throw new Error('Unable to verify GBrain embedding dimensions from `gbrain migrate embeddings --status`.');
-    const actual = Number(match[1]);
-    if (actual !== expected) {
+    const mismatch = matches.find((item) => Number(item[2]) !== expected);
+    const actual = Number(mismatch?.[2] ?? match[2]);
+    if (mismatch) {
       throw new Error(
-        `GBrain embedding plane mismatch: runtime is ${expected}d but content_chunks.embedding is ${actual}d. ` +
+        `GBrain embedding plane mismatch: runtime is ${expected}d but ${mismatch[1]} is ${actual}d. ` +
         `Run the official migration to the configured embedding model before indexing or querying.`,
       );
     }
@@ -739,7 +852,7 @@ export class BrainRepoAdapter {
         throw new Error(`GBrain source sync failed for ${sourceId}: ${JSON.stringify(sourceError || payload)}`);
       }
       if (expectedAddedPages > 0) {
-        const indexedPages = await this.sourcePageCount(sourceId);
+        const indexedPages = await this.sourcePageCount(sourceId, true);
         if (indexedPages < expectedAddedPages) {
           throw new Error(
             `GBrain source sync incomplete for ${sourceId}: expected at least ${expectedAddedPages} indexed page(s), found ${indexedPages}.`,
@@ -787,24 +900,21 @@ export class BrainRepoAdapter {
   }
 
   private async runGit(args: string[], cwd: string): Promise<void> {
-    const timeoutMs = Math.max(30_000, Number(process.env.GBRAIN_GIT_TIMEOUT_MS || 120_000));
-    await this.spawnGit(args, cwd, timeoutMs).catch(async (err) => {
-      if (args[0] === 'commit') return;
-      // A crashed/killed git run leaves .git/index.lock behind forever; every
-      // subsequent add/commit in that repo then fails until manual cleanup
-      // (observed: Dream Cycle reporting permanent partial failures). When a
-      // lock is clearly stale — older than 10 minutes and no live git process
-      // holds it — remove it and retry once.
-      if (['add', 'commit', 'reset'].includes(args[0]) && String((err as Error)?.message || '').includes('failed')) {
-        if (await this.clearStaleIndexLock(cwd)) {
-          await this.spawnGit(args, cwd, timeoutMs).catch((retryErr) => {
-            if (args[0] !== 'commit') throw retryErr;
-          });
-          return;
-        }
+    const timeoutMs = envNumber('GBRAIN_GIT_TIMEOUT_MS', 120_000, 30_000);
+    if (args[0] === 'commit' && !args.includes('--allow-empty')) {
+      // A clean index is the only successful no-op commit case.
+      const status = await this.runGitOutput(['diff', '--cached', '--name-only'], cwd);
+      if (!status) return;
+    }
+    try {
+      await this.spawnGit(args, cwd, timeoutMs);
+    } catch (error) {
+      if (['add', 'commit', 'reset'].includes(args[0]) && await this.clearStaleIndexLock(cwd)) {
+        await this.spawnGit(args, cwd, timeoutMs);
+        return;
       }
-      if (args[0] !== 'commit') throw err;
-    });
+      throw error;
+    }
   }
 
   /** Remove a .git/index.lock that no live git run can still own. */
@@ -813,7 +923,7 @@ export class BrainRepoAdapter {
     try {
       const st = await stat(lockPath);
       const ageMs = Date.now() - st.mtimeMs;
-      const staleMs = Math.max(60_000, Number(process.env.GIT_STALE_LOCK_MS || 600_000));
+      const staleMs = envNumber('GIT_STALE_LOCK_MS', 600_000, 60_000);
       if (ageMs < staleMs) return false;
       await rm(lockPath);
       console.warn(`[gbrain-adapter] Removed stale git index.lock (${Math.round(ageMs / 60000)}min old) in ${repoPath}`);
@@ -824,7 +934,7 @@ export class BrainRepoAdapter {
   }
 
   private async runGitOutput(args: string[], cwd: string): Promise<string> {
-    const timeoutMs = Math.max(30_000, Number(process.env.GBRAIN_GIT_TIMEOUT_MS || 120_000));
+    const timeoutMs = envNumber('GBRAIN_GIT_TIMEOUT_MS', 120_000, 30_000);
     return new Promise<string>((resolveOutput, reject) => {
       const child = spawn('git', args, { cwd, stdio: 'pipe', detached: true });
       let stdout = '';
@@ -840,8 +950,25 @@ export class BrainRepoAdapter {
         }, 5_000);
         reject(new Error(`git ${args.join(' ')} timed out after ${timeoutMs}ms`));
       }, timeoutMs);
-      child.stdout.on('data', (chunk: any) => { stdout += chunk.toString('utf8'); });
-      child.stderr.on('data', (chunk: any) => { stderr += chunk.toString('utf8'); });
+      let outputBytes = 0;
+      const collect = (chunk: any, stream: 'stdout' | 'stderr') => {
+        if (settled) return;
+        outputBytes += chunk.length;
+        if (outputBytes > envNumber('GBRAIN_MAX_OUTPUT_BYTES', 8 * 1024 * 1024)) {
+          settled = true;
+          clearTimeout(timer);
+          try { process.kill(-child.pid!, 'SIGTERM'); } catch { /* already gone */ }
+          killTimer = setTimeout(() => {
+            try { process.kill(-child.pid!, 'SIGKILL'); } catch { /* already gone */ }
+          }, 5_000);
+          reject(new Error('GBRAIN_GIT_OUTPUT_LIMIT'));
+          return;
+        }
+        if (stream === 'stdout') stdout += chunk.toString('utf8');
+        else stderr += chunk.toString('utf8');
+      };
+      child.stdout.on('data', (chunk: any) => collect(chunk, 'stdout'));
+      child.stderr.on('data', (chunk: any) => collect(chunk, 'stderr'));
       child.on('error', (err: Error) => {
         if (settled) return;
         settled = true;
@@ -884,7 +1011,7 @@ export class BrainRepoAdapter {
 
   private async pushSourceIfConfigured(sourceId: string): Promise<void> {
     if (!this.configuredRemote(sourceId)) return;
-    await this.run(['sources', 'push', sourceId, '--allow-unverified-remote', '--json']);
+    await this.run(['sources', 'push', sourceId, ...(process.env.GBRAIN_ALLOW_UNVERIFIED_REMOTE === '1' ? ['--allow-unverified-remote'] : []), '--json']);
   }
 
   private async ensureSearchConfig(): Promise<void> {
@@ -902,11 +1029,11 @@ export class BrainRepoAdapter {
     if (this.searchConfigSignature === signature) return;
 
     this.searchConfigPromise = (async () => {
-      await this.run(['config', 'set', 'search.mode', 'balanced']);
+      await this.run(['config', 'set', GBRAIN_CONFIG_KEYS.searchMode, 'balanced']);
       // Enterprise questions are often phrased differently from the source.
       // Let GBrain expand queries generically instead of adding application-level
       // rules for article numbers, filenames, or individual question patterns.
-      await this.run(['config', 'set', 'search.expansion', 'true']);
+      await this.run(['config', 'set', GBRAIN_CONFIG_KEYS.searchExpansion, 'true']);
       // GBrain intentionally rejects embedding model/dimension writes through
       // the DB config plane because they size the vector schema. The adapter
       // supplies both as child-process environment values from platform DB;
@@ -915,15 +1042,15 @@ export class BrainRepoAdapter {
       const rerankerRecipe = reranker.split(':', 1)[0];
       const chatRecipe = chatModel.split(':', 1)[0];
       const safeRecipe = (value: string) => /^[a-z0-9-]+$/.test(value) ? value : '';
-      if (embeddingBaseUrl && safeRecipe(embeddingRecipe)) await this.run(['config', 'set', `provider_base_urls.${embeddingRecipe}`, embeddingBaseUrl]);
+      if (embeddingBaseUrl && safeRecipe(embeddingRecipe)) await this.run(['config', 'set', GBRAIN_CONFIG_KEYS.providerBaseUrl(embeddingRecipe), embeddingBaseUrl]);
       if (reranker) {
-        await this.run(['config', 'set', 'search.reranker.model', reranker]);
-        await this.run(['config', 'set', 'search.reranker.enabled', 'true']);
+        await this.run(['config', 'set', GBRAIN_CONFIG_KEYS.rerankerModel, reranker]);
+        await this.run(['config', 'set', GBRAIN_CONFIG_KEYS.rerankerEnabled, 'true']);
       }
-      if (rerankerBaseUrl && safeRecipe(rerankerRecipe)) await this.run(['config', 'set', `provider_base_urls.${rerankerRecipe}`, rerankerBaseUrl]);
-      if (chatModel) await this.run(['config', 'set', 'chat_model', chatModel]);
-      if (expansionModel) await this.run(['config', 'set', 'expansion_model', expansionModel]);
-      if (chatBaseUrl && safeRecipe(chatRecipe)) await this.run(['config', 'set', `provider_base_urls.${chatRecipe}`, chatBaseUrl]);
+      if (rerankerBaseUrl && safeRecipe(rerankerRecipe)) await this.run(['config', 'set', GBRAIN_CONFIG_KEYS.providerBaseUrl(rerankerRecipe), rerankerBaseUrl]);
+      if (chatModel) await this.run(['config', 'set', GBRAIN_CONFIG_KEYS.chatModel, chatModel]);
+      if (expansionModel) await this.run(['config', 'set', GBRAIN_CONFIG_KEYS.expansionModel, expansionModel]);
+      if (chatBaseUrl && safeRecipe(chatRecipe)) await this.run(['config', 'set', GBRAIN_CONFIG_KEYS.providerBaseUrl(chatRecipe), chatBaseUrl]);
       await this.assertEmbeddingPlane();
       this.searchConfigSignature = signature;
     })();
@@ -931,7 +1058,7 @@ export class BrainRepoAdapter {
   }
 
   private async ensureSource(sourceId: string): Promise<string> {
-    const sourcePath = join(this.sourceRoot, sourceId);
+    const sourcePath = this.getSourcePath(sourceId);
     await mkdir(sourcePath, { recursive: true });
     try { await access(join(sourcePath, '.git')); } catch {
       await writeFile(join(sourcePath, '.gbrain-source'), `${sourceId}\n`, 'utf8');
@@ -983,6 +1110,7 @@ export class BrainRepoAdapter {
 
   /** Initialize/register a named source without creating a per-user source. */
   async initializeSource(sourceId: string): Promise<string> {
+    validateSourceId(sourceId);
     let initialization = this.initializedSources.get(sourceId);
     if (!initialization) {
       initialization = this.ensureSource(sourceId).catch((error: unknown) => {
@@ -1084,7 +1212,7 @@ export class BrainRepoAdapter {
 
     // Only remove canonical document pages under the application-owned docs/
     // directory. Keep .gbrain-source and any other control files intact.
-    const docsRoot = join(sourcePath, 'docs');
+    const managedRoots = [join(sourcePath, 'docs'), join(sourcePath, 'derived')];
     const removeOrphanPages = async (dir: string): Promise<void> => {
       const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
       for (const entry of entries) {
@@ -1095,7 +1223,7 @@ export class BrainRepoAdapter {
         }
       }
     };
-    await removeOrphanPages(docsRoot);
+    for (const root of managedRoots) await removeOrphanPages(root);
 
     await this.runGit(['add', '-A'], sourcePath);
     await this.runGit(['commit', '-qm', 'rebuild knowledge source'], sourcePath);
@@ -1170,7 +1298,7 @@ export class BrainRepoAdapter {
     // maintaining the derived index. Keep the source repository clean and
     // auditable so the next sync does not report those legitimate writes as
     // uncommitted-work warnings.
-    const sourcePath = join(this.sourceRoot, sourceId);
+    const sourcePath = this.getSourcePath(sourceId);
     await this.runGit(['add', '-A'], sourcePath);
     await this.runGit(['commit', '-qm', 'gbrain dream maintenance'], sourcePath);
     await this.pushSourceIfConfigured(sourceId);
@@ -1263,8 +1391,10 @@ export class BrainRepoAdapter {
     const cacheKey = `${sourceId}:${JSON.stringify([operation, options.breadth === true, question.trim(), this.searchConfigSignature])}`;
     const cached = this.queryCache.get(cacheKey);
     if (!options.forceRefresh && cached && cached.expiresAt > Date.now()) {
+      this.queryCache.delete(cacheKey);
+      this.queryCache.set(cacheKey, cached);
       return {
-        ...cached.result,
+        ...structuredClone(cached.result),
         diagnostics: cached.result.diagnostics
           ? { ...cached.result.diagnostics, cacheHit: true }
           : undefined,
@@ -1274,7 +1404,7 @@ export class BrainRepoAdapter {
     const httpDaemonUrl = process.env.GBRAIN_HTTP_URL?.replace(/\/$/, '');
     if (httpDaemonUrl) {
       try {
-        const timeoutMs = Math.min(10000, Number(process.env.GBRAIN_HTTP_TIMEOUT_MS || 4000));
+        const timeoutMs = Math.min(10000, envNumber('GBRAIN_HTTP_TIMEOUT_MS', 4000));
         const endpoint = `${httpDaemonUrl}/api/v1/${operation === 'search' ? 'search' : 'query'}`;
         const timeoutSignal = AbortSignal.timeout(timeoutMs);
         const res = await fetch(endpoint, {
@@ -1388,8 +1518,8 @@ export class BrainRepoAdapter {
     // a fixed context budget. This gives the answer model complete policy
     // context for details, totals and cross-section questions without trying
     // to classify every possible wording in application code.
-    const pageBudget = Math.max(8_000, Number(process.env.GBRAIN_CONTEXT_MAX_CHARS || (options.breadth ? 120_000 : 80_000)));
-    const maxParents = Math.max(1, Number(process.env.GBRAIN_CONTEXT_MAX_PARENTS || (options.breadth ? 5 : 3)));
+    const pageBudget = envNumber('GBRAIN_CONTEXT_MAX_CHARS', (options.breadth ? 120_000 : 80_000), 8_000);
+    const maxParents = envNumber('GBRAIN_CONTEXT_MAX_PARENTS', (options.breadth ? 5 : 3), 1);
     let remaining = pageBudget;
     const pageContext = new Map<string, { content: string; section?: string }>();
     const candidateRows = rows.slice(0, maxParents);
@@ -1460,7 +1590,8 @@ export class BrainRepoAdapter {
         ],
       },
     };
-    this.queryCache.set(cacheKey, { expiresAt: Date.now() + 30_000, result });
+    this.queryCache.delete(cacheKey);
+    this.queryCache.set(cacheKey, { expiresAt: Date.now() + 30_000, result: structuredClone(result) });
     if (this.queryCache.size > 200) {
       const oldest = this.queryCache.keys().next().value;
       if (oldest) this.queryCache.delete(oldest);
@@ -1472,11 +1603,11 @@ export class BrainRepoAdapter {
     const sourceId = this.sourceId(repoPath);
     // Fast-path: read page directly from disk repository when available (0.1ms vs 100ms spawn)
     try {
-      const sourcePath = join(this.sourceRoot, sourceId);
+      const sourcePath = this.getSourcePath(sourceId);
       const filePath = this.pagePath(sourcePath, slug);
       const fileContent = await readFile(filePath, 'utf8');
       if (typeof fileContent === 'string' && fileContent.trim()) {
-        const stripped = fileContent.replace(/^---[\s\S]*?---\s*/, '').trim();
+        const stripped = fileContent.replace(FRONTMATTER_PATTERN, '').trim();
         return stripped || fileContent.trim();
       }
     } catch {
@@ -1503,7 +1634,7 @@ export class BrainRepoAdapter {
     });
     const pathsToQuery = validRepoPaths.length > 0 ? validRepoPaths : repoPaths;
 
-    const concurrency = Math.max(1, Math.min(Number(process.env.GBRAIN_QUERY_CONCURRENCY || 8), 16));
+    const concurrency = Math.max(1, Math.min(envNumber('GBRAIN_QUERY_CONCURRENCY', 8), 16));
     const results: BrainQueryResult[] = [];
     for (let i = 0; i < pathsToQuery.length; i += concurrency) {
       const batch = pathsToQuery.slice(i, i + concurrency);
@@ -1514,7 +1645,7 @@ export class BrainRepoAdapter {
     // Per-source scores are not comparable (different native rerank scales or
     // absent scores), so fusing by rank is more robust than sorting by raw
     // score and biasing toward whichever source returned larger numbers.
-    const rrfK = Math.max(1, Number(process.env.GBRAIN_RRF_K || 60));
+    const rrfK = envNumber('GBRAIN_RRF_K', 60, 1);
     const fused = new Map<string, { citation: any; rrf: number }>();
     results.forEach((result, index) => {
       const srcKey = this.sourceId(pathsToQuery[index]);
@@ -1539,8 +1670,8 @@ export class BrainRepoAdapter {
     // Candidate cap before the platform cross-encoder. Kept deliberately
     // generous so a correct-but-low-ranked document is not dropped before it
     // can be scored; final truncation happens after reranking (token budget).
-    const mergeCapFocused = Math.max(8, Number(process.env.GBRAIN_MERGE_CAP_FOCUSED || 30));
-    const mergeCapBreadth = Math.max(mergeCapFocused, Number(process.env.GBRAIN_MERGE_CAP_BREADTH || 60));
+    const mergeCapFocused = envNumber('GBRAIN_MERGE_CAP_FOCUSED', 30, 8);
+    const mergeCapBreadth = envNumber('GBRAIN_MERGE_CAP_BREADTH', 60, mergeCapFocused);
     const merged = [...fused.values()]
       .map(({ citation, rrf }) => ({ ...citation, rrfScore: Number(rrf.toFixed(6)) }))
       .sort((a, b) =>
@@ -1552,7 +1683,7 @@ export class BrainRepoAdapter {
       topics: merged.map((citation) => citation.topic),
       answer: merged.map((citation) => citation.context || citation.snippet).filter(Boolean).join('\n\n'),
       citations: merged,
-      reranked: results.every((result) => result.reranked),
+      reranked: results.length > 0 && results.every((result) => result.reranked),
       diagnostics: {
         mode: 'balanced',
         operation: options.operation === 'search' ? 'search' : 'query',

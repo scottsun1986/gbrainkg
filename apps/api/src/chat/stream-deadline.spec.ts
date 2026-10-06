@@ -32,6 +32,20 @@ describe('answer stream transport deadlines', () => {
     await expect(pending).rejects.toThrow('authorization changed');
     stream.dispose(); expect(remove).toHaveBeenCalled(); expect(jest.getTimerCount()).toBe(0);
   });
+  it('keeps the other idle timeout when a concurrent wait completes first', async () => {
+    const stream = new StreamDeadline(undefined, 1000, 50);
+    let finish!: (value: string) => void;
+    const first = stream.wait(() => new Promise<string>(resolve => { finish = resolve; }));
+    await jest.advanceTimersByTimeAsync(10);
+    const second = stream.wait(() => new Promise(() => {}));
+    const rejected = expect(second).rejects.toThrow('长时间未响应');
+    finish('done');
+    await first;
+    await jest.advanceTimersByTimeAsync(50);
+    await rejected;
+    stream.dispose();
+    expect(jest.getTimerCount()).toBe(0);
+  });
   it('rejects a request already cancelled before contacting the provider', async () => {
     const parent = new AbortController(); parent.abort(new Error('cancelled'));
     const stream = new StreamDeadline(parent.signal); const work = jest.fn();

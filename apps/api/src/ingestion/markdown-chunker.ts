@@ -1,3 +1,4 @@
+import { positiveNumber } from '../config-numbers';
 import { estimateTokens } from '../chat/context-budget';
 import { classifyTableRole } from '../chat/section-align';
 
@@ -31,14 +32,17 @@ export interface ChunkSplitOptions {
 }
 
 const defaultSplitOptions = (): ChunkSplitOptions => ({
-  maxChars: Number(process.env.CHUNK_MAX_CHARS || 1800),
-  overlapChars: Number(process.env.CHUNK_OVERLAP_CHARS || 200),
+  maxChars: positiveNumber(process.env.CHUNK_MAX_CHARS, 1800),
+  overlapChars: positiveNumber(process.env.CHUNK_OVERLAP_CHARS, 200, 0),
 });
 
 let activeSplitOptions: ChunkSplitOptions = defaultSplitOptions();
 
 export function setChunkSplitOptions(partial: Partial<ChunkSplitOptions>): void {
-  activeSplitOptions = { ...activeSplitOptions, ...partial };
+  activeSplitOptions = {
+    maxChars: positiveNumber(partial.maxChars, activeSplitOptions.maxChars),
+    overlapChars: positiveNumber(partial.overlapChars, activeSplitOptions.overlapChars, 0),
+  };
 }
 
 export function resetChunkSplitOptions(): void {

@@ -79,30 +79,28 @@ export interface TotpVerifyOptions {
   digits?: number;
 }
 
-export function verifyTotp(
+export function matchTotpCounter(
   secret: Buffer,
   code: string,
   options: TotpVerifyOptions = {},
-): boolean {
+): number | null {
   const cleaned = String(code || '').replace(/\s+/g, '');
-  if (!/^\d{6,10}$/.test(cleaned)) return false;
+  const digits = options.digits ?? 6;
+  if (!new RegExp(`^\\d{${digits}}$`).test(cleaned)) return null;
   const window = options.window ?? 1;
   const stepSeconds = options.stepSeconds ?? 30;
-  const digits = options.digits ?? cleaned.length;
-  const timestampSec = options.timestampSec ?? Math.floor(Date.now() / 1000);
-  const counter = Math.floor(timestampSec / stepSeconds);
-  for (let drift = -window; drift <= window; drift += 1) {
-    const expected = hotp(secret, counter + drift, digits);
-    const expectedBuf = Buffer.from(expected, 'utf8');
-    const actualBuf = Buffer.from(cleaned.padStart(expected.length, '0'), 'utf8');
-    if (
-      expectedBuf.length === actualBuf.length &&
-      timingSafeEqual(expectedBuf, actualBuf)
-    ) {
-      return true;
-    }
+  const counter = Math.floor((options.timestampSec ?? Math.floor(Date.now() / 1000)) / stepSeconds);
+  for (let drift = window; drift >= -window; drift -= 1) {
+    if (counter + drift < 0) continue;
+    const expected = Buffer.from(hotp(secret, counter + drift, digits), 'utf8');
+    const actual = Buffer.from(cleaned, 'utf8');
+    if (expected.length === actual.length && timingSafeEqual(expected, actual)) return counter + drift;
   }
-  return false;
+  return null;
+}
+
+export function verifyTotp(secret: Buffer, code: string, options: TotpVerifyOptions = {}): boolean {
+  return matchTotpCounter(secret, code, options) !== null;
 }
 
 /** 20-byte (160-bit) secret as recommended by RFC 4226 §4. */

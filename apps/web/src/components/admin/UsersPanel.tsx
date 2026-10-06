@@ -88,15 +88,16 @@ export function UsersPanel({ orgTrees = [], orgTree, orgOptions = [], canManage 
     const t = setTimeout(() => setSearch(searchInput), 300);
     return () => clearTimeout(t);
   }, [searchInput]);
-  const [selectedOrg, setSelectedOrg] = useState<any>(null);
+  const [selectedOrg, setSelectedOrg] = useState<OrgTreeNode | null>(null);
   const [roleFilter, setRoleFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [permFilter, setPermFilter] = useState('all');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [open, setOpen] = useState(false);
-  const [editTarget, setEditTarget] = useState<any>(null);
-  const [confirmDel, setConfirmDel] = useState<any>(null);
+  const [editTarget, setEditTarget] = useState<UserRow | null>(null);
+  const [confirmDel, setConfirmDel] = useState<UserRow | null>(null);
+  const [enabling, setEnabling] = useState<UserRow | null>(null);
 
   // 用户快照 + 子树人数预算：appStore 是可变单例，捕获引用既能修复
   // filteredUsers 的过期缓存，也让计数 Map 在用户目录变化后正确重建。
@@ -109,13 +110,13 @@ export function UsersPanel({ orgTrees = [], orgTree, orgOptions = [], canManage 
   const isSysAdmin = (capabilities || []).includes('*');
   const manageableOrgOptions = useMemo(() => {
     if (isSysAdmin) return orgOptions;
-    return orgOptions.filter((node: any) => node.canManage);
+    return orgOptions.filter((node) => node.canManage);
   }, [orgOptions, isSysAdmin]);
 
   // 组织树展开状态
   const [treeExpandedIds, setTreeExpandedIds] = useState<Set<string>>(() => {
     const s = new Set<string>();
-    const walk = (n: any) => {
+    const walk = (n: OrgTreeNode) => {
       if (!n) return;
       s.add(n.id);
       (n.children || []).forEach(walk);
@@ -188,7 +189,8 @@ export function UsersPanel({ orgTrees = [], orgTree, orgOptions = [], canManage 
   }, [filteredUsers, currentPage, pageSize]);
 
   useEffect(() => {
-    setPage(1);
+    const timer = setTimeout(() => setPage(1), 0);
+    return () => clearTimeout(timer);
   }, [search, selectedOrg, roleFilter, statusFilter, permFilter, pageSize]);
 
   return (
@@ -219,7 +221,7 @@ export function UsersPanel({ orgTrees = [], orgTree, orgOptions = [], canManage 
                 if (treeExpandedIds.size > 0) setTreeExpandedIds(new Set());
                 else {
                   const s = new Set<string>();
-                  const walk = (n: any) => { if (!n) return; s.add(n.id); (n.children || []).forEach(walk); };
+                  const walk = (n: OrgTreeNode) => { if (!n) return; s.add(n.id); (n.children || []).forEach(walk); };
                   effectiveTrees.forEach(walk);
                   setTreeExpandedIds(s);
                 }
@@ -244,7 +246,7 @@ export function UsersPanel({ orgTrees = [], orgTree, orgOptions = [], canManage 
 
             {/* 组织层级树 */}
             {effectiveTrees.length > 0 ? (
-              effectiveTrees.map((rootNode: any) => (
+              effectiveTrees.map((rootNode) => (
                 <UsersOrgTreeNode
                   key={rootNode.id}
                   node={rootNode}
@@ -369,7 +371,7 @@ export function UsersPanel({ orgTrees = [], orgTree, orgOptions = [], canManage 
                       <td>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                           {(u.orgNodes || []).length > 0 ? (
-                            u.orgNodes.map((node: any, i: number) => (
+                            u.orgNodes.map((node, i: number) => (
                               <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
                                 <span className="badge ok" style={{ fontSize: '11px', padding: '1px 6px', width: 'fit-content' }}>
                                   {node.name}
@@ -441,11 +443,28 @@ export function UsersPanel({ orgTrees = [], orgTree, orgOptions = [], canManage 
                           {u.canManage && (
                             <button
                               type="button"
-                              className="btn danger"
+                              className={`btn ${u.status === 'active' ? 'danger' : ''}`}
                               style={{ padding: '3px 8px', fontSize: '11.5px', height: '26px' }}
-                              onClick={() => setConfirmDel(u)}
+                              onClick={() => {
+                                if (u.status === 'active') { setConfirmDel(u); return; }
+                                // 已停用人员提供行内快捷启用；PATCH 仅传 status，其余字段保持不变
+                                setEnabling(u);
+                                fetch(`${API_BASE_URL}/api/v1/admin/users/${u.id}`, {
+                                  method: 'PATCH',
+                                  headers: { 'Content-Type': 'application/json', ...apiHeaders() },
+                                  body: JSON.stringify({ status: 'active' }),
+                                })
+                                  .then(async (response) => {
+                                    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).message || '启用失败');
+                                    window.dispatchEvent(new CustomEvent('app-toast', { detail: `已启用 ${u.name}` }));
+                                    window.dispatchEvent(new CustomEvent('app-data-refresh'));
+                                  })
+                                  .catch((error) => window.dispatchEvent(new CustomEvent('app-toast', { detail: errorMessage(error) || '启用失败' })))
+                                  .finally(() => setEnabling(null));
+                              }}
+                              disabled={enabling?.id === u.id}
                             >
-                              停用
+                              {enabling?.id === u.id ? '启用中…' : u.status === 'active' ? '停用' : '启用'}
                             </button>
                           )}
                         </div>
@@ -520,6 +539,9 @@ export function UsersPanel({ orgTrees = [], orgTree, orgOptions = [], canManage 
         <ConfirmModal
           title="停用人员"
           msg={<>确认停用 <b style={{ color: 'var(--ink)' }}>{confirmDel.name}</b>（{confirmDel.initials}）？停用后该用户将无法登录系统，相关引用与历史仍将完整保留。</>}
+          confirmText="确认停用"
+          busyText="停用中…"
+          errorText="停用失败，请重试"
           onConfirm={async () => {
             const response = await fetch(`${API_BASE_URL}/api/v1/admin/users/${confirmDel.id}`, {
               method: 'DELETE',
@@ -539,10 +561,10 @@ export function UserFormModal({target, orgOptions = [], capabilities = [], onClo
   const isEdit = !!target;
   const isSysAdmin = capabilities.includes('*');
   const [name, setName] = useState(target?.name || '');
-  const [username, setUsername] = useState(target?.initials?.toLowerCase() || '');
+  const [username, setUsername] = useState(target?.initials || '');
   const [email, setEmail] = useState(target?.email || '');
   const [password, setPassword] = useState('');
-  const [orgId, setOrgId] = useState(target?.orgIds?.[0] || (orgOptions[0]?.id || ''));
+  const [orgIds, setOrgIds] = useState<string[]>(target?.orgIds || (orgOptions[0]?.id ? [orgOptions[0].id] : []));
   const [status, setStatus] = useState(target?.status || 'active');
   const [saving, setSaving] = useState(false);
   const [roles, setRoles] = useState<TagItem[]>(isEdit && target ? appStore.ROLES.filter(r=>target.roles.includes(r.name)).map(r=>({id:r.id,n:r.name,sub:`${r.users} 人`})) : []);
@@ -553,14 +575,18 @@ export function UserFormModal({target, orgOptions = [], capabilities = [], onClo
   }, [isSysAdmin]);
 
   const save = async () => {
-    if (!name.trim() || !username.trim() || (!isEdit && !orgId)) return;
+    // The placeholder <option value=""> stays selectable in a multiple select;
+    // an empty-string id would be sent as a bogus organization on the wholesale
+    // replace and would also satisfy the "at least one org" guard.
+    const selectedOrgIds = orgIds.filter((id) => id);
+    if (!name.trim() || !username.trim() || (!isEdit && !selectedOrgIds.length)) return;
     setSaving(true);
     try {
       const payload = {
         displayName: name.trim(),
         username: username.trim(),
         email: email.trim() || `${username.trim()}@local.invalid`,
-        orgIds: orgId ? [orgId] : [],
+        orgIds: selectedOrgIds,
         roleIds: roles.map(r => r.id),
         status,
         ...(password ? { password } : {})
@@ -604,7 +630,7 @@ export function UserFormModal({target, orgOptions = [], capabilities = [], onClo
       </div>
       <div className="field">
         <label>归属组织节点<span className="req">*</span></label>
-        <select value={orgId} onChange={e=>setOrgId(e.target.value)}>
+        <select multiple value={orgIds} onChange={e=>setOrgIds(Array.from(e.target.selectedOptions, option => option.value).filter(value => value))}>
           <option value="">选择组织节点…</option>
           {orgOptions.map(node => <option key={node.id} value={node.id}>{node.path}</option>)}
         </select>

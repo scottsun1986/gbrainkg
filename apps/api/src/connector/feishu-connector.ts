@@ -194,7 +194,7 @@ export class FeishuConnector implements EnterpriseConnector {
         content = await this.downloadRaw(config, token, file.token, file);
       } catch {
         if (syncAcl) changes.push({ externalId:file.token,title:file.name,content:'',aclOnly:true,externalAcl:{ revision:'unavailable',verified:false,subjects:[] } });
-        continue;
+        break;
       }
       changes.push({
         externalId: file.token,

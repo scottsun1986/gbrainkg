@@ -1,5 +1,6 @@
 "use client";
 
+import { assertOfficeArchiveBudget } from '@/lib/preview-limits';
 import React, { useState, useEffect, useRef } from "react";
 
 export interface PptDeckViewerProps {
@@ -197,6 +198,7 @@ export function PptDeckViewer({
   useEffect(() => {
     let cancelled = false;
 
+    const objectUrls: string[] = [];
     // Clean previous object URLs
     objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
     objectUrlsRef.current = [];
@@ -208,7 +210,9 @@ export function PptDeckViewer({
         try {
           const JSZipModule = await import("jszip");
           const JSZip = ((JSZipModule as { default?: unknown }).default ?? JSZipModule) as typeof JSZipModule;
+          if (rawBlob.size > 32 * 1024 * 1024) throw new Error("演示文件过大，请使用 PDF 预览或下载原件");
           const arrayBuffer = await rawBlob.arrayBuffer();
+          assertOfficeArchiveBudget(arrayBuffer);
           const zip = await JSZip.loadAsync(arrayBuffer);
 
           if (cancelled) return;
@@ -291,8 +295,9 @@ export function PptDeckViewer({
                     // Copy into a plain ArrayBufferView so the Blob constructor
                     // accepts it under the stricter DOM typings.
                     const imgBlob = new Blob([new Uint8Array(imgBuf)], { type: mime });
+                    if (cancelled) return;
                     const imgUrl = URL.createObjectURL(imgBlob);
-                    objectUrlsRef.current.push(imgUrl);
+                    objectUrls.push(imgUrl); objectUrlsRef.current.push(imgUrl);
                     slideImages.push(imgUrl);
 
                     // Position
@@ -428,6 +433,8 @@ export function PptDeckViewer({
 
     return () => {
       cancelled = true;
+      objectUrls.forEach(url => URL.revokeObjectURL(url));
+      objectUrlsRef.current = objectUrlsRef.current.filter(url => !objectUrls.includes(url));
     };
   }, [rawBlob, ext, docData?.markdown_content]);
 
@@ -476,7 +483,7 @@ export function PptDeckViewer({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't trigger if user is in an input
-      if (["INPUT", "TEXTAREA", "SELECT"].includes((e.target as HTMLElement)?.tagName)) {
+      if ((e.target instanceof Element) && e.target.closest('input, textarea, select, button, a, [contenteditable="true"], [role="button"]')) {
         return;
       }
 

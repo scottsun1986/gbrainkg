@@ -117,3 +117,96 @@ export async function withServiceContext(
     return fn(tx);
   }, { isolationLevel: 'ReadCommitted' });
 }
+
+/**
+ * 已授权管理面清单的只读 RLS 上下文：显式 service 范围（app.service='on'）。
+ *
+ * 为什么管理面不能用请求用户上下文跑清单：清单查询大量使用跨用户的
+ * to-one include（OrgNode.admins.user、KbAdmin.user、CompileJob.user）。
+ * 行级策略一旦按"请求用户可见行"过滤被 join 的 User，Prisma 的 required
+ * relation 就会得到 null 并抛 "Inconsistent query result" 直接 500
+ * （2026-10-06 E2E BUG-3：子组织管理员 /admin/data 必现）。
+ *
+ * 安全边界：调用方必须在应用层完成授权与范围裁剪。admin.controller 的
+ * getAllData 已经按 capabilities / managedOrgIds / visibleKbs 收敛
+ * directoryUsers、orgs、grants、documents——那些应用层裁剪是权威语义
+ * （组织管理员=本级+下级），不要依赖 RLS 在这里做二次过滤。
+ */
+export async function withAdminInventory(
+  prisma: RawCapable | null | undefined,
+  fn: (client: any) => Promise<any>,
+): Promise<any> {
+  return withElevatedContext(prisma, fn, true);
+}
+
+/** 内部授权计算只读入口。关系数据仅用于权限裁决，不直接返回用户清单。 */
+export async function withPermissionRead<T>(
+  prisma: RawCapable | null | undefined,
+  fn: (client: any) => Promise<T>,
+): Promise<T> {
+  return withElevatedContext(prisma, fn, true);
+}
+
+/**
+ * Authentication-only database context.
+ *
+ * Reads that decide *whether* an identity authenticates (login by username,
+ * JWT subject status, OIDC binding, MFA challenge, MCP app credentials) run
+ * before `app.user_id` is known, so no user-scoped RLS policy can authorize
+ * them. They run here with `app.service=on` inside one transaction.
+ *
+ * This deliberately skips `forService`'s "cannot promote a request to service"
+ * guard: that guard protects request-scoped business work, whereas these call
+ * sites only read identity rows to decide authentication and never run
+ * caller-supplied logic on the result. Keep it confined to authentication —
+ * every new use widens the hole in user-scoped isolation.
+ */
+export async function runAsAuth<T>(work: (tx: Tx) => Promise<T>): Promise<T> {
+  const prisma = getPrismaClient();
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.user_id', '', true)`;
+    await tx.$executeRaw`SELECT set_config('app.service', 'on', true)`;
+    return work(tx);
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
+}
+
+/**
+ * Service-identity transaction for a *system* write that a request legitimately
+ * triggers.
+ *
+ * Why this exists: `withServiceContext` deliberately keeps the caller's USER
+ * identity inside a request (`app.service='off'`), and `runAsService` refuses to
+ * promote a request identity at all. Neither can write tables whose RLS policies
+ * are service-only — yet several request-reachable flows must write exactly
+ * those tables (version/index artifacts), because they are system-owned derived
+ * data. `POST /api/v1/documents/:id/versions` failed with a 42501 on
+ * `DocumentVersionLink` for precisely this reason.
+ *
+ * The caller MUST have authorized the user against the target resource before
+ * calling this: everything written inside runs as the service identity and is
+ * therefore NOT constrained by the user's row visibility. Keep the body limited
+ * to derived/system artifacts — never to a user-scoped decision.
+ */
+export async function withSystemWrite<T>(
+  prisma: RawCapable | null | undefined,
+  fn: (client: any) => Promise<T>,
+): Promise<T> {
+  return withElevatedContext(prisma, fn, false);
+}
+
+async function withElevatedContext<T>(
+  prisma: RawCapable | null | undefined,
+  fn: (client: any) => Promise<T>,
+  readOnly: boolean,
+): Promise<T> {
+  if (!prisma || typeof prisma.$transaction !== 'function' || typeof prisma.$executeRaw !== 'function') {
+    return fn(prisma);
+  }
+  return prisma.$transaction(async (tx: any) => {
+    if (!tx || typeof tx.$executeRaw !== 'function') return fn(prisma);
+    if (readOnly) await tx.$executeRaw`SET TRANSACTION READ ONLY`;
+    const context = getRequestContext();
+    await tx.$executeRaw`SELECT set_config('app.user_id', '', true), set_config('app.service', 'on', true), set_config('app.as_of', ${new Date(context?.asOf ?? Date.now()).toISOString()}, true)`;
+    return fn(tx);
+  }, { isolationLevel: 'ReadCommitted' });
+}

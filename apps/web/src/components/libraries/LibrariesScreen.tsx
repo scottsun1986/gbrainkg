@@ -16,6 +16,12 @@ import type {
   DocChunk, KbInfo, PreviewTarget,
 } from '@/types';
 
+interface DocumentListItem {
+  id: string; title: string; status: string; mdPath?: string; sizeBytes?: number;
+  uploadedBy?: { displayName?: string; username?: string }; updatedAt: string; createdAt: string;
+  qualityStatus?: string; qualityScore?: number; qualityIssues?: string[]; parserEngine?: string;
+}
+
 interface DocRow {
   id: string;
   name: string;
@@ -35,7 +41,7 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
   // 多屏常驻挂载下本组件虽 display:none 但也会执行 effect；文档列表按
   // 首次可见再拉取，避免启动即请求全部知识库文档拖慢首屏。
   const [hasBeenActive, setHasBeenActive] = useState(Boolean(active));
-  useEffect(() => { if (active) setHasBeenActive(true); }, [active]);
+  useEffect(() => { if (!active) return; const timer = setTimeout(() => setHasBeenActive(true), 0); return () => clearTimeout(timer); }, [active]);
   const [filter, setFilter] = useState('all');
   const filtered = filter==='all' ? appStore.KNOWLEDGE_BASES : appStore.KNOWLEDGE_BASES.filter(k=>k.type===filter);
   const [sel, setSel] = useState<KbInfo | null>(null);
@@ -58,7 +64,7 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
   // 过滤条件变化后，不能继续沿用不属于当前分类的旧选中项；否则“个人库”为空
   // 时仍会渲染上一库的详情，并在后续操作中访问失效的 kbId。
   const current = (sel && filtered.some((kb) => kb.id === sel.id) ? sel : null) || filtered[0] || null;
-  const formatFileSize = (bytes: any) => {
+  const formatFileSize = (bytes: unknown) => {
     if (bytes === null || bytes === undefined || isNaN(Number(bytes)) || Number(bytes) <= 0) return '—';
     const n = Number(bytes);
     if (n < 1024) return `${n} B`;
@@ -70,7 +76,21 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
   // page/limit/search/status, but the page used to omit them and then paginate
   // client-side over the API's default 50-row response — so any knowledge base
   // silently capped at 50 documents in the management view.
+  const documentRequestRef = useRef(0);
+  const documentControllerRef = useRef<AbortController | null>(null);
+  useEffect(() => () => { ++documentRequestRef.current; documentControllerRef.current?.abort(); }, []);
+  useEffect(() => {
+    const newKb = () => setNewPersonalOpen(true);
+    const upload = () => fileInputRef.current?.click();
+    window.addEventListener('app-new-kb', newKb);
+    window.addEventListener('app-focus-upload', upload);
+    return () => { window.removeEventListener('app-new-kb', newKb); window.removeEventListener('app-focus-upload', upload); };
+  }, []);
   const loadDocuments = async (kbId: string, opts: { page?: number; limit?: number; search?: string; status?: string } = {}) => {
+    const request = ++documentRequestRef.current;
+    documentControllerRef.current?.abort();
+    const controller = new AbortController();
+    documentControllerRef.current = controller;
     if (!kbId) { setDocs([]); setDocsTotal(0); return; }
     const page = opts.page ?? docPage;
     const limit = opts.limit ?? docPageSize;
@@ -82,12 +102,13 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
       params.set('limit', String(limit || 50));
       if (search && String(search).trim()) params.set('search', String(search).trim());
       if (status && status !== 'all') params.set('status', String(status));
-      const response = await fetch(`${API_BASE_URL}/api/v1/kbs/${kbId}/documents?${params.toString()}`, {headers:apiHeaders()});
+      const response = await fetch(`${API_BASE_URL}/api/v1/kbs/${kbId}/documents?${params.toString()}`, {headers:apiHeaders(), signal: controller.signal});
       if (!response.ok) throw new Error('文档列表加载失败');
       const result = await response.json();
-      const items: any[] = result.items || [];
-      serverPageIdsRef.current = new Set(items.map((doc: any) => doc.id));
-      setDocs(items.map((doc: any) => {
+      if (request !== documentRequestRef.current) return;
+      const items: DocumentListItem[] = result.items || [];
+      serverPageIdsRef.current = new Set(items.map((doc) => doc.id));
+      setDocs(items.map((doc) => {
         const path = doc.mdPath || '';
         const baseName = path.split('/').pop() || path;
         const original = doc.title && !doc.title.includes('/') ? doc.title : baseName;
@@ -118,12 +139,12 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
       setPinnedDocs((ps) => ps.length
         ? ps
             .map((p) => {
-              const it = items.find((d: any) => d.id === p.id);
+              const it = items.find((d) => d.id === p.id);
               return it ? { ...p, status: it.status, uploader: p.uploader, t: p.t } : p;
             })
             .filter((p) => !(PIN_TERMINAL.has(p.status) && serverPageIdsRef.current.has(p.id)))
         : ps);
-    } catch (error) { window.dispatchEvent(new CustomEvent('app-toast', {detail: errorMessage(error) || '文档加载失败'})); }
+    } catch (error) { if (request === documentRequestRef.current && !controller.signal.aborted) emitToast(errorMessage(error, '文档加载失败')); }
   };
 
   // Export the WHOLE current filtered view, not just the visible page.
@@ -163,14 +184,10 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
     } catch (error) { window.dispatchEvent(new CustomEvent('app-toast', { detail: errorMessage(error) || '导出失败' })); }
   };
 
-  useEffect(() => {
-    if (!current && filtered[0]) setSel(filtered[0]);
-    if (!filtered.length && sel) setSel(null);
-  }, [filter, filtered.length, filtered[0]?.id, current?.id]);
-  useEffect(() => { const target = appStore.KNOWLEDGE_BASES.find(k => k.id === initialKbId); if (target) setSel(target); }, [initialKbId]);
+  useEffect(() => { const timer = setTimeout(() => { const target = appStore.KNOWLEDGE_BASES.find(k => k.id === initialKbId); if (target) setSel(target); }, 0); return () => clearTimeout(timer); }, [initialKbId]);
 
 
-  const uploadDocument = async (file: any) => {
+  const uploadDocument = async (file: File) => {
     if (!file || !current?.id) return;
     if (file.size > 200 * 1024 * 1024) {
       window.dispatchEvent(new CustomEvent('app-toast', { detail: `文件「${file.name}」超出 200MB 大小限制` }));
@@ -213,7 +230,7 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
       if (isArchive) {
         // 压缩包已在后端自动解压，压缩包本身已物理删除；移除压缩包占位行并提示提取的文档数量
         setDocs((ds) => ds.filter((d) => d.id !== tempId));
-        const extracted: any[] = result.documents || [];
+        const extracted: DocumentListItem[] = result.documents || [];
         // 解压出的每篇文档同样钉住，保证在任意过滤/页码下都可见
         setPinnedDocs((ps) => [
           ...extracted.map((doc) => ({
@@ -275,7 +292,7 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
   // 针对处理中（parsing / indexing）文档进行后台轻量级自动轮询，动态更新状态，完全不阻塞上传按钮与区域
   const hasProcessingDocs =
     Number(docsStatusCounts.processing || 0) > 0 ||
-    docs.some((d: any) => d.status === 'parsing' || d.status === 'indexing' || String(d.id).startsWith('temp-')) ||
+    docs.some((d) => d.status === 'parsing' || d.status === 'indexing' || String(d.id).startsWith('temp-')) ||
     pinnedDocs.some((p) => !PIN_TERMINAL.has(p.status));
 
   useEffect(() => {
@@ -291,10 +308,10 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
         fetch(`${API_BASE_URL}/api/v1/kbs/${current.id}/documents?ids=${idsParam}&limit=50`, { headers: apiHeaders() })
           .then((r) => (r.ok ? r.json() : null))
           .then((j) => {
-            const items: any[] = j?.items || [];
+            const items: DocumentListItem[] = j?.items || [];
             if (!items.length) return;
             setPinnedDocs((ps) => ps.map((p) => {
-              const it = items.find((d: any) => d.id === p.id);
+              const it = items.find((d) => d.id === p.id);
               return it ? { ...p, status: it.status } : p;
             }));
           })
@@ -305,14 +322,17 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
   }, [hasProcessingDocs, current?.id, docPage, docPageSize, docSearch, docStatusFilter, pinnedDocs, active]);
 
   useEffect(() => {
-    setDocPage(1);
+    const timer = setTimeout(() => setDocPage(1), 0);
+    return () => clearTimeout(timer);
   }, [current?.id, docSearch, docStatusFilter, docPageSize]);
 
   // 仅在切换知识库时清空钉住行；过滤/翻页变化必须保留钉住，
   // 否则新上传文档会再次从视野中消失。
   useEffect(() => {
-    setPinnedDocs([]);
+    ++documentRequestRef.current; documentControllerRef.current?.abort();
     serverPageIdsRef.current = new Set();
+    const timer = setTimeout(() => setPinnedDocs([]), 0);
+    return () => clearTimeout(timer);
   }, [current?.id]);
 
   // Fetch the current server page whenever the KB, page, page size or
@@ -323,7 +343,7 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
       () => void loadDocuments(current.id, { page: docPage, limit: docPageSize, search: docSearch, status: docStatusFilter }),
       docSearch ? 300 : 0,
     );
-    return () => clearTimeout(timer);
+    return () => { clearTimeout(timer); ++documentRequestRef.current; documentControllerRef.current?.abort(); };
   }, [hasBeenActive, current?.id, docPage, docPageSize, docSearch, docStatusFilter]);
 
   useEffect(() => {
@@ -340,7 +360,7 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
   // the current server page only (status/search are already server-side).
   const pagedDocs = useMemo(() => {
     if (docTypeFilter === 'all') return docs;
-    return docs.filter((d: any) => {
+    return docs.filter((d) => {
       const ext = (d.name || '').split('.').pop()?.toLowerCase() || '';
       if (docTypeFilter === 'word' && !['doc', 'docx'].includes(ext)) return false;
       if (docTypeFilter === 'pdf' && ext !== 'pdf') return false;
@@ -352,7 +372,7 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
 
   // 钉住行（未被当前服务端页包含的近期上传）置顶渲染，保证"上传了就在列表中"。
   const pinnedNotInPage = useMemo(
-    () => pinnedDocs.filter((p) => !docs.some((d: any) => d.id === p.id)),
+    () => pinnedDocs.filter((p) => !docs.some((d) => d.id === p.id)),
     [pinnedDocs, docs],
   );
   const listRows = useMemo(() => [...pinnedNotInPage, ...pagedDocs], [pinnedNotInPage, pagedDocs]);
@@ -378,6 +398,11 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
       const result = await response.json().catch(()=>({}));
       if (!response.ok) throw new Error(result.message || '删除失败');
       setConfirmDoc(null);
+      // 上传时会钉住该行以保证跨页可见；被删文档不会再出现在任何服务端页，
+      // loadDocuments 的钉清理条件（终态且在当前页）永远无法命中它，必须在此
+      // 显式摘钉，否则行会一直留在列表里直到手动刷新（2026-10-06 E2E OBS-5）。
+      setPinnedDocs((ps) => ps.filter((p) => p.id !== doc.id));
+      setDocs((ds) => ds.filter((d) => d.id !== doc.id));
       await loadDocuments(current.id);
       window.dispatchEvent(new CustomEvent('app-toast', {detail:'知识已删除'}));
     } catch (error) { window.dispatchEvent(new CustomEvent('app-toast', {detail:errorMessage(error) || '删除失败'})); }

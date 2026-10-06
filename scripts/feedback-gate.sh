@@ -4,7 +4,7 @@
 # 重放回线上问答，校验拒答 / 关键词缺失 / 与旧答案完全相同 三类回归。
 #
 # 用法:
-#   bash scripts/feedback-gate.sh                  # 有凭据则跑，无凭据则跳过(退出 0)
+#   bash scripts/feedback-gate.sh                  # 有凭据则跑，无凭据则跳过(退出 2)
 #   GATE_STRICT=1 bash scripts/feedback-gate.sh    # 发布门禁：有凭据时回归即非零退出
 #
 # 凭据（从 env 读，不写死；与 tests/evaluation/feedback-regression.ts 对齐）:
@@ -17,9 +17,9 @@
 #   FEEDBACK_LIMIT    可选，重放条数上限（默认 50）
 #
 # 行为矩阵:
-#   无 LLMWIKI_TOKEN 且无 TEST_PASSWORD  -> 跳过 + 警告，退出 0
-#   有 token 但缺 TEST_PASSWORD           -> GATE_STRICT=1 则非零；否则跳过 + 警告，退出 0
-#   有凭据，GATE_STRICT!=1                -> 报告模式（FEEDBACK_GATE 不开），始终退出 0
+#   无 LLMWIKI_TOKEN 且无 TEST_PASSWORD  -> 跳过 + 警告，退出 2
+#   有 token 但缺 TEST_PASSWORD           -> GATE_STRICT=1 则非零；否则跳过 + 警告，退出 2
+#   有凭据，GATE_STRICT!=1                -> 报告模式（FEEDBACK_GATE 不开），仅执行报告；执行错误仍非零
 #   有凭据，GATE_STRICT=1                 -> FEEDBACK_GATE=1，harness 失败即非零
 set -uo pipefail
 
@@ -36,7 +36,7 @@ export API_BASE="${API_BASE:-http://127.0.0.1:3202}"
 log() { echo "[feedback-gate $(date '+%F %T')] $*"; }
 warn() { log "WARNING: $*"; }
 
-# ---- 无 token/凭据：跳过并警告，退出 0（不要求本地必须有线上凭据）----
+# ---- 无 token/凭据：跳过并警告，退出 2（不要求本地必须有线上凭据）----
 if [ -z "$TOKEN" ] && [ -z "$TEST_PASSWORD" ]; then
   warn "skip: no LLMWIKI_TOKEN / TEST_PASSWORD configured — feedback regression gate not run."
   warn "set LLMWIKI_TOKEN (for CI bookkeeping) and TEST_PASSWORD (admin login for the harness) to enable."
@@ -44,7 +44,7 @@ if [ -z "$TOKEN" ] && [ -z "$TEST_PASSWORD" ]; then
     log "FAIL: strict mode requires feedback regression credentials."
     exit 1
   fi
-  exit 0
+  exit 2
 fi
 
 # harness 需要管理端密码登录；仅有 bearer token 跑不了 feedback-regression.ts
@@ -55,7 +55,7 @@ if [ -z "$TEST_PASSWORD" ]; then
     exit 1
   fi
   warn "skip: LLMWIKI_TOKEN present but TEST_PASSWORD missing (harness logs in with admin password)."
-  exit 0
+  exit 2
 fi
 
 export TEST_PASSWORD
@@ -76,18 +76,11 @@ log "running tests/evaluation/feedback-regression.ts against $API_BASE (user=$TE
 npx --yes tsx@4.23.13 tests/evaluation/feedback-regression.ts
 rc=$?
 
-if [ "$STRICT" = "1" ]; then
-  if [ "$rc" -ne 0 ]; then
-    log "FAIL: feedback regression gate failed (exit $rc)"
-  else
-    log "PASS: feedback regression gate"
-  fi
-  exit "$rc"
-fi
-
 if [ "$rc" -ne 0 ]; then
-  warn "harness exited $rc in report mode — not blocking (set GATE_STRICT=1 to block)."
+  log "FAIL: evaluation runner exited $rc"
+elif [ "$STRICT" = "1" ]; then
+  log "PASS: strict quality gate"
 else
-  log "done (report mode)."
+  log "Report completed; strict quality thresholds were not requested."
 fi
-exit 0
+exit "$rc"

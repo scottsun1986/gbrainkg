@@ -8,6 +8,8 @@ import { BrainRepoAdapter } from '@llmwiki/gbrain-adapter';
 import { sourceKeyForKnowledgeBase } from './brain-compiler/brain-source';
 import { GraphRagService } from './graph-rag/graph-rag.service';
 import { ModelConfigService } from './model-config.service';
+import { DocumentAclService } from './permission/document-acl.service';
+import { readAuthorizationSnapshot, assertAuthorizationSnapshot } from './permission/authorization-revision';
 import { getSharedBrainRepoAdapter } from './brain-compiler/brain-adapter.provider';
 
 type GraphNode = {
@@ -70,6 +72,7 @@ export class KnowledgeGraphController {
     @Optional() private readonly graphRagService?: GraphRagService,
     @Optional() private readonly modelConfigService?: ModelConfigService,
     @Optional() @Inject('BRAIN_REPO_ADAPTER') gbrainAdapter?: BrainRepoAdapter,
+    private readonly documentAclService: DocumentAclService = new DocumentAclService(permissionService),
   ) {
     this.gbrain = gbrainAdapter ?? getSharedBrainRepoAdapter();
   }
@@ -88,7 +91,8 @@ export class KnowledgeGraphController {
 
     // Cache is scoped to the caller's visible-KB set so one user's stale
     // snapshot can never leak another scope's nodes.
-    const cacheKey = `${limit}|${maxChunksPerDoc}|${[...visibleKbIds].sort().join(',')}`;
+    const authority = await readAuthorizationSnapshot(userId);
+    const cacheKey = `${userId}|${authority.revision}|${authority.expiresAt}|${limit}|${maxChunksPerDoc}|${[...visibleKbIds].sort().join(',')}`;
     const cacheTtlMs = Math.max(0, Number(process.env.KG_CACHE_TTL_MS || 300_000));
     // LRU eviction, not a wholesale clear. The cache key includes the caller's
     // visible-KB set, so a fleet of users with different scopes fills it fast;
@@ -97,7 +101,15 @@ export class KnowledgeGraphController {
     // (SOTA E2E P7-02: a fresh snapshot was reported `cached: false` 0.02s
     // after it was built).
     this.evictOldestGraphSnapshot();
-    const cached = this.touchGraphSnapshot(cacheKey);
+    let cached = this.touchGraphSnapshot(cacheKey);
+    if (cached) {
+      const ids = cached.payload.nodes.filter((node: GraphNode) => node.type === 'document').map((node: GraphNode) => node.documentId!);
+      const readable = await this.documentAclService.filterReadableDocuments(userId, ids, { visibleKbIds });
+      if (readable.size !== ids.length) {
+        this.graphCache.delete(cacheKey);
+        cached = undefined;
+      }
+    }
 
     if (cached && cached.expiresAt > Date.now() && !forceFresh) {
       return { ...cached.payload, cached: true };
@@ -180,8 +192,9 @@ export class KnowledgeGraphController {
     limit: number,
     maxChunksPerDoc: number,
   ) {
+    const authority = await readAuthorizationSnapshot(userId);
     const buildStartedAt = Date.now();
-    const documents = await this.prisma.document.findMany({
+    const candidates = await this.prisma.document.findMany({
       where: { kbId: { in: visibleKbIds }, status: 'published' },
       orderBy: { updatedAt: 'desc' },
       take: limit,
@@ -190,10 +203,14 @@ export class KnowledgeGraphController {
         title: true,
         kbId: true,
         updatedAt: true,
+        aclMode: true,
         kb: { select: { id: true, name: true, type: true } },
         chunks: { orderBy: { ord: 'asc' }, take: maxChunksPerDoc, select: { id: true, content: true, metadata: true } },
       },
     });
+
+    const readable = await this.documentAclService.filterReadableDocuments(userId, candidates.map(doc => doc.id), { docs: candidates, visibleKbIds });
+    const documents = candidates.filter(doc => readable.has(doc.id));
 
     const nodes = new Map<string, GraphNode>();
     const edges = new Map<string, GraphEdge>();
@@ -348,6 +365,9 @@ export class KnowledgeGraphController {
       },
       scope: { userId, visibleKnowledgeBases: visibleKbIds.length, onlyPublished: true },
     };
+    await assertAuthorizationSnapshot(userId, authority);
+    const stillReadable = await this.documentAclService.filterReadableDocuments(userId, documents.map(doc => doc.id), { visibleKbIds });
+    if (stillReadable.size !== documents.length) throw new ForbiddenException('Document access changed; refresh the graph.');
     if (cacheTtlMs > 0) {
       // Insert last so the freshly built snapshot is the most recent, then evict.
       this.graphCache.set(cacheKey, {
@@ -375,16 +395,19 @@ export class KnowledgeGraphController {
       throw new ForbiddenException('No manageable knowledge bases to reindex');
     }
 
-    const documents = await this.prisma.document.findMany({
+    const rows = await this.prisma.document.findMany({
       where: { kbId: { in: kbsToIndex }, status: 'published' },
       select: {
         id: true,
+        aclMode: true,
         title: true,
         kbId: true,
         chunks: { orderBy: { ord: 'asc' }, take: 200, select: { id: true, content: true } },
       },
     });
 
+    const readable = await this.documentAclService.filterReadableDocuments(userId, rows.map(doc => doc.id), { docs: rows, visibleKbIds });
+    const documents = rows.filter(doc => readable.has(doc.id));
     let totalEntities = 0;
     let totalRelations = 0;
     if (this.graphRagService) {

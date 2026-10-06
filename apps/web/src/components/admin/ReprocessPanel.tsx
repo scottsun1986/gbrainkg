@@ -10,9 +10,19 @@ import { errorMessage, apiMessage, asRecord, asArray, str, num, bool } from '@/l
 import { emitToast } from '@/lib/app-events';
 import type { Pagination } from '@/types';
 
+interface CorpusStats {
+  totalDocuments: number; readyDocuments: number; totalChunks: number;
+  chunksWithEmbedding: number; chunksMissingEmbedding: number; semanticCacheCount: number;
+  totalGraphCommunities: number; totalGraphEntities: number; totalGraphRelations: number; totalRaptorNodes: number;
+}
+interface ReprocessStatus {
+  running: boolean; completedAt?: string; currentStep?: string; error?: string; progress: number;
+  logs: Array<{ level: string; timestamp: string; message: string }>;
+}
+
 export function ReprocessPanel({ active = true }: { active?: boolean }) {
-  const [stats, setStats] = useState<any>(null);
-  const [status, setStatus] = useState<any>(null);
+  const [stats, setStats] = useState<CorpusStats | null>(null);
+  const [status, setStatus] = useState<ReprocessStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
@@ -43,7 +53,7 @@ export function ReprocessPanel({ active = true }: { active?: boolean }) {
   const runningRef = useRef(false);
   useEffect(() => {
     if (!active) return;
-    void fetchStatus();
+    const initialTimer = setTimeout(() => void fetchStatus(), 0);
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     const schedule = () => {
@@ -66,7 +76,7 @@ export function ReprocessPanel({ active = true }: { active?: boolean }) {
       }, interval);
     };
     schedule();
-    return () => { cancelled = true; clearTimeout(timer); };
+    return () => { cancelled = true; clearTimeout(initialTimer); clearTimeout(timer); };
   }, [active]);
 
   useEffect(() => {
@@ -270,7 +280,7 @@ export function ReprocessPanel({ active = true }: { active?: boolean }) {
               {(!status?.logs || status.logs.length === 0) ? (
                 <div style={{ color: '#8b949e' }}>暂无日志输出...</div>
               ) : (
-                status.logs.map((log: any, idx: number) => (
+                status.logs.map((log, idx: number) => (
                   <div key={idx} style={{ color: log.level === 'error' ? '#f85149' : log.level === 'warn' ? '#d29922' : '#c9d1d9' }}>
                     <span style={{ color: '#8b949e', marginRight: 8 }}>[{log.timestamp}]</span>
                     <span style={{ color: log.level === 'error' ? '#f85149' : log.level === 'warn' ? '#d29922' : '#79c0ff', marginRight: 6 }}>

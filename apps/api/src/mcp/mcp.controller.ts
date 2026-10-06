@@ -27,6 +27,7 @@ import { setRequestContextUser, getRequestContext } from '../observability/reque
 import { getPrismaClient } from '../prisma';
 import { withAuthorizedRequest, assertAuthorizationSnapshot, authorizationEnforced, AuthorizationSnapshot } from '../permission/authorization-revision';
 import { withStrictOutputPermit } from '../permission/strict-output-permit';
+import { runAsAuth } from '../db/tenant-context.service';
 
 interface McpSession {
   id: string;
@@ -54,8 +55,12 @@ export class McpController implements OnModuleDestroy {
     });
   }
 
-  private async emitAuthorized(userId: string, snapshot: AuthorizationSnapshot, emit: () => Promise<void>) {
-    if (process.env.KNOWLEDGE_STRICT_OUTPUT === '1') return withStrictOutputPermit(userId,snapshot,emit);
+  private async emitAuthorized(userId: string, snapshot: AuthorizationSnapshot, emit: () => Promise<void>, manifest?: unknown, knowledge = true) {
+    if (process.env.KNOWLEDGE_STRICT_OUTPUT === '1') {
+      if (knowledge) return withStrictOutputPermit(userId,snapshot,emit,manifest ?? getRequestContext()?.evidenceDependencies);
+      await assertAuthorizationSnapshot(userId,snapshot);
+      return emit();
+    }
     await assertAuthorizationSnapshot(userId,snapshot);
     return emit();
   }
@@ -172,13 +177,13 @@ export class McpController implements OnModuleDestroy {
             429,
           );
         }
-        const user = await this.prisma.user.findUnique({
+        const user = await runAsAuth((tx) => tx.user.findUnique({
           where: { id: userId, status: 'active' },
           include: {
             roles: { include: { role: true } },
             orgs: { include: { orgNode: true } },
           },
-        });
+        }));
         if (user) {
           return {
             user: {
@@ -191,7 +196,9 @@ export class McpController implements OnModuleDestroy {
             },
           };
         }
-      } catch {}
+      } catch (error) {
+        if (error instanceof HttpException && error.getStatus() === 429) throw error;
+      }
     }
 
     throw new UnauthorizedException({
@@ -321,6 +328,11 @@ export class McpController implements OnModuleDestroy {
     if (process.env.KNOWLEDGE_STRICT_OUTPUT === '1' && !authorizationEnforced()) throw new BadRequestException('Strict output requires authorization enforcement');
     return this.withRpcRequest(user.id,res,async snapshot => {
     const strict = process.env.KNOWLEDGE_STRICT_OUTPUT === '1';
+    const knowledge = body?.method === 'tools/call' && ['chat_knowledge', 'search_knowledge', 'aggregate_knowledge_table'].includes(body?.params?.name);
+    const resultManifest = (result: any): unknown => {
+      try { return JSON.parse(result?.result?.content?.[0]?.text || '{}').dependency_manifest; }
+      catch { return undefined; }
+    };
     const acceptHeader = String(req.headers['accept'] || '').toLowerCase();
     const isStreamRequested =
       forceStream ||
@@ -376,7 +388,7 @@ export class McpController implements OnModuleDestroy {
           await this.emitAuthorized(user.id,snapshot,async () => {
             if (strict) await this.drain(res,() => { res.write(event);res.end(); });
             else res.write(event);
-          });
+          }, resultManifest(result), knowledge);
         }
       } catch (err: any) {
         if (!res.writableEnded) {
@@ -402,7 +414,7 @@ export class McpController implements OnModuleDestroy {
     await this.emitAuthorized(user.id,snapshot,async () => {
       if (strict) await this.drain(res,() => res.status(200).json(result));
       else res.status(200).json(result);
-    });
+    }, resultManifest(result), knowledge);
     });
   }
 

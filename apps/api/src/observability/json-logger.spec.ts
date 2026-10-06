@@ -73,6 +73,19 @@ describe('redact / sanitizeLogFields', () => {
 });
 
 describe('JsonLogger', () => {
+  it('exposes database events as structured fields while protecting logger metadata', () => {
+    const lines: string[] = [];
+    const logger = new JsonLogger((line) => lines.push(line));
+    logger.error({ event: 'rls_policy_denied', sqlState: '42501', level: 'info', ts: 'fake', requestId: 'fake', password: 'secret' });
+    const record = JSON.parse(lines[0]);
+    expect(record.event).toBe('rls_policy_denied');
+    expect(record.sqlState).toBe('42501');
+    expect(record.level).toBe('error');
+    expect(record.ts).not.toBe('fake');
+    expect(record.requestId).not.toBe('fake');
+    expect(record.password).toBe('[REDACTED]');
+    expect(lines[0]).not.toContain('secret');
+  });
   it('emits one JSON line per record with ts/level/msg and redacted params', () => {
     const lines: string[] = [];
     const logger = new JsonLogger((line) => lines.push(line));

@@ -1,14 +1,14 @@
 import { IngestionService } from './ingestion.service';
 
 const mockPrisma = {
-  document: { findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
+  document: { findUnique: jest.fn(), findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]), update: jest.fn(), updateMany: jest.fn() },
   chunk: { deleteMany: jest.fn(), createMany: jest.fn() },
   $transaction: jest.fn(),
 };
 // Separate mock for the interactive-transaction client so specs can make the
 // in-transaction version re-read diverge from the queue-time read.
 const tx = {
-  document: { findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
+  document: { findUnique: jest.fn(), findFirst: jest.fn().mockResolvedValue(null), update: jest.fn(), updateMany: jest.fn() },
   chunk: { deleteMany: jest.fn(), createMany: jest.fn() },
   enrichmentStage: { deleteMany: jest.fn() },
   brainChangeEvent: { create: jest.fn() },

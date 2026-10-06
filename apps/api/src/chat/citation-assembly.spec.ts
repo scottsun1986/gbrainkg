@@ -263,7 +263,7 @@ describe('selectEvidence floorMode trace (P0-1: adaptive without calibration mus
     expect(out.evidenceSelection.floorMode).toBe('calibrated');
   });
 
-  it('reports floorMode=relative in adaptive mode when no calibration profile exists', () => {
+  it('reports floorMode=uncalibrated in adaptive mode when no calibration profile exists', () => {
     // ADAPTIVE_RETRIEVAL_ENABLED=true without RERANK_CALIBRATION_FILE means
     // calibrateRerankScore always returns null, so no citation carries a
     // calibratedProbability. The floor then only exists as a ratio over
@@ -276,7 +276,7 @@ describe('selectEvidence floorMode trace (P0-1: adaptive without calibration mus
         ],
         reranked: true,
       }, { breadth: false, tokenBudget: 4000, question: '测试' });
-      expect(out.evidenceSelection.floorMode).toBe('relative');
+      expect(out.evidenceSelection.floorMode).toBe('uncalibrated');
     });
   });
 
@@ -379,7 +379,7 @@ describe('selectEvidence unified score contract (P0-2: no dimension mixing)', ()
       });
       // Without a calibration profile these rerank scores are NOT measurements
       // in adaptive mode: the whole pool is synthetic-scale, floor is relative.
-      expect(out.evidenceSelection.floorMode).toBe('relative');
+      expect(out.evidenceSelection.floorMode).toBe('uncalibrated');
       expect(out.evidenceSelection.syntheticFilled).toBeUndefined();
     });
   });
@@ -536,6 +536,30 @@ describe('selectEvidence elimination funnel and selection reasons (review §4.1/
     expect((out.citations || []).find((c: any) => c.id === 'v1-a').selectionReason).toBe('multi_source');
     // The unrelated doc does not get the coverage slot.
     expect(ids).not.toContain('noise');
+    expect(out.evidenceSelection.multiSourceAdded).toBeGreaterThanOrEqual(1);
+  });
+
+  it('multi-source coverage also protects with the soft-floor flag OFF (P3-02 regression)', () => {
+    // The P3-02 release-gate failure: in relative mode (adaptive without
+    // calibration) a qualifying sibling policy lost its slot to same-document
+    // bulk under purely multiplicative boosts, and every protection was behind
+    // the OFF-by-default soft-floor flag. Coverage must protect regardless.
+    delete process.env.RETRIEVAL_SOFT_FLOOR_ENABLED;
+    delete process.env.RETRIEVAL_MULTISOURCE_COVERAGE_RATIO;
+    const candidates = [
+      { id: 'v3-a', docId: 'doc-v3', relevanceScore: 0.90, scoreSource: 'rerank', context: '考勤管理制度 弹性打卡时间 09:00 至 10:00 规定' },
+      { id: 'v3-b', docId: 'doc-v3', relevanceScore: 0.85, scoreSource: 'rerank', context: '考勤管理制度 迟到处罚条款 迟到扣款标准' },
+      { id: 'manual-a', docId: 'doc-manual', relevanceScore: 0.80, scoreSource: 'rerank', context: '考勤管理制度详细手册 夏令时作息时间说明' },
+      { id: 'v2-truth', docId: 'doc-v2', relevanceScore: 0.45, scoreSource: 'rerank', context: '考勤制度手册V2 固定打卡时间 09:00 规定' },
+    ];
+    process.env.RETRIEVAL_MAX_GROUPS = '3';
+    const out = svc.selectEvidence({ citations: candidates, reranked: true }, {
+      breadth: false, tokenBudget: 8000, question: '员工考勤的时间是什么',
+    });
+    const ids = (out.citations || []).map((c: any) => c.id);
+    expect(ids).toContain('v3-a');
+    expect(ids).toContain('v2-truth');
+    expect((out.citations || []).find((c: any) => c.id === 'v2-truth').selectionReason).toBe('multi_source');
     expect(out.evidenceSelection.multiSourceAdded).toBeGreaterThanOrEqual(1);
   });
 });

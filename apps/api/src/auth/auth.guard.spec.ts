@@ -103,6 +103,22 @@ describe('AuthGuards', () => {
       }
     });
 
+    it('does not interpret a query parameter as the personal KB endpoint', async () => {
+      permissionService.getCapabilities.mockResolvedValue(['user.basic']);
+      const request = mockExecutionContext.switchToHttp().getRequest();
+      Object.assign(request, { method: 'POST', path: '/api/v1/admin/enrichment/backfill', url: '/api/v1/admin/enrichment/backfill?x=/admin/kbs', body: { type: 'personal' } });
+      expect(await adminGuard.canActivate(mockExecutionContext)).toBe(false);
+      request.path = '/api/v1/admin/kbs';
+      expect(await adminGuard.canActivate(mockExecutionContext)).toBe(true);
+      // Express dispatches the trailing-slash form to the same route, so
+      // matching the path exactly must not 403 a legitimate personal-KB create.
+      request.path = '/api/v1/admin/kbs/';
+      expect(await adminGuard.canActivate(mockExecutionContext)).toBe(true);
+      // A deeper path is still not the create endpoint.
+      request.path = '/api/v1/admin/kbs/abc/documents';
+      expect(await adminGuard.canActivate(mockExecutionContext)).toBe(false);
+    });
+
     it('Test that wildcard * grants full admin access', async () => {
       permissionService.getCapabilities.mockResolvedValue(['*']);
       const result = await adminGuard.canActivate(mockExecutionContext);

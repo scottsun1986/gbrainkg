@@ -57,3 +57,25 @@ describe('document list pagination', () => {
     expect(page.statusCounts).toMatchObject({ total: 300, published: 300, processing: 0 });
   });
 });
+
+describe('document list ACL boundary', () => {
+  it('filters population before pagination and omits private storage paths', async () => {
+    const { DocumentAclService } = await import('../permission/document-acl.service');
+    const acl = jest.spyOn(DocumentAclService.prototype, 'filterReadableDocuments').mockResolvedValue(new Set(['allowed']));
+    mockPrisma.document.findMany.mockImplementation(async (input: any) => input.select && Object.keys(input.select).length === 1
+      ? [{ id: 'allowed' }, { id: 'restricted' }]
+      : [{ id: 'allowed', title: 'public', rawFileOid: '/private/source', status: 'published', version: 1, updatedAt: new Date() }]);
+    mockPrisma.document.count.mockResolvedValue(1);
+    mockPrisma.document.groupBy.mockResolvedValue([{ status: 'published', _count: { _all: 1 } }]);
+    mockPrisma.user.findMany.mockResolvedValue([]);
+    const controller = new KnowledgeBaseController(
+      { getVisibleKnowledgeBases: jest.fn().mockResolvedValue(['kb-1']) } as any,
+      { userIdFromRequest: jest.fn().mockResolvedValue('user-1') } as any, {} as any,
+    );
+    try {
+      const result = await controller.listDocuments('kb-1', {});
+      expect(mockPrisma.document.count).toHaveBeenCalledWith({ where: { AND: [{ kbId: 'kb-1' }, { id: { in: ['allowed'] } }] } });
+      expect(result.items[0].rawFileOid).toBeUndefined();
+    } finally { acl.mockRestore(); }
+  });
+});

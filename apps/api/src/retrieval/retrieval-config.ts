@@ -1,3 +1,4 @@
+import { calibrationProfileFingerprint } from './evidence-calibration';
 import { createHash } from 'node:crypto';
 
 /**
@@ -39,10 +40,16 @@ export const RETRIEVAL_ENV_KEYS = [
   'GRAPHRAG_DRIFT_ENABLED',
   'RAPTOR_ENABLED',
   'RETRIEVAL_PROBE_SCORE_SCALE',
+  'ADAPTIVE_RETRIEVAL_ENABLED',
+  'RERANK_DEPLOYMENT_REVISION',
+  'RERANK_CALIBRATION_FILE',
+  'BGE_M3_HYBRID_ENABLED',
+  'BGE_M3_MAXSIM_ENABLED',
+  'BGE_M3_LATE_CHUNKING_ENABLED',
 ] as const;
 
 /** Stable short fingerprint of the currently effective retrieval config. */
 export function retrievalConfigFingerprint(): string {
   const material = RETRIEVAL_ENV_KEYS.map((key) => `${key}=${process.env[key] ?? ''}`).join(';');
-  return createHash('sha256').update(material).digest('hex').slice(0, 16);
+  return createHash('sha256').update('retrieval-contract-2026-10-06|' + material + '|' + calibrationProfileFingerprint()).digest('hex').slice(0, 16);
 }

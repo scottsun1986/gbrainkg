@@ -22,6 +22,7 @@ GATE_STRICT="${GATE_STRICT:-0}"
 FAILED=0
 E2E_SKIPPED=0
 IR_SKIPPED=0
+SKIPPED=0
 
 run() {
   local name="$1"; shift
@@ -40,6 +41,7 @@ run() {
 warn_skip() {
   # warn_skip <layer-name> <how-to-enable>
   local layer="$1"; shift
+  SKIPPED=$((SKIPPED + 1))
   if [[ "$GATE_STRICT" == "1" ]]; then
     echo ""
     echo "[CI] WARN: GATE_STRICT=1 but '$layer' was SKIPPED."
@@ -50,12 +52,7 @@ warn_skip() {
 }
 
 run "Prisma client generate" pnpm --filter database exec prisma generate --schema=prisma/schema.prisma
-# Typecheck and lint before the unit layers. This script is the only gate
-# deploy-prod.sh runs, and it previously executed neither: `test:api` is a bare
-# jest run, so a type error or an ESLint violation could reach production as long
-# as the specs happened to pass (ts-jest transpiles per file and does not
-# typecheck the project). ci.yml already ran tsc separately; this closes the
-# divergence between the two paths.
+# Shared offline release checks; full strict mode also requires every live gate.
 run "API typecheck" pnpm --filter api exec tsc --noEmit
 run "API lint" pnpm --filter api lint
 run "API unit tests" pnpm run test:api
@@ -64,6 +61,8 @@ run "GBrain adapter contract tests" pnpm run test:adapter
 # P2: web unit tests (node:test via tsx, pure helpers only) + parser-worker
 # lint/type baseline. Ruff/mypy are skipped with a notice when not installed
 # so the unit layers still run on bare checkouts.
+run "Web typecheck" pnpm --filter web exec tsc --noEmit
+run "Web lint" pnpm --filter web lint
 run "Web unit tests" pnpm --filter web test
 if python3 -c "import ruff" >/dev/null 2>&1 || command -v ruff >/dev/null 2>&1; then
   run "Parser worker ruff" bash -c 'cd apps/parser-worker && (command -v ruff >/dev/null && ruff check src tests || python3 -m ruff check src tests)'
@@ -82,6 +81,10 @@ fi
 # a broken gateway is caught before any live benchmark run.
 run "Evaluation harness self-tests" pnpm run benchmark:selftest
 
+# Live quality evaluation is opt-in. Ordinary CI and functional releases do not
+# imply authorization for paid judge/public benchmark calls.
+if [[ "$GATE_STRICT" == "1" || "${CHECK_INTL:-0}" == "1" ]]; then
+python3 scripts/assert-test-target.py "${API_BASE:-http://127.0.0.1:3202}" || exit 1
 # Official-qrels IR regression gate. Enabled by producing a run file with
 # beir_pipeline.py and exporting BEIR_QRELS + BEIR_RUN. IR_GATE_THRESHOLDS uses
 # comma-separated metric=value pairs (metric names are the same as the CLI --k
@@ -125,13 +128,18 @@ else
   warn_skip "A/B metrics gate" "export TEST_PASSWORD (or LLMWIKI_PASS) and collect experiment samples"
 fi
 
+else
+  echo "[CI] SKIPPED: live quality layers were not requested (GATE_STRICT=1 or CHECK_INTL=1 enables)."
+  SKIPPED=$((SKIPPED + 1))
+fi
+
 echo ""
 if [[ "$GATE_STRICT" == "1" ]]; then
   echo "[CI] GATE_STRICT=1 summary: FAILED=$FAILED E2E_SKIPPED=$E2E_SKIPPED IR_SKIPPED=$IR_SKIPPED"
 fi
 
 if [[ "$FAILED" -eq 0 ]]; then
-  echo "[CI] ALL LAYERS PASSED"
+  echo "[CI] ENABLED LAYERS PASSED; skipped=$SKIPPED (no quality claim for skipped layers)"
   exit 0
 else
   echo "[CI] PIPELINE FAILED"

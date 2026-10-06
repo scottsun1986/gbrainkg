@@ -53,6 +53,7 @@ async function bootstrap() {
     Logger.overrideLogger(logger as unknown as Parameters<typeof Logger.overrideLogger>[0]);
   }
   app.enableShutdownHooks();
+  app.getHttpAdapter().getInstance().set("trust proxy", "loopback");
 
   // Route params without a UUID format check used to surface Prisma's
   // "Error creating UUID" / pool-timeout errors as naked 500s. Map them to
@@ -84,8 +85,8 @@ async function bootstrap() {
       crossOriginResourcePolicy: { policy: 'cross-origin' },
     }),
   );
-  app.use(express.json({ limit: '250mb' }));
-  app.use(express.urlencoded({ limit: '250mb', extended: true }));
+  app.use(express.json({ limit: '10mb' }));
+  app.use(express.urlencoded({ limit: '10mb', extended: true }));
   // 列表/管理后台 JSON 响应普遍在数百 KB 到 MB 级，gzip 可压缩 70%+，
   // 显著缩短弱网/跨地域下页面与列表的首屏等待。
   app.use(compression({ threshold: 1024 }));
@@ -105,9 +106,9 @@ async function bootstrap() {
 
       // Only allow exact matches against the whitelist OR localhost/127.0.0.1
       // Previously, any IPv4 literal was allowed (security risk with credentials:true)
-      const isLocalhost = /^(https?:\/\/)?(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
 
-      if (allowed.includes(origin) || isLocalhost) {
+
+      if (allowed.includes(origin)) {
         return callback(null, true);
       }
       // Reject without throwing: browsers block it when Access-Control-Allow-Origin is missing

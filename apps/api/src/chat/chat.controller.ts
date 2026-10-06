@@ -194,13 +194,22 @@ export class ChatController {
     let finalizePromise: Promise<void> | null = null;
     const buffered: string[] = [];
     let bufferedBytes = 0;
+    let bufferExceeded = false;
     const writeEvent = (data: any) => {
-      if (!response.writableEnded) {
+      if (bufferExceeded) return;
+      if (strictOutput || !response.writableEnded) {
         const event = `data: ${JSON.stringify(data)}\n\n`;
         if (strictOutput) {
           bufferedBytes += Buffer.byteLength(event);
-          if (bufferedBytes > 8 * 1024 * 1024) throw new Error('Strict output buffer capacity exceeded');
-          buffered.push(event);
+          if (bufferedBytes > 8 * 1024 * 1024) {
+            bufferExceeded = true;
+            errorContent = '回答超过安全输出容量，请缩小问题范围后重试。';
+            buffered.length = 0;
+            answer = ''; citations.length = 0; traceNodes.clear();
+            queueMicrotask(() => { subscription.unsubscribe(); void finalize().catch(handleFinalizationError); });
+            return;
+          }
+          if (!runId) buffered.push(event);
         } else response.write(event);
       }
     };
@@ -227,7 +236,8 @@ export class ChatController {
     const finalize = () => {
       if (finalizePromise) return finalizePromise;
       finalizePromise = (async () => {
-        const content = errorContent || answer || "本次问答未生成可保存的回答。";
+        if (!answer.trim() && !errorContent) errorContent = '本次问答未生成可用回答，请重试。';
+        const content = errorContent || answer;
         if (errorContent) {
           citations.length = 0;
           dependencyManifest = nonEvidenceManifest('failure');
@@ -306,7 +316,7 @@ export class ChatController {
                   response.once('error', onError);
                   response.end(buffered.join(''), () => { cleanup(); resolve(); });
                 });
-              });
+              }, dependencyManifest);
             } catch (error: any) {
               if (!response.writableEnded && !response.destroyed) response.end(`data: ${JSON.stringify({ type: 'error', content: error.message })}\n\n`);
             }
@@ -317,13 +327,20 @@ export class ChatController {
       })();
       return finalizePromise;
     };
+    const handleFinalizationError = (error: unknown) => {
+      console.error('Chat finalization failed:', error);
+      if (runId) void this.chatRunService.fail(runId, '回答保存失败，请重试。').catch(() => undefined);
+      if (!response.writableEnded && !response.destroyed) response.end(`data: ${JSON.stringify({ type: 'error', content: '回答保存失败，请重试。' })}\n\n`);
+    };
     const subscription = stream$.subscribe({
       next: (event) => {
+        if (bufferExceeded) return;
         const data: any = event.data;
         // Accumulate unconditionally: a non-streaming run has already sent its
         // 201 and closed the response, but the pipeline still has to collect
         // the answer that finalize persists. Only the wire write is conditional.
         if (data?.type === "delta") answer += String(data.content || "");
+        if (data?.type === "replace") answer = String(data.content || "");
         if (data?.type === "citation") citations.push(data);
         if (data?.type === "error") errorContent = String(data.content || "问答处理失败");
         if (data?.type === "trace" && data.node?.id) {
@@ -336,7 +353,7 @@ export class ChatController {
             ? nonEvidenceManifest('refusal') : data.dependency_manifest || null;
           return;
         }
-        if (!response.writableEnded) writeEvent(event.data);
+        if (strictOutput || !response.writableEnded) writeEvent(event.data);
       },
       error: (error) => {
         // A non-streaming run's response is already closed, but the failure
@@ -344,6 +361,8 @@ export class ChatController {
         if (response.writableEnded && !runId) return;
         if (error?.getStatus?.() === 403 || error?.getStatus?.() === 503) {
           answer = ''; citations.length = 0; traceNodes.clear(); dependencyManifest = null;
+          buffered.length = 0;
+          if (!strictOutput) writeEvent({ type: 'replace', content: '' });
         }
         // Translate common internal errors into user-friendly messages.
         const rawMsg = String(error.message || "Chat failed");
@@ -365,12 +384,12 @@ export class ChatController {
         traceNodes.set(node.id, node);
         writeEvent({ type: "trace", schema_version: 1, trace_id: traceId, node });
         writeEvent({ type: "error", content: errorContent });
-        void finalize();
+        void finalize().catch(handleFinalizationError);
       },
       complete: () => {
         // RxJS 不会等待 async complete 回调，统一由 finalize 收口并在
         // 消息真正落库后再向浏览器发送 done。
-        void finalize();
+        void finalize().catch(handleFinalizationError);
       },
     });
     if (runId) {

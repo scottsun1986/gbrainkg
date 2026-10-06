@@ -1,5 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { assertOfficeArchiveBudget, boundedSheetRange, readPreviewBlob } from '@/lib/preview-limits';
 import { Icon } from '@/components/common/Icon';
 import { PptDeckViewer } from '@/components/preview/PptDeckViewer';
 import { renderMarkdown, renderPlainText } from '@/lib/markdown';
@@ -21,6 +22,12 @@ interface UniversalDocumentViewerProps {
   onClose: () => void;
 }
 
+function previewSheetRows(XLSX: typeof import('xlsx'), sheet: import('xlsx').WorkSheet): unknown[][] {
+  if (!sheet['!ref']) return [];
+  const range = boundedSheetRange(XLSX.utils.decode_range(sheet['!ref']));
+  return XLSX.utils.sheet_to_json(sheet, { header: 1, range }) as unknown[][];
+}
+
 export function UniversalDocumentViewer({ preview, onClose }: UniversalDocumentViewerProps) {
   const snippet = (preview?.snippet || '').trim();
   const [activeTab, setActiveTab] = useState(preview?.initialTab || (snippet ? 'std_md' : 'raw')); // 'raw' | 'std_md' | 'parsed' | 'chunks' | 'meta'
@@ -39,6 +46,8 @@ export function UniversalDocumentViewer({ preview, onClose }: UniversalDocumentV
   const [pptPdfLoading, setPptPdfLoading] = useState(false);
   const [pptPdfError, setPptPdfError] = useState('');
   const [sheetsData, setSheetsData] = useState<{ names: string[]; active: string; rows: unknown[][] }>({ names: [], active: '', rows: [] });
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const workbookRef = useRef<import('xlsx').WorkBook | null>(null);
   const [copied, setCopied] = useState(false);
   const docxContainerRef = useRef<HTMLDivElement | null>(null);
   const modalBodyRef = useRef<HTMLDivElement | null>(null);
@@ -115,7 +124,7 @@ export function UniversalDocumentViewer({ preview, onClose }: UniversalDocumentV
 
     scored.sort((a, b) => b.score - a.score);
     return scored.slice(0, 15).map((item) => item.phrase);
-  }, [cleanPhrases, docData?.markdown_content]);
+  }, [cleanPhrases, docData]);
 
   // 整块锚定高亮：检索命中的单位是"知识切片(chunk)"，而逐句匹配会把命中
   // 打散到全文各处、且常落在错误位置。这里先把引用片段归一化后与文档的
@@ -169,7 +178,7 @@ export function UniversalDocumentViewer({ preview, onClose }: UniversalDocumentV
     const unique = Array.from(new Set(lines));
     // 整块锚定切片覆盖不足（如仅命中表格注入等非常规内容）时退回句级短语
     return unique.length >= 2 ? unique.slice(0, 60) : null;
-  }, [snippet, docData?.chunks]);
+  }, [snippet, docData]);
 
   // 最终高亮短语：整块锚定优先 → 全文唯一性打分 → 原始清洗短语
   const highlightPhrases = useMemo<string[]>(() => {
@@ -208,11 +217,12 @@ export function UniversalDocumentViewer({ preview, onClose }: UniversalDocumentV
     if (!kbId || !docId || rawRequestedRef.current) return;
     rawRequestedRef.current = true;
     try {
+      try {
       const fileRes = await fetch(`${API_BASE_URL}/api/v1/kbs/${kbId}/documents/${docId}/file`, {
         headers: apiHeaders(),
       });
       if (fileRes.ok) {
-        const blob = await fileRes.blob();
+        const blob = (isExcel || isPpt) ? await readPreviewBlob(fileRes) : await fileRes.blob();
         if (docIdRef.current !== docId) return;
         setRawBlob(blob);
         const url = URL.createObjectURL(blob);
@@ -220,15 +230,23 @@ export function UniversalDocumentViewer({ preview, onClose }: UniversalDocumentV
         setRawBlobUrl(url);
 
         if (isExcel) {
+          if (blob.size > 32 * 1024 * 1024) throw new Error('表格文件过大，请下载原件查看');
           const buffer = await blob.arrayBuffer();
+          assertOfficeArchiveBudget(buffer);
           const XLSX = await loadXLSX();
-          const wb = XLSX.read(buffer, { type: 'array' });
+          const wb = XLSX.read(buffer, { type: 'array', sheetRows: 1001 });
+          workbookRef.current = wb;
           if (wb.SheetNames.length > 0) {
             const firstSheet = wb.SheetNames[0];
-            const rows = XLSX.utils.sheet_to_json(wb.Sheets[firstSheet], { header: 1 }) as unknown[][];
+            const rows = previewSheetRows(XLSX, wb.Sheets[firstSheet]);
             if (docIdRef.current === docId) setSheetsData({ names: wb.SheetNames, active: firstSheet, rows });
           }
         }
+      }
+
+      } catch (error) {
+        if (!isPpt) throw error;
+        // Large presentations use the server PDF without browser Office parsing.
       }
 
       // PPT/PPTX：后端无损转制原生 PDF 真实版式预览（仅原件 Tab 需要）。
@@ -255,15 +273,14 @@ export function UniversalDocumentViewer({ preview, onClose }: UniversalDocumentV
       }
     } catch (e) {
       console.warn('获取原始文件失败:', e);
+      if (docIdRef.current === docId) window.dispatchEvent(new CustomEvent('app-toast', { detail: errorMessage(e, '原件预览失败') }));
     }
   };
 
   useEffect(() => {
-    if (!kbId || !docId) {
-      setLoading(false);
-      return;
-    }
     let active = true;
+    const timer = setTimeout(() => {
+    if (!kbId || !docId) { setLoading(false); return; }
     // 切换文档时重置按需加载状态并释放旧 objectURL。
     docIdRef.current = docId;
     rawRequestedRef.current = false;
@@ -278,6 +295,7 @@ export function UniversalDocumentViewer({ preview, onClose }: UniversalDocumentV
     setRawBlob(null);
     setRawBlobUrl('');
     setPptPdfBlobUrl('');
+    workbookRef.current = null;
     setSheetsData({ names: [], active: '', rows: [] });
 
     // 1. 获取文档元数据与分块数据（默认视图所需）
@@ -302,7 +320,9 @@ export function UniversalDocumentViewer({ preview, onClose }: UniversalDocumentV
         if (active) setLoading(false);
       });
 
+    }, 0);
     return () => {
+      clearTimeout(timer);
       active = false;
       docIdRef.current = undefined;
     };
@@ -322,6 +342,8 @@ export function UniversalDocumentViewer({ preview, onClose }: UniversalDocumentV
   }, [activeTab, docData]);
 
   useEffect(() => () => {
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    workbookRef.current = null;
     objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
     objectUrlsRef.current = [];
   }, []);
@@ -351,7 +373,7 @@ export function UniversalDocumentViewer({ preview, onClose }: UniversalDocumentV
       if (firstMatch) matched.add(firstMatch.id);
     }
     return matched;
-  }, [docData?.chunks, highlightPhrases, snippet]);
+  }, [docData, highlightPhrases, snippet]);
 
   // 自动滚动定位到高亮最密集的区域
   useEffect(() => {
@@ -431,21 +453,23 @@ export function UniversalDocumentViewer({ preview, onClose }: UniversalDocumentV
     if (!rawBlob) return;
     try {
       const XLSX = await loadXLSX();
-      const buffer = await rawBlob.arrayBuffer();
-      const wb = XLSX.read(buffer, { type: 'array' });
-      const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1 }) as unknown[][];
+      const wb = workbookRef.current;
+      if (!wb?.Sheets[sheetName]) return;
+      const rows = previewSheetRows(XLSX, wb.Sheets[sheetName]);
       setSheetsData((prev) => ({ ...prev, active: sheetName, rows }));
     } catch (e) {
       console.warn('切换 Sheet 失败:', e);
     }
   };
 
-  const handleCopyMarkdown = () => {
-    const text = docData?.markdown_content || '';
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-    window.dispatchEvent(new CustomEvent('app-toast', { detail: '文档 Markdown 全文已复制到剪贴板' }));
+  const handleCopyMarkdown = async () => {
+    try {
+      await navigator.clipboard.writeText(docData?.markdown_content || '');
+      setCopied(true);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopied(false), 2000);
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: '文档 Markdown 全文已复制到剪贴板' }));
+    } catch (error) { window.dispatchEvent(new CustomEvent('app-toast', { detail: errorMessage(error, '复制失败，请检查剪贴板权限') })); }
   };
 
   const handleDownload = () => {
@@ -973,7 +997,7 @@ export function UniversalDocumentViewer({ preview, onClose }: UniversalDocumentV
                     <div style={{ color: 'var(--ink-3)' }}>内嵌图片 OCR</div>
                     <div>
                       {(() => {
-                        const meta = (docData?.document as any)?.parserMetadata || {};
+                        const meta = docData?.document?.parserMetadata || {};
                         const embedded = meta.embedded_image_count;
                         const ocr = meta.ocr_image_count;
                         const words = meta.ocr_words_result_num;

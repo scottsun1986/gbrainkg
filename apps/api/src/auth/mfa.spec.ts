@@ -3,6 +3,12 @@ import { AuthService } from './auth.service';
 import { MfaService } from './mfa.service';
 import { getPrismaClient } from '../prisma';
 import { base32Decode, totpNow, generateTotpSecret } from './totp';
+// The authentication reads now run through the runAsAuth transaction client.
+// Hand the callback the same mocked client the specs spy on so those spies
+// (prisma.user.findFirst etc.) still intercept.
+jest.mock('../db/tenant-context.service', () => ({
+  runAsAuth: async (work: any) => work(require('../prisma').getPrismaClient()),
+}));
 
 const prisma = getPrismaClient();
 
@@ -25,6 +31,7 @@ describe('MFA/TOTP two-step login', () => {
     mfaSecret: null as string | null,
     mfaEnabled: false,
     mfaEnabledAt: null as Date | null,
+    mfaLastCounter: null as number | null,
     oidcSub: null as string | null,
     createdAt: new Date(),
     roles: [] as any[],
@@ -47,7 +54,8 @@ describe('MFA/TOTP two-step login', () => {
       return null;
     }) as any);
     jest.spyOn(prisma.user, 'updateMany').mockImplementation((async (args: any) => {
-      if (Object.entries(args.where).some(([key, value]) => (userState as any)[key] !== value)) return { count: 0 };
+      if (Object.entries(args.where).some(([key, value]) => key !== 'OR' && (userState as any)[key] !== value)) return { count: 0 };
+      if (args.where.OR && userState.mfaLastCounter !== null && !args.where.OR.some((part: any) => part.mfaLastCounter?.lt > userState.mfaLastCounter!)) return { count: 0 };
       userState = { ...userState, ...args.data };
       return { count: 1 };
     }) as any);
@@ -139,6 +147,13 @@ describe('MFA/TOTP two-step login', () => {
         headers: { authorization: `Bearer ${session.token}` },
       });
       expect(resolved).toBe(userId);
+    });
+
+    it('accepts a TOTP counter once across concurrent login attempts', async () => {
+      const { mfaToken: token } = authService.issueMfaToken(userId);
+      const results = await Promise.allSettled([mfaService.login(token, totpNow(secret.raw)), mfaService.login(token, totpNow(secret.raw))]);
+      expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+      expect(results.filter(result => result.status === 'rejected')).toHaveLength(1);
     });
 
     it('step 2: a session token cannot be replayed as an mfaToken', async () => {

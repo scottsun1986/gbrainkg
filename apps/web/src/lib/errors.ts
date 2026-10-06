@@ -1,14 +1,14 @@
 /** Narrowing helpers for loosely-typed API / catch payloads. */
 
-export function errorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
+export function errorMessage(err: unknown, fallback = ''): string {
+  if (err instanceof Error) return err.message || fallback;
   if (typeof err === 'object' && err !== null) {
     const msg = (err as { message?: unknown }).message;
     if (typeof msg === 'string' && msg) return msg;
     const name = (err as { name?: unknown }).name;
     if (typeof name === 'string' && name === 'AbortError') return 'AbortError';
   }
-  return typeof err === 'string' ? err : '';
+  return typeof err === 'string' && err ? err : fallback;
 }
 
 export function errorName(err: unknown): string {

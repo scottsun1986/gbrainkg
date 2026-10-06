@@ -673,10 +673,10 @@ export function planTopRankGuarantee(input: TopRankGuaranteeInput): TopRankGuara
 
   for (const key of leading) {
     if (represented.has(key)) continue;
-    const index = byScore.find((item) => keyOf(item.citation) === key)?.index ?? -1;
-    if (index < 0) continue;
-    if (input.isRelevant && !input.isRelevant(byScore[index].citation)) continue;
-    plan.indices.push(index);
+    const found = byScore.find((item) => keyOf(item.citation) === key);
+    if (!found) continue;
+    if (input.isRelevant && !input.isRelevant(found.citation)) continue;
+    plan.indices.push(found.index);
     plan.docs.push(key);
     represented.add(key);
   }

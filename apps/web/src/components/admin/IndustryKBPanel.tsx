@@ -37,7 +37,7 @@ export function IndustryKBPanel({onOpenGrant, canCreate = false}: { onOpenGrant:
   const filtered = appStore.INDUSTRY_KBS.filter(k => {
     if (!search) return true;
     const q = search.toLowerCase();
-    return k.name.toLowerCase().includes(q) || (k.desc || '').toLowerCase().includes(q) || k.admins.some((a: any) => (a.n || a.i || '').toLowerCase().includes(q));
+    return k.name.toLowerCase().includes(q) || (k.desc || '').toLowerCase().includes(q) || k.admins.some((a) => (a.n || a.i || '').toLowerCase().includes(q));
   });
 
   return (
@@ -111,7 +111,7 @@ export function IndustryKBPanel({onOpenGrant, canCreate = false}: { onOpenGrant:
                 <td>
                   <div className="avatar-stack">
                     {k.admins.length > 0 ? (
-                      k.admins.map((a: any, i: number) => (
+                      k.admins.map((a, i: number) => (
                         <div
                           key={i}
                           className="avatar"
@@ -199,13 +199,15 @@ export function NewIndustryKBModal({onClose, onSaved}: { onClose: () => void; on
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
   const save = async () => {
-    if (!name.trim() || !description.trim()) return;
+    if (!name.trim() || !description.trim() || !admins.length) return;
     setSaving(true);
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/admin/kbs`, {method:'POST',headers:{'Content-Type':'application/json',...apiHeaders()},body:JSON.stringify({name,description,type:'industry'})});
       const result = await response.json().catch(()=>({}));
       if (!response.ok) throw new Error(result.message || '创建失败');
-      if (admins.length && result.knowledgeBase?.id) await fetch(`${API_BASE_URL}/api/v1/admin/kbs/${result.knowledgeBase.id}/admins`,{method:'POST',headers:{'Content-Type':'application/json',...apiHeaders()},body:JSON.stringify({userIds:admins.map(a=>a.id)})});
+      if (!result.knowledgeBase?.id) throw new Error('创建响应缺少知识库 ID');
+      const adminResponse = await fetch(`${API_BASE_URL}/api/v1/admin/kbs/${result.knowledgeBase.id}/admins`,{method:'POST',headers:{'Content-Type':'application/json',...apiHeaders()},body:JSON.stringify({userIds:admins.map(a=>a.id)})});
+      if (!adminResponse.ok) throw new Error('知识库已创建，但管理员分配失败；请在库管理中重新设置管理员');
       window.dispatchEvent(new CustomEvent('app-toast',{detail:'行业知识库已创建'})); onSaved?.();
     } catch(error) { window.dispatchEvent(new CustomEvent('app-toast',{detail:errorMessage(error) || '创建失败'})); }
     finally { setSaving(false); }
@@ -214,14 +216,14 @@ export function NewIndustryKBModal({onClose, onSaved}: { onClose: () => void; on
     <Modal title="新建行业知识库" onClose={onClose} foot={
       <>
         <button className="btn" onClick={onClose}>取消</button>
-        <button className="btn primary" disabled={saving} onClick={save}><Icon name="plus" size={12}/> {saving?'创建中…':'创建并初始化'}</button>
+        <button className="btn primary" disabled={saving || !name.trim() || !description.trim() || !admins.length} onClick={save}><Icon name="plus" size={12}/> {saving?'创建中…':'创建并初始化'}</button>
       </>
     }>
       <div className="field"><label>库名称<span className="req">*</span></label><input value={name} onChange={e=>setName(e.target.value)} placeholder="如：跨境贸易合规库 / AI 治理与伦理库"/></div>
       <div className="field"><label>库描述<span className="req">*</span></label><textarea value={description} onChange={e=>setDescription(e.target.value)} placeholder="说明本库的范围、用途、收录规范"/></div>
       <div className="field">
         <label>管理员（1 人或多人）<span className="req">*</span></label>
-        <TagPicker placeholder="搜索并选择管理员..." items={appStore.USERS.map(u=>({id:u.id,n:u.name,sub:u.org}))} selected={admins} setSelected={setAdmins}/>
+        <TagPicker placeholder="搜索并选择管理员..." items={appStore.USERS.map(u=>({id:u.id,n:u.name,sub:u.org,kw:u.initials}))} selected={admins} setSelected={setAdmins}/>
         <div className="field-hint">管理员拥有该库的全部维护权限：上传/编辑/删除文档、设置授权主体。</div>
       </div>
       <div className="warn-strip"><Icon name="alert" size={12}/>创建后可立即上传文档；文档解析和大脑编译由后台异步完成。</div>
@@ -251,7 +253,7 @@ export function KBAdminModal({kb, onClose, onSaved}: { kb: IndustryKbRow; onClos
       </div>
       <div className="field">
         <label>当前管理员（{picked.length} 人）</label>
-        <TagPicker placeholder="搜索并添加管理员..." items={appStore.USERS.map(u=>({id:u.id,n:u.name,sub:u.org}))} selected={picked} setSelected={setPicked}/>
+        <TagPicker placeholder="搜索并添加管理员..." items={appStore.USERS.map(u=>({id:u.id,n:u.name,sub:u.org,kw:u.initials}))} selected={picked} setSelected={setPicked}/>
       </div>
       {remove.length>0 && (
         <div className="warn-strip">

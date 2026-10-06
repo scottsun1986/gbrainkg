@@ -1,4 +1,5 @@
-import { withServiceContext } from './db/tenant-context.service';
+import { uploadRoot as resolveUploadRoot } from './storage/upload-paths';
+import { withAdminInventory } from './db/tenant-context.service';
 import {
   BadRequestException,
   Body,
@@ -71,6 +72,21 @@ function boundedInteger(value: unknown, field: string, min: number, max: number)
 const PROTECTED_ROLE_CODES = new Set(['super_admin', 'system_admin']);
 const ORG_ADMIN_ROLE_NAME = "组织管理员";
 const BASIC_USER_ROLE_NAME = "普通用户";
+
+// `*` 就是 auth.guard 判定"系统管理员"的依据，因此把通配权限授给受保护角色以外的
+// 任何角色，等同于把所有持有者静默提升为系统管理员。种子角色（普通用户、组织管理员
+// 等）都是 builtin: false，按上面的约定不能用 builtin 判定，只能按受保护身份判定。
+function assertWildcardReservedForProtectedRoles(
+  permissions: unknown,
+  roleCode?: string | null,
+) {
+  if (!Array.isArray(permissions)) return;
+  if (!permissions.some((permission) => String(permission) === "*")) return;
+  if (roleCode && PROTECTED_ROLE_CODES.has(roleCode)) return;
+  throw new BadRequestException(
+    "通配权限仅限内置的系统管理员/超级管理员角色。",
+  );
+}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -366,8 +382,17 @@ export class AdminController {
     return this.chunkEmbeddingService.coverage();
   }
 
+  private async requireSystemSettingsManager(req: any): Promise<void> {
+    const userId = await this.authService.userIdFromRequest(req);
+    const capabilities = await this.permissionService.getCapabilities(userId);
+    if (!capabilities.includes('*') && !capabilities.includes('system.settings.manage')) {
+      throw new ForbiddenException('System settings management permission required.');
+    }
+  }
+
   @Post("enrichment/backfill")
-  async backfillEnrichment(@Body("limit") limit?: number) {
+  async backfillEnrichment(@Req() req: any, @Body("limit") limit?: number) {
+    await this.requireSystemSettingsManager(req);
     if (!this.enrichmentQueue) throw new ForbiddenException("Enrichment queue unavailable.");
     const boundedLimit = limit === undefined ? 50 : boundedInteger(limit, "limit", 1, 500);
     const docs = await this.prisma.document.findMany({
@@ -400,9 +425,11 @@ export class AdminController {
 
   @Post("embeddings/backfill")
   async backfillEmbeddings(
+    @Req() req: any,
     @Body("kbId") kbId?: string,
     @Body("limit") limit?: number,
   ) {
+    await this.requireSystemSettingsManager(req);
     if (!this.chunkEmbeddingService) throw new ForbiddenException("Embedding service unavailable.");
     if (!this.chunkEmbeddingService.isEnabled()) {
       throw new BadRequestException("Chunk embeddings are disabled (CHUNK_EMBEDDINGS_ENABLED=false).");
@@ -435,8 +462,9 @@ export class AdminController {
    * throws "Field kb is required ... got null". Load grants and KBs separately
    * so a filtered/missing KB cannot 500 the admin shell after login.
    */
-  private async loadGrantsWithKb() {
-    const grants = await this.prisma.industryGrant.findMany({
+  private async loadGrantsWithKb(db: any, kbIdsInScope: string[] | null) {
+    const grants = await db.industryGrant.findMany({
+      where: kbIdsInScope === null ? undefined : { kbId: { in: kbIdsInScope } },
       select: {
         id: true,
         kbId: true,
@@ -451,7 +479,7 @@ export class AdminController {
     });
     const kbIds = [...new Set(grants.map((g: any) => g.kbId))];
     const kbs: any[] = kbIds.length
-      ? await this.prisma.knowledgeBase.findMany({
+      ? await db.knowledgeBase.findMany({
           where: { id: { in: kbIds } },
           select: { id: true, name: true },
         })
@@ -536,53 +564,48 @@ export class AdminController {
     )
       throw new ForbiddenException("No administration permission.");
 
-    // Admin shell inventory must run under service RLS context: otherwise
-    // KnowledgeBase filters make required Prisma relations (IndustryGrant.kb)
-    // resolve to null and 500 the post-login admin bootstrap.
+    // Admin shell inventory must run under a true service RLS scope, not the
+    // requesting user's: the inventory joins cross-user to-one relations
+    // (OrgNode.admins.user, KbAdmin.user, CompileJob.user), and user-scoped
+    // RLS filters those joined User rows to null, making Prisma throw
+    // "Inconsistent query result" and 500 the bootstrap for org admins
+    // (2026-10-06 E2E BUG-3). Authorization and row scoping stay in this
+    // controller (capabilities / managedOrgIds / visibleKbs) — that
+    // application-layer narrowing is authoritative for the admin shell.
     // Keep telemetry outside this interactive transaction: it performs queue,
     // filesystem and HTTP health checks, which can exceed Prisma's 5s default
     // transaction timeout even though the inventory DB work is quick.
-    const data = await withServiceContext(this.prisma, async (db: any) => {
+    // Scope before elevation and take: unrelated rows cannot consume the limit.
+    const readableKbIds = new Set(
+      await this.permissionService.getVisibleKnowledgeBases(adminId),
+    );
+    const kbInventoryWhere = {
+      status: "active",
+      ...(isSystemAdmin
+        ? { OR: [{ type: { not: "personal" } }, { ownerUserId: adminId }] }
+        : { OR: [
+            { id: { in: [...readableKbIds] } },
+            { type: "industry", OR: [{ ownerUserId: adminId }, { admins: { some: { userId: adminId } } }] },
+          ] }),
+    };
+    const data = await withAdminInventory(this.prisma, async (db: any) => {
       // 分区模式下只执行审计链路必需的查询，跳过全量清单。
       const users = wantAudit
         ? await (db as any).user.findMany({
+            where: isSystemAdmin ? undefined : {
+              OR: [
+                { id: adminId },
+                ...(canReadOrg ? [{ orgs: { some: { orgNodeId: { in: [...managedOrgIds] } } } }] : []),
+              ],
+            },
             select: ADMIN_USER_SELECT,
             orderBy: { createdAt: "asc" },
             take: inventoryLimit,
           })
         : [];
-      const allOrgs = !fieldsMode
-        ? await (db as any).orgNode.findMany({
-        where: { status: "active" },
-        include: {
-          admins: {
-            include: {
-              user: { select: { id: true, displayName: true, username: true } },
-            },
-          },
-          kbs: {
-            where: { status: "active" },
-            select: {
-              id: true,
-              name: true,
-              status: true,
-              description: true,
-              orgNodeId: true,
-              admins: {
-                include: {
-                  user: { select: { displayName: true, username: true } },
-                },
-              },
-            },
-          },
-        },
-        orderBy: [{ path: "asc" }, { sort: "asc" }],
-        take: inventoryLimit,
-      })
-        : [];
       const kbs = wantAudit
         ? await (db as any).knowledgeBase.findMany({
-        where: { status: "active" },
+        where: kbInventoryWhere,
         include: {
           admins: {
             include: {
@@ -602,6 +625,44 @@ export class AdminController {
         take: inventoryLimit,
       })
         : [];
+      const industryScopeKbs = kbs.filter((kb: any) => kb.type === "industry" &&
+        (isSystemAdmin || kb.ownerUserId === adminId || kb.admins.some((admin: any) => admin.userId === adminId)));
+      const allOrgs = !fieldsMode
+        ? await (db as any).orgNode.findMany({
+        where: {
+          status: "active",
+          ...(isSystemAdmin ? {} : { id: { in: [...new Set([
+            ...(canReadOrg ? [...managedOrgIds] : []),
+            ...(canReadOrg || canReadIndustry ? industryScopeKbs
+              .map((kb: any) => kb.orgNodeId).filter(Boolean) : []),
+          ])] } }),
+        },
+        include: {
+          admins: {
+            include: {
+              user: { select: { id: true, displayName: true, username: true } },
+            },
+          },
+          kbs: {
+            where: kbInventoryWhere,
+            select: {
+              id: true,
+              name: true,
+              status: true,
+              description: true,
+              orgNodeId: true,
+              admins: {
+                include: {
+                  user: { select: { displayName: true, username: true } },
+                },
+              },
+            },
+          },
+        },
+        orderBy: [{ path: "asc" }, { sort: "asc" }],
+        take: inventoryLimit,
+      })
+        : [];
       // 审计流水只需要标题/状态/时间等汇总字段；不带 parserMetadata 等大
       // JSON 列，避免为拼审计文案把整张文档表（含 MB 级元数据）拉进内存。
       const [roles, grants, providers, configs, compileJobs, documents] =
@@ -613,7 +674,7 @@ export class AdminController {
                 take: inventoryLimit,
               })
             : Promise.resolve([]),
-          wantAudit ? this.loadGrantsWithKb() : Promise.resolve([]),
+          wantAudit ? this.loadGrantsWithKb(db, isSystemAdmin ? null : industryScopeKbs.map((kb: any) => kb.id)) : Promise.resolve([]),
           !fieldsMode
             ? (db as any).modelProvider.findMany({
                 orderBy: { name: "asc" },
@@ -629,6 +690,7 @@ export class AdminController {
             : Promise.resolve([]),
           wantAudit
             ? (db as any).compileJob.findMany({
+                where: isSystemAdmin ? undefined : { userId: adminId },
                 select: {
                   id: true,
                   userId: true,
@@ -645,6 +707,7 @@ export class AdminController {
             : Promise.resolve([]),
           wantAudit
             ? (db as any).document.findMany({
+                where: { kbId: { in: kbs.map((kb: any) => kb.id) } },
                 select: {
                   id: true,
                   kbId: true,
@@ -674,13 +737,6 @@ export class AdminController {
           hasSecretKey: Boolean(secretKeyEncrypted),
         }),
       );
-      const industryScopeKbs = kbs.filter(
-        (kb: any) =>
-          kb.type === "industry" &&
-          (isSystemAdmin ||
-            kb.ownerUserId === adminId ||
-            kb.admins.some((admin: any) => admin.userId === adminId)),
-      );
       // B-2: kb.industry.read 只解锁行业库关联的组织节点，绝不放行全量组织树。
       // 全量组织树仍由 org.read / org.user.read 控制。
       const industryLinkedOrgNodeIds = new Set(
@@ -688,11 +744,20 @@ export class AdminController {
           .map((kb: any) => kb.orgNodeId)
           .filter((id: any): id is string => typeof id === "string"),
       );
-      const orgs = (canReadOrg
+      // 2026-10-06 E2E BUG-2 修正：组织管理员是节点级角色——组织树同样收敛到
+      // 其管辖子树（本级+下级），不再因持 org.read 输出全量组织；行业库管理
+      // 视角保持 B-2 语义（仅行业库关联的组织节点）。
+      const orgs = (isSystemAdmin
         ? allOrgs
-        : canReadIndustry
-          ? allOrgs.filter((org: any) => industryLinkedOrgNodeIds.has(org.id))
-          : []
+        : canReadOrg
+          ? allOrgs.filter(
+              (org: any) =>
+                managedOrgIds.has(org.id) ||
+                industryLinkedOrgNodeIds.has(org.id),
+            )
+          : canReadIndustry
+            ? allOrgs.filter((org: any) => industryLinkedOrgNodeIds.has(org.id))
+            : []
       ).map((org: any) => ({
         ...org,
         canManage: isSystemAdmin || managedOrgIds.has(org.id),
@@ -704,9 +769,6 @@ export class AdminController {
       }));
       // 管理后台的管理范围和用户实际阅读范围不同：普通成员不能管理组织库，
       // 但仍应在对话/知识库页面看到自己按组织继承规则可读的组织库。
-      const readableKbIds = new Set(
-        await this.permissionService.getVisibleKnowledgeBases(adminId),
-      );
       const readableKbs = kbs.filter((kb: any) => readableKbIds.has(kb.id));
       const visibleKbs = isSystemAdmin
         // 个人库仍然遵循“仅本人可见”：超级管理员可以看到自己创建的个人库，
@@ -720,9 +782,11 @@ export class AdminController {
             ).values(),
           ];
       // B-2: 用户目录按 org.read / org.user.read 输出全量；行业库阅读能力
-      // （kb.industry.read / 行业库管理员）不再放行全量用户清单，未持组织
-      // 阅读能力者只看到自己与其管理组织子树内的成员。
-      const directoryUsers = canReadOrg
+      // （kb.industry.read / 行业库管理员）不再放行全量用户清单。
+      // 2026-10-06 E2E BUG-2 修正：组织管理员是节点级角色——目录必须收敛到
+      // 其管辖子树（本级+下级）成员，而不是持 org.read 即全量。全量目录只
+      // 属于系统管理员/超级管理员；行业库视角仍只见自己（无组织管辖范围）。
+      const directoryUsers = isSystemAdmin
         ? users
         : users.filter(
             (user: any) =>
@@ -1113,7 +1177,7 @@ export class AdminController {
 
     // 2. GBrain Sources & Disk Materialization
     const repoBasePath = process.env.BRAIN_REPO_BASE_PATH || "/home/scottsun/.local/share/llmwiki/brain_repos";
-    const uploadRoot = process.env.UPLOAD_ROOT || "/home/scottsun/.local/share/llmwiki/uploads";
+    const uploadRoot = resolveUploadRoot();
     // 磁盘占用读后台采样缓存（首次请求会异步预热，返回 0 直到采样完成）。
     void refreshDiskUsageSamples([repoBasePath, uploadRoot]);
     const repoBytes = cachedDirBytes(repoBasePath);
@@ -2168,6 +2232,8 @@ export class AdminController {
     const existing = await this.prisma.role.findFirst({ where: { name } });
     if (existing)
       throw new BadRequestException(`Role with name "${name}" already exists.`);
+    // 新建角色永远不是受保护身份，因此不得携带通配权限。
+    assertWildcardReservedForProtectedRoles(body?.permissions);
     const role = await this.prisma.role.create({
       data: {
         name,
@@ -2189,6 +2255,15 @@ export class AdminController {
     await this.authService.adminUserIdFromRequest(req);
     const role = await this.prisma.role.findUnique({ where: { id } });
     if (!role) throw new NotFoundException("Role not found.");
+    if (role.builtin && body?.permissions !== undefined && JSON.stringify(body.permissions) !== JSON.stringify(role.permissions)) {
+      throw new BadRequestException("Built-in role permissions cannot be changed.");
+    }
+    // 上面的 builtin 分支只覆盖两个内置管理员角色；普通用户等种子角色 builtin
+    // 为 false，仍可被写入 ["*"] 从而把全部持有者提升为系统管理员。按受保护身份
+    // 而非 builtin 收敛通配权限。
+    if (body?.permissions !== undefined) {
+      assertWildcardReservedForProtectedRoles(body.permissions, role.code);
+    }
     if (body?.name && String(body.name).trim() !== role.name) {
       const duplicate = await this.prisma.role.findFirst({
         where: { name: String(body.name).trim(), id: { not: id } },
@@ -2359,7 +2434,11 @@ export class AdminController {
       throw new ForbiddenException(
         "Knowledge base administrator permission required.",
       );
-    const userIds = Array.isArray(body?.userIds) ? body.userIds : [];
+    const submittedIds = Array.isArray(body?.userIds) ? body.userIds : [];
+    if (submittedIds.some((value: unknown) => typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value))) {
+      throw new BadRequestException('Administrator IDs must be UUIDs.');
+    }
+    const userIds = [...new Set<string>(submittedIds)];
     if (!userIds.length)
       throw new BadRequestException("At least one administrator is required.");
     const activeUsers = await this.prisma.user.findMany({
@@ -2422,19 +2501,19 @@ export class AdminController {
       }))
     )
       throw new BadRequestException("Authorized organization is invalid.");
-    const duplicate = await this.prisma.industryGrant.findFirst({
-      where: { kbId, subjectType, subjectId },
-    });
-    if (duplicate)
-      throw new BadRequestException("This authorization already exists.");
+    const expiresAt = body?.expiresAt ? new Date(body.expiresAt) : null;
+    if (expiresAt && !Number.isFinite(expiresAt.getTime())) throw new BadRequestException('Invalid authorization expiry.');
     const grant = await this.prisma.$transaction(async tx => {
+    if (typeof tx.$queryRaw === 'function') await tx.$queryRaw`SELECT id FROM "KnowledgeBase" WHERE id=${kbId}::uuid FOR UPDATE`;
+    const duplicate = await tx.industryGrant.findFirst({ where: { kbId, subjectType, subjectId } });
+    if (duplicate) throw new BadRequestException("This authorization already exists.");
     const created = await tx.industryGrant.create({
       data: {
         kbId,
         subjectType,
         subjectId,
         grantedById,
-        expiresAt: body?.expiresAt ? new Date(body.expiresAt) : null,
+        expiresAt,
       },
     });
     await tx.brainChangeEvent.create({ data: {

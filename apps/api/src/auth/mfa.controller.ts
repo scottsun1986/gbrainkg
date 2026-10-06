@@ -22,7 +22,7 @@ export class MfaController {
   /** Current user's MFA state. Works with a session or an mfaToken. */
   @Get('status')
   async status(@Req() req: any) {
-    const { userId } = await this.mfaService.resolveActor(req, { mfaToken: String(req.query?.mfaToken || '') });
+    const { userId } = await this.mfaService.resolveActor(req, { mfaToken: String(req.headers?.['x-mfa-token'] || '') });
     return this.mfaService.getMfaStatus(userId);
   }
 

@@ -1,3 +1,5 @@
+> 历史评审说明（2026-10-06）：本文保留原评审现场结论。分数契约、MMR 乘性 boost、预算降级/跳过、缓存版本与两阶段重排已在当前代码中调整；本文列项不等同于当前未修复清单。此次完整验证结果以 `docs/FIX-REPORT-2026-10-06.md` 为准。
+
 # 低分排除优化落地评审（27cd327）
 
 > 评审对象：`docs/retrieval-low-score-exclusion-optimization-proposal.md` 与提交 `27cd327 feat(retrieval): 优化候选饱和下的低分排除机制与重排上下文增强`

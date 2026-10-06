@@ -36,7 +36,7 @@ const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrainkg-judge-'));
 try {
   const evaluation = path.join(temp, 'tests/evaluation');
   fs.mkdirSync(evaluation, { recursive: true });
-  for (const file of ['quality-gate.ts', 'quality-gate-judge.ts', 'quality-gate-auth.ts', 'quality-gate-validity.ts', 'llm-client.ts', 'run-meta.ts']) {
+  for (const file of ['quality-gate.ts', 'quality-gate-judge.ts', 'quality-gate-auth.ts', 'quality-gate-validity.ts', 'llm-client.ts', 'run-meta.ts', 'gate-thresholds.ts', 'gate-thresholds.json']) {
     fs.copyFileSync(path.join(__dirname, file), path.join(evaluation, file));
   }
   fs.writeFileSync(path.join(evaluation, 'golden-dataset.json'), JSON.stringify([{
@@ -132,8 +132,15 @@ global.fetch = async (url, init) => {
   }
   const bin = path.join(temp, 'bin');
   fs.mkdirSync(bin);
+  const realPython = spawnSync('python3', ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' }).stdout.trim();
   fs.writeFileSync(path.join(bin, 'npx'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-  fs.writeFileSync(path.join(bin, 'python3'), '#!/bin/sh\necho "mock live gate: $1"\nexit 1\n', { mode: 0o755 });
+  // Only the ANN live gate is simulated as failing; the shared threshold loader
+  // also shells out to python3 and must keep working.
+  fs.writeFileSync(
+    path.join(bin, 'python3'),
+    `#!/bin/sh\ncase " $* " in\n  *ann_recall_eval.py*) echo "mock live gate: $1"; exit 1 ;;\nesac\nexec "${realPython}" "$@"\n`,
+    { mode: 0o755 },
+  );
   for (const strict of ['0', '1']) {
     const shell = spawnSync('bash', [path.join(__dirname, 'ci-gate.sh')], {
       env: { ...env, GATE_STRICT: strict, PATH: `${bin}:${process.env.PATH}`, CHECK_INTL: '1', ANN_EVAL_DATABASE_URL: 'fixture' },

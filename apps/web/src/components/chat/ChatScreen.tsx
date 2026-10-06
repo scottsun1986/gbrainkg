@@ -154,22 +154,24 @@ export function ChatScreen(){
   // 侧栏只加载首页（30 条），更早的会话按需翻页。
   const [convMore, setConvMore] = useState(() => appStore.CONVERSATIONS_META?.hasMore ?? false);
   const [convCursor, setConvCursor] = useState<string | null>(() => appStore.CONVERSATIONS_META?.nextCursor ?? null);
+  const convPaginationAdvancedRef = useRef(false);
   const [convMoreLoading, setConvMoreLoading] = useState(false);
   const loadMoreConversations = useCallback(async () => {
     if (convMoreLoading || !convMore || !convCursor) return;
     setConvMoreLoading(true);
     try {
       const res = await fetch(`${API_BASE_URL}/api/v1/conversations?paginated=1&limit=30&before=${encodeURIComponent(convCursor)}`, { headers: apiHeaders() });
-      if (!res.ok) return;
+      if (!res.ok) throw new Error('会话列表加载失败');
       const page = (await res.json()) as { items?: ConversationSummary[]; nextCursor?: string | null; hasMore?: boolean };
       const items = Array.isArray(page?.items) ? page.items : [];
       setConversationList(prev => {
         const seen = new Set(prev.map(c => c.id));
         return [...prev, ...items.filter(c => !seen.has(c.id))];
       });
+      convPaginationAdvancedRef.current = true;
       setConvMore(page?.hasMore === true);
       setConvCursor(typeof page?.nextCursor === 'string' ? page.nextCursor : null);
-    } catch {} finally { setConvMoreLoading(false); }
+    } catch (error) { emitToast(errorMessage(error, '会话列表加载失败')); } finally { setConvMoreLoading(false); }
   }, [convMore, convCursor, convMoreLoading]);
   const [collapsedGroups, setCollapsedGroups] = useState(() => ({
     '近 7 天': true,
@@ -248,7 +250,7 @@ export function ChatScreen(){
     const sources = state.status === 'completed' ? collectRunCitations(state) : [];
     const answer: ChatMessage = { role: 'ai', text: state.status === 'failed'
       ? state.errorMessage || '问答未成功完成。' : state.answer || '', done: true,
-      id: state.messageId, trace: [], sources };
+      id: state.messageId || `run-${state.runId}`, trace: [], sources };
     setMessages(current => {
       if (state.messageId && current.some(message => message.id === state.messageId)) return current;
       const last = current[current.length - 1];
@@ -324,8 +326,11 @@ export function ChatScreen(){
         return [...incoming, ...current.filter(item => !seen.has(item.id))];
       });
       adoptRunStages(appStore.CONVERSATIONS);
-      setConvMore(appStore.CONVERSATIONS_META?.hasMore ?? false);
-      setConvCursor(appStore.CONVERSATIONS_META?.nextCursor ?? null);
+      if (!convPaginationAdvancedRef.current) {
+        setConvMore(appStore.CONVERSATIONS_META?.hasMore ?? false);
+        setConvCursor(appStore.CONVERSATIONS_META?.nextCursor ?? null);
+      }
+
     };
     window.addEventListener('app-admin-data-updated', refresh);
     return () => window.removeEventListener('app-admin-data-updated', refresh);
@@ -447,7 +452,7 @@ export function ChatScreen(){
     const text = (preset ?? input).trim();
     if(!text || convLoading || (viewKeyRef.current !== null && runsRef.current.has(viewKeyRef.current)) || selected.length===0) return;
     // 同一会话已有回答在生成时不重复提交；其他会话的并发流互不影响。
-    setMessages(ms=>[...ms, {role:'user', text}, {role:'ai', text:'', done:false, trace:[]}]);
+    setMessages(ms=>[...ms, {id: crypto.randomUUID(), role:'user', text}, {id: crypto.randomUUID(), role:'ai', text:'', done:false, trace:[]}]);
     inputRef.current = ''; if (viewKeyRef.current) draftsRef.current.delete(viewKeyRef.current); setInput('');
     setActiveCite(null);
     setCitations([]);
@@ -599,9 +604,9 @@ export function ChatScreen(){
   const hideConversation = (conv: ConversationSummary) => {
     const id = conv?.id;
     if (!id) return;
-    const next = new Set(hiddenConvs); next.add(id); setHiddenConvs(next);
+    setHiddenConvs(current => new Set(current).add(id));
     if (activeConv === id) { setMessages([]); setActiveConv(null); setCitations([]); viewKeyRef.current = null; setViewKey(null); }
-    const onUndo = () => { const r = new Set(hiddenConvs); r.delete(id); setHiddenConvs(r); };
+    const onUndo = () => setHiddenConvs(current => { const next = new Set(current); next.delete(id); return next; });
     const evt = new CustomEvent('app-undoable', { detail: { message: `已隐藏会话：${(conv.title || '未命名').slice(0, 20)}`, undoLabel: '撤销', undo: onUndo } });
     window.dispatchEvent(evt);
   };
@@ -615,11 +620,12 @@ export function ChatScreen(){
         headers: { 'Content-Type': 'application/json', ...apiHeaders() },
         body: JSON.stringify({ title: newTitle.trim() }),
       });
-      if (res.ok) {
+      if (!res.ok) throw new Error('会话重命名失败');
+      {
         setConversationList((prev) => prev.map((item) => item.id === conv.id ? { ...item, title: newTitle.trim() } : item));
         window.dispatchEvent(new CustomEvent('app-toast', { detail: '会话标题已更新' }));
       }
-    } catch {}
+    } catch (error) { emitToast(errorMessage(error, '会话重命名失败')); }
   };
 
   const showConvMenu = (e: React.MouseEvent, conv: ConversationSummary) => {
@@ -873,7 +879,7 @@ export function ChatScreen(){
             </div>
             <div className="cite-body">
               {citations.map((c, idx) => {
-                const n = idx+1;
+                const n = c.citationIndex || idx + 1;
                 // 原型引用中的 i1/o1 等旧 ID 可能与数据库真实 UUID 不同；
                 // 引用仍应可读，不能因为元数据未匹配而让整页崩溃。
                 const kb = appStore.KNOWLEDGE_BASES.find(k=>k.id===c.kb) || {
@@ -1105,7 +1111,7 @@ const TraceDetails = memo(function TraceDetails({ nodes, conversationId, message
             // 检索漏斗行（评审 §5）：evidence_selection 节点携带
             // 召回→重排→入选 数字时，在节点摘要下以单行数字展示，
             // 普通用户无需展开 JSON。
-            const details = (node.details ?? {}) as Record<string, any>;
+            const details = (node.details ?? {}) as { selection?: { funnel?: { recalled: number; rerankScored: number; eligible: number; selected: number } } };
             const funnel = details?.selection?.funnel as
               { recalled: number; rerankScored: number; eligible: number; selected: number } | undefined;
             return (

@@ -16,17 +16,19 @@ export function DocumentAclPanel({ documentId, title, onClose }: { documentId: s
   const [subjects, setSubjects] = useState<Array<{ id: string; name: string }>>([]);
   useEffect(() => {
     const controller = new AbortController();
+    const timer = setTimeout(() => {
     setBusy(true); setLoaded(false); setEntries([]); setError(''); setSubjectId(''); setSubjects([]); setSearch('');
     fetch(`${API_BASE_URL}/api/v1/documents/${documentId}/acl`, { headers: apiHeaders(), signal: controller.signal })
       .then(async response => { const body = await response.json(); if (controller.signal.aborted) return; if (!response.ok) throw new Error(body.message || '权限读取失败'); setMode(body.aclMode); setEntries(body.entries); setLoaded(true); })
       .catch(error => { if (!controller.signal.aborted) setError(error.message); })
       .finally(() => { if (!controller.signal.aborted) setBusy(false); });
-    return () => controller.abort();
+    }, 0);
+    return () => { clearTimeout(timer); controller.abort(); };
   }, [documentId]);
   useEffect(() => {
     const controller = new AbortController();
-    if (search.trim().length < 2) { setSubjects([]); return; }
     const timer = setTimeout(() => {
+      if (search.trim().length < 2) { setSubjects([]); return; }
       fetch(`${API_BASE_URL}/api/v1/documents/${documentId}/acl-subjects?type=${subjectType}&q=${encodeURIComponent(search)}`, { headers: apiHeaders(), signal: controller.signal })
         .then(async response => { const data = await response.json(); if (controller.signal.aborted) return; if (!response.ok) throw new Error(data.message || '搜索失败'); setSubjects(data); })
         .catch(error => { if (!controller.signal.aborted) setError(error.message); });

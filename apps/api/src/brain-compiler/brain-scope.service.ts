@@ -7,6 +7,7 @@ import { BrainRepoAdapter, BrainEvidence } from '@llmwiki/gbrain-adapter';
 import { readCanonicalDocument } from './canonical-document';
 import { sourceKeyForKnowledgeBase } from './brain-source';
 import { getSharedBrainRepoAdapter } from "./brain-adapter.provider";
+import { uploadRoot as resolveUploadRoot } from "../storage/upload-paths";
 
 export interface ScopeResolutionResult {
   scopeId: string;
@@ -23,7 +24,7 @@ export class BrainScopeService {
   private readonly logger = new Logger(BrainScopeService.name);
   private prisma = getPrismaClient();
   private gbrain: BrainRepoAdapter;
-  private readonly uploadRoot = process.env.UPLOAD_ROOT || '/tmp/llmwiki/uploads';
+  private readonly uploadRoot = resolveUploadRoot();
 
   constructor(
     private readonly permissionService: PermissionService,
@@ -344,6 +345,10 @@ export class BrainScopeService {
 
     const summaryContent = summaryLines.join('\n');
 
+    if (process.env.RLS_ENFORCE === '1') {
+      await db.$executeRaw`SELECT app_publish_derived_page(${scope.id}::uuid, ${'derived/scope-summary'}, ${summaryTitle}, ${'summary'}, ${summaryContent},
+        ${JSON.stringify(derivedEvidence)}::jsonb, ${JSON.stringify(sourceKeys)}::jsonb, ${inputFingerprint}, ${scope.aclEpoch}::integer, ${scope.knowledgeEpoch}::integer, ${'gbrain-synthesize-v1'})`;
+    } else {
     await db.brainDerivedPage.upsert({
       where: { scopeId_slug: { scopeId: scope.id, slug: 'derived/scope-summary' } },
       create: {
@@ -370,6 +375,8 @@ export class BrainScopeService {
         updatedAt: new Date(),
       },
     });
+
+    }
 
     // 3. 写入 Scope 专属派生源仓库并同步 (GBrain source ID 限制 <= 32 字符)
     const scopeSourceId = `llmwiki-d-${scope.fingerprint}`;

@@ -27,10 +27,8 @@ from pathlib import Path
 
 API = os.environ.get("API_BASE", "http://127.0.0.1:3202")
 USER = os.environ.get("TEST_USER", "admin")
-PASS = os.environ.get("TEST_PASSWORD", "123456")
+PASS = os.environ.get("TEST_PASSWORD", "")
 CTX = ssl.create_default_context()
-CTX.check_hostname = False
-CTX.verify_mode = ssl.CERT_NONE
 
 RESULTS = []
 RUN_ID = datetime.now().strftime("%H%M%S")
@@ -81,12 +79,16 @@ def chat(token, message, kb_scope=None, timeout=180):
                     continue
                 if d.get("type") == "delta":
                     answer += d.get("content") or ""
+                elif d.get("type") == "replace":
+                    answer = d.get("content") or ""
+                elif d.get("type") == "error":
+                    return 0, {"answer": answer, "citations": citations, "done": False, "error": d.get("message") or d.get("error") or "SSE generation failed"}
                 elif d.get("type") == "citation":
                     te = d.get("timeline_entry") or {}
                     if te.get("doc_title"):
                         citations.append(te.get("doc_title"))
                 elif d.get("type") == "done":
-                    done = True
+                    done = bool(answer.strip())
         return 200, {"answer": answer, "citations": citations, "done": done}
     except urllib.error.HTTPError as e:
         return e.code, {"answer": "", "error": e.read().decode("utf-8", "replace")[:200]}
@@ -282,16 +284,16 @@ def section_kbs():
         kb = (b.get("knowledgeBase") or b)
         if kb.get("id"):
             CREATED_KBS.append(kb.get("id"))
-        return expect(s in (200, 201, 503), f"{s}")
+        return expect(s in (200, 201), f"{s}")
     case(M, "KB-002", "创建 1 字符名库(边界:最小)", c2)
 
     def c3():
-        s, b = http("POST", "/api/v1/kbs/personal", {"name": f"L{RUN_ID}" * 1 + "L" * 118}, token=TOKEN)
+        s, b = http("POST", "/api/v1/kbs/personal", {"name": (f"L{RUN_ID}" + "L" * 120)[:120]}, token=TOKEN)
         kb = (b.get("knowledgeBase") or b)
         if kb.get("id"):
             CREATED_KBS.append(kb.get("id"))
         got = (kb.get("name") or "")
-        return expect((s in (200, 201) and len(got) == 120) or s == 503, f"{s} len={len(got)}")
+        return expect((s in (200, 201) and len(got) == 120), f"{s} len={len(got)}")
     case(M, "KB-003", "120 字符名(边界:上限)完整保留", c3)
 
     def c4():
@@ -300,12 +302,12 @@ def section_kbs():
         if kb.get("id"):
             CREATED_KBS.append(kb.get("id"))
         got = (kb.get("name") or "")
-        return expect((s in (200, 201) and len(got) == 120) or s == 503, f"{s} len={len(got)}")
-    case(M, "KB-004", "300 字符名被截断到 120(边界:超限)", c4)
+        return expect(s == 400, f"{s}")
+    case(M, "KB-004", "300 字符名被拒绝(边界:超限)", c4)
 
     def c5():
         s, b = http("POST", "/api/v1/kbs/personal", {"name": f"FUNC-TEST-边界-✨库-{RUN_ID}"}, token=TOKEN)
-        return expect(s in (400, 503), f"{s}")
+        return expect(s == 400, f"{s}")
     case(M, "KB-005", "重复名创建被拒绝(负向)", c5)
 
     def c6():
@@ -319,7 +321,7 @@ def section_kbs():
         if s in (200, 201) and kb.get("id"):
             CREATED_KBS.append(kb.get("id"))
         raw = json.dumps(b)
-        return expect(s in (200, 201, 400) and "<script>" not in raw.replace("\\u003c", "<") * 0 + raw or True, f"{s}")
+        return expect(s in (200, 201, 400), f"{s}")
     case(M, "KB-007", "名称含脚本载荷:允许创建或拒绝,不 500(安全)", c7)
 
     def c8():

@@ -65,5 +65,5 @@ if __name__ == '__main__':
         raise SystemExit('usage: sota_gate_results.py no-answer RESULT DATASET')
     count, rate = validate_no_answer(json.loads(Path(sys.argv[2]).read_text()),
                                      json.loads(Path(sys.argv[3]).read_text()),
-                                     float(os.environ.get('GATE_NO_ANSWER_HALLUCINATION_MAX', '0.01')))
+                                     float(os.environ.get('GATE_NO_ANSWER_HALLUCINATION_MAX') or json.loads((Path(__file__).resolve().parent.parent / 'gate-thresholds.json').read_text())['GATE_NO_ANSWER_HALLUCINATION_MAX']))
     print(f'  ✓ no-answer: {count} cases, hallucination rate {rate:.3f}')

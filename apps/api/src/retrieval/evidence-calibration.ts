@@ -22,3 +22,13 @@ export function calibrateRerankScore(score: number, route: string, model: string
     return 1/(1+Math.exp(-Math.max(-40,Math.min(40,profile.slope*score+profile.intercept))));
   } catch { cachedProfile = undefined; return null; }
 }
+
+/** Cache identity changes when the configured calibration file is replaced. */
+export function calibrationProfileFingerprint(): string {
+  const path = process.env.RERANK_CALIBRATION_FILE;
+  if (!path) return 'none';
+  try {
+    const stat = statSync(path, { bigint: true });
+    return `${path}:${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+  } catch { return `${path}:unavailable`; }
+}

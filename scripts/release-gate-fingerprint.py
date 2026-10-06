@@ -9,7 +9,8 @@ for directory in ['apps/api/dist','packages/gbrain-adapter/dist','apps/web/.next
  files.update(p for p in (root/directory).rglob('*') if p.is_file())
 files.add(root/'apps/web/.next/BUILD_ID')
 h=hashlib.sha256()
-h.update(json.dumps({k:os.environ.get(k) for k in ["RELEASE_GATE_PROFILE","API_BASE","TEST_KB_NAME","TEST_CONFLICT_KB_NAME","PERF_BUDGET_S"]},sort_keys=True).encode())
+h.update(json.dumps({k:os.environ.get(k) for k in ["RELEASE_GATE_PROFILE","API_BASE","TEST_KB_NAME","TEST_CONFLICT_KB_NAME","PERF_BUDGET_S","E2E_REQUIRE_ALL","GATE_STRICT","TEST_USER"]},sort_keys=True).encode())
+h.update(hashlib.sha256(os.environ.get("LLMWIKI_TOKEN", "").encode()).digest())
 for p in sorted(files):
  if p.is_file():h.update(str(p.relative_to(root)).encode());h.update(hashlib.sha256(p.read_bytes()).digest())
 fingerprint=h.hexdigest()

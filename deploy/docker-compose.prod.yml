@@ -63,6 +63,14 @@ services:
       BAIDU_OCR_API_KEY: ${BAIDU_OCR_API_KEY:-}
       BAIDU_OCR_SECRET_KEY: ${BAIDU_OCR_SECRET_KEY:-}
       BAIDU_OCR_ENDPOINT: ${BAIDU_OCR_ENDPOINT:-https://aip.baidubce.com}
+      # Capacity limits the parser applies itself. These are declared in
+      # production.env.example but were never forwarded, so the container ran the
+      # code defaults — PARSER_MAX_INFLIGHT fell back from the documented 64 to 16.
+      PARSER_MAX_TASKS: ${PARSER_MAX_TASKS:-5000}
+      PARSER_MAX_INFLIGHT: ${PARSER_MAX_INFLIGHT:-64}
+      PARSER_MAX_TEMP_BYTES: ${PARSER_MAX_TEMP_BYTES:-1073741824}
+      PARSER_TASK_STALE_SECONDS: ${PARSER_TASK_STALE_SECONDS:-5400}
+      LEGACY_WORD_MAX_BYTES: ${LEGACY_WORD_MAX_BYTES:-62914560}
     volumes:
       - parser_data:/var/lib/llmwiki/parser
     restart: unless-stopped

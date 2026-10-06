@@ -83,8 +83,8 @@ should_run_live() {
 
 if should_run_live; then
   # 1. Public multi-hop benchmarks against the live API.
-  gate_step "international retrieval benchmark" \
-    python3 tests/evaluation/intl-benchmark/benchmark_suite.py all --mode retrieval --gate || true
+  gate_step "SOTA retrieval, no-answer and historical-probe regression" \
+    bash tests/evaluation/intl-benchmark/sota-gate.sh full || true
 
   # 2. Filtered ANN recall against exact KNN (pgvector). Reading a database is
   #    enough; no API needed.

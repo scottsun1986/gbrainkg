@@ -11,6 +11,11 @@ import main
 
 
 class ExecuteContractTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        environment = patch.dict(os.environ, {"AUTH_TOKEN": "", "PARSER_ALLOW_UNAUTHENTICATED_LOOPBACK": "1"})
+        environment.start()
+        self.addCleanup(environment.stop)
+
     async def test_image_without_configured_extractor_fails_without_calling_baidu(self):
         png_bytes = bytes([
             0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,

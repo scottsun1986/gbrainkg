@@ -4,6 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export E2E_REQUIRE_ALL=1
+python3 scripts/assert-test-target.py "${API_BASE:-http://127.0.0.1:3202}"
 [[ -n "${LLMWIKI_TOKEN:-}" ]] || { echo 'FAIL: live authenticated test token required'; exit 1; }
 python3 - <<'PY'
 import os
@@ -30,14 +31,23 @@ if os.environ.get('RELEASE_GATE_PROFILE')=='quality-first':
 elif active: raise SystemExit('FAIL: experimental activation requires full gate: '+', '.join(active))
 if os.environ.get('RELEASE_GATE_PROFILE')!='quality-first':print('PASS: additive deployment; experimental flags disabled')
 PY
+# These checks always run. Fingerprints reuse only expensive live scenarios.
+pnpm --filter database exec prisma generate --schema=prisma/schema.prisma
+pnpm --filter api exec tsc --noEmit
+pnpm --filter api lint
+pnpm --filter web exec tsc --noEmit
+pnpm --filter web lint
+pnpm run test:api
+pnpm --filter web test
+python3 tests/integration/run-core-checks.py
+pnpm run test:parser
+pnpm run test:adapter
+pnpm run benchmark:selftest
+git diff --check
 if python3 scripts/release-gate-fingerprint.py check; then
   curl --fail --silent "${API_BASE:-http://127.0.0.1:3202}/ready" >/dev/null
   exit 0
 fi
-python3 tests/integration/run-core-checks.py --unit
-pnpm run test:parser
-pnpm run test:adapter
-pnpm run benchmark:selftest
 (cd apps/web && npx --yes tsx@4.23.13 __tests__/answer-layout.fixture.tsx /tmp/gbrain-answer-layout.html)
 python3 tests/e2e/chat_answer_layout.py
 python3 -u tests/e2e/sota_knowledge_base_suite.py

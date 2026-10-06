@@ -434,7 +434,7 @@ export class FusionRerankService {
     const primaryWeight = Number(process.env.RETRIEVAL_PRIMARY_GROUP_WEIGHT || 1);
     const probeWeight = Number(process.env.RETRIEVAL_PROBE_GROUP_WEIGHT || 0.9);
     const maxDocs = Math.max(2, Number(process.env.RERANK_MAX_DOCS || 60));
-    const timeoutMs = Math.max(1000, Number(process.env.RERANK_TIMEOUT_MS || 60000));
+    const timeoutMs = Math.max(1000, Number(process.env.RERANK_TIMEOUT_MS || 15000));
 
     const groups = new Map<string, any[]>();
     for (const citation of citations) {
@@ -447,11 +447,11 @@ export class FusionRerankService {
     await Promise.all(
       Array.from(groups.entries()).map(async ([key, list]) => {
         const rerankQuery = key === '__primary__' ? question : key;
-        const pool = list.slice(0, maxDocs);
-        const documents = pool
-          .map((citation) => buildContextualizedRerankText(citation))
-          .filter(Boolean);
-        if (documents.length < 2 || documents.length !== pool.length) return;
+        const candidates = list.slice(0, maxDocs).map(citation => ({ citation, text: buildContextualizedRerankText(citation) }));
+        const usable = candidates.filter(item => item.text.trim());
+        const pool = usable.map(item => item.citation);
+        const documents = usable.map(item => item.text);
+        if (documents.length < 2) return;
         try {
           await assertRequestAuthorization();
           const ranked = await timedRerankPairs(config, rerankQuery, documents, timeoutMs, 'probe_group');
@@ -613,7 +613,7 @@ export class FusionRerankService {
       .filter((i: any): i is number => i !== null);
     try {
       await assertRequestAuthorization();
-      const ranked = await timedRerankPairs(config, question, documents, Number(process.env.RERANK_TIMEOUT_MS || 60000), 'pool');
+      const ranked = await timedRerankPairs(config, question, documents, Number(process.env.RERANK_TIMEOUT_MS || 15000), 'pool');
       if (!ranked.length) return result;
 
       const scoredItems = ranked

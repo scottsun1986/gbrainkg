@@ -5,7 +5,7 @@ export class StreamDeadline {
   private readonly controller = new AbortController();
   private readonly combined: ReturnType<typeof combineAbortSignals>;
   private readonly totalTimer: ReturnType<typeof setTimeout>;
-  private idleTimer?: ReturnType<typeof setTimeout>;
+  private readonly idleTimers = new Set<ReturnType<typeof setTimeout>>();
   readonly signal: AbortSignal;
 
   constructor(parent?: AbortSignal, totalMs = 120000, private readonly idleMs = 45000) {
@@ -17,16 +17,17 @@ export class StreamDeadline {
 
   async wait<T>(operation: () => Promise<T>): Promise<T> {
     if (this.signal.aborted) throw this.signal.reason;
-    this.idleTimer = setTimeout(() => this.controller.abort(new Error('回答服务长时间未响应，请重试。')), this.idleMs);
-    this.idleTimer.unref?.();
+    const idleTimer = setTimeout(() => this.controller.abort(new Error('回答服务长时间未响应，请重试。')), this.idleMs);
+    idleTimer.unref?.();
+    this.idleTimers.add(idleTimer);
     let rejectAbort: () => void = () => {};
     const aborted = new Promise<never>((_, reject) => {
       rejectAbort = () => reject(this.signal.reason);
       this.signal.addEventListener('abort', rejectAbort, { once: true });
     });
     try { return await Promise.race([operation(), aborted]); }
-    finally { clearTimeout(this.idleTimer); this.signal.removeEventListener('abort', rejectAbort); }
+    finally { clearTimeout(idleTimer); this.idleTimers.delete(idleTimer); this.signal.removeEventListener('abort', rejectAbort); }
   }
 
-  dispose() { clearTimeout(this.totalTimer); clearTimeout(this.idleTimer); this.combined.dispose(); }
+  dispose() { clearTimeout(this.totalTimer); for (const timer of this.idleTimers) clearTimeout(timer); this.idleTimers.clear(); this.combined.dispose(); }
 }

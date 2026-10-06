@@ -661,11 +661,14 @@ export class RetrievalArmsService {
         }
       }
       const dedupedTerms = Array.from(new Set(terms));
+      this.scopeDomainTermsCache.delete(cacheKey);
       this.scopeDomainTermsCache.set(cacheKey, {
         terms: dedupedTerms,
         mappings,
         expiresAt: Date.now() + 120_000,
       });
+      for (const [key, value] of this.scopeDomainTermsCache) if (value.expiresAt <= Date.now()) this.scopeDomainTermsCache.delete(key);
+      while (this.scopeDomainTermsCache.size > 500) this.scopeDomainTermsCache.delete(this.scopeDomainTermsCache.keys().next().value!);
       return { terms: dedupedTerms, mappings };
     } catch {
       return { terms: [], mappings: [] };
@@ -1315,7 +1318,9 @@ export class RetrievalArmsService {
     if (subQueryCacheKey) {
       const cached = this.subQueryChunkCache.get(subQueryCacheKey);
       if (cached && cached.expiresAt > Date.now()) {
-        return cached.hits.map((h) => ({ ...h }));
+        const checked = await this.filterQueryResultByCurrentPermission({ citations: cached.hits.map(h => ({ ...h })) }, scope,
+          { scopeId: '', sourceKeys: [], aclEpoch: -1, knowledgeEpoch: -1 });
+        return checked.citations;
       }
     }
 

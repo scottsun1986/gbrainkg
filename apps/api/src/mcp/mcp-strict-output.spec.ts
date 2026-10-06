@@ -33,18 +33,18 @@ describe('strict MCP transports', () => {
   }
   const req:any={ headers:{ 'x-app-id':'id','x-app-secret':'secret' },query:{} };
   it('buffers stream results and sends them only inside a serialization permit', async () => {
-    const res=response();await controller.handleStreamEndpoint(req,res,{ id:1,method:'tools/call' });
+    const res=response();await controller.handleStreamEndpoint(req,res,{ id:1,method:'tools/call',params:{ name:'search_knowledge' } });
     expect(service.handleJsonRpc.mock.calls[0][2]).toBeUndefined();
     expect(withStrictOutputPermit).toHaveBeenCalledTimes(1);
     expect(res.write).toHaveBeenCalledTimes(1);
   });
   it('protects the JSON response with the same permit', async () => {
-    const res=response();await controller.handleDirectRpc(req,res,{ id:1,method:'tools/call' });
+    const res=response();await controller.handleDirectRpc(req,res,{ id:1,method:'tools/call',params:{ name:'search_knowledge' } });
     expect(withStrictOutputPermit).toHaveBeenCalledTimes(1);expect(res.json).toHaveBeenCalledTimes(1);
   });
   it('never emits buffered evidence after permit rejection', async () => {
     (withStrictOutputPermit as jest.Mock).mockRejectedValue(new Error('authorization changed'));
-    const res=response();await controller.handleStreamEndpoint(req,res,{ id:1,method:'tools/call' });
+    const res=response();await controller.handleStreamEndpoint(req,res,{ id:1,method:'tools/call',params:{ name:'search_knowledge' } });
     expect(res.write.mock.calls.every((call:any[]) => !String(call[0]).includes('authorized secret'))).toBe(true);
   });
 });

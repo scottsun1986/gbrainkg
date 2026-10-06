@@ -114,6 +114,15 @@ export class DocumentVersionController {
     if ((body.mdPath && body.mdPath !== doc.mdPath) || (body.objectKey && body.objectKey !== doc.objectKey && body.objectKey !== doc.rawFileOid)) {
       throw new BadRequestException('Upload the replacement through the document ingestion API; source paths cannot be reassigned');
     }
+    const parseDate = (value: unknown): Date | undefined => {
+      if (value === undefined || value === null || value === '') return undefined;
+      const date = new Date(String(value));
+      if (!Number.isFinite(date.getTime())) throw new BadRequestException('Invalid effective date');
+      return date;
+    };
+    const effectiveFrom = parseDate(body.effectiveFrom);
+    const effectiveTo = parseDate(body.effectiveTo);
+    if (effectiveFrom && effectiveTo && effectiveFrom >= effectiveTo) throw new BadRequestException('effectiveTo must follow effectiveFrom');
     return this.versionChain.createVersion({
       kbId: doc.kbId,
       documentId: id,
@@ -121,14 +130,14 @@ export class DocumentVersionController {
       mdPath: body.mdPath || doc.mdPath,
       sourceType: body.sourceType || doc.sourceType,
       uploadedById: userId,
-      objectKey: body.objectKey,
-      storageProvider: body.storageProvider,
-      contentHash: body.contentHash,
+      objectKey: doc.rawFileOid || undefined,
+      storageProvider: "local",
+      contentHash: doc.contentHash || undefined,
       sourceExternalId: body.sourceExternalId ?? doc.sourceExternalId,
       sensitivity: body.sensitivity ?? doc.sensitivity,
       language: body.language ?? doc.language,
-      effectiveFrom: body.effectiveFrom ? new Date(body.effectiveFrom) : undefined,
-      effectiveTo: body.effectiveTo ? new Date(body.effectiveTo) : undefined,
+      effectiveFrom,
+      effectiveTo,
       relation: body.relation,
     });
   }

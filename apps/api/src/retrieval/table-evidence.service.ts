@@ -7,6 +7,7 @@ import { DocumentAclService } from '../permission/document-acl.service';
 import { PermissionService } from '../permission/permission.service';
 import { withAuthorizedRequest, assertAuthorizationSnapshot } from '../permission/authorization-revision';
 import { extractRawTables, aggregateTable, cellSpans } from './table-aggregation';
+import { uploadRoot } from '../storage/upload-paths';
 
 export class TableEvidenceService {
   async readPublishedTables(userId: string, documentId: string, versionId: string) {
@@ -16,7 +17,7 @@ export class TableEvidenceService {
         where: { id: versionId, documentId, state: 'published', document: { status: 'published', activeVersionId: versionId } },
       });
       if (!version) throw new NotFoundException('Active published version not found');
-      const root = resolve(process.env.UPLOAD_ROOT || '/tmp/llmwiki/uploads');
+      const root = uploadRoot();
       const path = resolve(root, version.mdPath);
       if (!path.startsWith(root + sep)) throw new BadRequestException('Invalid source path');
       if ((await stat(path)).size > 32 * 1024 * 1024) throw new BadRequestException('Table source exceeds calculation budget');
@@ -31,9 +32,9 @@ export class TableEvidenceService {
     return withAuthorizedRequest(userId, async snapshot => {
       const db = getPrismaClient();
       if (!await new DocumentAclService(new PermissionService()).isDocumentReadable(userId, request.documentId)) throw new NotFoundException('Document not found');
-      const version = await db.documentVersion.findFirst({ where: { id: request.versionId, documentId: request.documentId, state: 'published', document: { status: 'published' } } });
+      const version = await db.documentVersion.findFirst({ where: { id: request.versionId, documentId: request.documentId, state: 'published', document: { status: 'published', activeVersionId: request.versionId } } });
       if (!version) throw new NotFoundException('Published version not found');
-      const root = resolve(process.env.UPLOAD_ROOT || '/tmp/llmwiki/uploads');
+      const root = uploadRoot();
       const path = resolve(root, version.mdPath);
       if (!path.startsWith(root + sep)) throw new BadRequestException('Invalid source path');
       if ((await stat(path)).size > 32 * 1024 * 1024) throw new BadRequestException('Table source exceeds calculation budget');

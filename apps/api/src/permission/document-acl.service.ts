@@ -122,15 +122,12 @@ export class DocumentAclService {
   /** 增量添加：同 (subjectType, subjectId) 已存在则跳过。 */
   async add(documentId: string, entry: unknown): Promise<AclEntry> {
     const normalized = normalizeAclEntry(entry);
-    const existing = await this.prisma.documentAcl.findFirst({
-      where: {
-        documentId,
-        subjectType: normalized.subjectType,
-        subjectId: normalized.subjectId,
-      },
-    });
-    if (existing) return existing;
     return withServiceContext(this.prisma, async (tx) => {
+      if (typeof tx.$queryRaw === 'function') await tx.$queryRaw`SELECT id FROM "Document" WHERE id=${documentId}::uuid FOR UPDATE`;
+      const existing = await tx.documentAcl.findFirst({ where: {
+        documentId, subjectType: normalized.subjectType, subjectId: normalized.subjectId,
+      } });
+      if (existing) return existing;
       await tx.document.update({ where: { id: documentId }, data: { aclMode: 'restricted' } });
       const created = await tx.documentAcl.create({
         data: {

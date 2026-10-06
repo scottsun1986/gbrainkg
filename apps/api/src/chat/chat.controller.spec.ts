@@ -1,4 +1,4 @@
-import { concat, of, throwError } from 'rxjs';
+import { concat, of, throwError, Observable } from 'rxjs';
 import { ChatController } from './chat.controller';
 
 const mockPrisma = {
@@ -40,6 +40,52 @@ describe('Chat completion message identity', () => {
     expect(mockPrisma.citation.createMany).not.toHaveBeenCalled();
     if (!stream) expect(runs.fail).toHaveBeenCalledWith('run-1', '问答处理失败：Query execution deadline exhausted');
     expect(runs.complete).not.toHaveBeenCalled();
+  });
+  it('fails and cancels an oversized strict stream without escaping an async rejection', async () => {
+    const previousStrict = process.env.KNOWLEDGE_STRICT_OUTPUT;
+    const previousRls = process.env.RLS_ENFORCE;
+    process.env.KNOWLEDGE_STRICT_OUTPUT = '1'; process.env.RLS_ENFORCE = '1';
+    try {
+      jest.clearAllMocks();
+      mockPrisma.conversation.create.mockResolvedValue({ id: 'conversation-1' });
+      mockPrisma.message.create.mockResolvedValueOnce({ id: 'question-1' }).mockResolvedValueOnce({ id: 'answer-1' });
+      mockPrisma.message.update.mockResolvedValue({});
+      const cancelled = jest.fn();
+      const source = new Observable(subscriber => {
+        subscriber.next({ data: { type: 'delta', content: 'x'.repeat(8 * 1024 * 1024) } });
+        return cancelled;
+      });
+      const service = { assertRequestedScopeAuthorized: jest.fn(), handleChatStream: jest.fn().mockResolvedValue(source) };
+      const controller = new ChatController(service as any, { userIdFromRequest: async () => 'user-1' } as any, { start: jest.fn(), complete: jest.fn(), fail: jest.fn() } as any);
+      let finish!: () => void;
+      const ended = new Promise<void>(resolve => { finish = resolve; });
+      const response = { writableEnded: false, setHeader: jest.fn(), flushHeaders: jest.fn(), write: jest.fn(), end: finish };
+      await controller.streamCompletions({ message: 'Question', stream: true }, { on: jest.fn() }, response as any);
+      await ended;
+      expect(cancelled).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.message.create.mock.calls[1][0].data.content).toContain('安全输出容量');
+      expect(mockPrisma.message.create.mock.calls[1][0].data.citationsSummary).toEqual([]);
+    } finally {
+      if (previousStrict === undefined) delete process.env.KNOWLEDGE_STRICT_OUTPUT; else process.env.KNOWLEDGE_STRICT_OUTPUT = previousStrict;
+      if (previousRls === undefined) delete process.env.RLS_ENFORCE; else process.env.RLS_ENFORCE = previousRls;
+    }
+  });
+  it('records an empty provider completion as failure rather than a successful run', async () => {
+    jest.clearAllMocks();
+    mockPrisma.conversation.create.mockResolvedValue({ id: 'conversation-1' });
+    mockPrisma.message.create.mockResolvedValueOnce({ id: 'question-1' }).mockResolvedValueOnce({ id: 'answer-1' });
+    mockPrisma.message.update.mockResolvedValue({});
+    const runs = { start: jest.fn().mockResolvedValue({ runId: 'run-1' }), complete: jest.fn(), fail: jest.fn() };
+    const service = { assertRequestedScopeAuthorized: jest.fn(), handleChatStream: jest.fn().mockResolvedValue(of({ data: { type: 'done' } })) };
+    const controller = new ChatController(service as any, { userIdFromRequest: async () => 'user-1' } as any, runs as any);
+    let finish!: () => void;
+    const ended = new Promise<void>(resolve => { finish = resolve; });
+    const response = { writableEnded: false, status: jest.fn().mockReturnValue({ json: jest.fn() }), write: jest.fn(), end: finish };
+    await controller.streamCompletions({ message: 'Question', stream: false }, { on: jest.fn() }, response as any);
+    await ended;
+    expect(runs.complete).not.toHaveBeenCalled();
+    expect(runs.fail).toHaveBeenCalledWith('run-1', expect.stringContaining('未生成可用回答'));
+    expect(mockPrisma.message.create.mock.calls[1][0].data.dependencyManifest).toEqual({ kind: 'non_evidence', version: 1, outcome: 'failure' });
   });
   it('returns the persisted assistant ID only after persistence finishes', async () => {
     jest.clearAllMocks();

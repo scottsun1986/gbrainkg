@@ -1,4 +1,4 @@
-import { formatVectorValues, TenantContextService, withServiceContext } from './tenant-context.service';
+import { formatVectorValues, TenantContextService, withServiceContext, withPermissionRead, withAdminInventory, withSystemWrite } from './tenant-context.service';
 
 const mockTx = {
   $executeRaw: jest.fn().mockResolvedValue(1),
@@ -144,5 +144,24 @@ describe('withServiceContext', () => {
     expect(call[1]).toBe('');
     expect(String(call[0])).toContain("'off'");
     expect(String(call[0])).not.toContain("'on'");
+  });
+});
+
+describe('explicit elevation boundaries', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it.each([withPermissionRead, withAdminInventory])('keeps elevated reads read-only', async (read) => {
+    await read(mockPrisma, async (tx) => {
+      expect(tx).toBe(mockTx);
+      return 'scope-result';
+    });
+    expect(String(mockTx.$executeRaw.mock.calls[0][0])).toContain('SET TRANSACTION READ ONLY');
+    expect(String(mockTx.$executeRaw.mock.calls[1][0])).toContain("'on'");
+  });
+
+  it('allows explicitly authorized system writes without making the transaction read-only', async () => {
+    await expect(withSystemWrite(mockPrisma, async () => 'written')).resolves.toBe('written');
+    expect(mockTx.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(String(mockTx.$executeRaw.mock.calls[0][0])).not.toContain('READ ONLY');
   });
 });

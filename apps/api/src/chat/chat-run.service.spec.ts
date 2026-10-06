@@ -182,4 +182,14 @@ describe('ChatRunService', () => {
     expect(args.where.status).toBe('running');
     expect(args.data.status).toBe('failed');
   });
+  it('does not reap a locally active run and requires an expired database lease', async () => {
+    await service.start('conv-1', 'user-1');
+    prismaMock.chatRun.updateMany.mockClear();
+    await service.reapStaleRuns(1);
+    const where = prismaMock.chatRun.updateMany.mock.calls[0][0].where;
+    expect(where.id.notIn).toContain('run-1');
+    expect(where.OR).toEqual([{ leaseExpiresAt: null }, { leaseExpiresAt: { lt: expect.any(Date) } }]);
+    service.onModuleDestroy();
+  });
+
 });

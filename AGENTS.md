@@ -19,3 +19,9 @@
   - 新服务器部署实例 1：通过 `bash scripts/bootstrap-new-server.sh` 自动化初始化底座与共享中间件，再通过 `bash scripts/deploy-prod.sh --target=inst1` 完成初次发布。
   - 新实例扩容必须通过 `bash scripts/provision-instance.sh <N>` 自动化开辟，确保目录软链在 `/data` 数据盘且配置符合隔离标准。
   - 部署发布统一使用 `bash scripts/deploy-prod.sh --target=all` 或 `--target=instN`，脚本内置隔离性、数据库权限（BYPASSRLS）与架构迁移预检门禁。
+
+## 4. RLS 与应用权限边界
+- PermissionService 定义权限语义，数据库 RLS 保留独立兜底；用户路径默认保持用户上下文，不能因为跨用户 join 自动绕过 RLS。
+- 授权内部关系读取使用 `withPermissionRead`；管理清单先鉴权、收敛资源范围后使用只读 `withAdminInventory`；已授权资源的系统产物写入使用 `withSystemWrite`。范围谓词必须在分页/截断前执行，嵌套关联也必须遵循资源范围。
+- 新表按 owner/资源权限/系统产物的实际归属设计策略，不默认系统管理员可读他人个人数据。不得为消除 500 而放宽 RLS。
+- 新增显式提权点须更新 [RLS 边界清单](docs/RLS-BOUNDARIES.md)，记录身份、数据范围和调用方鉴权依据；权限变更同时维护应用裁决、DB 兜底与范围回归。

@@ -412,8 +412,9 @@ export default function AppShell() {
   };
   const paletteNewKb = () => {
     setScreen('libs');
-    setAdminTab('newkb');
-    emitNewKb();
+    // LibrariesScreen is lazily mounted, so its listener is not attached yet on
+    // first use; emitting synchronously made the ⌘K command a silent no-op.
+    setTimeout(() => emitNewKb(), 120);
   };
   const paletteUpload = () => {
     setScreen('libs');
@@ -531,7 +532,10 @@ export default function AppShell() {
           )}
           {(mountedScreens.has('admin') || mountedScreens.has('settings')) && (
             <div style={{ display: adminActive ? 'flex' : 'none', flex: 1, minWidth: 0 }}>
-              <AdminScreen active={adminActive} initialTab={visibleScreen === 'settings' ? 'model' : visibleScreen === 'admin' ? adminTab : undefined} capabilities={appStore.CAPABILITIES} onOpenGrant={() => { setAdminTab('grant'); setScreen('admin'); }} onManageKb={(kbId: string) => { setLibraryKbId(kbId); setScreen('libs'); }} />
+              {/* key=当前用户：切换账号时强制重挂载管理屏，避免沿用上一账号的
+                  页签/面板状态（capabilities 是账号级数据，登出换登后内存态
+                  不会自动失效，2026-10-06 E2E 复测发现）。 */}
+              <AdminScreen key={currentUser?.id || 'anonymous'} active={adminActive} initialTab={visibleScreen === 'settings' ? 'model' : visibleScreen === 'admin' ? adminTab : undefined} capabilities={appStore.CAPABILITIES} onOpenGrant={() => { setAdminTab('grant'); setScreen('admin'); }} onManageKb={(kbId: string) => { setLibraryKbId(kbId); setScreen('libs'); }} />
             </div>
           )}
         </div>

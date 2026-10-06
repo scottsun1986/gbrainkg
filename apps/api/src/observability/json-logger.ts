@@ -177,6 +177,14 @@ export class JsonLogger implements LoggerService {
     if (context) record.context = context;
     if (stack) record.stack = stack;
     if (rest.length) record.params = rest;
+    // Structured events stay queryable at the top level. Correlation and
+    // logger-owned fields cannot be overwritten by a message object.
+    if (message && typeof message === 'object' && !(message instanceof Error) && !Array.isArray(message)) {
+      const reserved = new Set(['ts', 'level', 'msg', 'requestId', 'userId', 'route', 'context', 'stack', 'params']);
+      for (const [key, value] of Object.entries(redact(message) as Record<string, unknown>)) {
+        if (!reserved.has(key)) record[key] = value;
+      }
+    }
     this.emit(record);
   }
 

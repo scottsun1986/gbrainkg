@@ -93,7 +93,8 @@ class ShellGateTests(unittest.TestCase):
             script_dir.mkdir(parents=True)
             for name in ('sota-gate.sh', 'sota_gate_results.py'):
                 shutil.copy(BASE / name, script_dir / name)
-            shutil.copy(BASE.parent / 'gate-thresholds.sh', script_dir.parent / 'gate-thresholds.sh')
+            for name in ('gate-thresholds.sh', 'gate-thresholds.json'):
+                shutil.copy(BASE.parent / name, script_dir.parent / name)
             (script_dir.parent / 'golden_dataset.json').write_text(json.dumps([{'id': 'GS-NA-001'}]))
             (script_dir / 'regression').mkdir()
             (script_dir / 'regression/hard-multihop-hotpot.json').write_text(json.dumps([{'qid': 'q0'}]))

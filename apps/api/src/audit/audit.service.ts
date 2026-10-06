@@ -38,7 +38,14 @@ export class AuditService {
           attemptedIdentity: params.userId,
         };
       }
-      await (this.prisma as any).auditLog.create({ data });
+      // createMany, not create: PostgreSQL evaluates the table's SELECT policies
+      // against the row produced by INSERT ... RETURNING, and PostgreSQL reports
+      // a denial there as "new row violates row-level security policy" (the
+      // WITH CHECK wording), which is misleading. Audit rows are readable only by
+      // service/administrators, so every non-admin insert — including a failed
+      // login — was rejected on the RETURNING read. The caller does not need the
+      // row back, so emit a plain INSERT.
+      await (this.prisma as any).auditLog.createMany({ data: [data] });
     } catch (error) {
       // Don't let audit failures break the main flow
       console.error('Audit log failed:', error);

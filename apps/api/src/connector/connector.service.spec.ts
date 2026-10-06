@@ -1,3 +1,26 @@
+
+jest.mock('../redis/redis.service', () => ({
+  RedisService: class {
+    private queues = new Map<string, any[]>();
+    private sequence = 0;
+    async evalDurable(script: string, keys: string[], args: string[] = []) {
+      let rows = this.queues.get(keys[0]) || [];
+      if (script.includes('append-webhook')) {
+        if (rows.length >= Number(args[1])) throw new Error('Webhook queue capacity exhausted');
+        rows.push({ ...JSON.parse(args[0]), sequence: ++this.sequence });
+        this.queues.set(keys[0], rows);
+        return this.sequence;
+      }
+      if (script.includes('fetch-webhook')) {
+        rows = rows.filter(row => row.sequence > Number(args[0]));
+        this.queues.set(keys[0], rows);
+        return rows.map(row => JSON.stringify(row));
+      }
+      return rows.length;
+    }
+    async onModuleDestroy() {}
+  },
+}));
 import { ConnectorService } from './connector.service';
 import { WebhookConnector } from './webhook-connector';
 
@@ -294,7 +317,7 @@ describe('ConnectorService.sync', () => {
       cursor: null,
     });
 
-    service.enqueueWebhook('src-1', {
+    await service.enqueueWebhook('src-1', {
       externalId: 'ext-1',
       title: 'T',
       content: 'C',

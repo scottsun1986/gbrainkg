@@ -1,3 +1,6 @@
+import { captureEvidenceDependencies } from '../permission/evidence-dependencies';
+import { SUPPORTED_UPLOAD_EXTENSIONS } from '../ingestion/parser-capabilities';
+import { uploadRoot } from '../storage/upload-paths';
 import { parseAsOf } from '../retrieval/as-of';
 import { getRequestContext } from '../observability/request-context';
 import { TableEvidenceService } from '../retrieval/table-evidence.service';
@@ -28,7 +31,7 @@ export class McpService {
   private readonly logger = new Logger(McpService.name);
   private readonly prisma = getPrismaClient();
   private readonly uploadRoot =
-    process.env.UPLOAD_ROOT || join(process.cwd(), 'runtime/uploads');
+    uploadRoot();
 
   constructor(
     private readonly chatService: ChatService,
@@ -304,6 +307,7 @@ export class McpService {
       for (const item of extractedFiles) {
         const childDocId = randomUUID();
         const itemExt = extname(item.filename).toLowerCase();
+        if (!SUPPORTED_UPLOAD_EXTENSIONS.has(itemExt)) throw new Error("Unsupported archive entry type");
         const destDir = join(this.uploadRoot, childDocId);
         await fs.mkdir(destDir, { recursive: true });
         const localFilePath = join(destDir, `raw${itemExt}`);
@@ -353,6 +357,7 @@ export class McpService {
       };
     }
 
+    if (!SUPPORTED_UPLOAD_EXTENSIONS.has(safeExt)) throw new Error("Unsupported file type");
     const documentId = randomUUID();
     const destDir = join(this.uploadRoot, documentId);
     await fs.mkdir(destDir, { recursive: true });
@@ -411,7 +416,9 @@ export class McpService {
       case 'aggregate_knowledge_table': {
         const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         if (!uuid.test(args?.documentId || '') || !uuid.test(args?.versionId || '')) throw new Error('documentId and versionId must be UUIDs');
-        return new TableEvidenceService().execute(user.id, args as any);
+        const result = await new TableEvidenceService().execute(user.id, args as any);
+        const dependency_manifest = await captureEvidenceDependencies([{ docId: args.documentId, documentVersionId: args.versionId }]);
+        return { ...result, dependency_manifest };
       }
       case 'search_knowledge': {
         // search_knowledge 工具已正式下线，统一收敛至端到端事实裁决工具 chat_knowledge。
@@ -553,6 +560,7 @@ export class McpService {
               resolve({
                 conversation_id: conversationId,
                 answer,
+                dependency_manifest: dependencyManifest,
                 citations,
                 processing_trace: trace,
               });

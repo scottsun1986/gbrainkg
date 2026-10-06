@@ -1,6 +1,8 @@
 import type { WebhookPayload } from './webhook-connector';
 import {
   BadRequestException,
+  HttpException,
+  ServiceUnavailableException,
   Body,
   Controller,
   Delete,
@@ -138,13 +140,15 @@ export class ConnectorController {
       throw new BadRequestException('ingest is only available for generic_webhook');
     }
     try {
-      const payload = this.connectorService.enqueueWebhook(id, {
+      const payload = await this.connectorService.enqueueWebhook(id, {
         externalId: String(body?.externalId || ''),
         title: String(body?.title || ''),
         content: String(body?.content ?? ''), externalRevision:body?.externalRevision, externalAcl:body?.externalAcl, deleted:body?.deleted,
       });
       return { queued: payload };
     } catch (err) {
+      if (err instanceof Error && err.message.includes("queue capacity exhausted")) throw new HttpException("Webhook queue capacity exhausted", 429);
+      if (err instanceof Error && !/webhook .*requires|Invalid external ACL/.test(err.message)) throw new ServiceUnavailableException("Webhook queue storage unavailable; retry later");
       throw new BadRequestException(
         err instanceof Error ? err.message : 'invalid webhook payload',
       );

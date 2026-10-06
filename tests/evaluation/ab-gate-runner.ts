@@ -11,7 +11,7 @@ async function main() {
   const password = process.env.TEST_PASSWORD || process.env.LLMWIKI_PASS;
   if (!password) {
     console.log('[ab-gate-runner] no TEST_PASSWORD, skipping');
-    return strict ? 1 : 0;
+    return strict ? 1 : 2;
   }
   const login = await fetch(`${base}/api/v1/auth/login`, {
     method: 'POST',
@@ -20,7 +20,7 @@ async function main() {
   }).catch(() => null);
   if (!login || !login.ok) {
     console.error('[ab-gate-runner] login failed or API down');
-    return strict ? 1 : 0;
+    return 1;
   }
   const loginJson = (await login.json()) as { token?: string; accessToken?: string };
   const token = loginJson.token || loginJson.accessToken || '';
@@ -29,7 +29,7 @@ async function main() {
   }).catch(() => null);
   if (!res || !res.ok) {
     console.error('[ab-gate-runner] summary fetch failed');
-    return strict ? 1 : 0;
+    return 1;
   }
   const summaries = (await res.json()) as ArmSummary[];
   const result = evaluateAbSummaries(summaries, {
@@ -37,7 +37,7 @@ async function main() {
     minSamples: Number(process.env.AB_MIN_SAMPLES || 30),
   });
   console.log(JSON.stringify(result, null, 2));
-  if (result.skipped) return strict ? 1 : 0;
+  if (result.skipped) return strict ? 1 : 2;
   return result.pass ? 0 : 1;
 }
 
@@ -45,5 +45,5 @@ main()
   .then((code) => process.exit(code))
   .catch((err) => {
     console.error('[ab-gate-runner] error', err);
-    process.exit(process.env.GATE_STRICT === '1' ? 1 : 0);
+    process.exit(1);
   });
