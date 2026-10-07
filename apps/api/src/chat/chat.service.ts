@@ -1693,11 +1693,39 @@ export class ChatService {
     }
 
     // 3. Salient bracketed or quoted entities (e.g. 《书名》, “专有名词”)
+    // When the question names a relation, a bracketed item is a bridge only if it
+    // shares a sentence with one of that relation's surface forms. Without this
+    // guard an appendix/form title sitting in an unrelated passage of the first-hop
+    // evidence becomes a retrieval probe on its own and can inject a whole off-topic
+    // document, displacing the source that actually answers the question.
+    // Corpus-agnostic: the guard uses the relation forms taken from the question or
+    // deployment configuration, never a domain vocabulary list.
+    const bracketRelationGuard = process.env.RETRIEVAL_BRACKET_ENTITY_GUARD !== 'false' && Boolean(rel);
+    const relationForms = bracketRelationGuard
+      ? surfaceFormsForRelation(rel as string).map((form) => String(form || '').trim()).filter(Boolean)
+      : [];
+    const sentenceContaining = (index: number): string => {
+      const leftBoundary = Math.max(
+        text.lastIndexOf('。', index),
+        text.lastIndexOf('！', index),
+        text.lastIndexOf('？', index),
+        text.lastIndexOf('\n', index),
+      );
+      const rightStops = ['。', '！', '？', '\n']
+        .map((stop) => text.indexOf(stop, index))
+        .filter((pos) => pos >= 0);
+      const rightBoundary = rightStops.length ? Math.min(...rightStops) : text.length;
+      return text.slice(leftBoundary + 1, rightBoundary);
+    };
     const bracketRe = /[《“]([\u4e00-\u9fa5A-Za-z0-9\s]{2,30})[》”]/g;
     let bm: RegExpExecArray | null;
     while ((bm = bracketRe.exec(text)) !== null) {
       const candidate = bm[1].trim();
-      if (candidate && candidate.length >= 2 && candidate.length <= 25) bridges.add(candidate);
+      if (!candidate || candidate.length < 2 || candidate.length > 25) continue;
+      if (relationForms.length && !relationForms.some((form) => sentenceContaining(bm!.index).includes(form))) {
+        continue;
+      }
+      bridges.add(candidate);
     }
 
     // 4. Generic capitalised-phrase probes (used when the question carries no relation
@@ -4220,7 +4248,7 @@ export class ChatService {
       }
     }
 
-    trace.start("version_conflict_check", "时序效力与版本裁决", "检测多版本并裁决现行有效标准");
+    trace.start("version_conflict_check", "时序效力与版本裁决", "检测同源多版本；跨文档同属性差异交由回答并列");
     let versionConflictNote = "";
     if (citations.length > 0) {
       const docTitles: string[] = Array.from(new Set(citations.map((c: any) => c.docTitle).filter(Boolean))) as string[];
@@ -4457,7 +4485,7 @@ export class ChatService {
           conflictTitles.length > 0 ? "warning" : "success",
           conflictTitles.length > 0
             ? `裁决 ${conflictTitles.length} 个文档的多版本冲突: ${conflictTitles.join(", ")}`
-            : "命中文档版本均一致，未检测到多版本冲突",
+            : "命中文档未发现同源多版本；跨文档同属性差异由回答并列呈现",
           { conflictCount: conflictTitles.length, conflictTitles },
         );
       } else {

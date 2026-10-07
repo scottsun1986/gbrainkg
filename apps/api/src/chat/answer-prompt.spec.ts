@@ -99,6 +99,24 @@ describe('answer prompt ownership', () => {
       expect(buildStaticAnswerRules(english)).not.toMatch(/绩效|员工|业绩|能力|行为|\bemployees?\b|\bperformance\b/i);
     }
   });
+  it('requires every source with a differing value for the same property to be presented', () => {
+    const englishRules = buildStaticAnswerRules(true);
+    const chineseRules = buildStaticAnswerRules(false);
+    expect(englishRules).toContain('Multi-source divergence on the same property');
+    expect(chineseRules).toContain('同属性多源差异必须并列');
+    expect(englishRules).toContain('present every one of them, each with its own citation and its stated scope');
+    expect(chineseRules).toContain('必须全部并列呈现，逐条标注各自来源角标及其明示适用范围');
+    expect(englishRules).toContain('do not decide which is authoritative or which supersedes the other');
+    expect(chineseRules).toContain('不得自行判定何者为准或存在替代关系');
+    expect(englishRules).toContain('do not silently merge or average them');
+    expect(chineseRules).toContain('不得静默合并或取平均');
+    expect(englishRules).toContain('version numbers, upload times, or similar titles are not grounds for choosing');
+    expect(chineseRules).toContain('版本号、上传时间或标题相似不构成取舍依据');
+    expect(englishRules).toContain('keep each source\'s own wording so the user decides');
+    expect(chineseRules).toContain('由用户决定采用哪一条');
+    expect(englishRules).toContain('This rule is about readings of the question, not about differing values across sources');
+    expect(chineseRules).toContain('此规则针对问题的理解，不针对来源之间取值不同');
+  });
   it('requires each hop, identifies missing links, and uses merged source indices', () => {
     const rule = multiHopAnswerDirective('multi_hop', [{ subQueryOrigin: 'first' }, { subQueryOrigin: 'second' }], true);
     expect(rule).toContain('citation for every link');

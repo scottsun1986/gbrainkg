@@ -53,4 +53,20 @@ describe('bridge entity extraction', () => {
     expect(service.extractRelationFromQuery('Which film has the director who died later?')).toBe('director');
     expect(service.extractRelationFromQuery('普通的问题没有关系词')).toBeNull();
   });
+
+  it('keeps bracketed entities as bridges only when they share a sentence with the asked relation', () => {
+    const related = service.extractBridgeEntitiesFromEvidence('出勤的时间要求见《考勤细则》。', '时间要求');
+    expect(related).toContain('考勤细则');
+
+    const unrelated = service.extractBridgeEntitiesFromEvidence(
+      '员工应按时出勤。附件清单：1. 《季度考核表》 2. 《报销单》。',
+      '时间要求',
+    );
+    expect(unrelated).not.toContain('季度考核表');
+    expect(unrelated).not.toContain('报销单');
+
+    // Without a relation the salient-entity fallback still applies.
+    const noRelation = service.extractBridgeEntitiesFromEvidence('附件清单：《季度考核表》。', null);
+    expect(noRelation).toContain('季度考核表');
+  });
 });
