@@ -101,21 +101,37 @@ answer_context          : 已组装 1 条可引用证据
 
 ---
 
-## 6. 本次已落地
+## 6. 已落地（本轮）
 
-- `raptor.service.ts: extractiveSummary` 修复：识别 `\*\*第X条\**` 等加粗/列表前缀标题；标题上限可配（默认 40）；输出上限可配（默认 1800）。
-- 新增单测：加粗条款标题与子条款标题均进入大纲，能力指标不再丢失；输出上限断言同步更新。
-- API 全量单测通过。
+### 6.1 摘要→源切片回补（P0）
+- `RaptorSearchHit` 增加 `sourceChunkIds`，并在 `search`/`searchGlobal`/`vectorSearch`/`getDocumentSummaries` 中从节点回填；
+- `fallbackChunkToCitation` 与 `searchChunksFallback` 的 RAPTOR 注入点补齐 `sourceChunkIds`（**这是本次漏项的直接原因：注入点丢了该字段，导致回补无法触发**）；
+- `ChatService.expandSummarySourceChunks`：候选池中出现派生摘要时，按 `sourceChunkIds` 取回**原始切片**（授权+已发布+有界），并标记 `floorExempt`，避免有损摘要成为唯一证据；在预缝合之前执行，使源切片按相邻关系合并为原子单元。
+- 验证：cy 实时 4 轮均给出「业绩指标、能力指标、行为指标」，`[SUMMARY_EXPAND] summaries=1 wanted=12 missing=12`。
+
+### 6.2 切片原子性（P0）
+- `ChatService.expandEnumerationSiblings`：对"枚举型"切片（行首为 `（X）/一、/数字.` 或以冒号结尾）补拉其**紧邻下一兄弟切片**（同文档 ord+1，有界、授权、`floorExempt`），避免小切片被孤立。可用 `RETRIEVAL_SIBLING_EXPAND=false` 关闭。
+- 预缝合（`stitchContiguousCitations`）继续把相邻切片合并为原子单元。
+
+### 6.3 摘要完整性（R2）
+- `extractiveSummary` 修复：识别 `\*\*第X条\**` 等加粗/列表前缀标题；标题上限可配（默认 40）；输出上限可配（默认 1800）。
+
+### 6.4 摘要重建（P2）
+- 复用既有管理端能力：`POST /admin/system/reprocess/start { "raptor": true }`（`SystemReprocessService` 逐文档重跑 `raptorService.indexDocument`），即可按新逻辑重建全部已入库摘要。
+
+### 6.5 测试
+- 新增：`raptor.service.spec`（加粗条款标题）、`fallback-citation.spec`（来源溯源字段透传）、`ordered-answer.spec`/`answer-style.spec`/`answer-markdown.test.tsx`（加粗一致性）。
+- API 全量单测 162 套通过；Web `tsc`/`lint`/单测通过。
 
 ---
 
-## 7. 待落地（优先级）
+## 7. 剩余项
 
-| 优先级 | 项 | 说明 |
+| 优先级 | 项 | 状态 |
 |--------|----|------|
-| P0 | 摘要→源切片回补 | RAPTOR 命中携带 `sourceChunkIds`，选中摘要时补齐源切片；枚举类问题优先原始切片 |
-| P0 | 切片原子性 | 同父条兄弟切片共享 sectionGroup（或合并小切片） |
-| P1 | provider 故障兜底 | 向量/重排不可用时保证词法+原文召回量，不塌缩到 1 条 |
-| P2 | 摘要重建 | 对已入库摘要按新逻辑重跑（现有数据仍是有损的） |
+| P0 | 摘要→源切片回补 | ✅ 已落地（§6.1） |
+| P0 | 切片原子性 | ✅ 已落地（§6.2，检索侧兄弟补拉） |
+| P1 | provider 故障兜底 | ⚠️ 部分缓解：摘要回补 + 兄弟补拉已覆盖"摘要唯一证据"与"兄弟漏召"两类；provider 自身不可用属运维可靠性问题，建议加健康检查/重试与告警 |
+| P2 | 摘要重建 | ✅ 复用管理端 reprocess（§6.4） |
 
-> 说明：R2 的代码修复只影响**新入库**摘要；**现有**有损摘要需重跑 RAPTOR（或由 P0 的源切片回补在查询时兜底）。
+> 说明：R2 的代码修复只影响**新入库**摘要；**现有**有损摘要在查询时已由 §6.1 的源切片回补兜底，也可用 §6.4 重建。

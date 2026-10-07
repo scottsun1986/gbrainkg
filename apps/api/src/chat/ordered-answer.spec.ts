@@ -231,4 +231,14 @@ describe('answer block layout normalization', () => {
     expect(normalizeAnswerLayout('说明。\n\n---\n\n后续。')).toBe('说明。\n\n---\n\n后续。');
     expect(normalizeAnswerLayout('```\n）\n```')).toBe('```\n）\n```');
   });
+
+  it('reserves bold for standalone labels and strips inline emphasis', () => {
+    expect(normalizeAnswerLayout('资料记载有**业绩指标**和**行为指标**两部分[1]。'))
+      .toBe('资料记载有业绩指标和行为指标两部分[1]。');
+    expect(normalizeAnswerLayout('说明。\n**来源《X》**：内容 [1]'))
+      .toBe('说明。\n\n**来源《X》**：内容 [1]');
+    // A list-item label keeps its bold; its trailing inline bold is stripped.
+    expect(normalizeAnswerLayout('- **业绩指标**：衡量工作产出与**成果** [1]'))
+      .toBe('- **业绩指标**：衡量工作产出与成果 [1]');
+  });
 });

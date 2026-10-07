@@ -10,9 +10,18 @@ const html = (content: string, citations = sources) => renderToStaticMarkup(<Ans
 
 describe('answer Markdown structure and citation safety', () => {
   it('renders headings, paragraphs, nested lists, quotes and emphasis as semantic blocks', () => {
-    const result = html('结论 **重要**。[2]\n\n## 依据\n\n第一段。\n第二行。\n\n3. 步骤三\n   - 子要点\n4. 步骤四\n\n> 原文说明\n\n---');
+    const result = html('结论[2]。\n\n**来源 1《X》**：依据。\n\n## 依据\n\n第一段。\n第二行。\n\n3. 步骤三\n   - 子要点\n4. 步骤四\n\n> 原文说明\n\n---');
     for (const tag of ['<h2>', '<p>', '<strong>', '<br/>', '<ol start="3">', '<ul>', '<li>', '<blockquote>', '<hr/>']) assert.ok(result.includes(tag), tag);
     assert.ok(!result.includes('## 依据'));
+  });
+
+  it('reserves bold for standalone labels and strips inline emphasis', () => {
+    const result = html('资料记载有**业绩指标**和**行为指标**两部分[1]。');
+    assert.ok(!result.includes('<strong>'));
+    assert.ok(result.includes('业绩指标和行为指标'));
+    // A bold label keeps its emphasis and opens its own block.
+    const label = html('说明[1]。**来源《企业研发管理规范》**：研发人员考核采用…[3]');
+    assert.match(label, /<\/p><p><strong>来源《企业研发管理规范》<\/strong>/);
   });
   it('repairs sentence-attached model headings while preserving code and links', () => {
     const result = html('结论[2]。## 现行版本\n\n说明。### 版本差异\n\n`示例。## 原样`\n\n```text\n示例。## 原样\n```\n\n[链接。## 原样](https://example.test)');

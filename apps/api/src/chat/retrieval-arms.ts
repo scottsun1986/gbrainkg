@@ -750,6 +750,7 @@ export class RetrievalArmsService {
           section: s.section || "raptor-level1",
           raptor: true,
           isSummary: true,
+          sourceChunkIds: Array.isArray(s.sourceChunkIds) ? s.sourceChunkIds : undefined,
         };
       });
 
@@ -807,6 +808,7 @@ export class RetrievalArmsService {
           raptor: true,
           isSummary: true,
           level: h.level,
+          sourceChunkIds: Array.isArray(h.sourceChunkIds) ? h.sourceChunkIds : undefined,
         });
         added++;
       }
@@ -2147,6 +2149,9 @@ export class RetrievalArmsService {
               previewUrl: hit.previewUrl,
               raptor: true,
               isSummary: true,
+              // Carry the raw chunk ids so the answer layer can expand this
+              // (lossy) summary back to its source evidence.
+              sourceChunkIds: Array.isArray((hit as any).sourceChunkIds) ? (hit as any).sourceChunkIds : undefined,
             });
           }
         } catch (raptorErr) { rethrowAuthorizationFailure(raptorErr);

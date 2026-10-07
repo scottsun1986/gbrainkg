@@ -139,6 +139,20 @@ function evidenceTextOf(entry: CitationEvidenceLike | undefined | null): string 
 }
 
 /**
+ * A chunk that looks like an enumeration member: a clause/list item, or a
+ * heading ending in a colon (its items follow). Used to keep a split list
+ * atomic by pulling the missing immediate sibling.
+ */
+function isEnumerationLikeChunk(text: string): boolean {
+  const lines = String(text || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return false;
+  const first = lines[0];
+  const last = lines[lines.length - 1];
+  if (/[：:]\s*$/.test(last)) return true;
+  return /^[（(]?[一二三四五六七八九十\d]{1,3}[）).、]/.test(first);
+}
+
+/**
  * Truncate chunk text intelligently to fit within maxChunkLen:
  * 1. If text is within maxChunkLen, return as is.
  * 2. If text must be truncated:
@@ -381,6 +395,10 @@ export function fallbackChunkToCitation(fb: any, idx: number): any {
     // able to tell a real source page from a derived summary.
     raptor: (fb as any).raptor === true,
     isSummary: (fb as any).isSummary === true,
+    // A derived summary must carry the raw chunk ids it was built from so the
+    // answer layer can expand it back to source evidence instead of trusting
+    // the (lossy) digest alone.
+    sourceChunkIds: Array.isArray((fb as any).sourceChunkIds) ? (fb as any).sourceChunkIds : undefined,
   };
 }
 
@@ -627,6 +645,160 @@ export class ChatService {
       visibleKbIds: scope,
     });
     return results.filter((result) => result.documentId && readable.has(result.documentId));
+  }
+
+  /**
+   * A selected RAPTOR summary is a lossy derived digest. When one is in the
+   * candidate pool, add back the raw chunks it was built from (its
+   * `sourceChunkIds`) so the answer is grounded in the original text and a list
+   * item dropped by the summary cannot vanish from the answer. Bounded,
+   * permission-filtered, and a no-op when nothing is missing.
+   */
+  private async expandSummarySourceChunks(queryResult: any, scope: string[], userId: string): Promise<any> {
+    const citations = Array.isArray(queryResult?.citations) ? queryResult.citations : [];
+    const wanted = new Set<string>();
+    for (const c of citations) {
+      if (!(c?.raptor || c?.isSummary)) continue;
+      for (const id of Array.isArray(c?.sourceChunkIds) ? c.sourceChunkIds : []) {
+        if (typeof id === 'string' && id) wanted.add(id);
+      }
+    }
+    if (!wanted.size) return queryResult;
+    const present = new Set(citations.map((c: any) => String(c?.id || c?.chunkId || '')).filter(Boolean));
+    const missing = [...wanted].filter((id) => !present.has(id));
+    this.logger.debug(
+      `[SUMMARY_EXPAND] summaries=${citations.filter((c: any) => c?.raptor || c?.isSummary).length} wanted=${wanted.size} missing=${missing.length}`,
+    );
+    if (!missing.length) return queryResult;
+    const cap = Math.max(1, Number(process.env.RETRIEVAL_SUMMARY_EXPAND_MAX || 24));
+    let rows: any[] = [];
+    try {
+      rows = await this.prisma.$queryRaw`
+        SELECT c.id, c."documentId", c."kbId", c.ord, c.content, c.metadata,
+               d.title AS "docTitle", d.version AS "docVersion"
+        FROM "Chunk" c
+        JOIN "Document" d ON d.id = c."documentId"
+        WHERE c.id = ANY(${missing}::uuid[])
+          AND c."kbId" = ANY(${scope}::uuid[])
+          AND d.status = 'published'
+        ORDER BY c."documentId", c.ord ASC
+        LIMIT ${cap}
+      `;
+    } catch (err) { rethrowAuthorizationFailure(err);
+      return queryResult;
+    }
+    if (!Array.isArray(rows) || !rows.length) return queryResult;
+    const additions = rows.map((row) => ({
+      id: row.id,
+      topic: row.docTitle,
+      docId: row.documentId,
+      kbId: row.kbId,
+      version: row.docVersion,
+      ord: row.ord,
+      evidence: row.content,
+      snippet: row.content,
+      context: row.content,
+      score: 0,
+      scoreSource: 'synthetic',
+      docTitle: row.docTitle,
+      section: row.metadata?.section,
+      // Raw source evidence must not be dropped by the relevance floor just
+      // because it was reached through a summary rather than a scored query.
+      floorExempt: true,
+      floorExemptReason: 'summary_source',
+      summarySourceExpansion: true,
+      subQueryOrigin: 'summary-source-expansion',
+    }));
+    const checked = await this.filterQueryResultByCurrentPermission(
+      { citations: additions },
+      scope,
+      { scopeId: '', sourceKeys: [], aclEpoch: -1, knowledgeEpoch: -1, userId },
+    );
+    const allowed = Array.isArray(checked?.citations) ? checked.citations : [];
+    if (!allowed.length) return queryResult;
+    this.logger.debug(`Summary source expansion added ${allowed.length} raw chunk(s) for ${wanted.size} source id(s).`);
+    return { ...queryResult, citations: [...citations, ...allowed] };
+  }
+
+  /**
+   * Keep an enumerated list atomic. Clause-based chunking emits each list item
+   * as its own chunk (and its own section group), so a small item can be
+   * dropped independently of its siblings. When a recalled chunk looks like an
+   * enumeration member, add its immediate next sibling (same document, ord+1)
+   * if it is missing. Bounded and permission-filtered.
+   */
+  private async expandEnumerationSiblings(queryResult: any, scope: string[], userId: string): Promise<any> {
+    if (process.env.RETRIEVAL_SIBLING_EXPAND === 'false') return queryResult;
+    const citations = Array.isArray(queryResult?.citations) ? queryResult.citations : [];
+    if (!citations.length) return queryResult;
+    const have = new Set<string>();
+    for (const c of citations) {
+      const docId = c?.docId || c?.documentId;
+      const ord = Number(c?.ord);
+      if (docId && Number.isFinite(ord)) have.add(`${docId}:${ord}`);
+    }
+    const targets = new Map<string, Set<number>>();
+    for (const c of citations) {
+      const docId = c?.docId || c?.documentId;
+      const ord = Number(c?.ord);
+      if (!docId || !Number.isFinite(ord)) continue;
+      if (!isEnumerationLikeChunk(String(c?.context || c?.evidence || c?.snippet || ''))) continue;
+      const next = ord + 1;
+      if (have.has(`${docId}:${next}`)) continue;
+      if (!targets.has(docId)) targets.set(docId, new Set());
+      targets.get(docId)!.add(next);
+    }
+    if (!targets.size) return queryResult;
+    const docIds = [...targets.keys()];
+    const ords = [...new Set([...targets.values()].flatMap((s) => [...s]))];
+    const cap = Math.max(1, Number(process.env.RETRIEVAL_SIBLING_EXPAND_MAX || 12));
+    let rows: any[] = [];
+    try {
+      rows = await this.prisma.$queryRaw`
+        SELECT c.id, c."documentId", c."kbId", c.ord, c.content, c.metadata,
+               d.title AS "docTitle", d.version AS "docVersion"
+        FROM "Chunk" c
+        JOIN "Document" d ON d.id = c."documentId"
+        WHERE c."documentId" = ANY(${docIds}::uuid[])
+          AND c.ord = ANY(${ords}::int[])
+          AND c."kbId" = ANY(${scope}::uuid[])
+          AND d.status = 'published'
+        LIMIT ${cap}
+      `;
+    } catch (err) { rethrowAuthorizationFailure(err);
+      return queryResult;
+    }
+    const additions = (Array.isArray(rows) ? rows : [])
+      .filter((row) => targets.get(String(row.documentId))?.has(Number(row.ord)))
+      .map((row) => ({
+        id: row.id,
+        topic: row.docTitle,
+        docId: row.documentId,
+        kbId: row.kbId,
+        version: row.docVersion,
+        ord: row.ord,
+        evidence: row.content,
+        snippet: row.content,
+        context: row.content,
+        score: 0,
+        scoreSource: 'synthetic',
+        docTitle: row.docTitle,
+        section: row.metadata?.section,
+        floorExempt: true,
+        floorExemptReason: 'enumeration_sibling',
+        enumerationSiblingExpansion: true,
+        subQueryOrigin: 'enumeration-sibling-expansion',
+      }));
+    if (!additions.length) return queryResult;
+    const checked = await this.filterQueryResultByCurrentPermission(
+      { citations: additions },
+      scope,
+      { scopeId: '', sourceKeys: [], aclEpoch: -1, knowledgeEpoch: -1, userId },
+    );
+    const allowed = Array.isArray(checked?.citations) ? checked.citations : [];
+    if (!allowed.length) return queryResult;
+    this.logger.debug(`Enumeration sibling expansion added ${allowed.length} chunk(s).`);
+    return { ...queryResult, citations: [...citations, ...allowed] };
   }
 
   private selectEvidence(
@@ -3782,6 +3954,16 @@ export class ChatService {
     // document_diversity and evidence_gate passes.
     const beforeSelect = queryResult.citations?.length || 0;
     trace.start("evidence_selection", "证据统一选择", "相关性阈值、组级去重与 token 预算的联合选择");
+    // A selected RAPTOR summary is a lossy derived digest; add back the raw
+    // chunks it was built from (its sourceChunkIds) so the answer is grounded in
+    // the original text and a dropped list item cannot vanish from the answer.
+    // Runs before the contiguous stitching so the expanded siblings merge into
+    // one atomic unit.
+    queryResult = await this.expandSummarySourceChunks(queryResult, scope, userId);
+    // Keep split enumerations atomic: pull a missing immediate sibling of a
+    // list-item / clause chunk so a small item is never isolated.
+    queryResult = await this.expandEnumerationSiblings(queryResult, scope, userId);
+
     // Pre-selection contiguous stitching: physically adjacent chunks must be
     // merged BEFORE the relevance floor / group MMR / token-budget selection.
     // Previously stitching ran only after selection, so a split answer (e.g.

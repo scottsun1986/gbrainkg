@@ -382,6 +382,27 @@ function splitInlineBlockLabels(line: string): string[] {
 }
 
 /**
+ * Bold is reserved for a standalone label line. The model also uses bold for
+ * inline emphasis, which renders inconsistently (some bold becomes a block,
+ * some stays inline). Strip bold from every non-label run so the only bold in
+ * an answer is a label; the block pass below then gives each label its own
+ * line. A label is a leading bold span (after any list marker) that ends the
+ * line or is followed — optionally after a parenthetical qualifier — by a
+ * colon.
+ */
+function normalizeBoldMarkers(line: string): string {
+  const first = /\*\*[^*\n]+\*\*/.exec(line);
+  if (!first) return line;
+  const before = line.slice(0, first.index);
+  const leading = /^\s*(?:[-*+•]\s+|\d{1,2}\s*[.、)]\s+)?$/.test(before);
+  const afterSpan = line.slice(first.index + first[0].length);
+  const labelTail = /^\s*(?:[（(【\[][^（()【】]{0,120}[)）】\]]\s*)?(?:[：:]|$)/.test(afterSpan);
+  if (!leading || !labelTail) return line.replace(/\*\*/g, '');
+  // Keep the leading label; strip any later inline bold.
+  return line.slice(0, first.index + first[0].length) + afterSpan.replace(/\*\*/g, '');
+}
+
+/**
  * Guarantee one blank line before every block-level element.
  *
  * The web renderer lexes with `breaks: true`, so a single newline is a hard
@@ -390,10 +411,11 @@ function splitInlineBlockLabels(line: string): string[] {
  * defect ("**来源 2…**" not parallel to "**来源 1…**"). Blocks must be separated
  * by a blank line.
  *
- * Pure layout pass: it only inserts/collapses blank lines and splits a glued
- * block label, never edits prose, never touches lines inside a code fence, and
- * never splits a list or table (consecutive list items / table rows keep no
- * blank between them).
+ * Pure layout pass: it only inserts/collapses blank lines, normalizes bold
+ * (label-only), splits a glued block label, and drops markup residue — never
+ * edits prose, never touches lines inside a code fence, and never splits a
+ * list or table (consecutive list items / table rows keep no blank between
+ * them).
  */
 export function normalizeAnswerLayout(text: string): string {
   const lines = String(text || '').split('\n');
@@ -412,7 +434,8 @@ export function normalizeAnswerLayout(text: string): string {
       if (match && match[1][0] === fence.marker && match[1].length >= fence.length && !match[2].trim()) fence = undefined;
       continue;
     }
-    for (const line of splitInlineBlockLabels(rawLine)) {
+    for (const segment of splitInlineBlockLabels(rawLine)) {
+      const line = normalizeBoldMarkers(segment);
       if (isMarkupResidueLine(line)) continue;
       if (line.trim() && isAnswerBlockStart(line) && out.length && out[out.length - 1].trim()) {
         const prev = out[out.length - 1];

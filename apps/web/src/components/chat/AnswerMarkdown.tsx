@@ -46,22 +46,24 @@ function answerTokens(content: string): Token[] {
     }
     if ((token.type !== 'paragraph' && token.type !== 'text') || !token.tokens) return token.raw;
     const paragraph = token.tokens.map((item, index, siblings) => {
-      // A bold section label attached to the preceding sentence is a block,
-      // not inline emphasis. Keep code/link tokens and ordinary emphasis intact.
-      if (item.type === 'strong' && index > 0) {
+      // Bold is reserved for standalone labels. A bold run that opens a block
+      // (start of the paragraph, or after a sentence boundary / citation
+      // marker / hard break, and followed by a colon or the line end) is a
+      // label: give it its own paragraph. Any other bold run is inline
+      // emphasis, which the answer format does not use, so drop the markers.
+      if (item.type === 'strong') {
         const before = siblings[index - 1];
         const after = siblings[index + 1];
-        // A sentence boundary is punctuation OR a trailing citation marker
-        // ("…行为15%" [2]"); a preceding hard break means the label already
-        // began a new line. Either way the bold run opens a block, so it must
-        // become a paragraph rather than stay glued to the previous one.
-        const endsClaim = before.type === 'br'
+        const endsClaim = !before || before.type === 'br'
           || (before.type === 'text' && /(?:[。！？；;.!?]|\[\d+\])\s*$/.test(before.raw));
         const opensBlock = !after || after.type === 'br' || /^\s*(?:\n|[：:])/.test(after.raw);
-        if (endsClaim && opensBlock) {
+        if (opensBlock && (index === 0 || endsClaim)) {
+          if (index === 0) return item.raw;
           changed = true;
           return `\n\n${item.raw}`;
         }
+        changed = true;
+        return item.raw.replace(/\*\*/g, '');
       }
       if (item.type !== 'text') return item.raw;
       return item.raw.replace(/([。！？.!?])(?= {0,3}#{1,6}[ \t]+\S)/g, (_match, punctuation: string) => {

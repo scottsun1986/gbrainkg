@@ -37,6 +37,10 @@ interface RaptorSearchHit {
   level: number;
   raptor: true;
   section?: string;
+  /** Raw chunk ids this summary was built from, so a selected summary can be
+   * expanded back to its source evidence instead of being the sole, lossy
+   * citation. */
+  sourceChunkIds?: string[];
 }
 
 /**
@@ -264,6 +268,7 @@ export class RaptorService {
           level: 1,
           raptor: true,
           section: 'raptor-level1',
+          sourceChunkIds: Array.isArray(node.sourceChunkIds) ? node.sourceChunkIds : undefined,
         }));
     } catch (err) { throwAuthorizationFailure(err);
       this.logger.warn(`Document summary fetch failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -387,6 +392,7 @@ export class RaptorService {
         level: item.node.level,
         raptor: true,
         section: item.node.level === 2 ? 'raptor-level2-global' : item.node.level === 1 ? 'raptor-level1' : 'raptor-level0',
+        sourceChunkIds: Array.isArray(item.node.sourceChunkIds) ? item.node.sourceChunkIds : undefined,
       }));
     } catch (err) { throwAuthorizationFailure(err);
       this.logger.warn(`RAPTOR search failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -443,6 +449,7 @@ export class RaptorService {
         level: item.node.level,
         raptor: true,
         section: item.node.level === 2 ? 'raptor-level2-global' : 'raptor-level1',
+        sourceChunkIds: Array.isArray(item.node.sourceChunkIds) ? item.node.sourceChunkIds : undefined,
       }));
     } catch (err) { throwAuthorizationFailure(err);
       this.logger.warn(`RAPTOR searchGlobal failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -972,7 +979,7 @@ export class RaptorService {
       const rows = levels
         ? await withServiceContext(this.prisma, (tx) =>
             (tx as any).$queryRaw<any[]>`
-            SELECT id, "kbId", "documentId", level, title, content,
+            SELECT id, "kbId", "documentId", level, title, content, "sourceChunkIds",
                    1 - (embedding <=> ${literal}::vector) AS similarity
             FROM "RaptorNode"
             WHERE "kbId" = ANY(${kbIds}::uuid[])
@@ -983,7 +990,7 @@ export class RaptorService {
           `)
         : await withServiceContext(this.prisma, (tx) =>
             (tx as any).$queryRaw<any[]>`
-            SELECT id, "kbId", "documentId", level, title, content,
+            SELECT id, "kbId", "documentId", level, title, content, "sourceChunkIds",
                    1 - (embedding <=> ${literal}::vector) AS similarity
             FROM "RaptorNode"
             WHERE "kbId" = ANY(${kbIds}::uuid[])
@@ -1009,6 +1016,7 @@ export class RaptorService {
           level: row.level,
           raptor: true as const,
           section: row.level === 2 ? 'raptor-level2-global' : row.level === 1 ? 'raptor-level1' : 'raptor-level0',
+          sourceChunkIds: Array.isArray(row.sourceChunkIds) ? row.sourceChunkIds : undefined,
         }));
       if (hits.length === 0) {
         // Nodes written before the embedding column existed (or with the
