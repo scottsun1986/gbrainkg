@@ -1354,6 +1354,83 @@ export class CitationAssemblyService {
     };
   }
 
+  /**
+   * Cite every document whose content is byte-identical to a cited one.
+   *
+   * A knowledge base may legitimately hold duplicate uploads of the same file
+   * (a "… (副本).doc" beside its original); they share a `Document.contentHash`.
+   * When the answer cites one of them, the reference list must include its
+   * identical siblings so the user sees every source that carries the fact and
+   * the count does not depend on which copy happened to rank first. Siblings
+   * are appended with fresh indices and the answer's markers are widened to
+   * cite them too (see the caller). Permission-checked and bounded.
+   */
+  private async expandIdenticalContentCitations(
+    userId: string,
+    finalCitations: Array<{ citation: any; originalIndex: number }>,
+    visibleKbs: string[],
+  ): Promise<{
+    citations: Array<{ citation: any; originalIndex: number }>;
+    siblingIndicesByIndex: Map<number, number[]>;
+  }> {
+    const siblingIndicesByIndex = new Map<number, number[]>();
+    if (process.env.CITATION_EXPAND_IDENTICAL === 'false' || !visibleKbs.length) {
+      return { citations: finalCitations, siblingIndicesByIndex };
+    }
+    const citedDocIds = [...new Set(finalCitations.map((f) => f.citation.docId).filter((id): id is string => typeof id === 'string' && id.length > 0))];
+    if (!citedDocIds.length) return { citations: finalCitations, siblingIndicesByIndex };
+    const docs = await this.prisma.document.findMany({
+      where: { id: { in: citedDocIds } },
+      select: { id: true, kbId: true, contentHash: true },
+    });
+    const hashByDoc = new Map<string, string>();
+    for (const doc of docs) if (doc.contentHash) hashByDoc.set(doc.id, doc.contentHash);
+    if (!hashByDoc.size) return { citations: finalCitations, siblingIndicesByIndex };
+    const hashes = [...new Set(hashByDoc.values())];
+    const candidates = await this.prisma.document.findMany({
+      where: { kbId: { in: visibleKbs }, status: 'published', contentHash: { in: hashes } },
+      select: { id: true, kbId: true, title: true, version: true, contentHash: true, aclMode: true },
+    });
+    if (!candidates.length) return { citations: finalCitations, siblingIndicesByIndex };
+    // Document-level ACL: a duplicate is only citable when the caller may read it.
+    const readable = await this.documentAclService.filterReadableDocuments(
+      userId,
+      candidates.map((d: any) => d.id),
+      { docs: candidates as any },
+    );
+    const existing = new Set(finalCitations.map((f) => f.citation.docId).filter(Boolean));
+    let nextIndex = finalCitations.reduce((max, f) => Math.max(max, f.originalIndex), 0);
+    const additions: Array<{ citation: any; originalIndex: number }> = [];
+    for (const item of finalCitations) {
+      const hash = item.citation.docId ? hashByDoc.get(item.citation.docId) : undefined;
+      if (!hash) continue;
+      for (const sib of candidates) {
+        if (sib.contentHash !== hash || sib.id === item.citation.docId) continue;
+        if (!readable.has(sib.id) || existing.has(sib.id)) continue;
+        existing.add(sib.id);
+        nextIndex += 1;
+        additions.push({
+          originalIndex: nextIndex,
+          citation: {
+            ...item.citation,
+            docId: sib.id,
+            kbId: sib.kbId,
+            docTitle: sib.title,
+            topic: sib.title,
+            version: sib.version,
+            identicalContentOf: item.citation.docId,
+          },
+        });
+        const siblings = siblingIndicesByIndex.get(item.originalIndex) || [];
+        siblings.push(nextIndex);
+        siblingIndicesByIndex.set(item.originalIndex, siblings);
+      }
+    }
+    if (!additions.length) return { citations: finalCitations, siblingIndicesByIndex };
+    this.logger.debug(`Identical-content citation expansion added ${additions.length} duplicate source(s).`);
+    return { citations: [...finalCitations, ...additions], siblingIndicesByIndex };
+  }
+
   async emitCitationsAndComplete(
     userId: string,
     citations: any[],
@@ -1386,12 +1463,13 @@ export class CitationAssemblyService {
 
     // Third-layer independent permission check
     let validDocIdSet = new Set<string>();
+    let visibleKbs: string[] = [];
     const docIdsToCheck = finalCitations
       .map((item) => item.citation.docId)
       .filter((id): id is string => typeof id === "string" && id.length > 0);
 
     if (docIdsToCheck.length > 0) {
-      const visibleKbs = await this.permissionService.getVisibleKnowledgeBases(userId);
+      visibleKbs = await this.permissionService.getVisibleKnowledgeBases(userId);
       const validDocs = await this.prisma.document.findMany({
         where: {
           id: { in: docIdsToCheck },
@@ -1414,6 +1492,15 @@ export class CitationAssemblyService {
     if (finalCitations.length < preAclCount) {
       const survivingIndices = new Set(finalCitations.map((f) => f.originalIndex));
       safeAnswer = stripMarkersOfDroppedCitations(safeAnswer, survivingIndices);
+    }
+
+    // Cite every byte-identical duplicate of a cited document (a KB may hold a
+    // "… (副本).doc" next to its original with the same Document.contentHash), so
+    // the reference list does not depend on which copy happened to rank first.
+    const identicalExpansion = await this.expandIdenticalContentCitations(userId, finalCitations, visibleKbs);
+    finalCitations = identicalExpansion.citations;
+    for (const siblings of identicalExpansion.siblingIndicesByIndex.values()) {
+      for (const index of siblings) citedIndices.add(index);
     }
 
     const statements = safeAnswer.split(/(?:\n+|[。！？])/).map(s => s.trim()).filter(s => s.length >= 5);

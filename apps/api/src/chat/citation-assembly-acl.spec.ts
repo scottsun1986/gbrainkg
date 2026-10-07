@@ -21,6 +21,58 @@ describe('CitationAssemblyService ACL revalidation', () => {
     return { service, prisma, acl };
   }
 
+  it('cites every byte-identical duplicate of a cited document', async () => {
+    const prisma = {
+      document: { findMany: jest.fn() },
+    };
+    prisma.document.findMany
+      .mockResolvedValueOnce([{ id: 'doc-a', kbId: 'kb-1', contentHash: 'hash-1' }])
+      .mockResolvedValueOnce([
+        { id: 'doc-a', kbId: 'kb-1', title: 'A.doc', version: 1, contentHash: 'hash-1', aclMode: 'inherit' },
+        { id: 'doc-b', kbId: 'kb-1', title: 'A (副本).doc', version: 1, contentHash: 'hash-1', aclMode: 'inherit' },
+      ]);
+    const acl = { filterReadableDocuments: jest.fn().mockResolvedValue(new Set(['doc-a', 'doc-b'])) };
+    const service = new CitationAssemblyService({
+      logger: { warn: jest.fn(), debug: jest.fn() } as any,
+      prisma,
+      documentAclService: acl as any,
+    });
+    const result = await (service as any).expandIdenticalContentCitations(
+      'user-1',
+      [{ citation: { docId: 'doc-a', docTitle: 'A.doc' }, originalIndex: 1 }],
+      ['kb-1'],
+    );
+    expect(result.citations).toHaveLength(2);
+    expect(result.citations[1].citation.docId).toBe('doc-b');
+    expect(result.citations[1].citation.docTitle).toBe('A (副本).doc');
+    expect(result.siblingIndicesByIndex.get(1)).toEqual([2]);
+  });
+
+  it('does not add an identical duplicate the caller may not read', async () => {
+    const prisma = {
+      document: { findMany: jest.fn() },
+    };
+    prisma.document.findMany
+      .mockResolvedValueOnce([{ id: 'doc-a', kbId: 'kb-1', contentHash: 'hash-1' }])
+      .mockResolvedValueOnce([
+        { id: 'doc-a', kbId: 'kb-1', title: 'A.doc', version: 1, contentHash: 'hash-1', aclMode: 'inherit' },
+        { id: 'doc-b', kbId: 'kb-1', title: 'A (副本).doc', version: 1, contentHash: 'hash-1', aclMode: 'restricted' },
+      ]);
+    const acl = { filterReadableDocuments: jest.fn().mockResolvedValue(new Set(['doc-a'])) };
+    const service = new CitationAssemblyService({
+      logger: { warn: jest.fn(), debug: jest.fn() } as any,
+      prisma,
+      documentAclService: acl as any,
+    });
+    const result = await (service as any).expandIdenticalContentCitations(
+      'user-1',
+      [{ citation: { docId: 'doc-a', docTitle: 'A.doc' }, originalIndex: 1 }],
+      ['kb-1'],
+    );
+    expect(result.citations).toHaveLength(1);
+    expect(result.siblingIndicesByIndex.size).toBe(0);
+  });
+
   it('does not repeat broad retrieval solely because a completed reranker lacks calibration', () => {
     const { service } = createService([]);
     runWithRequestContext({requestId:'uncalibrated', execution:{adaptive:true,qualityFirst:true} as any}, () => {
