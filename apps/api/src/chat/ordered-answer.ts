@@ -417,8 +417,24 @@ function normalizeBoldMarkers(line: string): string {
  * list or table (consecutive list items / table rows keep no blank between
  * them).
  */
+/**
+ * Canonicalize source labels to one bold form.
+ *
+ * The model emits the same label both ways — "**来源 1《…》**" and
+ * "来源2《…》（…）" — which renders inconsistently (one bold, one plain). A
+ * source label is always a bold block label, so wrap every non-bold label in
+ * `**…**`. A label is a leading source word + number + 《title》 + an optional
+ * parenthetical (which may span lines), followed by a colon or the line end.
+ * Already-bold labels are untouched; a sentence that merely starts with a
+ * source word ("来源2《…》规定…") has trailing prose and is not matched.
+ */
+export function boldSourceLabels(text: string): string {
+  const re = /(^|\n)([ \t]*(?:[-*+•][ \t]+)?)((?:来源|Source|引用|参考来源|来源文件|Ref)[ \t]*[:：]?[ \t]*\[?\d{1,2}\]?[ \t]*(?:《[^》\n]*》[ \t]*)?(?:[（(【\[][^（()）【】\[\]\n]*(?:\n[^（()）【】\[\]\n]*)*?[)）】\]][ \t]*)?)(?=[：:]|\n|$)/g;
+  return String(text || '').replace(re, (_match, lead: string, indent: string, label: string) => `${lead}${indent}**${label.trim()}**`);
+}
+
 export function normalizeAnswerLayout(text: string): string {
-  const lines = String(text || '').split('\n');
+  const lines = boldSourceLabels(String(text || '')).split('\n');
   const out: string[] = [];
   let fence: { marker: string; length: number } | undefined;
   for (const rawLine of lines) {

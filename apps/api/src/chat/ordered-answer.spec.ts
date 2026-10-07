@@ -1,4 +1,4 @@
-import { OrderedAnswer, tidyVerifiedAnswer, answerSentenceBoundary, isStructuralHeadingLine, isSourceLabelHeading, dropEmptySectionHeadings, splitLeadingHeading, isAnswerBlockStart, isEnumerativeLabelLine, normalizeAnswerLayout } from './ordered-answer';
+import { OrderedAnswer, tidyVerifiedAnswer, answerSentenceBoundary, isStructuralHeadingLine, isSourceLabelHeading, dropEmptySectionHeadings, splitLeadingHeading, isAnswerBlockStart, isEnumerativeLabelLine, normalizeAnswerLayout, boldSourceLabels } from './ordered-answer';
 
 describe('verified answer order', () => {
   it('restores delayed evidence beneath its own heading, ahead of later sections', () => {
@@ -240,5 +240,18 @@ describe('answer block layout normalization', () => {
     // A list-item label keeps its bold; its trailing inline bold is stripped.
     expect(normalizeAnswerLayout('- **业绩指标**：衡量工作产出与**成果** [1]'))
       .toBe('- **业绩指标**：衡量工作产出与成果 [1]');
+  });
+
+  it('makes every source label bold, including a multi-line parenthetical', () => {
+    const input = '**来源1《A》**（适用）\n\n- x [1]\n\n来源2《B》（适用全体在职员工含试用期、劳务派遣人员；\n标准工时制适用于一般管理岗位）\n\n- y [2]';
+    const out = boldSourceLabels(input);
+    expect(out).toContain('**来源2《B》（适用全体在职员工含试用期、劳务派遣人员；\n标准工时制适用于一般管理岗位）**');
+    // An already-bold label is left untouched.
+    expect(out).toContain('**来源1《A》**（适用）');
+    // A sentence that merely starts with a source word is not a label.
+    expect(boldSourceLabels('来源2《B》规定，员工迟到按旷工处理 [2]。')).toBe('来源2《B》规定，员工迟到按旷工处理 [2]。');
+    // A title-less label is normalized too.
+    expect(boldSourceLabels('来源 1（适用于公司全体正式员工）\n\n- x [1]'))
+      .toContain('**来源 1（适用于公司全体正式员工）**');
   });
 });
