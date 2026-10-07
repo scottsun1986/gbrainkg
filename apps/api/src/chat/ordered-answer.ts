@@ -309,6 +309,129 @@ export function isBlockLevelStart(sentence: string): boolean {
   return /^\s*(?:\d{1,2}\s*[.、)]\s|\*\*\s*\d{1,2}\s*[.、)]|[-*•]\s)/.test(String(sentence || ''));
 }
 
+/** Enumerative discourse label at the start of a line ("其一：", "其次，", "最后。"). */
+export function isEnumerativeLabelLine(line: string): boolean {
+  const t = String(line || '').trim().replace(/^\*+\s*/, '').replace(/\s*\*+$/, '');
+  if (!t || t.length > 60) return false;
+  return /^(?:其[一二三四五六七八九十]+|首先|其次|再次|最后|另外|此外)\s*[：:，,、.．]/.test(t);
+}
+
+/**
+ * A line that must open a new block.
+ *
+ * Extends isBlockLevelStart with the label shapes models use for multi-source
+ * answers but that are NOT headings on their own: a bold label carrying its
+ * payload on the same line ("**来源《…》**：…"), a per-source label without a
+ * number, and enumerative discourse labels ("其一：…"). Layout-only: it never
+ * changes how the line is grounded or classified.
+ */
+export function isAnswerBlockStart(line: string): boolean {
+  const t = String(line || '').trim();
+  if (!t) return false;
+  if (isBlockLevelStart(t)) return true;
+  // A line-leading bold span that ends the line or is followed (optionally
+  // after a parenthetical qualifier, which may itself carry a citation marker)
+  // by a colon opens a block: "**来源《…》**：…",
+  // "**《…》口径**（适用范围 [1]）：…", "**其二**：…".
+  // A bold run followed directly by prose ("**重要**内容…") stays emphasis.
+  if (/^\*\*[^*\n]{1,80}\*\*\s*(?:[（(【\[][^（()【】]{0,120}[)）】\]]\s*)?(?:[：:]|$)/.test(t)) return true;
+  if (/^(?:来源|引用|参考来源|来源文件|Source|Reference|Ref)\s*[:：]?\s*\d{0,2}\s*(?:[《:：]|[—–-])/.test(t)) return true;
+  return isEnumerativeLabelLine(t);
+}
+
+/** A list item line (bullet or ordered), including nested indentation. */
+function isListItemLine(line: string): boolean {
+  return /^\s*(?:[-*+•]\s|\d{1,2}\s*[.、)]\s)/.test(String(line || ''));
+}
+
+/**
+ * A line that is only brackets/punctuation with no letter, digit or Han
+ * character — residue from a clause the grounding gate held and dropped (a lone
+ * "）" left after a partially removed parenthetical). Markdown structure
+ * characters (-, |, #, *, >, `, ~, =, _) are excluded so rules, tables and
+ * fences survive.
+ */
+function isMarkupResidueLine(line: string): boolean {
+  const t = String(line || '').trim();
+  if (!t || t.length > 4) return false;
+  if (/[-|#*>`~_=]/.test(t)) return false;
+  return /^[（）()【】\[\]「」『』、，。；：,.!?！？;:…·]+$/.test(t);
+}
+
+/**
+ * Split a bold block label that the model glued to the end of the preceding
+ * sentence ("…[2]；**二、《…》口径（…）**") into its own line, so the normalizer
+ * can give it a block boundary. Only a label that ends the line or is followed
+ * (optionally after a parenthetical qualifier) by a colon is split; bold
+ * emphasis followed by prose is left inline.
+ */
+function splitInlineBlockLabels(line: string): string[] {
+  const boundary = /([。！？；.!?;]|\[\d+\])\s*(?=\*\*[^*\n]{1,80}\*\*\s*(?:[（(【\[][^（()【】]{0,120}[)）】\]]\s*)?(?:[：:]|$))/g;
+  const segments: string[] = [];
+  let last = 0;
+  let match: RegExpExecArray | null;
+  while ((match = boundary.exec(line))) {
+    const end = match.index + match[1].length;
+    segments.push(line.slice(last, end));
+    segments.push('');
+    last = end;
+    while (last < line.length && /\s/.test(line[last])) last += 1;
+  }
+  segments.push(line.slice(last));
+  return segments;
+}
+
+/**
+ * Guarantee one blank line before every block-level element.
+ *
+ * The web renderer lexes with `breaks: true`, so a single newline is a hard
+ * break *inside the same paragraph*: two sections separated by "\n" render
+ * glued together with no paragraph spacing — the reported multi-source layout
+ * defect ("**来源 2…**" not parallel to "**来源 1…**"). Blocks must be separated
+ * by a blank line.
+ *
+ * Pure layout pass: it only inserts/collapses blank lines and splits a glued
+ * block label, never edits prose, never touches lines inside a code fence, and
+ * never splits a list or table (consecutive list items / table rows keep no
+ * blank between them).
+ */
+export function normalizeAnswerLayout(text: string): string {
+  const lines = String(text || '').split('\n');
+  const out: string[] = [];
+  let fence: { marker: string; length: number } | undefined;
+  for (const rawLine of lines) {
+    const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(rawLine);
+    if (!fence && match) {
+      if (out.length && out[out.length - 1].trim()) out.push('');
+      out.push(rawLine);
+      fence = { marker: match[1][0], length: match[1].length };
+      continue;
+    }
+    if (fence) {
+      out.push(rawLine);
+      if (match && match[1][0] === fence.marker && match[1].length >= fence.length && !match[2].trim()) fence = undefined;
+      continue;
+    }
+    for (const line of splitInlineBlockLabels(rawLine)) {
+      if (isMarkupResidueLine(line)) continue;
+      if (line.trim() && isAnswerBlockStart(line) && out.length && out[out.length - 1].trim()) {
+        const prev = out[out.length - 1];
+        const sameContinuation =
+          (isListItemLine(prev) && isListItemLine(line)) ||
+          (isTableSyntaxLine(prev) && isTableSyntaxLine(line));
+        if (!sameContinuation) out.push('');
+      }
+      out.push(line);
+    }
+  }
+  const collapsed: string[] = [];
+  for (const line of out) {
+    if (!line.trim() && collapsed.length && !collapsed[collapsed.length - 1].trim()) continue;
+    collapsed.push(line);
+  }
+  return collapsed.join('\n');
+}
+
 /**
  * Split a heading off the front of a string that merged it with the sentence
  * that follows.

@@ -9,7 +9,7 @@ import { evidenceIdentity, distinctRankedPassages } from './evidence-identity';
 import { StreamDeadline } from './stream-deadline';
 import { ChatRunService } from './chat-run.service';
 import { outlineDocumentTitle, normalizeDocumentTitle, renderDocumentOutline } from './document-outline';
-import { OrderedAnswer, tidyVerifiedAnswer, answerSentenceBoundary, isStructuralHeadingLine, isTableSyntaxLine, isBlockLevelStart, splitLeadingHeading } from './ordered-answer';
+import { OrderedAnswer, tidyVerifiedAnswer, answerSentenceBoundary, isStructuralHeadingLine, isTableSyntaxLine, isBlockLevelStart, splitLeadingHeading, normalizeAnswerLayout } from './ordered-answer';
 import { alignSiblingEditionChunks, normalizeFamilyTitle } from './version-sibling-evidence';
 
 export { isStructuralHeadingLine, isTableSyntaxLine, isBlockLevelStart } from './ordered-answer';
@@ -5503,7 +5503,11 @@ ${compiledTruthContext}${dynamicDirectives ? `\n\n【专项指令提示】：\n$
       }
       // Commit verified text in model order. A delayed clause must never be
       // appended underneath a later heading. History and SSE use this same text.
-      fullAnswer = tidyVerifiedAnswer(orderedAnswer.render());
+      // normalizeAnswerLayout then guarantees one blank line before every
+      // block-level element (source/section labels, headings, lists, tables,
+      // fences) because the renderer lexes with `breaks: true`, where a single
+      // newline stays inside the same paragraph.
+      fullAnswer = normalizeAnswerLayout(tidyVerifiedAnswer(orderedAnswer.render()));
       // A line that carries no letters, digits or Han characters is markup
       // residue, not an answer. "）" alone passed this check (it is not blank and
       // not a heading), so a response whose every sentence was held by the

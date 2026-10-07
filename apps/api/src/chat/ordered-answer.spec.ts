@@ -1,4 +1,4 @@
-import { OrderedAnswer, tidyVerifiedAnswer, answerSentenceBoundary, isStructuralHeadingLine, isSourceLabelHeading, dropEmptySectionHeadings, splitLeadingHeading } from './ordered-answer';
+import { OrderedAnswer, tidyVerifiedAnswer, answerSentenceBoundary, isStructuralHeadingLine, isSourceLabelHeading, dropEmptySectionHeadings, splitLeadingHeading, isAnswerBlockStart, isEnumerativeLabelLine, normalizeAnswerLayout } from './ordered-answer';
 
 describe('verified answer order', () => {
   it('restores delayed evidence beneath its own heading, ahead of later sections', () => {
@@ -156,5 +156,79 @@ describe('splitLeadingHeading', () => {
     const split = splitLeadingHeading(h + '该手册提到员工上下班均需打卡[3]。');
     expect(split!.heading).toBe(h);
     expect(split!.rest).toBe('该手册提到员工上下班均需打卡[3]。');
+  });
+});
+
+describe('answer block layout normalization', () => {
+  it('opens a new block for a bold source label with a same-line payload', () => {
+    expect(isAnswerBlockStart('**来源《企业研发管理规范》**：研发人员考核采用…[3]')).toBe(true);
+    expect(isAnswerBlockStart('**来源《软件研发中心绩效管理办法》**：三类指标…[2]')).toBe(true);
+    // A qualifier may sit between the closing marker and the colon.
+    expect(isAnswerBlockStart('**《企业研发管理规范》的口径**（适用于公司所有研发项目）：研发人员考核采用…[3]')).toBe(true);
+    // The qualifier may itself carry a citation marker.
+    expect(isAnswerBlockStart('**《软件研发中心绩效管理办法》口径**（适用于软件研发中心全体正式员工 [1]）：三类指标 [1]')).toBe(true);
+    expect(isAnswerBlockStart('研发人员考核采用“项目绩效+技术贡献”的结构[3]。')).toBe(false);
+    // Bold emphasis followed directly by prose stays inline.
+    expect(isAnswerBlockStart('**重要**内容继续同一句。')).toBe(false);
+  });
+
+  it('recognizes enumerative discourse labels without a numbered source', () => {
+    expect(isEnumerativeLabelLine('其二，企业研发管理规范：')).toBe(true);
+    expect(isEnumerativeLabelLine('**其一：**')).toBe(true);
+    expect(isEnumerativeLabelLine('其次，说明如下。')).toBe(true);
+    expect(isAnswerBlockStart('其二，企业研发管理规范：内容[3]。')).toBe(true);
+    // A clause reference is not a discourse label.
+    expect(isEnumerativeLabelLine('第十条 经济补偿按 N+1 执行。')).toBe(false);
+  });
+
+  it('inserts exactly one blank line before each block that follows prose', () => {
+    const input = [
+      '研发人员的绩效组成，两份来源给出了不同结构，须并列参考：',
+      '**来源《软件研发中心绩效管理办法》**：三类指标 [2]',
+      '**来源《企业研发管理规范》**：项目绩效+技术贡献 [3]',
+    ].join('\n');
+    expect(normalizeAnswerLayout(input)).toBe([
+      '研发人员的绩效组成，两份来源给出了不同结构，须并列参考：',
+      '',
+      '**来源《软件研发中心绩效管理办法》**：三类指标 [2]',
+      '',
+      '**来源《企业研发管理规范》**：项目绩效+技术贡献 [3]',
+    ].join('\n'));
+  });
+
+  it('separates enumerative sections but never splits a list or a table', () => {
+    expect(normalizeAnswerLayout('其一：内容A。\n其二，企业研发管理规范：内容B。'))
+      .toBe('其一：内容A。\n\n其二，企业研发管理规范：内容B。');
+    const list = '- 甲[1]\n- 乙[2]\n- 丙[3]';
+    expect(normalizeAnswerLayout(list)).toBe(list);
+    const table = '| A | B |\n|---|---|\n| 1 | 2 |';
+    expect(normalizeAnswerLayout(table)).toBe(table);
+  });
+
+  it('splits a bold label glued after a sentence boundary or a citation marker', () => {
+    expect(normalizeAnswerLayout('原文表述：…[2]；**二、《企业研发管理规范》口径（适用范围）**\n研发人员考核…[3]。'))
+      .toBe('原文表述：…[2]；\n\n**二、《企业研发管理规范》口径（适用范围）**\n研发人员考核…[3]。');
+    expect(normalizeAnswerLayout('前节结论[2] **来源《企业研发管理规范》**：研发人员考核…[3]'))
+      .toBe('前节结论[2]\n\n**来源《企业研发管理规范》**：研发人员考核…[3]');
+  });
+
+  it('separates headings and code fences from surrounding prose without touching fenced content', () => {
+    expect(normalizeAnswerLayout('结论。\n## 依据\n内容。\n```js\nx\n```'))
+      .toBe('结论。\n\n## 依据\n内容。\n\n```js\nx\n```');
+    const fenced = '说明。\n```text\n# 代码里的标题\n- 代码里的列表\n```';
+    expect(normalizeAnswerLayout(fenced)).toBe('说明。\n\n```text\n# 代码里的标题\n- 代码里的列表\n```');
+  });
+
+  it('is idempotent', () => {
+    const input = '前言。\n**来源 1《A》**：内容 [1]\n**来源 2《B》**：内容 [2]\n- 甲\n- 乙';
+    const once = normalizeAnswerLayout(input);
+    expect(normalizeAnswerLayout(once)).toBe(once);
+  });
+
+  it('drops lone bracket/punctuation residue but keeps tables, rules and fences', () => {
+    expect(normalizeAnswerLayout('甲。\n）\n乙。')).toBe('甲。\n乙。');
+    expect(normalizeAnswerLayout('| A | B |\n|---|---|\n| 1 | 2 |')).toBe('| A | B |\n|---|---|\n| 1 | 2 |');
+    expect(normalizeAnswerLayout('说明。\n\n---\n\n后续。')).toBe('说明。\n\n---\n\n后续。');
+    expect(normalizeAnswerLayout('```\n）\n```')).toBe('```\n）\n```');
   });
 });

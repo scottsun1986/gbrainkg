@@ -51,8 +51,14 @@ function answerTokens(content: string): Token[] {
       if (item.type === 'strong' && index > 0) {
         const before = siblings[index - 1];
         const after = siblings[index + 1];
-        if (before.type === 'text' && /[。！？.!?]\s*$/.test(before.raw)
-          && (!after || after.type === 'br' || /^\s*(?:\n|[：:])/.test(after.raw))) {
+        // A sentence boundary is punctuation OR a trailing citation marker
+        // ("…行为15%" [2]"); a preceding hard break means the label already
+        // began a new line. Either way the bold run opens a block, so it must
+        // become a paragraph rather than stay glued to the previous one.
+        const endsClaim = before.type === 'br'
+          || (before.type === 'text' && /(?:[。！？；;.!?]|\[\d+\])\s*$/.test(before.raw));
+        const opensBlock = !after || after.type === 'br' || /^\s*(?:\n|[：:])/.test(after.raw);
+        if (endsClaim && opensBlock) {
           changed = true;
           return `\n\n${item.raw}`;
         }

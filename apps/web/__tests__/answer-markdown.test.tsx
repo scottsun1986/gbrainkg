@@ -33,6 +33,17 @@ describe('answer Markdown structure and citation safety', () => {
     assert.match(html('`示例。**标题**`'), /<code>示例。\*\*标题\*\*<\/code>/);
   });
 
+  it('opens a new block for a source label that follows a citation marker or a hard break', () => {
+    const afterCitation = html('前节结论[2] **来源《企业研发管理规范》**：研发人员考核…[3]');
+    assert.match(afterCitation, /<\/p><p><strong>来源《企业研发管理规范》<\/strong>/);
+    const afterBreak = html('前节结论[2]\n**来源《企业研发管理规范》**：研发人员考核…[3]');
+    assert.match(afterBreak, /<\/p><p><strong>来源《企业研发管理规范》<\/strong>/);
+    const afterSemicolon = html('原文表述：…[2]；**二、《企业研发管理规范》口径（适用范围）**');
+    assert.match(afterSemicolon, /<\/p><p><strong>二、《企业研发管理规范》口径（适用范围）<\/strong>/);
+    // Inline emphasis mid-sentence is untouched.
+    assert.ok(!html('前节结论[2] **重点**仍是同一段。').includes('</p><p>'));
+  });
+
   it('renders task checkboxes once without leaking Markdown markers', () => {
     const result = html('- [x] 已完成\n- [ ] 待处理');
     assert.equal((result.match(/type="checkbox"/g) || []).length, 2);
