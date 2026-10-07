@@ -1563,15 +1563,14 @@ describe('isStructuralHeadingLine', () => {
 
   it('does not mistake an ordinal-led rule statement for a heading', () => {
     // Limit wording, a predicate applied to someone, or a quantity makes the
-    // line a claim, which must still face the evidence gate.
-    expect(isStructuralHeadingLine('二、迟到一小时以上的处理')).toBe(false);
-    expect(isStructuralHeadingLine('一、迟到一小时以内')).toBe(false);
-    expect(isStructuralHeadingLine('一、迟到一小时的扣款标准为50元')).toBe(false);
-    expect(isStructuralHeadingLine('1. 员工迟到1小时，扣除当日工资的50%')).toBe(false);
-    expect(isStructuralHeadingLine('二、超过30分钟视为迟到')).toBe(false);
-    expect(isStructuralHeadingLine('1、月累计迟到三次以上扣发当月绩效')).toBe(false);
-    expect(isStructuralHeadingLine('（一）迟到一小时以内扣款10元')).toBe(false);
-    expect(isStructuralHeadingLine('二、迟到一小时的扣款标准')).toBe(false);
+    // line a claim, which must still face the evidence gate. The examples are
+    // structural only (no domain vocabulary), matching the classifier.
+    expect(isStructuralHeadingLine('二、超过一小时以上的处理')).toBe(false);
+    expect(isStructuralHeadingLine('一、超过一小时以内')).toBe(false);
+    expect(isStructuralHeadingLine('一、应当提交书面申请')).toBe(false);
+    expect(isStructuralHeadingLine('1. 每月累计三次以上不予通过')).toBe(false);
+    expect(isStructuralHeadingLine('二、超过30分钟视为异常')).toBe(false);
+    expect(isStructuralHeadingLine('（一）超过一小时以内按10处理')).toBe(false);
   });
 
   it('recognises the production heading shapes that were held and re-appended', () => {

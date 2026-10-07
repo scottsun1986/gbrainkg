@@ -1,4 +1,4 @@
-import { OrderedAnswer, tidyVerifiedAnswer, answerSentenceBoundary, isStructuralHeadingLine, isSourceLabelHeading, dropEmptySectionHeadings, splitLeadingHeading, isAnswerBlockStart, isEnumerativeLabelLine, normalizeAnswerLayout, boldSourceLabels } from './ordered-answer';
+import { OrderedAnswer, tidyVerifiedAnswer, answerSentenceBoundary, isStructuralHeadingLine, isSourceLabelHeading, dropEmptySectionHeadings, splitLeadingHeading, isAnswerBlockStart, isEnumerativeLabelLine, normalizeAnswerLayout, boldSourceLabels, isPlainTextHeading } from './ordered-answer';
 
 describe('verified answer order', () => {
   it('restores delayed evidence beneath its own heading, ahead of later sections', () => {
@@ -240,6 +240,15 @@ describe('answer block layout normalization', () => {
     // A list-item label keeps its bold; its trailing inline bold is stripped.
     expect(normalizeAnswerLayout('- **业绩指标**：衡量工作产出与**成果** [1]'))
       .toBe('- **业绩指标**：衡量工作产出与成果 [1]');
+  });
+
+  it('classifies plain-text headings from structure, not domain vocabulary', () => {
+    // A heading ends on a section-type noun.
+    expect(isPlainTextHeading('一、处理方式')).toBe(true);
+    expect(isPlainTextHeading('二、适用范围')).toBe(true);
+    // A rule carries limit wording or a predicate, regardless of topic.
+    expect(isPlainTextHeading('三、超过10分钟以上')).toBe(false);
+    expect(isPlainTextHeading('四、应当提交申请')).toBe(false);
   });
 
   it('makes every source label bold, including a multi-line parenthetical', () => {
