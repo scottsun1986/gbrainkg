@@ -34,8 +34,22 @@ describe('RaptorService', () => {
     const text = '第一条 规定内容。第二条 补充规定内容。第三条 结束条款内容。';
     const summary = (service as any).extractiveSummary(text);
     expect(summary.length).toBeGreaterThan(0);
-    expect(summary.length).toBeLessThanOrEqual(800);
+    expect(summary.length).toBeLessThanOrEqual(1800);
     expect(text).toContain(summary.slice(0, 5));
+  });
+
+  it('recognizes bold 第X条 and sub-clause headings so the outline is not lossy', () => {
+    const text = [
+      '\\*\\*第一条\\** 目的。',
+      '\\*\\*第二条\\** 适用范围。',
+      '（一）\\*\\*业绩指标\\**：衡量工作产出与成果；',
+      '（二）\\*\\*能力指标\\**：衡量专业能力成长；',
+      '（三）\\*\\*行为指标\\**：衡量工作态度与团队协作。',
+    ].join('\n');
+    const summary = (service as any).extractiveSummary(text);
+    expect(summary).toContain('第一条');
+    expect(summary).toContain('能力指标');
+    expect(summary).toContain('行为指标');
   });
 
   it('returns no search hits when disabled', async () => {

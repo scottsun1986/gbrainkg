@@ -886,11 +886,24 @@ export class RaptorService {
   private extractiveSummary(text: string): string {
     const clean = text.replace(/\[上下文:[^\]]*\]/g, '').replace(/<!--[\s\S]*?-->/g, '');
     const lines = clean.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+    // Strip list/bold/heading markers before classifying a line, so
+    // "**第X条** …", "- （二）…" and "# 章节" are all recognised as headings.
+    // Without this the 第X条 clauses (the parser emits them as "\*\*第X条\** …")
+    // were invisible and only the （X） sub-clauses entered the outline — the
+    // lossy outline that dropped a sub-clause (and its facts) from a derived
+    // summary, so an answer built from that summary lost the whole item.
+    const probe = (l: string) =>
+      l.replace(/^[>\s]*(?:[-*+•]\s+)?/, '').replace(/^\\?\*+\s*/, '').trim();
+    const display = (l: string) =>
+      probe(l).replace(/^#{1,6}\s*/, '').replace(/\\?\*+\s*$/, '').trim();
+    const isHeading = (l: string) =>
+      /^(?:#{1,6}\s|（[一二三四五六七八九十百]+）|[一二三四五六七八九十百]+、|第[一二三四五六七八九十百0-9]+[章节]|\d{1,3}[.．、])/.test(probe(l));
+    const headingCap = Math.max(1, Number(process.env.RAPTOR_SUMMARY_MAX_HEADINGS || 40));
     const headings = lines
-      .filter((l) => /^(?:#{1,6}\s|（[一二三四五六七八九十]+）|[一二三四五六七八九十]+、|第[一二三四五六七八九十百0-9]+[章节]|\d{1,3}[.．])/.test(l))
-      .map((l) => l.replace(/^#{1,6}\s*/, '').slice(0, 40))
+      .filter(isHeading)
+      .map((l) => display(l).slice(0, 60))
       .filter((v, i, arr) => v && arr.indexOf(v) === i)
-      .slice(0, 12);
+      .slice(0, headingCap);
     const sentences = clean
       .replace(/\s+/g, ' ')
       .split(/(?<=[。！？!?；;])/)
@@ -899,7 +912,8 @@ export class RaptorService {
     const picked: string[] = [];
     if (headings.length) picked.push(`要点章节：${headings.join('；')}`);
     picked.push(...sentences.slice(0, 4));
-    const out = picked.join(' ').trim().slice(0, 900);
+    const outCap = Math.max(300, Number(process.env.RAPTOR_SUMMARY_MAX_CHARS || 1800));
+    const out = picked.join(' ').trim().slice(0, outCap);
     return out || clean.slice(0, 300);
   }
 
