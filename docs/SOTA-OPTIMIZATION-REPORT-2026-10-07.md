@@ -12,7 +12,7 @@
 - 报告 §4 的 12 项差距中，**3 项在基线版本中已落地**（#3 索引卡死自愈、#5 无校准拒答降级、#6 ANN 召回），本轮复核确认并保留。
 - **7 项本轮实现并测试**：#4 去业务硬编码、#7 编译深度、#8 GraphRAG 抽取深度、#9 确定性路径硬顶、#10 多副本权限缓存失效、#11 登录限流白名单、#12 评测口径。
 - **2 项为开放大工程，本轮不盲目改动**：#1 端到端多跳答案质量、#2 `chat.service.ts` 上帝类拆分（见 §6，附路线图）。
-- 单元/契约测试：**API 1335 passed / 5 skipped（155 套件）、Parser 54 passed、Adapter 17 passed，0 失败**。
+- 单元/契约测试：**API 1336 passed / 5 skipped（155 套件）、Parser 54 passed、Adapter 17 passed，0 失败**。
 - **关键发现（评测口径缺陷）**：基线 SOTA-20 的"弱域"（squad/boolq/pubmedqa/msmarco/cmrc2018/tatqa）**主要是评测口径造成的假象**，而非检索能力不足。基线每集仅跑 40 条 query，但 `standard_ir_eval.py` 按全部 qrels query（缺失计 0 分）求均值，样本覆盖率不足的集被按比例压低。评测集口径下真实质量远高于报告值（见 §5.2）。本轮已为评分器补充 `__evaluated` 口径并修正解读。
 - **同条件复测结论（§5.3）**：以基线代码与优化代码在相同环境/相同编排器各跑一次，20 集宏观 nDCG@10 **0.577→0.585（+0.008）**、MRR@10 **0.617→0.650（+0.033）**、评测集口径 nDCG@10 **0.808→0.819（+0.011）**；逐集波动（最大 ±0.16）与宏观差同量级，判定为**统计持平、无回归**。本轮优化不改变默认检索行为，确定性收益在工程健壮性与评测口径。
 
@@ -76,7 +76,7 @@
 
 | 测试 | 命令 | 结果 |
 |---|---|---|
-| API 单元/契约 | `pnpm run test:api` | **1335 passed / 5 skipped，155 套件，0 失败**（基线 1311 passed） |
+| API 单元/契约 | `pnpm run test:api` | **1336 passed / 5 skipped，155 套件，0 失败**（基线 1311 passed） |
 | Parser | `pnpm run test:parser` | **54 passed + 4 subtests** |
 | Adapter 契约 | `pnpm run test:adapter` | **17 passed** |
 | 评分器自测 | `python3 standard_ir_eval.py --selftest` | 通过 |
