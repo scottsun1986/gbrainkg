@@ -1,4 +1,37 @@
-import { routeGraphQuery, graphProbeEnabledForQuery } from './graph-rag.service';
+import { routeGraphQuery, graphProbeEnabledForQuery, resolveGraphLlmExtraction } from './graph-rag.service';
+
+describe('resolveGraphLlmExtraction (GraphRAG depth)', () => {
+  it('defaults to a deeper budget than the original 30% / 20 chunks', () => {
+    expect(resolveGraphLlmExtraction({} as NodeJS.ProcessEnv)).toEqual({
+      sampleRate: 0.6,
+      maxLlmChunks: 60,
+    });
+  });
+
+  it('supports full extraction', () => {
+    const cfg = resolveGraphLlmExtraction({
+      GRAPH_LLM_FULL_EXTRACTION: '1',
+    } as NodeJS.ProcessEnv);
+    expect(cfg.sampleRate).toBe(1);
+    expect(cfg.maxLlmChunks).toBe(100000);
+  });
+
+  it('honours explicit overrides and clamps invalid values', () => {
+    expect(
+      resolveGraphLlmExtraction({
+        GRAPH_LLM_SAMPLE_RATE: '0.25',
+        GRAPH_LLM_MAX_CHUNKS: '12',
+      } as NodeJS.ProcessEnv),
+    ).toEqual({ sampleRate: 0.25, maxLlmChunks: 12 });
+    expect(
+      resolveGraphLlmExtraction({
+        GRAPH_LLM_SAMPLE_RATE: '5',
+        GRAPH_LLM_MAX_CHUNKS: '-1',
+      } as NodeJS.ProcessEnv),
+    ).toEqual({ sampleRate: 1, maxLlmChunks: 60 });
+  });
+});
+
 
 describe('routeGraphQuery (P2-3 corpus-agnostic graph routing)', () => {
   it('routes theme/overview questions to global_theme (no local graph probe)', () => {

@@ -402,6 +402,21 @@ export function decideEvidenceSufficiency(
 }
 
 /**
+ * Hard ceiling for the exhaustive (non-Top-K) deterministic paths — complete
+ * chapter enumeration and named-table counts. These must read the whole
+ * authorized document, so a fixed 5000-chunk cap silently made large documents
+ * unanswerable. The cap stays (an unbounded scan is a DoS vector) but is now
+ * configurable and defaults high enough for real regulation manuals.
+ */
+export function deterministicChunkCap(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const raw = Number(env.CHAT_DETERMINISTIC_MAX_CHUNKS ?? 20_000);
+  if (!Number.isFinite(raw) || raw <= 0) return 20_000;
+  return Math.min(Math.floor(raw), 200_000);
+}
+
+/**
  * Identity key for a retrieval candidate, used to merge arms without dropping
  * distinct evidence. Prefer the chunk id — a single page can hold many relevant
  * chunks, and keying on (document, page) silently collapsed them into one, so a
@@ -1862,6 +1877,58 @@ export class ChatService {
     };
   }
 
+  /**
+   * Load every chunk of an exhaustive deterministic path (chapter enumeration,
+   * named-table count) in bounded pages, so a very large document never issues
+   * one giant result set. Ordering is stable (document, ord). The caller only
+   * reaches here when the total count is within `deterministicChunkCap()`.
+   */
+  private async loadDeterministicChunks(
+    where: any,
+    cap: number,
+    pageSize = 2000,
+  ): Promise<
+    Array<{
+      id: string;
+      documentId: string;
+      kbId: string;
+      ord: number;
+      content: string;
+      metadata: any;
+    }>
+  > {
+    const rows: Array<{
+      id: string;
+      documentId: string;
+      kbId: string;
+      ord: number;
+      content: string;
+      metadata: any;
+    }> = [];
+    let skip = 0;
+    while (rows.length < cap) {
+      const take = Math.min(pageSize, cap - rows.length);
+      const page = await this.prisma.chunk.findMany({
+        where,
+        orderBy: [{ documentId: 'asc' }, { ord: 'asc' }],
+        skip,
+        take,
+        select: {
+          id: true,
+          documentId: true,
+          kbId: true,
+          ord: true,
+          content: true,
+          metadata: true,
+        },
+      });
+      rows.push(...page);
+      if (page.length < take) break;
+      skip += page.length;
+    }
+    return rows;
+  }
+
   private async processChat(
     userId: string,
     question: string,
@@ -2037,10 +2104,10 @@ export class ChatService {
         const doc = named[0];
         const where = { documentId: doc.id, kbId: { in: scope }, document: { status: 'published' } };
         const expected = await this.prisma.chunk.count({ where });
-        const rows = expected > 0 && expected <= 5000 ? await this.prisma.chunk.findMany({
-          where, orderBy: { ord: 'asc' }, take: 5000,
-          select: { id: true, documentId: true, kbId: true, ord: true, content: true, metadata: true },
-        }) : [];
+        const cap = deterministicChunkCap();
+        const rows = expected > 0 && expected <= cap
+          ? await this.loadDeterministicChunks(where, cap)
+          : [];
         const checked = await this.filterQueryResultByCurrentPermission({ citations: rows.map(c => ({
           id: c.id, docId: c.documentId, kbId: c.kbId, ord: c.ord, docTitle: doc.title, version: doc.version,
           context: c.content, evidence: c.content, snippet: c.content, metadata: c.metadata,
@@ -2116,11 +2183,8 @@ export class ChatService {
       const docIds = exactDocs.map(d => d.id);
       const where = { kbId: { in: scope }, documentId: { in: docIds }, document: { status: 'published' } };
       const count = docIds.length ? await this.prisma.chunk.count({ where }) : 0;
-      const cap = 5000;
-      const rows = count && count <= cap ? await this.prisma.chunk.findMany({
-        where, orderBy: [{ documentId: 'asc' }, { ord: 'asc' }], take: cap,
-        select: { id: true, documentId: true, kbId: true, ord: true, content: true, metadata: true },
-      }) : [];
+      const cap = deterministicChunkCap();
+      const rows = count && count <= cap ? await this.loadDeterministicChunks(where, cap) : [];
       const byId = new Map(exactDocs.map(d => [d.id, d]));
       const checked = await this.filterQueryResultByCurrentPermission({ citations: rows.map(c => ({
         id: c.id, docId: c.documentId, kbId: c.kbId, ord: c.ord,

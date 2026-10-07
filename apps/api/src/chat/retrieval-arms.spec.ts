@@ -1,5 +1,6 @@
 import {
   calibratedScoreOf,
+  detectStructuralQueryShape,
   documentCurrentlyEffective,
   extractRawChunkText,
   hasPolarityConflict,
@@ -166,5 +167,32 @@ describe('documentCurrentlyEffective', () => {
 
   it('keeps an edition with no date metadata', () => {
     expect(documentCurrentlyEffective({}, now)).toBe(true);
+  });
+});
+
+describe('detectStructuralQueryShape (AGENTS.md §2: corpus-agnostic gating)', () => {
+  it('detects Chinese clause-shaped intents when the corpus is clause-shaped', () => {
+    expect(detectStructuralQueryShape('本规范一共有哪些章？', true)).toEqual({
+      isChapterListing: true,
+      isArticleCountQuery: false,
+    });
+    expect(detectStructuralQueryShape('本制度一共有多少条？', true)).toEqual({
+      isChapterListing: false,
+      isArticleCountQuery: true,
+    });
+  });
+
+  it('disables every structural intent when the corpus is not clause-shaped', () => {
+    // A clause-shaped question against a technical manual / English corpus must
+    // not trigger chapter boosts: the query text is irrelevant once the corpus
+    // shape says "no 章/条".
+    expect(detectStructuralQueryShape('本规范一共有哪些章？', false)).toEqual({
+      isChapterListing: false,
+      isArticleCountQuery: false,
+    });
+    expect(detectStructuralQueryShape('本制度一共有多少条？', false)).toEqual({
+      isChapterListing: false,
+      isArticleCountQuery: false,
+    });
   });
 });

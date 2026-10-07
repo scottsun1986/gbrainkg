@@ -1,7 +1,8 @@
 import { runAsService } from '../db/service-principal';
-import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
+import { Injectable, Logger, OnModuleInit, Optional } from "@nestjs/common";
 import { getPrismaClient } from "../prisma";
 import { withServiceContext, withPermissionRead } from "../db/tenant-context.service";
+import { RedisService } from "../redis/redis.service";
 import {
   BASE_USER_PERMISSIONS,
   DEFAULT_ROLES,
@@ -29,7 +30,24 @@ export class PermissionService implements OnModuleInit {
   private readonly visibleKbsCache = new Map<string, { expiresAt: number; value: string[] }>();
   private orgNodeListCache: { expiresAt: number; nodes: { id: string; parentId: string | null }[] } | null = null;
 
+  /** Cross-replica cache-invalidation channel (Redis pub/sub). */
+  private static readonly INVALIDATION_CHANNEL = 'permission-cache-invalidation';
+
+  constructor(@Optional() private readonly redis?: RedisService) {}
+
   invalidatePermissionCaches(userId?: string): void {
+    this.invalidateLocalPermissionCaches(userId);
+    // Broadcast so other replicas drop their copies immediately instead of
+    // waiting out PERMISSION_CACHE_TTL_MS. Fire-and-forget: without Redis this
+    // is a no-op and the short TTL stays the single-instance fallback.
+    const instanceId = this.redis?.getInstanceId();
+    void this.redis?.publish(PermissionService.INVALIDATION_CHANNEL, {
+      instanceId,
+      userId: userId ?? null,
+    });
+  }
+
+  private invalidateLocalPermissionCaches(userId?: string): void {
     if (userId) {
       this.systemAdminCache.delete(userId);
       this.rolePermissionsCache.delete(userId);
@@ -63,7 +81,28 @@ export class PermissionService implements OnModuleInit {
     return nodes;
   }
 
-  async onModuleInit() { return runAsService('permission-initialize', () => this.initializeInternal()); }
+  async onModuleInit() {
+    await runAsService('permission-initialize', () => this.initializeInternal());
+    // Cross-replica cache invalidation: another instance's permission change
+    // drops this instance's caches immediately rather than after the TTL.
+    void this.redis?.subscribe(
+      PermissionService.INVALIDATION_CHANNEL,
+      (message: string) => this.handleInvalidationMessage(message),
+    );
+  }
+
+  /** Apply a peer's invalidation broadcast to this instance's local caches. */
+  private handleInvalidationMessage(message: string): void {
+    try {
+      const payload = JSON.parse(message);
+      if (payload?.instanceId && payload.instanceId === this.redis?.getInstanceId()) return;
+      this.invalidateLocalPermissionCaches(
+        typeof payload?.userId === 'string' ? payload.userId : undefined,
+      );
+    } catch {
+      // Malformed message: ignore rather than crash the subscriber.
+    }
+  }
 
   private async initializeInternal() {
     await this.ensureDefaultRoles();

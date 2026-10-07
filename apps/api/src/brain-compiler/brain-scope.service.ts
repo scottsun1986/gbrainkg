@@ -19,6 +19,26 @@ export interface ScopeResolutionResult {
   knowledgeEpoch: number;
 }
 
+/**
+ * Compile depth for scope-derived intelligence. The first release summarised a
+ * scope from each document's first 10 chunks and at most 3 sources, which is a
+ * shallow slice for a "compiled brain" and left most of a large manual out of
+ * the macro layer. Both dimensions are now configurable with sane, bounded
+ * defaults.
+ */
+export function resolveScopeCompileDepth(
+  env: NodeJS.ProcessEnv = process.env,
+): { docChunkDepth: number; synthesizeSourceLimit: number } {
+  const depth = Number(env.BRAIN_SCOPE_DOC_CHUNKS ?? 40);
+  const sources = Number(env.BRAIN_SCOPE_SYNTHESIZE_SOURCES ?? 5);
+  return {
+    docChunkDepth:
+      Number.isFinite(depth) && depth > 0 ? Math.min(Math.floor(depth), 200) : 40,
+    synthesizeSourceLimit:
+      Number.isFinite(sources) && sources > 0 ? Math.min(Math.floor(sources), 50) : 5,
+  };
+}
+
 @Injectable()
 export class BrainScopeService {
   private readonly logger = new Logger(BrainScopeService.name);
@@ -199,6 +219,7 @@ export class BrainScopeService {
 
     const sourceKeys: string[] = Array.isArray(scope.sourceKeys) ? scope.sourceKeys : [];
     this.logger.log(`Compiling derived intelligence for Scope ${scope.fingerprint} (sources: ${sourceKeys.join(',')})...`);
+    const { docChunkDepth, synthesizeSourceLimit } = resolveScopeCompileDepth();
 
     // 查找当前 Scope 涉及的所有文档
     const sourceRecords = await db.brainSource.findMany({
@@ -209,7 +230,7 @@ export class BrainScopeService {
             document: {
               include: {
                 kb: { select: { id: true, name: true, type: true } },
-                chunks: { orderBy: { ord: 'asc' }, take: 10, select: { id: true, content: true, ord: true } },
+                chunks: { orderBy: { ord: 'asc' }, take: docChunkDepth, select: { id: true, content: true, ord: true } },
               },
             },
           },
@@ -238,13 +259,22 @@ export class BrainScopeService {
       .digest('hex')
       .slice(0, 16);
 
-    const derivedEvidence = docs.map((doc) => ({
-      docId: doc.id,
-      title: doc.title,
-      kbName: doc.kb?.name,
-      snippet: doc.chunks[0]?.content?.slice(0, 200) || '',
-      chunkOrd: doc.chunks[0]?.ord || 0,
-    }));
+    const derivedEvidence = docs.map((doc) => {
+      // A single 200-char head was too little to represent a document in the
+      // macro layer; carry the ordered heads of several chunks instead.
+      const heads = (doc.chunks || [])
+        .slice(0, 4)
+        .map((c: any) => String(c?.content || '').slice(0, 200).trim())
+        .filter(Boolean);
+      return {
+        docId: doc.id,
+        title: doc.title,
+        kbName: doc.kb?.name,
+        snippet: heads.join('\n').slice(0, 1000),
+        chunkOrd: doc.chunks[0]?.ord || 0,
+        chunkCount: (doc.chunks || []).length,
+      };
+    });
 
     // 1. Run GBrain's official cross-page synthesis separately inside every
     // stable Source. We never issue an unscoped global call: combining source
@@ -258,7 +288,7 @@ export class BrainScopeService {
     const synthesisBySource: Array<{ sourceKey: string; answer: string; status?: string; gaps?: unknown; warnings?: unknown; cost?: unknown }> = [];
     let synthesisFallbacks = 0;
     if (process.env.GBRAIN_SCOPE_SYNTHESIZE_ENABLED !== '0') {
-      const targetSources = sourceKeys.slice(0, 3);
+      const targetSources = sourceKeys.slice(0, synthesizeSourceLimit);
       for (const sourceKey of targetSources) {
         try {
           const result = await Promise.race([

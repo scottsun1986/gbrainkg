@@ -9,6 +9,9 @@ type RedisLike = {
   quit(): Promise<any>;
   on(event: string, handler: (...args: any[]) => void): any;
   status?: string;
+  publish?(channel: string, message: string): Promise<number>;
+  subscribe?(channel: string): Promise<number>;
+  connect?(): Promise<any>;
 };
 
 /**
@@ -29,26 +32,33 @@ type RedisLike = {
 export class RedisService implements OnModuleDestroy {
   private readonly logger = new Logger(RedisService.name);
   private client: RedisLike | null = null;
+  /** Dedicated connection for pub/sub; a subscribed connection cannot run commands. */
+  private subscriberClient: RedisLike | null = null;
+  private readonly instanceId = randomUUID();
   private connecting = false;
   private available = false;
   private readonly prefix = process.env.REDIS_KEY_PREFIX || 'llmwiki';
+
+  private async newClient(): Promise<RedisLike> {
+    const { default: Redis } = await import('ioredis');
+    return new Redis({
+      host: process.env.REDIS_HOST || '127.0.0.1',
+      port: Number(process.env.REDIS_PORT || 6379),
+      db: Number(process.env.REDIS_DB || 0),
+      ...(process.env.REDIS_PASS ? { password: process.env.REDIS_PASS } : {}),
+      lazyConnect: true,
+      maxRetriesPerRequest: 2,
+      enableOfflineQueue: true,
+      retryStrategy: (times: number) => Math.min(times * 500, 5000),
+    }) as unknown as RedisLike;
+  }
 
   private async connect(): Promise<RedisLike | null> {
     if (this.client) return this.client;
     if (this.connecting) return null;
     this.connecting = true;
     try {
-      const { default: Redis } = await import('ioredis');
-      const client = new Redis({
-        host: process.env.REDIS_HOST || '127.0.0.1',
-        port: Number(process.env.REDIS_PORT || 6379),
-        db: Number(process.env.REDIS_DB || 0),
-        ...(process.env.REDIS_PASS ? { password: process.env.REDIS_PASS } : {}),
-        lazyConnect: true,
-        maxRetriesPerRequest: 2,
-        enableOfflineQueue: true,
-        retryStrategy: (times: number) => Math.min(times * 500, 5000),
-      }) as unknown as RedisLike;
+      const client = await this.newClient();
       client.on?.('error', (err: Error) => {
         this.available = false;
         this.logger.debug(`Redis error (degrading to local-only behaviour): ${err.message}`);
@@ -108,6 +118,76 @@ export class RedisService implements OnModuleDestroy {
 
   isAvailable(): boolean {
     return this.available && this.client !== null;
+  }
+
+  /** Stable id for this process, used to ignore self-published messages. */
+  getInstanceId(): string {
+    return this.instanceId;
+  }
+
+  /**
+   * Publish a fire-and-forget message on a channel. Returns false when Redis is
+   * unavailable so callers keep their local-only behaviour instead of throwing.
+   */
+  async publish(channel: string, payload: unknown): Promise<boolean> {
+    const client = await this.connect();
+    const anyClient = client as any;
+    if (!client || typeof anyClient?.publish !== 'function') return false;
+    try {
+      await anyClient.publish(this.key(channel), JSON.stringify(payload));
+      return true;
+    } catch (err) {
+      this.logger.debug(
+        `Redis PUBLISH failed for ${channel}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Subscribe to a channel on a dedicated connection. A process keeps one
+   * subscriber connection; the handler runs synchronously per message so a slow
+   * consumer cannot stall the subscriber. Degrades to a no-op without Redis.
+   */
+  async subscribe(channel: string, handler: (message: string) => void): Promise<void> {
+    if (!this.subscriberClient) {
+      try {
+        const sub = await this.newClient();
+        sub.on?.('error', (err: Error) =>
+          this.logger.debug(`Redis subscriber error: ${err.message}`),
+        );
+        const anySub = sub as any;
+        if (typeof anySub.connect === 'function') {
+          try {
+            await anySub.connect();
+          } catch (err) {
+            this.logger.debug(
+              `Redis subscriber connect: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+        this.subscriberClient = sub;
+      } catch (err) {
+        this.logger.warn(
+          `Redis subscriber unavailable: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return;
+      }
+    }
+    const sub = this.subscriberClient as any;
+    if (typeof sub?.subscribe !== 'function') return;
+    const key = this.key(channel);
+    await sub.subscribe(key).catch(() => undefined);
+    sub.on?.('message', (ch: string, message: string) => {
+      if (ch !== key) return;
+      try {
+        handler(String(message));
+      } catch (err) {
+        this.logger.debug(
+          `Redis subscriber handler threw: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    });
   }
 
   private key(key: string): string {
@@ -224,6 +304,12 @@ export class RedisService implements OnModuleDestroy {
     } catch {
       // ignore
     }
+    try {
+      await this.subscriberClient?.quit();
+    } catch {
+      // ignore
+    }
     this.client = null;
+    this.subscriberClient = null;
   }
 }

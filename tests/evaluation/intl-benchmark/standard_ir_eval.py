@@ -151,20 +151,45 @@ def evaluate(
 ) -> dict[str, float]:
     """Macro-average each metric over queries present in qrels. Queries with no
     retrieved result score 0 (they are NOT skipped — dropping hard queries is
-    how a benchmark inflates itself)."""
+    how a benchmark inflates itself).
+
+    When a run covers only a *sample* of the qrels topics (e.g. an orchestrator
+    caps queries per dataset for runtime), the primary metrics still divide by
+    every qrels topic, so a 40-of-100 sample is reported at ~40% of its true
+    value. The same metrics are therefore also emitted with an ``__evaluated``
+    suffix, averaged over the topics that were actually submitted. That suffix
+    is the fair estimate of full-corpus quality for a sampled run; the primary
+    keys stay conservative and comparable with official TREC tooling.
+    """
     totals: dict[str, float] = {}
+    evaluated_totals: dict[str, float] = {}
     count = 0
+    evaluated_count = 0
     for qid, relevance in qrels.items():
         if not relevance:
             continue
         ranked = [doc for doc in run.get(qid, []) if not ignore_identical_ids or doc != qid]
         count += 1
+        submitted = qid in run
+        if submitted:
+            evaluated_count += 1
         for k in k_values:
             for name, func in METRIC_FUNCS.items():
-                totals[f"{name}@{k}"] = totals.get(f"{name}@{k}", 0.0) + func(ranked, relevance, k)
+                value = func(ranked, relevance, k)
+                totals[f"{name}@{k}"] = totals.get(f"{name}@{k}", 0.0) + value
+                if submitted:
+                    key = f"{name}@{k}__evaluated"
+                    evaluated_totals[key] = evaluated_totals.get(key, 0.0) + value
     if count == 0:
         return {}
-    return {key: value / count for key, value in totals.items()}
+    result: dict[str, float] = {key: value / count for key, value in totals.items()}
+    if evaluated_count:
+        result.update(
+            {key: value / evaluated_count for key, value in evaluated_totals.items()}
+        )
+        result["evaluated_queries"] = evaluated_count
+        result["total_queries"] = count
+    return result
 
 
 def parse_thresholds(values: list[str]) -> dict[str, float]:
@@ -215,6 +240,9 @@ def _selftest() -> int:
     # Missing query contributes 0, not excluded.
     partial = evaluate({"q1": {"d1": 1}, "q2": {"d3": 1}}, {"q1": ["d1"]}, [1])
     assert abs(partial["recall@1"] - 0.5) < 1e-9, partial
+    # …while the evaluated-only view estimates the sampled queries fairly.
+    assert abs(partial["recall@1__evaluated"] - 1.0) < 1e-9, partial
+    assert partial["evaluated_queries"] == 1 and partial["total_queries"] == 2, partial
     assert ndcg_at_k(["x"], {}, 10) == 0.0
     # Duplicate relevant ids must never create a metric greater than one.
     assert ndcg_at_k(["d1", "d1"], {"d1": 1}, 10) == 1.0

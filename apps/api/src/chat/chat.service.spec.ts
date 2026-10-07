@@ -4,6 +4,7 @@ import { countTables } from './table-count';
 import { Test, TestingModule } from "@nestjs/testing";
 import {
   ChatService,
+  deterministicChunkCap,
   hasPolarityConflict,
   isStrongNameEntity,
   smartTruncateChunkText,
@@ -1649,5 +1650,35 @@ describe('isStructuralHeadingLine (ordinal heading with nominal colon payload)',
     expect(isStructuralHeadingLine('- **作息安排分令时执行**：')).toBe(true);
     // 冒号后是取值区间 → 声明,交回门禁
     expect(isStructuralHeadingLine('**一、上班时间**：09:00-18:00')).toBe(false);
+  });
+});
+
+describe('deterministicChunkCap', () => {
+  it('defaults to a cap large enough for real regulation manuals', () => {
+    expect(deterministicChunkCap({} as NodeJS.ProcessEnv)).toBe(20_000);
+  });
+
+  it('is configurable via CHAT_DETERMINISTIC_MAX_CHUNKS', () => {
+    expect(
+      deterministicChunkCap({ CHAT_DETERMINISTIC_MAX_CHUNKS: '50000' } as NodeJS.ProcessEnv),
+    ).toBe(50_000);
+  });
+
+  it('falls back to the default on invalid or non-positive values', () => {
+    expect(
+      deterministicChunkCap({ CHAT_DETERMINISTIC_MAX_CHUNKS: 'abc' } as NodeJS.ProcessEnv),
+    ).toBe(20_000);
+    expect(
+      deterministicChunkCap({ CHAT_DETERMINISTIC_MAX_CHUNKS: '0' } as NodeJS.ProcessEnv),
+    ).toBe(20_000);
+    expect(
+      deterministicChunkCap({ CHAT_DETERMINISTIC_MAX_CHUNKS: '-5' } as NodeJS.ProcessEnv),
+    ).toBe(20_000);
+  });
+
+  it('clamps an absurdly high configuration to a hard ceiling', () => {
+    expect(
+      deterministicChunkCap({ CHAT_DETERMINISTIC_MAX_CHUNKS: '99999999' } as NodeJS.ProcessEnv),
+    ).toBe(200_000);
   });
 });

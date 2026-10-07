@@ -265,6 +265,27 @@ export function calibratedScoreOf(citation: any): number | null {
 }
 
 /**
+ * Detect structural (clause-shaped) query intents. Only meaningful for
+ * clause-shaped corpora: when `legalStructure` is false every structural flag
+ * is off, so a technical manual or English corpus never receives Chinese
+ * chapter/article heuristics (AGENTS.md §2). Pure and exported so the gating
+ * itself is regression-tested rather than only exercised through the full
+ * retrieval pipeline.
+ */
+export function detectStructuralQueryShape(
+  query: string,
+  legalStructure: boolean,
+): { isChapterListing: boolean; isArticleCountQuery: boolean } {
+  if (!legalStructure) return { isChapterListing: false, isArticleCountQuery: false };
+  const q = String(query || '');
+  return {
+    isChapterListing: /哪些章|所有章|全部章|章名|一共有哪些章/.test(q),
+    isArticleCountQuery:
+      /(?:一共|共有|总共|全部)?(?:有多少|几条|几章|哪些章节|全文结构).*(?:条|章|篇)/.test(q),
+  };
+}
+
+/**
  * Does this answer text read as a refusal / "not in the knowledge base" reply?
  *
  * Used to keep refusals out of the semantic cache. The original pattern was
@@ -1391,7 +1412,13 @@ export class RetrievalArmsService {
     })().catch(() => [] as any[]);
 
     try {
-      const isChapterListing = /哪些章|所有章|全部章|章名|一共有哪些章/.test(query);
+      // Corpus shape, not a business fact: 章/节/条 headings only exist in
+      // clause-shaped corpora. Enabling this for every deployment leaked the
+      // Chinese legal shape into generic retrieval (chapter boosts, article-
+      // count sorting). It is now opt-out per deployment via
+      // ENABLE_LEGAL_STRUCTURE_BOOST=0 (AGENTS.md §2).
+      const legalStructure = loadCorpusConfig().enableLegalStructureBoost;
+      const { isChapterListing } = detectStructuralQueryShape(query, legalStructure);
 
       // Tier 1: High Specificity Tokens (structural identifiers only). Domain
       // vocabulary is deployment-specific and comes from KnowledgeBase.domainTerms
@@ -1400,7 +1427,7 @@ export class RetrievalArmsService {
         /[\u0370-\u03FF]/.test(kw) || // Greek letters like ΨOmega-7
         /^[A-Za-z0-9]+-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(kw) || // EQ-0077, PRD-2026-8899, SUM-2026-5566, BIGDOC-VERIFY, WP-2026-R9
         /^[A-Za-z][A-Za-z_]*\d+$/i.test(kw) || // Compact identifiers, regardless of prefix
-        /第[0-9一二三四五六七八九十百]+[条款章节]/.test(kw),
+        (legalStructure && /第[0-9一二三四五六七八九十百]+[条款章节]/.test(kw)),
       );
 
       const chunkMap = new Map<string, any>();
@@ -1743,7 +1770,7 @@ export class RetrievalArmsService {
           keywords.some((k) => k.toLowerCase() === normalized)
         );
       });
-      const isArticleCountQuery = /(?:一共|共有|总共|全部)?(?:有多少|几条|几章|哪些章节|全文结构).*(?:条|章|篇)/.test(query);
+      const { isArticleCountQuery } = detectStructuralQueryShape(query, legalStructure);
 
       // Lexical channel scoring: local BM25 over the candidate pool (real
       // IDF/TF/length normalisation) replaces the fixed per-keyword points.

@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
-import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { AdminController } from './admin.controller';
 import { BullModule } from '@nestjs/bullmq';
 import { AppController } from './app.controller';
@@ -10,6 +10,7 @@ import { BrainCompilerModule } from './brain-compiler/brain-compiler.module';
 import { PermissionModule } from './permission/permission.module';
 import { IngestionModule } from './ingestion/ingestion.module';
 import { AuthModule } from './auth/auth.module';
+import { AppThrottlerGuard } from './auth/app-throttler.guard';
 import { ModelConfigModule } from './model-config.module';
 import { KnowledgeGraphController } from './knowledge-graph.controller';
 import { AuditModule } from './audit/audit.module';
@@ -68,7 +69,7 @@ import { VersionChainModule } from './ingestion/version-chain.module';
     TenantContextService,
     {
       provide: APP_GUARD,
-      useClass: ThrottlerGuard,
+      useClass: AppThrottlerGuard,
     },
   ],
 })

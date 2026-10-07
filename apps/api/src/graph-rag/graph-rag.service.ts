@@ -23,6 +23,28 @@ export function routeGraphQuery(query: string): GraphQueryRoute {
   return 'local_fact';
 }
 
+/**
+ * LLM deep-extraction budget. The first release fixed 30% / 20 chunks, weaker
+ * than Microsoft GraphRAG's full extraction (regex carried the rest). Now
+ * deployment-configurable with a deeper default; GRAPH_LLM_FULL_EXTRACTION=1
+ * processes every chunk.
+ */
+export function resolveGraphLlmExtraction(
+  env: NodeJS.ProcessEnv = process.env,
+): { sampleRate: number; maxLlmChunks: number } {
+  const full = String(env.GRAPH_LLM_FULL_EXTRACTION ?? '').toLowerCase() === '1';
+  const rawRate = Number(env.GRAPH_LLM_SAMPLE_RATE ?? (full ? 1 : 0.6));
+  const rawMax = Number(env.GRAPH_LLM_MAX_CHUNKS ?? (full ? 100000 : 60));
+  return {
+    sampleRate:
+      Number.isFinite(rawRate) && rawRate > 0 ? Math.min(rawRate, 1) : 0.6,
+    maxLlmChunks:
+      Number.isFinite(rawMax) && rawMax > 0
+        ? Math.min(Math.floor(rawMax), 100000)
+        : 60,
+  };
+}
+
 /** 图谱探针是否对该查询启用。GRAPHRAG_ROUTE=always|off|auto（默认 auto：仅多跳）。 */
 export function graphProbeEnabledForQuery(query: string): boolean {
   const mode = String(process.env.GRAPHRAG_ROUTE || 'auto').toLowerCase();
@@ -143,7 +165,7 @@ export class GraphRagService {
       this.logger.log(`Incremental graph ${kbId}: extracted=${result.extracted}, changed=${result.changed}`);
       return;
     }
-    const docs = await this.prisma.document.findMany({ where:{ kbId,status:'published' }, select:{ id:true,title:true,version:true,chunks:{ orderBy:{ ord:'asc' },take:Number(process.env.AUTO_GRAPH_EXTRACT_MAX_CHUNKS || 50), select:{ id:true,content:true,metadata:true } } }, orderBy:{ id:'asc' } });
+    const docs = await this.prisma.document.findMany({ where:{ kbId,status:'published' }, select:{ id:true,title:true,version:true,chunks:{ orderBy:{ ord:'asc' },take:Number(process.env.AUTO_GRAPH_EXTRACT_MAX_CHUNKS || 200), select:{ id:true,content:true,metadata:true } } }, orderBy:{ id:'asc' } });
     const config = await this.modelConfigService?.getDefault('llm');
     const llm = config ? { baseUrl:config.provider.baseUrl,apiKey:config.provider.apiKey || '',modelName:config.modelName } : null;
     const inputs = [];
@@ -591,8 +613,9 @@ ${chunkContent.slice(0, 4000)}
     }
 
     // Step 2: Select chunks for LLM deep extraction
-    const sampleRate = options.llmSampleRate ?? 0.3; // Process 30% of chunks with LLM
-    const maxLlmChunks = options.maxLlmChunks ?? 20;
+    const defaults = resolveGraphLlmExtraction();
+    const sampleRate = options.llmSampleRate ?? defaults.sampleRate;
+    const maxLlmChunks = options.maxLlmChunks ?? defaults.maxLlmChunks;
     
     // Prioritize chunks with high entity density (more regex matches) or tables
     const scoredChunks = chunks.map((chunk, idx) => {
