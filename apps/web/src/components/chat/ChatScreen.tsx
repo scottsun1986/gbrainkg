@@ -696,7 +696,7 @@ export function ChatScreen(){
 
   return (
     <div className="chat">
-      {convOpen && <div className="conv-backdrop" onClick={() => setConvOpen(false)} />}
+      {convOpen && <div className="conv-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setConvOpen(false); }} />}
       <div className={`conv-side ${convOpen ? 'open' : ''}`}>
         <div className="scope">
           <div className="scope-label">查询范围</div>

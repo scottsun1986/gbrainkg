@@ -32,7 +32,7 @@ export function SideNav({
   };
   return (
     <>
-      {open && <div className="side-backdrop" onClick={onClose} />}
+      {open && <div className="side-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }} />}
       <aside className={`side ${open ? 'open' : ''} ${collapsed ? 'collapsed' : ''}`}>
         <div className="brand">
           <span className="brand-mark" title="百纳知识底座">百</span>

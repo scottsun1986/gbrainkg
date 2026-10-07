@@ -492,7 +492,7 @@ export function UniversalDocumentViewer({ preview, onClose }: UniversalDocumentV
   const formatBadgeColor = isWord ? '#2563eb' : isPdf ? '#dc2626' : isExcel ? '#16a34a' : isPpt ? '#ea580c' : '#d97706';
 
   return (
-    <div className={`modal-mask ${docked ? 'docked-mask' : ''}`} onClick={onClose} style={{ zIndex: 9999 }}>
+    <div className={`modal-mask ${docked ? 'docked-mask' : ''}`} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }} style={{ zIndex: 9999 }}>
       <div
         className={`modal preview-modal ${fullscreen ? 'fullscreen' : ''} ${docked ? 'docked' : ''}`}
         onClick={(e) => e.stopPropagation()}

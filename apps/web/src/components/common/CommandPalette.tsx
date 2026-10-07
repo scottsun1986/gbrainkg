@@ -81,7 +81,7 @@ export function CommandPalette({ open, onClose, onNav, onNewChat, onNewKb, onUpl
   if (!open) return null;
   let cursor = 0;
   return (
-    <div className="cmdk-mask" onClick={onClose}>
+    <div className="cmdk-mask" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="cmdk" onClick={(e) => e.stopPropagation()}>
         <div className="cmdk-input">
           <Icon name="search" size={16} color="var(--ink-3)"/>

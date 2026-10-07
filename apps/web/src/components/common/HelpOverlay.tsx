@@ -99,7 +99,7 @@ export function HelpOverlay({ open, onClose }: HelpOverlayProps) {
   ];
 
   return (
-    <div className="cmdk-mask" onClick={onClose} style={{ zIndex: 9999 }}>
+    <div className="cmdk-mask" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }} style={{ zIndex: 9999 }}>
       <div className="help-overlay" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '780px', width: '90vw', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
         <div className="help-head" style={{ borderBottom: '1px solid var(--border)', paddingBottom: '12px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
