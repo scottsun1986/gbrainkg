@@ -68,6 +68,11 @@ describe('AppThrottlerGuard login bypass', () => {
     expect(await skip(makeGuard(), ctx)).toBe(false);
   });
 
+  it.each(['/api/v1/auth/login/admin', '/api/v1/files/auth/login', '/api/v1/kbs?redirect=/auth/login'])('does not bypass a route merely containing login text: %s', async url => {
+    process.env.AUTH_LOGIN_THROTTLE_BYPASS = '1';
+    expect(await skip(makeGuard(), makeContext({ url, ip: '127.0.0.1' }))).toBe(false);
+  });
+
   it('keeps the per-IP list inert in production', async () => {
     process.env.NODE_ENV = 'production';
     delete process.env.AUTH_LOGIN_THROTTLE_BYPASS;

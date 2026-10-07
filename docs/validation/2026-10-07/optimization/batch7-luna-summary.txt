@@ -1,0 +1,6 @@
+Verification passed on the current checkout:
+
+- `pnpm --filter api build` — exit 0.
+- The requested focused Jest command — exit 0; 3 suites and 25 tests passed.
+
+Stdout and stderr are saved in [batch7-api-build.log](/home/scottsun/gbrainkg/docs/validation/2026-10-07/optimization/batch7-api-build.log) and [batch7-focused.log](/home/scottsun/gbrainkg/docs/validation/2026-10-07/optimization/batch7-focused.log). Exact exit statuses are in the corresponding `.exit` files. No source or test files were modified.

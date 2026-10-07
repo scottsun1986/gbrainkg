@@ -330,6 +330,52 @@ describe("BrainCompilerService coalesced source sync", () => {
   });
 });
 
+describe('BrainCompilerService complete source replacement', () => {
+  const fixture = (count: number) => {
+    const docs = Array.from({ length: count }, (_, index) => ({ id: `doc-${String(index).padStart(4, '0')}`, kbId: 'kb', title: `Document ${index}`, version: 1, updatedAt: new Date(), chunks: [], kb: { name: 'KB', type: 'org' } }));
+    const pages = new Set<string>(['docs/orphan']);
+    const mappings = new Set<string>();
+    const db = {
+      brainSource: { upsert: jest.fn().mockResolvedValue({ id: 'source' }), update: jest.fn() },
+      brainSourceDocument: { findMany: jest.fn().mockResolvedValue([]), upsert: jest.fn(async (args: any) => { mappings.add(args.create.documentId); }), deleteMany: jest.fn() },
+      document: { findMany: jest.fn(async (args: any) => {
+        if (args.select) return docs;
+        expect(args.orderBy).toEqual({ id: 'asc' });
+        const start = args.cursor ? docs.findIndex(doc => doc.id === args.cursor.id) + 1 : 0;
+        return docs.slice(start, start + args.take);
+      }) },
+    };
+    const adapter = {
+      initializeSource: jest.fn(),
+      rebuild: jest.fn(async (_source: string, evidence: any[]) => { pages.clear(); evidence.forEach(item => pages.add(item.slug)); }),
+      ingest: jest.fn(async (_source: string, evidence: any[]) => { evidence.forEach(item => pages.add(item.slug)); }),
+    };
+    const service = new BrainCompilerService({} as any, {} as any, {} as any, {} as any, {} as any, adapter as any);
+    (service as any).prisma = db;
+    const run = () => (service as any).syncSourceDefinition({ sourceKey: 'source', kind: 'org', scopeKey: 'kb:kb', kbIds: ['kb'] }, undefined, [], { forceFull: true });
+    return { docs, pages, mappings, db, adapter, run };
+  };
+  it('resets once then adds the second batch, preserving all 501 pages and unique joins', async () => {
+    const { run, adapter, pages, mappings, docs, db } = fixture(501);
+    const result = await run();
+    expect(result.synced).toBe(501);
+    expect(adapter.rebuild).toHaveBeenCalledTimes(1);
+    expect(adapter.rebuild.mock.calls[0][1]).toHaveLength(500);
+    expect(adapter.ingest).toHaveBeenCalledTimes(1);
+    expect(adapter.ingest.mock.calls[0][1]).toHaveLength(1);
+    expect([...pages].sort()).toEqual(docs.map(doc => `docs/${doc.id}`));
+    expect(mappings.size).toBe(501);
+    expect(db.brainSourceDocument.upsert).toHaveBeenCalledTimes(501);
+  });
+  it('clears orphan pages when a full source inventory is empty', async () => {
+    const { run, adapter, pages } = fixture(0);
+    await run();
+    expect(adapter.rebuild).toHaveBeenCalledWith('gbrain://source/source', []);
+    expect(adapter.ingest).not.toHaveBeenCalled();
+    expect(pages.size).toBe(0);
+  });
+});
+
 describe("BrainCompilerService query freshness", () => {
   it('checks permissions once per selected-source request and rereads them on the next request', async () => {
     const permission = { getVisibleKnowledgeBases: jest.fn().mockResolvedValue(['kb-1']) };

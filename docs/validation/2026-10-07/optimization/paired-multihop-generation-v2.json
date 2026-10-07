@@ -1,0 +1,542 @@
+{
+  "contract": "paired-oracle-multihop-generation-v1",
+  "createdAt": "2026-10-07T03:29:36.374Z",
+  "mode": "oracle-gold-context",
+  "limits": [
+    "Gold documents are provided directly; retrieval quality and permission behavior are not measured.",
+    "Citation recall measures source-marker coverage, not entailment of each reasoning link.",
+    "Full-answer token F1 is local diagnostic normalization, not official benchmark scoring."
+  ],
+  "model": "deepseek-chat",
+  "routeHash": "5abe20d7d3d56ed5cd86f95d28d3e712ce59ab9161922170c78a4cfc18eaaf0f",
+  "baselineGit": "574a15a7893731eaa23c80edb85a5cdcf1b88c52",
+  "baselinePromptHash": "5e98a9ffbf1bf7c00f68916cd45b4dca080108e0ee9aeb4dd23fc9ac46e7acca",
+  "candidatePromptHash": "3eebff9f53df10ffa819dc9f4117d1d37b08520676606796b2a656518c6a548d",
+  "inputHash": "c54f4962105c2fea0958e15458c45d79b81b88cb7042ddc3c5f0fd36259c1571",
+  "skipped": [],
+  "results": [
+    {
+      "dataset": "hotpot",
+      "qid": "5a85fb085542994775f606de",
+      "question": "What is the name of the executive producer of the film that has a score composed by Jerry Goldsmith?",
+      "goldAnswer": "Ronald Shusett",
+      "goldSources": [
+        "Alien (film)",
+        "Alien (soundtrack)"
+      ],
+      "contextHash": "37e3f29cc6f281306f0054dd51cade21a249a7569e8feec7ac022c3b7015c60e",
+      "baseline": {
+        "answer": "Ronald Shusett is the executive producer of the film whose score was composed by Jerry Goldsmith [1][2].\n\nThe film is *Alien* (1979), directed by Ridley Scott, and its score was composed by Jerry Goldsmith [1][2]. Dan O'Bannon wrote the screenplay from a story he co-authored with Ronald Shusett, who served as executive producer [1].",
+        "fullAnswerF1": 0.07999999999999999,
+        "firstSentenceF1": 0.25,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 1155
+      },
+      "candidate": {
+        "answer": "Shusett is the executive producer of the film whose score was composed by Jerry Goldsmith [1][2]. Goldsmith composed the score for *Alien* [2], and Shusett was the executive producer of *Alien* [1].",
+        "fullAnswerF1": 0.07407407407407407,
+        "firstSentenceF1": 0.13333333333333336,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 944
+      }
+    },
+    {
+      "dataset": "hotpot",
+      "qid": "5ae1e22a5542997f29b3c160",
+      "question": "The role of \"Celene\" in the film \"Walk All over Me\" was played by an actress that voices what role in the \"Starcraft 2\" triolgy?",
+      "goldAnswer": "Sarah Kerrigan",
+      "goldSources": [
+        "Tricia Helfer",
+        "Walk All over Me"
+      ],
+      "contextHash": "b8d5629e70e2865c392b2b2d0e9be80bc3cb1e99259686e43e3521e7a2abf7de",
+      "candidate": {
+        "answer": "Tricia Helfer, who plays \"Celene\" in *Walk All Over Me* [2], voices Sarah Kerrigan, the Queen of Blades, in the \"Starcraft 2\" trilogy [1].",
+        "fullAnswerF1": 0.18181818181818182,
+        "firstSentenceF1": 0.18181818181818182,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 942
+      },
+      "baseline": {
+        "answer": "Sarah Kerrigan, the Queen of Blades [1].\n\nTricia Helfer played \"Celene\" in *Walk All Over Me* [2], and she is also known for voicing Sarah Kerrigan, the Queen of Blades, in the *Starcraft 2* trilogy [1].",
+        "fullAnswerF1": 0.125,
+        "firstSentenceF1": 0.5714285714285715,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 1028
+      }
+    },
+    {
+      "dataset": "hotpot",
+      "qid": "5ab700ca5542991d32223736",
+      "question": "Which other film did one of the supporting cast in \"Sleepless in Seattle\" appear?",
+      "goldAnswer": "\"Now and Then\" (1995)",
+      "goldSources": [
+        "Rita Wilson",
+        "Sleepless in Seattle"
+      ],
+      "contextHash": "e2da6eb42b50545cd843ef69ea57ffb39b7b507bb8f5040054f8b11c09d5f461",
+      "baseline": {
+        "answer": "Rita Wilson, a supporting cast member in \"Sleepless in Seattle,\" appeared in \"Now and Then\" (1995) [1]. She also appeared in \"Jingle All the Way\" (1996), \"The Story of Us\" (1999), and \"Runaway Bride\" (1999) [1].\n\nWilson is listed among the supporting cast of \"Sleepless in Seattle\" (1993), alongside Bill Pullman, Ross Malinger, Rob Reiner, Rosie O'Donnell, Gaby Hoffmann, and Victor Garber [2]. Source 1 documents her other film appearances, including \"Sleepless in Seattle\" (1993) itself [1].\n\nThe materials do not record other films for the remaining supporting cast members (Bill Pullman, Ross Malinger, Rob Reiner, Rosie O'Donnell, Gaby Hoffmann, Victor Garber) [2].",
+        "fullAnswerF1": 0.08163265306122448,
+        "firstSentenceF1": 0.4210526315789474,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 1430
+      },
+      "candidate": {
+        "answer": "Rita Wilson, a supporting cast member in \"Sleepless in Seattle,\" appeared in \"Runaway Bride\" (1999) [1][2]. She also appeared in \"Sleepless in Seattle\" (1993), \"Now and Then\" (1995), \"Jingle All the Way\" (1996), and \"The Story of Us\" (1999) [1].",
+        "fullAnswerF1": 0.20512820512820512,
+        "firstSentenceF1": 0,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 1209
+      }
+    },
+    {
+      "dataset": "hotpot",
+      "qid": "5a716ec85542994082a3e82d",
+      "question": "Which movie was filmed first \"The Guest\" or \"You're Next\"?",
+      "goldAnswer": "You're Next",
+      "goldSources": [
+        "The Guest (film)",
+        "You're Next"
+      ],
+      "contextHash": "3d644535835a6e475b7d76e75ab939db072e2a497ea8fec12648a9ab839ebe14",
+      "candidate": {
+        "answer": "\"You're Next\" was filmed first, as it is a 2011 film [2], while \"The Guest\" is a 2014 film [1]. Both were directed by Adam Wingard and written by Simon Barrett, who previously collaborated on \"You're Next\" (2011) before \"The Guest\" [1].",
+        "fullAnswerF1": 0.15,
+        "firstSentenceF1": 0.3157894736842105,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 957
+      },
+      "baseline": {
+        "answer": "\"You're Next\" was filmed first, as it is a 2011 American slasher film [2], while \"The Guest\" is a 2014 American action horror-thriller film [1].\n\nBoth were directed by Adam Wingard and written by Simon Barrett, who previously collaborated on \"You're Next\" (2011) before \"The Guest\" [1].",
+        "fullAnswerF1": 0.13043478260869565,
+        "firstSentenceF1": 0.24000000000000002,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 759
+      }
+    },
+    {
+      "dataset": "hotpot",
+      "qid": "5a87081755429960ec39b6fe",
+      "question": "Jessica Jones is a television series created for Netflix, the second in the series of the shows that lead to \"The Defenders\" miniseries after what show released on Netflix earlier?",
+      "goldAnswer": "Daredevil",
+      "goldSources": [
+        "Jessica Jones (TV series)",
+        "The Defenders (miniseries)"
+      ],
+      "contextHash": "7d268c1d131c7b08b465b5ec2a5b22f3f49b293349f71ec1c6f81e60a74d1407",
+      "baseline": {
+        "answer": "Daredevil is the show released on Netflix earlier, as Jessica Jones is the second in a series of shows that lead to \"The Defenders\" crossover miniseries [1].\n\nThe reference materials confirm that Jessica Jones is the second in a series of shows leading to \"The Defenders\" [1], and that The Defenders is the culmination of a series of interconnected shows from Marvel and Netflix based on Daredevil, Jessica Jones, Luke Cage and Iron Fist [2]. However, the materials do not explicitly name the first show in that sequence; the identity of the earlier show is not recorded in the provided sources.",
+        "fullAnswerF1": 0.024096385542168676,
+        "firstSentenceF1": 0.08695652173913045,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 1222
+      },
+      "candidate": {
+        "answer": "The reference materials do not record which show was released on Netflix earlier than *Jessica Jones*; they only confirm that *Jessica Jones* is \"the second in a series of shows that lead to 'The Defenders' crossover miniseries\" [1], and that *The Defenders* is \"the culmination of a series of interconnected shows from Marvel and Netflix\" [2]. The identity of the first show in that series is not stated in the provided materials.",
+        "fullAnswerF1": 0,
+        "firstSentenceF1": 0,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 1129
+      }
+    },
+    {
+      "dataset": "hotpot",
+      "qid": "5a80071f5542992bc0c4a684",
+      "question": "Alice David is the voice of Lara Croft in a video game developed by which company ?",
+      "goldAnswer": "Crystal Dynamics",
+      "goldSources": [
+        "Alice David",
+        "Tomb Raider (2013 video game)"
+      ],
+      "contextHash": "c272480ef73df271f338cfd2f40483c813f194dbe3099f8f2ea2d28e50948703",
+      "candidate": {
+        "answer": "Alice David is the voice of Lara Croft in the French dub of the video game \"Tomb Raider\" [1], which was developed by Crystal Dynamics [2].",
+        "fullAnswerF1": 0.17391304347826084,
+        "firstSentenceF1": 0.17391304347826084,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 910
+      },
+      "baseline": {
+        "answer": "Alice David is the voice of the French dub of Lara Croft in the video game \"Tomb Raider\" [1], which was developed by Crystal Dynamics [2].",
+        "fullAnswerF1": 0.17391304347826084,
+        "firstSentenceF1": 0.17391304347826084,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 899
+      }
+    },
+    {
+      "dataset": "hotpot",
+      "qid": "5ade25ed5542997c77aded70",
+      "question": "During what war were the Russia-United Kingdom relations in a state of rivalry after the abdication of Emperor Nicholas II? ",
+      "goldAnswer": "the Cold War (1947–91)",
+      "goldSources": [
+        "Russian Revolution",
+        "Russia–United Kingdom relations"
+      ],
+      "contextHash": "19f665e96c3018357196fa2c7e325803f9656826f920c554f78bc332503dd7a0",
+      "baseline": {
+        "answer": "The Russia–United Kingdom relations were strained by the Russian Revolution of 1917, which followed the abdication of Emperor Nicholas II [1][2]. The materials do not record a specific war in which the two were in a state of rivalry after that abdication; they note only that the Russians and British were allies again in World Wars I and II, though relations were strained by the 1917 revolution [2].",
+        "fullAnswerF1": 0.03225806451612903,
+        "firstSentenceF1": 0,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 1185
+      },
+      "candidate": {
+        "answer": "The Russia–United Kingdom relations were strained by the Russian Revolution of 1917, which followed the abdication of Emperor Nicholas II [1][2]. The materials do not record a specific war during which those relations were in a state of rivalry after that abdication; they note only that the two were allies in World Wars I and II and at sword's point during the Cold War (1947–91) [2].",
+        "fullAnswerF1": 0.12698412698412698,
+        "firstSentenceF1": 0,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 837
+      }
+    },
+    {
+      "dataset": "hotpot",
+      "qid": "5a7b63eb55429931da12ca7e",
+      "question": "What city does Paul Clyne and David Soares have in common?",
+      "goldAnswer": "New York",
+      "goldSources": [
+        "David Soares",
+        "Paul Clyne"
+      ],
+      "contextHash": "ff887dd50ad0def83c006f951d0d349197ce8e4408a5e5459d3285e19670406d",
+      "candidate": {
+        "answer": "Albany, New York [1][2].\n\nDavid Soares is the Albany County, N.Y. District Attorney [1], and Paul Clyne was the District Attorney of Albany County, New York from January 2001 through December 2004 [2].",
+        "fullAnswerF1": 0.12903225806451613,
+        "firstSentenceF1": 0.8,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 529
+      },
+      "baseline": {
+        "answer": "Albany, New York [1][2].\n\nDavid Soares is the Albany County, N.Y. District Attorney [1], and Paul Clyne was the District Attorney of Albany County, New York from January 2001 through December 2004 [2].",
+        "fullAnswerF1": 0.12903225806451613,
+        "firstSentenceF1": 0.8,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 844
+      }
+    },
+    {
+      "dataset": "hotpot",
+      "qid": "5adf1b8a5542995534e8c750",
+      "question": "What band did Gator Country guitarist that co-wrote Bloody Reunion come from?",
+      "goldAnswer": "Molly Hatchet",
+      "goldSources": [
+        "Duane Roland",
+        "Gator Country"
+      ],
+      "contextHash": "a5a7e6a933215750706d14920a1a934b0d818586a936e774d1bd17d40f568f85",
+      "baseline": {
+        "answer": "Duane Roland, the Gator Country guitarist who co-wrote \"Bloody Reunion,\" came from the Southern hard rock band Molly Hatchet [1]. He was a member of Molly Hatchet from its founding in the mid-1970s until his departure in 1990, and he is credited with co-writing some of the band's biggest hits, including \"Bloody Reunion\" and \"Boogie No More\" [1]. Gator Country itself was formed in Davie, Florida, in 2005 by several ex-members of Molly Hatchet, including guitarist Duane Roland [2].",
+        "fullAnswerF1": 0.05128205128205127,
+        "firstSentenceF1": 0.19999999999999998,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 1195
+      },
+      "candidate": {
+        "answer": "Molly Hatchet [1][2].\n\nDuane Roland was the Gator Country guitarist who co-wrote \"Bloody Reunion\" [1], and he was a guitarist for Molly Hatchet from its mid-1970s founding until 1990 [1].",
+        "fullAnswerF1": 0.13793103448275862,
+        "firstSentenceF1": 1,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 932
+      }
+    },
+    {
+      "dataset": "hotpot",
+      "qid": "5ae7535c5542997b22f6a6d8",
+      "question": "The 53rd National Hockey League All-Star Game took place at the indoor arena that was completed in what year?",
+      "goldAnswer": "1998",
+      "goldSources": [
+        "53rd National Hockey League All-Star Game",
+        "BB&amp;T Center (Sunrise, Florida)"
+      ],
+      "contextHash": "4700dbba805192881a5b2e17d0f104e4469893354b317d48b41b83120e04cfa1",
+      "candidate": {
+        "answer": "1998 [2]. The 53rd National Hockey League All-Star Game was held at the Office Depot Center in Sunrise, Florida [1], and the BB&T Center — previously known as the Office Depot Center — was completed in 1998 [2].",
+        "fullAnswerF1": 0.0625,
+        "firstSentenceF1": 1,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 729
+      },
+      "baseline": {
+        "answer": "1998 [2]. The 53rd National Hockey League All-Star Game was held at the Office Depot Center in Sunrise, Florida [1], and that arena — now known as the BB&T Center — was completed in 1998 [2].",
+        "fullAnswerF1": 0.06451612903225806,
+        "firstSentenceF1": 1,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 926
+      }
+    },
+    {
+      "dataset": "musique",
+      "qid": "2hop__804417_126089",
+      "question": "Who was in charge of the place where Bergen is located?",
+      "goldAnswer": "Johan Remkes",
+      "goldSources": [
+        "Bergen, North Holland",
+        "North Holland"
+      ],
+      "contextHash": "4f7661cc2e995b4fcade0b2bb99d8cc694dcc8fb65d2387d92d2dd22f0f8e54f",
+      "baseline": {
+        "answer": "Johan Remkes was the King's Commissioner of North Holland, the province where Bergen is located, serving since 2010 [2].\n\nBergen is a municipality and town in the Netherlands, in the province of North Holland [1]. The capital and seat of the provincial government of North Holland is Haarlem, and the province's largest city is Amsterdam [2].",
+        "fullAnswerF1": 0.08163265306122448,
+        "firstSentenceF1": 0.21052631578947367,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 911
+      },
+      "candidate": {
+        "answer": "Johan Remkes was the King's Commissioner of North Holland, the province where Bergen is located, serving since 2010 [1][2].\n\nBergen is a municipality and town in the province of North Holland [1], and the King's Commissioner of North Holland is Johan Remkes, serving since 2010 [2].",
+        "fullAnswerF1": 0.09523809523809523,
+        "firstSentenceF1": 0.21052631578947367,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 866
+      }
+    },
+    {
+      "dataset": "musique",
+      "qid": "3hop2__668732_223623_162182",
+      "question": "In what region of the country where An Phu is located is John Phan's birthplace?",
+      "goldAnswer": "South Central Coast",
+      "goldSources": [
+        "An Phú District",
+        "John Phan",
+        "South Central Coast"
+      ],
+      "contextHash": "ff303a49467d09abb9a4eba398fdd8b66c2c265da6c2e6af3a9b918c31b5eca8",
+      "candidate": {
+        "answer": "Da Nang is in the South Central Coast region of Vietnam [2][3]. John Phan was born in Da Nang, Vietnam [2], and the South Central Coast region consists of the independent municipality of Đà Nẵng and seven other provinces [3].",
+        "fullAnswerF1": 0.1621621621621622,
+        "firstSentenceF1": 0.4615384615384615,
+        "goldSourceCitationRecall": 0.6666666666666666,
+        "latencyMs": 1151
+      },
+      "baseline": {
+        "answer": "John Phan's birthplace, Da Nang, is in the South Central Coast region of Vietnam [2][3]. An Phú is a district of An Giang Province in the Mekong Delta region [1], while the South Central Coast consists of the independent municipality of Đà Nẵng and seven other provinces [3].",
+        "fullAnswerF1": 0.14285714285714288,
+        "firstSentenceF1": 0.35294117647058826,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 915
+      }
+    },
+    {
+      "dataset": "musique",
+      "qid": "4hop2__103790_14670_8987_8529",
+      "question": "A country's military branch, the equivalent of which in the US contains the Air Defense Artillery, was unprepared for the invasion of Ivo Werner's country. When was the word \"Slavs\" used in the national anthem of the unprepared country?",
+      "goldAnswer": "1943–1992",
+      "goldSources": [
+        "Ivo Werner",
+        "Josip Broz Tito",
+        "Slavs",
+        "United States Army"
+      ],
+      "contextHash": "56dcd0290996b7639262e6a8e8ea056fefbe6a85f8fd81c873224f157bcd0ca4",
+      "baseline": {
+        "answer": "The word \"Slavs\" was used in the national anthem of Yugoslavia (1943–1992) and the Federal Republic of Yugoslavia (1992–2003), later Serbia and Montenegro (2003–2006) [3].\n\nThe chain of facts is: Ivo Werner was originally from Czechoslovakia [1], and in April 1969 Tito removed generals Ivan Gošnjak and Rade Hamović because of the unpreparedness of the Yugoslav army to respond to an invasion similar to that of Czechoslovakia [2]. The Yugoslav army is the military branch in question, and the \"Slavs\" anthem usage for Yugoslavia is recorded as 1943–1992, with the successor Federal Republic of Yugoslavia from 1992–2003 and Serbia and Montenegro from 2003–2006 [3].\n\nThe materials do not record a specific US Army branch as the direct \"equivalent\" of the Yugoslav army; Source 4 only lists Air Defense Artillery among the U.S. Army's major branches [4].",
+        "fullAnswerF1": 0.032,
+        "firstSentenceF1": 0.15384615384615385,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 1492
+      },
+      "candidate": {
+        "answer": "The word \"Slavs\" was used in the national anthem of Yugoslavia (1943–1992) and the Federal Republic of Yugoslavia (1992–2003), later Serbia and Montenegro (2003–2006) [3]. The Yugoslav army was unprepared to respond to an invasion of Yugoslavia, which led Tito to remove generals Ivan Gošnjak and Rade Hamović in April 1969 [2], and the U.S. Army branch containing the Air Defense Artillery is the Army itself [4]. However, the materials do not establish that Ivo Werner's country (Czechoslovakia) is the same as the unprepared country (Yugoslavia), so the chain linking Werner to Yugoslavia is not supported [1][2].",
+        "fullAnswerF1": 0.04545454545454545,
+        "firstSentenceF1": 0.15384615384615385,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 1586
+      }
+    },
+    {
+      "dataset": "musique",
+      "qid": "2hop__109131_343058",
+      "question": "Who is the spouse of the creator of Absolutely Fabulous?",
+      "goldAnswer": "Adrian Edmondson",
+      "goldSources": [
+        "Absolutely Fabulous",
+        "Mirrorball (TV pilot)"
+      ],
+      "contextHash": "bf06335cfb3afbaf447c4cb76a98331f139df8e437fd23b7c39bbd799c234b6e",
+      "candidate": {
+        "answer": "The reference materials do not record the spouse of Jennifer Saunders, the creator of *Absolutely Fabulous* [1]. They confirm only that *Absolutely Fabulous* was created by, written by and starring Jennifer Saunders [1], and that *Mirrorball* was written by Jennifer Saunders [2].",
+        "fullAnswerF1": 0,
+        "firstSentenceF1": 0,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 1026
+      },
+      "baseline": {
+        "answer": "The reference materials do not record the spouse of Jennifer Saunders, the creator of *Absolutely Fabulous* [1]. They confirm only that she created, wrote, and starred in the sitcom, which is based on the 1990 \"French & Saunders\" sketch \"Modern Mother and Daughter\" [1].",
+        "fullAnswerF1": 0,
+        "firstSentenceF1": 0,
+        "goldSourceCitationRecall": 0.5,
+        "latencyMs": 932
+      }
+    },
+    {
+      "dataset": "musique",
+      "qid": "4hop3__312119_132409_371500_35031",
+      "question": "Among the top five largest urban areas in the state where Getting Away with Murder's performer was formed, where does Veoh's headquarters city rank?",
+      "goldAnswer": "third-largest",
+      "goldSources": [
+        "Getting Away with Murder (song)",
+        "Papa Roach",
+        "San Diego",
+        "Veoh"
+      ],
+      "contextHash": "a1ad4179857e86faf3a14e8230ee69b41dbf906ef0b9c1628bf8610b9b23ac17",
+      "baseline": {
+        "answer": "Veoh's headquarters city, San Diego, ranks third-largest urban area in California [3][4]. Papa Roach, the performer of \"Getting Away with Murder,\" was formed in Vacaville, California [1][2], and San Diego's urban area had a total population of 2,956,746, making it the third-largest urban area in the state, after the Los Angeles metropolitan area and San Francisco metropolitan area [3].\n\nThe materials do not record a ranking of the top five largest urban areas in California, so the specific position within a top-five list is not documented.",
+        "fullAnswerF1": 0.04878048780487806,
+        "firstSentenceF1": 0.2666666666666667,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 1156
+      },
+      "candidate": {
+        "answer": "Veoh's headquarters city, San Diego, ranks third-largest urban area in California [3][4].\n\nThe chain: \"Getting Away with Murder\" is by Papa Roach [1], which was formed in Vacaville, California [2]; San Diego's urban area is the third-largest in the state, after the Los Angeles and San Francisco metropolitan areas [3], and Veoh is based in San Diego, California [4].",
+        "fullAnswerF1": 0.07142857142857142,
+        "firstSentenceF1": 0.2666666666666667,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 1128
+      }
+    },
+    {
+      "dataset": "musique",
+      "qid": "2hop__678516_179720",
+      "question": "Who was married to the creator of Ruby Loftus Screwing a Breech Ring?",
+      "goldAnswer": "Harold Knight",
+      "goldSources": [
+        "Ruby Loftus Screwing a Breech Ring",
+        "Staithes group"
+      ],
+      "contextHash": "c6416a1e8f3232daea9b59aebdee955b83042fde03b0e6289b1e313132021d07",
+      "candidate": {
+        "answer": "Harold Knight was married to Laura Knight, the creator of *Ruby Loftus Screwing a Breech Ring* [1][2].\n\nLaura Knight painted *Ruby Loftus Screwing a Breech Ring* in 1943 [1], and she kept a studio in the village of Staithes with her husband and fellow painter Harold Knight [2].",
+        "fullAnswerF1": 0.09523809523809523,
+        "firstSentenceF1": 0.25,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 1060
+      },
+      "baseline": {
+        "answer": "Harold Knight was married to Laura Knight, the creator of *Ruby Loftus Screwing a Breech Ring* [1][2].\n\nLaura Knight painted *Ruby Loftus Screwing a Breech Ring* in 1943, and she kept a studio in the village of Staithes with her husband and fellow painter Harold Knight [1][2].",
+        "fullAnswerF1": 0.09523809523809523,
+        "firstSentenceF1": 0.25,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 530
+      }
+    },
+    {
+      "dataset": "musique",
+      "qid": "3hop1__305282_282081_73772",
+      "question": "When was the start of the battle of the birthplace of the performer of III?",
+      "goldAnswer": "December 14, 1814",
+      "goldSources": [
+        "Battle of New Orleans",
+        "Flyin' the Koop",
+        "III (Stanton Moore album)"
+      ],
+      "contextHash": "ccde94645133c88b4e6c511502d853b1f50ba72d7a37555734cd806e5ed3ca49",
+      "baseline": {
+        "answer": "The Battle of New Orleans began on December 14, 1814 [1]. Stanton Moore, the performer of *III*, is a New Orleans drummer [2][3], and the Battle of New Orleans was fought between December 14, 1814 and January 18, 1815 [1].\n\nThe materials do not record a specific birth date or birthplace for Stanton Moore beyond identifying him as a New Orleans drummer [2][3].",
+        "fullAnswerF1": 0.1090909090909091,
+        "firstSentenceF1": 0.5,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 1050
+      },
+      "candidate": {
+        "answer": "December 14, 1814 [1].\n\nStanton Moore is the performer of *III* [3], and he is a New Orleans drummer [2]; the Battle of New Orleans was fought between December 14, 1814 and January 18, 1815 [1].",
+        "fullAnswerF1": 0.1875,
+        "firstSentenceF1": 1,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 999
+      }
+    },
+    {
+      "dataset": "musique",
+      "qid": "2hop__24697_578772",
+      "question": "The name of the Chinese capitol Kanmu modeled his government after is an instance of what?",
+      "goldAnswer": "Chinese surname",
+      "goldSources": [
+        "Heian period",
+        "Táng (surname)"
+      ],
+      "contextHash": "50fc5cf9b64881aa258bc430f70fc1c456203c04c9013f5fb84d4cc6c3161a75",
+      "candidate": {
+        "answer": "Chang'an, the Chinese Tang capital that the Heian capital was patterned on, is an instance of the surname Táng (唐) [1][2].\n\nThe Heian capital was patterned on the Chinese Tang capital at Chang'an [1], and Tang (唐) is a Chinese surname [2].",
+        "fullAnswerF1": 0.11764705882352941,
+        "firstSentenceF1": 0.2222222222222222,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 922
+      },
+      "baseline": {
+        "answer": "The Chinese capital Kammu modeled his government after is Chang'an, and \"Chang'an\" is an instance of a Tang-dynasty capital [1]. The Heian capital was patterned on the Chinese Tang capital at Chang'an, as was Nara, but on a larger scale than Nara [1].\n\nNote: Source 2 discusses \"Tang\" only as a Chinese surname and its pronunciations/romanizations in various languages; it does not address Chang'an or Tang-dynasty capitals [2].",
+        "fullAnswerF1": 0.06349206349206349,
+        "firstSentenceF1": 0.10526315789473684,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 1152
+      }
+    },
+    {
+      "dataset": "musique",
+      "qid": "2hop__580231_162399",
+      "question": "When did the father of Dahyabhai Patel die?",
+      "goldAnswer": "15 December 1950",
+      "goldSources": [
+        "Dahyabhai Patel",
+        "Vallabhbhai Patel"
+      ],
+      "contextHash": "e08d32bb080ad20974ece6a7859c86579d2c5eb03e6e0f25c57cf4dbc186bd70",
+      "baseline": {
+        "answer": "Vallabhbhai Patel, the father of Dahyabhai Patel, died on 15 December 1950 [1][2]. Dahyabhai Patel was the son of Indian leader Sardar Vallabhbhai Patel [1], and Vallabhbhai Patel's life dates are recorded as 31 October 1875 – 15 December 1950 [2].",
+        "fullAnswerF1": 0.15384615384615385,
+        "firstSentenceF1": 0.42857142857142855,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 814
+      },
+      "candidate": {
+        "answer": "15 December 1950 [2]\n\nDahyabhai Patel was the son of Indian leader Sardar Vallabhbhai Patel [1], and Vallabhbhai Patel's recorded dates are 31 October 1875 – 15 December 1950 [2].",
+        "fullAnswerF1": 0.20689655172413793,
+        "firstSentenceF1": 0.20689655172413793,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 799
+      }
+    },
+    {
+      "dataset": "musique",
+      "qid": "2hop__485221_544917",
+      "question": "What body of water includes the terrain feature where Coffee Swamp is located?",
+      "goldAnswer": "Lake Superior",
+      "goldSources": [
+        "Coffee Swamp",
+        "Washington Island (Michigan)"
+      ],
+      "contextHash": "e3d431bbb035cf5f40f9d3dac3b2fac511ecc412bf4eb91c48db3a4b6b77d794",
+      "candidate": {
+        "answer": "Lake Superior includes the terrain feature where Coffee Swamp is located [2].\n\nCoffee Swamp is a two-acre freshwater swamp on the northern edge of Washington Island in Door County, Wisconsin [1], and Washington Island is an uninhabited island in Lake Superior within Keweenaw County and Isle Royale National Park, Michigan [2].",
+        "fullAnswerF1": 0.0851063829787234,
+        "firstSentenceF1": 0.33333333333333337,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 938
+      },
+      "baseline": {
+        "answer": "Coffee Swamp is located on the northern edge of Washington Island, in Door County, Wisconsin [1]. The reference materials do not specify the body of water associated with that Washington Island; Source 2 describes a different, uninhabited Washington Island in Lake Superior within Isle Royale National Park, Michigan [2], which is not the island referenced by Source 1.",
+        "fullAnswerF1": 0.07547169811320754,
+        "firstSentenceF1": 0,
+        "goldSourceCitationRecall": 1,
+        "latencyMs": 593
+      }
+    }
+  ],
+  "completePairs": 20,
+  "failedPairs": 0,
+  "summary": {
+    "baseline": {
+      "fullAnswerF1": 0.08472872855444893,
+      "firstSentenceF1": 0.30055828337319795,
+      "goldSourceCitationRecall": 0.975,
+      "latencyMs": 1009.4
+    },
+    "candidate": {
+      "fullAnswerF1": 0.1154026193538992,
+      "firstSentenceF1": 0.3354941868717218,
+      "goldSourceCitationRecall": 0.9833333333333332,
+      "latencyMs": 979.65
+    }
+  },
+  "complete": true
+}

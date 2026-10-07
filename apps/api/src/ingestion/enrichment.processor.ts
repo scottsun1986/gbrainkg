@@ -1,6 +1,7 @@
 import { VerifiedLateChunking } from '../embedding/verified-late-chunking';
 import { runAsService } from '../db/service-principal';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { graphDocumentChunkLimit } from '../graph-rag/extraction-budget';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Job, Queue } from 'bullmq';
 import { Logger, Optional } from '@nestjs/common';
@@ -345,7 +346,7 @@ export class EnrichmentProcessor extends WorkerHost {
         version: true,
         chunks: {
           orderBy: { ord: 'asc' },
-          take: Number(process.env.AUTO_GRAPH_EXTRACT_MAX_CHUNKS || 50),
+          take: graphDocumentChunkLimit(),
           select: { id: true, content: true, metadata: true },
         },
       },

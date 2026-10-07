@@ -11,9 +11,13 @@ def quantile(values, q):
     ordered = sorted(values)
     if not ordered:
         raise ValueError('Empty evaluation bucket')
-    return ordered[min(len(ordered)-1, math.ceil((len(ordered)-1)*q))]
+    position=(len(ordered)-1)*q
+    lower=math.floor(position);upper=math.ceil(position)
+    return ordered[lower]+(ordered[upper]-ordered[lower])*(position-lower)
 
 def paired_interval(left, right, metric, seed=20260930, samples=3000):
+    if not left or len(left)!=len(right) or samples<1:
+        raise ValueError('Bootstrap requires nonempty equal-length paired samples')
     values = [b[metric]-a[metric] for a,b in zip(left,right)]
     rng = random.Random(seed)
     means = [sum(rng.choice(values) for _ in values)/len(values) for _ in range(samples)]

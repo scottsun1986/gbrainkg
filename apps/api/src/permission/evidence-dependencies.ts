@@ -31,18 +31,22 @@ export async function captureEvidenceDependencies(citations: any[]): Promise<Evi
     effectiveTo: row.effectiveTo?.toISOString() ?? null }));
 }
 export async function validateEvidenceDependencies(userId: string, manifest: unknown): Promise<boolean> {
+  await assertRequestAuthorization();
+  return validateEvidenceDependenciesInClient(userId, manifest, getPrismaClient());
+}
+
+/** Caller owns authority/locking; all source and ACL reads use its transaction. */
+export async function validateEvidenceDependenciesInClient(userId: string, manifest: unknown, prisma: any): Promise<boolean> {
   if (manifest && typeof manifest === 'object' && !Array.isArray(manifest)) {
     const marker = manifest as Record<string, unknown>;
     if (marker.kind === 'non_evidence' && marker.version === 1 && ['failure', 'refusal'].includes(String(marker.outcome))) {
-      await assertRequestAuthorization();
       return true;
     }
   }
   if (!Array.isArray(manifest) || !manifest.length || manifest.some(d => !d?.documentId || !Number.isInteger(d.number))) return false;
-  await assertRequestAuthorization();
-  const rows = await getPrismaClient().document.findMany({ where: { id: { in: manifest.map(d => d.documentId) }, status: 'published' },
+  const rows = await prisma.document.findMany({ where: { id: { in: manifest.map(d => d.documentId) }, status: 'published' },
     select: { id: true, kbId: true, aclMode: true, activeVersionId: true, version: true, contentHash: true, lifecycleStatus: true, effectiveFrom: true, effectiveTo: true } });
-  const byId = new Map(rows.map(row => [row.id, row]));
+  const byId = new Map<string, any>(rows.map((row: any) => [row.id, row]));
   const asOf = getRequestContext()?.asOf ?? Date.now();
   if (manifest.some(d => {
     const row = byId.get(d.documentId);
@@ -50,6 +54,6 @@ export async function validateEvidenceDependencies(userId: string, manifest: unk
       || (row.effectiveFrom && asOf < row.effectiveFrom.getTime()) || (row.effectiveTo && asOf >= row.effectiveTo.getTime())
       || (row.lifecycleStatus === 'repealed' && !row.effectiveTo);
   })) return false;
-  const readable = await new DocumentAclService(new PermissionService()).filterReadableDocuments(userId, [...byId.keys()], { docs: rows });
+  const readable = await new DocumentAclService(new PermissionService()).filterReadableDocuments(userId, [...byId.keys()], { docs: rows, prisma });
   return readable.size === byId.size;
 }

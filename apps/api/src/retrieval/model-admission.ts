@@ -13,7 +13,9 @@ export function modelQuotaRoute(route: string): string {
 /** Each isolated instance owns <= hostBudget/instances; all its API/worker processes share one DB counter. */
 export async function admitModelCall(route: string, model: string, inputTokens: number): Promise<void> {
   await assertRequestAuthorization();
-  const execution = getRequestContext()?.execution;
+  const context = getRequestContext();
+  if (process.env.CORE_AUTH_ENFORCE === '1' && !context?.servicePrincipal && (!context?.userId || !context.authorization)) throw new Error('Authorized model caller required');
+  const execution = context?.execution;
   if (execution && !execution.reserveModelCall(inputTokens)) throw new Error('Query model budget exhausted');
   if (!process.env.MODEL_HOST_RPM && !process.env.MODEL_HOST_INPUT_TPM) return;
   const instances = Number(process.env.HOST_INSTANCE_COUNT || 1);
@@ -24,6 +26,15 @@ export async function admitModelCall(route: string, model: string, inputTokens: 
   // the host allocation. An explicit resource ID can join gateway aliases.
   const resource = process.env.MODEL_QUOTA_RESOURCE_ID || new URL(modelQuotaRoute(route)).origin;
   const key = createHash('sha256').update(resource).digest('hex');
-  const [row] = await getPrismaClient().$queryRaw<Array<{ admitted:boolean }>>`SELECT app_admit_model_call(${key},${requests}::int,${tokens}::bigint,${Math.ceil(inputTokens)}::int) AS admitted`;
+  if (!Number.isFinite(inputTokens) || inputTokens < 0 || Math.ceil(inputTokens) > tokens) throw new Error('Invalid model input token allocation');
+  // Authorization is application owned. The historical SQL helper still
+  // checks obsolete RLS identity GUCs and cannot authorize current requests.
+  const [row] = await getPrismaClient().$queryRaw<Array<{ admitted:boolean }>>`
+    INSERT INTO "ModelQuotaBucket" (key,period,requests,tokens)
+    VALUES (${key},floor(extract(epoch FROM clock_timestamp())/60)::bigint,1,${Math.ceil(inputTokens)}::bigint)
+    ON CONFLICT (key,period) DO UPDATE
+      SET requests="ModelQuotaBucket".requests+1,tokens="ModelQuotaBucket".tokens+EXCLUDED.tokens
+      WHERE "ModelQuotaBucket".requests<${requests}::int AND "ModelQuotaBucket".tokens+EXCLUDED.tokens<=${tokens}::bigint
+    RETURNING true AS admitted`;
   if (!row?.admitted) throw new Error('Instance model quota exhausted; retry next window');
 }

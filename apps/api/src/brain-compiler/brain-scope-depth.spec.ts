@@ -27,6 +27,7 @@ describe('resolveScopeCompileDepth', () => {
   });
 
   it('falls back to defaults on invalid or non-positive values', () => {
+    expect(resolveScopeCompileDepth({ BRAIN_SCOPE_DOC_CHUNKS: '0.5', BRAIN_SCOPE_SYNTHESIZE_SOURCES: '0.5' })).toEqual({ docChunkDepth: 40, synthesizeSourceLimit: 5 });
     expect(
       resolveScopeCompileDepth({
         BRAIN_SCOPE_DOC_CHUNKS: '0',

@@ -1,0 +1,3 @@
+[data] corpus=100 queries=3 qrels=3
+[done] wrote run file: docs/validation/2026-10-07/optimization/sota20-full-current-luna/run-scidocs.jsonl (3 queries)
+Next: python3 standard_ir_eval.py --qrels /home/scottsun/beir-data/scidocs/qrels/test.tsv --run docs/validation/2026-10-07/optimization/sota20-full-current-luna/run-scidocs.jsonl --k 1,5,10,100

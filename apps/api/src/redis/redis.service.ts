@@ -34,10 +34,14 @@ export class RedisService implements OnModuleDestroy {
   private client: RedisLike | null = null;
   /** Dedicated connection for pub/sub; a subscribed connection cannot run commands. */
   private subscriberClient: RedisLike | null = null;
+  private subscriberConnecting: Promise<RedisLike | null> | null = null;
+  private readonly subscriptionResetHandlers = new Set<() => void>();
   private readonly instanceId = randomUUID();
   private connecting = false;
   private available = false;
   private readonly prefix = process.env.REDIS_KEY_PREFIX || 'llmwiki';
+  // Redis pub/sub ignores SELECT: logical DB isolation requires a channel namespace.
+  private readonly channelPrefix = `${this.prefix}:db:${process.env.REDIS_DB || '0'}`;
 
   private async newClient(): Promise<RedisLike> {
     const { default: Redis } = await import('ioredis');
@@ -134,7 +138,7 @@ export class RedisService implements OnModuleDestroy {
     const anyClient = client as any;
     if (!client || typeof anyClient?.publish !== 'function') return false;
     try {
-      await anyClient.publish(this.key(channel), JSON.stringify(payload));
+      await anyClient.publish(this.channelKey(channel), JSON.stringify(payload));
       return true;
     } catch (err) {
       this.logger.debug(
@@ -149,35 +153,44 @@ export class RedisService implements OnModuleDestroy {
    * subscriber connection; the handler runs synchronously per message so a slow
    * consumer cannot stall the subscriber. Degrades to a no-op without Redis.
    */
-  async subscribe(channel: string, handler: (message: string) => void): Promise<void> {
-    if (!this.subscriberClient) {
-      try {
-        const sub = await this.newClient();
-        sub.on?.('error', (err: Error) =>
-          this.logger.debug(`Redis subscriber error: ${err.message}`),
-        );
-        const anySub = sub as any;
-        if (typeof anySub.connect === 'function') {
-          try {
-            await anySub.connect();
-          } catch (err) {
-            this.logger.debug(
-              `Redis subscriber connect: ${err instanceof Error ? err.message : String(err)}`,
-            );
+  async subscribe(channel: string, handler: (message: string) => void, onReset?: () => void): Promise<void> {
+    if (onReset) this.subscriptionResetHandlers.add(onReset);
+    if (!this.subscriberClient && !this.subscriberConnecting) {
+      this.subscriberConnecting = (async () => {
+        try {
+          const sub = await this.newClient();
+          sub.on?.('error', (err: Error) =>
+            this.logger.debug(`Redis subscriber error: ${err.message}`),
+          );
+          // Pub/sub does not replay messages missed during a partition. Drop
+          // consumer caches both on disconnect and after resubscription so no
+          // missed revocation survives a recovered connection.
+          for (const event of ['close', 'ready']) sub.on?.(event, () => {
+            for (const reset of this.subscriptionResetHandlers) {
+              try { reset(); } catch (err) { this.logger.debug(`Redis subscriber reset: ${String(err)}`); }
+            }
+          });
+          const anySub = sub as any;
+          if (typeof anySub.connect === 'function') {
+            try {
+              await anySub.connect();
+            } catch (err) {
+              this.logger.debug(`Redis subscriber connect: ${err instanceof Error ? err.message : String(err)}`);
+            }
           }
+          this.subscriberClient = sub;
+          return sub;
+        } catch (err) {
+          this.logger.warn(`Redis subscriber unavailable: ${err instanceof Error ? err.message : String(err)}`);
+          return null;
         }
-        this.subscriberClient = sub;
-      } catch (err) {
-        this.logger.warn(
-          `Redis subscriber unavailable: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        return;
-      }
+      })();
     }
-    const sub = this.subscriberClient as any;
+    const sub = (this.subscriberClient ?? await this.subscriberConnecting) as any;
+    this.subscriberConnecting = null;
     if (typeof sub?.subscribe !== 'function') return;
-    const key = this.key(channel);
-    await sub.subscribe(key).catch(() => undefined);
+    const key = this.channelKey(channel);
+    // Register before SUBSCRIBE: a publisher can send immediately after the ack.
     sub.on?.('message', (ch: string, message: string) => {
       if (ch !== key) return;
       try {
@@ -188,6 +201,11 @@ export class RedisService implements OnModuleDestroy {
         );
       }
     });
+    await sub.subscribe(key).catch(() => undefined);
+  }
+
+  private channelKey(channel: string): string {
+    return `${this.channelPrefix}:${channel}`;
   }
 
   private key(key: string): string {

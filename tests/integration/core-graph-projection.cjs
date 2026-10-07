@@ -22,6 +22,8 @@ async function main(){
   const shared=await db.graphEntity.findFirst({where:{kbId,name:'Shared'}});
   const deps=await db.$queryRaw`SELECT "sourceDocumentId" FROM "ArtifactDependency" WHERE "artifactId"=${shared.id}`;
   assert.equal(deps.length,1);assert.equal(deps[0].sourceDocumentId,docIds[1]);
+  const [manifest]=await db.$queryRaw`SELECT "expectedCount" FROM "ArtifactManifest" WHERE "artifactId"=${shared.id}`;
+  assert.equal(manifest.expectedCount,1,'replacement manifest must match remaining current source');
   let changed=false;
   await assert.rejects(reconcile(async doc=>{if(!changed){changed=true;await db.document.update({where:{id:doc.id},data:{contentHash:'concurrent-edit'}});}return extract(doc);},false),/versions changed/);
   console.log('incremental graph delta, withdrawal, dependency replacement and concurrent version fence passed');

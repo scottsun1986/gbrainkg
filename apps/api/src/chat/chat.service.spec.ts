@@ -1665,6 +1665,7 @@ describe('deterministicChunkCap', () => {
   });
 
   it('falls back to the default on invalid or non-positive values', () => {
+    expect(deterministicChunkCap({ CHAT_DETERMINISTIC_MAX_CHUNKS: '0.5' })).toBe(20_000);
     expect(
       deterministicChunkCap({ CHAT_DETERMINISTIC_MAX_CHUNKS: 'abc' } as NodeJS.ProcessEnv),
     ).toBe(20_000);

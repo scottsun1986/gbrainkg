@@ -1,9 +1,15 @@
+import { embeddingFingerprint, reusableEmbeddingIdentity } from '../embedding/model-fingerprint';
+import { getRequestContext } from '../observability/request-context';
+import { authorizationEnforced } from '../permission/authorization-revision';
+import { filterReadableArtifacts } from '../permission/artifact-read-guard';
 import { requestFetch } from '../retrieval/request-signal';
 import { rethrowAuthorizationFailure as throwAuthorizationFailure } from '../permission/authorization-revision';
 import { modelArtifactKey, readModelArtifact, saveModelArtifact } from '../embedding/model-artifact-cache';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { resolveGraphLlmExtraction, graphDocumentChunkLimit } from './extraction-budget';
+export { resolveGraphLlmExtraction } from './extraction-budget';
 
 /** P2-3：按查询形态路由图谱参与度（语料无关，仅语言形态，无业务词表）。 */
 export type GraphQueryRoute = 'local_fact' | 'global_theme' | 'multi_hop';
@@ -29,22 +35,6 @@ export function routeGraphQuery(query: string): GraphQueryRoute {
  * deployment-configurable with a deeper default; GRAPH_LLM_FULL_EXTRACTION=1
  * processes every chunk.
  */
-export function resolveGraphLlmExtraction(
-  env: NodeJS.ProcessEnv = process.env,
-): { sampleRate: number; maxLlmChunks: number } {
-  const full = String(env.GRAPH_LLM_FULL_EXTRACTION ?? '').toLowerCase() === '1';
-  const rawRate = Number(env.GRAPH_LLM_SAMPLE_RATE ?? (full ? 1 : 0.6));
-  const rawMax = Number(env.GRAPH_LLM_MAX_CHUNKS ?? (full ? 100000 : 60));
-  return {
-    sampleRate:
-      Number.isFinite(rawRate) && rawRate > 0 ? Math.min(rawRate, 1) : 0.6,
-    maxLlmChunks:
-      Number.isFinite(rawMax) && rawMax > 0
-        ? Math.min(Math.floor(rawMax), 100000)
-        : 60,
-  };
-}
-
 /** 图谱探针是否对该查询启用。GRAPHRAG_ROUTE=always|off|auto（默认 auto：仅多跳）。 */
 export function graphProbeEnabledForQuery(query: string): boolean {
   const mode = String(process.env.GRAPHRAG_ROUTE || 'auto').toLowerCase();
@@ -159,13 +149,14 @@ export class GraphRagService {
       const llm=config ? { baseUrl:config.provider.baseUrl,apiKey:config.provider.apiKey || '',modelName:config.modelName } : null;
       const revision=process.env.GRAPH_LLM_DEPLOYMENT_REVISION;
       const identity=['graph-shards-v1',llm?.baseUrl,llm?.modelName,revision,
-        Object.entries(process.env).filter(([key])=>(key.startsWith('GRAPHRAG_') || key.startsWith('AUTO_GRAPH_')) && !/(KEY|TOKEN|SECRET|PASSWORD)/.test(key)).sort(([a],[b])=>a.localeCompare(b))];
+        resolveGraphLlmExtraction(), graphDocumentChunkLimit(),
+        Object.entries(process.env).filter(([key])=>(key.startsWith('GRAPHRAG_') || key.startsWith('AUTO_GRAPH_') || key.startsWith('GRAPH_LLM_')) && !/(KEY|TOKEN|SECRET|PASSWORD)/.test(key)).sort(([a],[b])=>a.localeCompare(b))];
       const result=await reconcileIncrementalGraph(this.prisma,kbId,identity,!llm || !!revision,
         doc=>this.extractGraphElementsHybrid(doc.title,doc.id,doc.chunks,doc.version,llm));
       this.logger.log(`Incremental graph ${kbId}: extracted=${result.extracted}, changed=${result.changed}`);
       return;
     }
-    const docs = await this.prisma.document.findMany({ where:{ kbId,status:'published' }, select:{ id:true,title:true,version:true,chunks:{ orderBy:{ ord:'asc' },take:Number(process.env.AUTO_GRAPH_EXTRACT_MAX_CHUNKS || 200), select:{ id:true,content:true,metadata:true } } }, orderBy:{ id:'asc' } });
+    const docs = await this.prisma.document.findMany({ where:{ kbId,status:'published' }, select:{ id:true,title:true,version:true,chunks:{ orderBy:{ ord:'asc' },take:graphDocumentChunkLimit(), select:{ id:true,content:true,metadata:true } } }, orderBy:{ id:'asc' } });
     const config = await this.modelConfigService?.getDefault('llm');
     const llm = config ? { baseUrl:config.provider.baseUrl,apiKey:config.provider.apiKey || '',modelName:config.modelName } : null;
     const inputs = [];
@@ -475,7 +466,7 @@ export class GraphRagService {
     documentVersion: number,
     llmConfig: { baseUrl: string; apiKey: string; modelName: string } | null,
   ): Promise<{ entities: ExtractedEntity[]; relations: ExtractedRelation[] }> {
-    if (!llmConfig || !chunkContent.trim() || chunkContent.length < 50) {
+    if (!llmConfig || !chunkContent.trim() || (chunkContent.length < 50 && process.env.GRAPH_LLM_FULL_EXTRACTION !== '1')) {
       return { entities: [], relations: [] };
     }
 
@@ -589,6 +580,7 @@ ${chunkContent.slice(0, 4000)}
       return { entities, relations };
     } catch (err) { throwAuthorizationFailure(err);
       this.logger.warn(`LLM entity extraction error: ${err instanceof Error ? err.message : String(err)}`);
+      if (process.env.GRAPH_LLM_FULL_EXTRACTION === '1') throw err;
       return { entities: [], relations: [] };
     }
   }
@@ -608,17 +600,29 @@ ${chunkContent.slice(0, 4000)}
     // Step 1: Always run fast regex extraction
     const regexResult = this.extractGraphElements(title, docId, chunks, documentVersion);
     
+    const fullExtraction = process.env.GRAPH_LLM_FULL_EXTRACTION === '1';
     if (!llmConfig) {
+      if (fullExtraction) throw new Error('Full graph extraction requires a configured LLM');
       return regexResult;
     }
 
     // Step 2: Select chunks for LLM deep extraction
     const defaults = resolveGraphLlmExtraction();
-    const sampleRate = options.llmSampleRate ?? defaults.sampleRate;
-    const maxLlmChunks = options.maxLlmChunks ?? defaults.maxLlmChunks;
+    const sampleRate = fullExtraction ? 1 : options.llmSampleRate ?? defaults.sampleRate;
+    const maxLlmChunks = fullExtraction ? defaults.maxLlmChunks : options.maxLlmChunks ?? defaults.maxLlmChunks;
+    // Full mode must cover long chunk tails too: the model prompt accepts
+    // 4000 characters, so split rather than silently dropping everything later.
+    const extractionChunks = fullExtraction ? chunks.flatMap(chunk => {
+      const parts = [];
+      for (let offset = 0; offset < chunk.content.length; offset += 3600) {
+        parts.push({ ...chunk, content: chunk.content.slice(offset, offset + 4000) });
+      }
+      return parts;
+    }) : chunks;
+    if (fullExtraction && extractionChunks.length > maxLlmChunks) throw new Error('Full graph extraction exceeds the explicit segment safety budget');
     
     // Prioritize chunks with high entity density (more regex matches) or tables
-    const scoredChunks = chunks.map((chunk, idx) => {
+    const scoredChunks = extractionChunks.map((chunk, idx) => {
       let score = 0;
       if (chunk.content.includes('|') && chunk.content.includes('---')) score += 2; // tables
       if (/[《「"]/.test(chunk.content)) score += 1; // policy references
@@ -627,7 +631,7 @@ ${chunkContent.slice(0, 4000)}
       return { chunk, idx, score };
     })
     .sort((a, b) => b.score - a.score)
-    .slice(0, Math.min(Math.ceil(chunks.length * sampleRate), maxLlmChunks));
+    .slice(0, Math.min(Math.ceil(extractionChunks.length * sampleRate), maxLlmChunks));
 
     // Step 3: Run LLM extraction on selected chunks (with concurrency limit)
     const allLlmEntities: ExtractedEntity[] = [];
@@ -650,7 +654,10 @@ ${chunkContent.slice(0, 4000)}
         ),
       );
       for (const result of results) {
-        if (result.status === 'rejected') throwAuthorizationFailure(result.reason);
+        if (result.status === 'rejected') {
+          throwAuthorizationFailure(result.reason);
+          if (fullExtraction) throw result.reason;
+        }
         if (result.status === 'fulfilled') {
           allLlmEntities.push(...result.value.entities);
           allLlmRelations.push(...result.value.relations);
@@ -1309,7 +1316,9 @@ ${chunkContent.slice(0, 4000)}
     options?: { incremental?: boolean },
   ): Promise<number> {
     const summaryConfig=process.env.CORE_GRAPH_INCREMENTAL_ENABLED === '1' && process.env.GRAPHRAG_COMMUNITY_SUMMARY_LLM !== 'false' ? await this.getLlmConfig() : null;
-    const summaryIdentity=summaryConfig ? [summaryConfig.baseUrl,summaryConfig.modelName,process.env.GRAPH_LLM_DEPLOYMENT_REVISION || randomUUID()] : ['deterministic-summary-v1'];
+    const embeddingConfig = this.embeddingService?.isEnabled() ? await this.embeddingService.getConfig() : null;
+    const embeddingIdentity = embeddingConfig ? (reusableEmbeddingIdentity(embeddingConfig) ? embeddingFingerprint(embeddingConfig) : randomUUID()) : 'embedding-disabled';
+    const summaryIdentity=summaryConfig ? [summaryConfig.baseUrl,summaryConfig.modelName,process.env.GRAPH_LLM_DEPLOYMENT_REVISION || randomUUID(),embeddingIdentity] : ['deterministic-summary-v1',embeddingIdentity];
     if (options?.incremental) {
       // Incremental Community Self-Healing:
       // Compare newly computed clusters against existing communities in database.
@@ -1351,7 +1360,7 @@ ${chunkContent.slice(0, 4000)}
         const mainTitle = titles.slice(0, 3).join(" / ") + ` (增量社区 ${created + 1})`;
         const { summary, findings } = await this.summarizeCommunity(cluster, mainTitle);
 
-        const createCommunity = () => (this.prisma as any).graphCommunity.create({
+        const createCommunity = (tx: any = this.prisma) => tx.graphCommunity.create({
           data: {
             kbId,
             title: mainTitle,
@@ -1385,6 +1394,7 @@ ${chunkContent.slice(0, 4000)}
       }
 
       this.logger.log(`Incrementally healed ${created} GraphRAG communities for KB ${kbId} (created ${clustersToCreate.length}, pruned ${toDelete.length})`);
+      await this.backfillCommunityEmbeddings(kbId);
       if (process.env.CORE_GRAPH_INCREMENTAL_ENABLED === '1' && !createdCommunities.length && !toDelete.length) return created;
       await this.rebuildCommunityHierarchy(kbId).catch((err) => {
         this.logger.warn(
@@ -1406,16 +1416,14 @@ ${chunkContent.slice(0, 4000)}
       const mainTitle = titles.slice(0, 3).join(' / ') + ` (社区 ${i + 1})`;
       const { summary, findings } = await this.summarizeCommunity(cluster, mainTitle);
 
-      const comm = await (this.prisma as any).graphCommunity.create({
-        data: {
-          kbId,
-          title: mainTitle,
-          level: 0,
-          summary,
-          entityIds: cluster.map((e: any) => e.id),
-          findings,
+      const createCommunity = (tx: any = this.prisma) => tx.graphCommunity.create({
+        data: { kbId, title: mainTitle, level: 0, summary,
+          entityIds: cluster.map((e: any) => e.id), findings,
+          ...(process.env.CORE_GRAPH_INCREMENTAL_ENABLED === '1' ? { fingerprint: communityInputFingerprint(cluster, summaryIdentity) } : {}),
         },
       });
+      const comm: any = process.env.CORE_GRAPH_INCREMENTAL_ENABLED === '1'
+        ? await withCommunityInputs(this.prisma, cluster, createCommunity) : await createCommunity();
       createdCommunities.push({ id: comm.id, text: `${mainTitle}\n${summary}` });
       created++;
     }
@@ -1449,8 +1457,40 @@ ${chunkContent.slice(0, 4000)}
       );
     });
 
+    await this.backfillCommunityEmbeddings(kbId);
     this.logger.log(`Built ${created} GraphRAG communities for KB ${kbId}`);
     return created;
+  }
+
+  private async backfillCommunityEmbeddings(kbId: string): Promise<void> {
+    if (!this.embeddingService?.isEnabled()) return;
+    try {
+      const config = await this.embeddingService.getConfig();
+      if (!config) return;
+      let cursor = '';
+      while (true) {
+        const rows: any[] = await withServiceContext(this.prisma, (tx) => tx.$queryRaw`
+          SELECT id::text, title, summary FROM "GraphCommunity"
+          WHERE "kbId"=${kbId}::uuid AND embedding IS NULL AND id::text>${cursor}
+          ORDER BY id LIMIT 32
+        `);
+        if (!rows?.length) break;
+        const vectors = await this.embeddingService.embed(rows.map(row => `${row.title}\n${row.summary}`.slice(0, 4000)), config);
+        for (let index = 0; index < rows.length; index++) {
+          const vector = vectors[index];
+          if (!vector?.length || !vector.every(Number.isFinite)) continue;
+          await withServiceContext(this.prisma, tx => tx.$executeRaw`
+            UPDATE "GraphCommunity" SET embedding=${`[${vector.join(',')}]`}::vector
+            WHERE id=${rows[index].id}::uuid AND "kbId"=${kbId}::uuid
+              AND summary=${rows[index].summary} AND embedding IS NULL
+          `);
+        }
+        cursor = rows[rows.length - 1].id;
+        if (rows.length < 32) break;
+      }
+    } catch (error) { throwAuthorizationFailure(error);
+      this.logger.debug(`Community vector recovery deferred: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /**
@@ -1620,7 +1660,7 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
         })),
         title,
       );
-      const createParent = () => (this.prisma as any).graphCommunity.create({
+      const createParent = (tx: any = this.prisma) => tx.graphCommunity.create({
         data: {
           kbId,
           title,
@@ -2054,6 +2094,22 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
       return { communities: [], formattedContext: '' };
     }
 
+    const userId = getRequestContext()?.userId;
+    if (authorizationEnforced()) {
+      if (!userId) return { communities: [], formattedContext: '' };
+      return this.prisma.$transaction(async (tx: any) => {
+        const candidates = await tx.graphCommunity.findMany({ where: { kbId: { in: kbIds } }, select: { id: true, kbId: true } });
+        const readable = await filterReadableArtifacts(userId, candidates, 'GraphCommunity', tx);
+        return this.searchGlobalCommunityCandidates(kbIds, query, limit, tx, [...readable]);
+      }, { isolationLevel: 'RepeatableRead', timeout: 30000 });
+    }
+    return this.searchGlobalCommunityCandidates(kbIds, query, limit, this.prisma);
+  }
+
+  private async searchGlobalCommunityCandidates(kbIds: string[], query: string, limit: number, db: any, readableIds?: string[]): Promise<GlobalCommunitySearchResult> {
+    if (readableIds && !readableIds.length) return { communities: [], formattedContext: '' };
+    limit = Number.isFinite(limit) && limit >= 1 ? Math.min(Math.floor(limit), 20) : 3;
+    let vectorHits: any[] = [];
     // Vector recall over embedded community summaries first; keyword overlap
     // remains the fallback for un-embedded rows / disabled provider.
     if (this.embeddingService?.isEnabled()) {
@@ -2061,31 +2117,18 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
         const vector = await this.embeddingService.embedOne(query);
         if (vector && vector.length) {
           const literal = `[${vector.join(',')}]`;
-          const rows = await withServiceContext(this.prisma, (tx) => (tx as any).$queryRaw<any[]>`
+          const rows = await db.$queryRaw`
             SELECT id, title, summary, findings,
                    1 - (embedding <=> ${literal}::vector) AS similarity
             FROM "GraphCommunity"
             WHERE "kbId" = ANY(${kbIds}::uuid[]) AND embedding IS NOT NULL
-            ORDER BY embedding <=> ${literal}::vector
+              AND (${readableIds === undefined} OR id::text IN (SELECT jsonb_array_elements_text(${JSON.stringify(readableIds || [])}::jsonb)))
+            ORDER BY embedding <=> ${literal}::vector, id
             LIMIT ${Math.max(limit * 2, 6)}
-          `);
+          `;
           const hits = (rows || []).filter((row: any) => Number(row.similarity) >= Number(process.env.GRAPHRAG_VECTOR_MIN_SCORE || 0.30));
-          if (hits.length) {
-            const selected = hits.slice(0, limit);
-            const contextLines: string[] = ['【知识图谱社区宏观摘要 (GraphRAG Global Search)】'];
-            for (const c of selected) {
-              contextLines.push(`### 领域社区: ${c.title}\n${c.summary}`);
-            }
-            return {
-              communities: selected.map((c: any) => ({
-                id: c.id,
-                title: c.title,
-                summary: c.summary,
-                findings: Array.isArray(c.findings) ? c.findings : [],
-              })),
-              formattedContext: contextLines.join('\n\n'),
-            };
-          }
+          vectorHits = hits;
+
         }
       } catch (err) { throwAuthorizationFailure(err);
         this.logger.debug(`Community vector search unavailable: ${err instanceof Error ? err.message : String(err)}`);
@@ -2093,30 +2136,41 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
       }
     }
 
-    const communities = await (this.prisma as any).graphCommunity.findMany({
-      where: { kbId: { in: kbIds } },
-      take: limit * 3,
+    const communities = await db.graphCommunity.findMany({
+      where: { kbId: { in: kbIds }, ...(readableIds ? { id: { in: readableIds } } : {}),
+        OR: this.extractQueryTerms(query).flatMap(term => [{ title: { contains: term, mode: 'insensitive' } }, { summary: { contains: term, mode: 'insensitive' } }]),
+      },
       // Tie-break on id: communities rebuilt in the same transaction share an
       // updatedAt, and a tie made the selected set nondeterministic.
       orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
     });
 
-    if (!communities.length) {
+    if (!communities.length && !vectorHits.length) {
       return { communities: [], formattedContext: '' };
     }
 
     // Rank communities by keyword overlap
-    const terms = query.split(/[\s,，、。！？?；;:：]+/u).filter((t) => t.length >= 2);
+    const terms = this.extractQueryTerms(query).map(term => term.toLowerCase());
     const scored = communities.map((comm: any) => {
       let score = 0;
       for (const t of terms) {
-        if (comm.title.includes(t)) score += 3;
-        if (comm.summary.includes(t)) score += 1;
+        if (String(comm.title).toLowerCase().includes(t)) score += 3;
+        if (String(comm.summary).toLowerCase().includes(t)) score += 1;
       }
       return { comm, score };
-    }).sort((a: any, b: any) => b.score - a.score);
+    }).sort((a: any, b: any) => b.score - a.score || String(a.comm.id).localeCompare(String(b.comm.id)));
 
-    const selected = scored.filter((s: any) => s.score > 0).slice(0, limit).map((s: any) => s.comm);
+    // RRF combines lexical matches (including unembedded communities) with
+    // vector recall. A single dense hit must not suppress the fallback arm.
+    const fused = new Map<string, { comm: any; score: number }>();
+    [vectorHits, scored.filter((entry: any) => entry.score > 0).map((entry: any) => entry.comm)].forEach(arm => {
+      arm.forEach((comm: any, rank: number) => {
+        const entry = fused.get(comm.id) || { comm, score: 0 };
+        entry.score += 1 / (60 + rank + 1);
+        fused.set(comm.id, entry);
+      });
+    });
+    const selected = [...fused.values()].sort((a, b) => b.score - a.score || String(a.comm.id).localeCompare(String(b.comm.id))).slice(0, limit).map(entry => entry.comm);
     const contextLines: string[] = [];
     if (selected.length) {
       contextLines.push('【知识图谱社区宏观摘要 (GraphRAG Global Search)】');

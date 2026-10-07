@@ -1,11 +1,25 @@
 import { createHash,randomUUID } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
 import { withServiceContext } from '../db/tenant-context.service';
-import { getRequestContext,runWithRequestContext } from '../observability/request-context';
+import { getRequestContext } from '../observability/request-context';
 import type { ExtractedEntity,ExtractedRelation } from './graph-rag.service';
+import { graphDocumentChunkLimit } from './extraction-budget';
 const hash=(value:unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export interface GraphInput { documentId:string;versionId:string|null;sourceHash:string }
 export interface GraphShard { input:GraphInput;entities:ExtractedEntity[];relations:ExtractedRelation[] }
+
+/** The worker already checked scope and input versions. Dependency replacement
+ * is application-owned; legacy trigger GUCs are no longer a service identity. */
+async function replaceProjectionInputs(tx:any, artifactId:string, artifactKind:string, inputs:GraphInput[]) {
+  await tx.artifactDependency.deleteMany({ where:{ artifactId } });
+  await tx.artifactDependency.createMany({ data:inputs.map(input=>({
+    artifactId,artifactKind,sourceDocumentId:input.documentId,
+    sourceVersionId:input.versionId,sourceHash:input.sourceHash,
+  })) });
+  await tx.$executeRaw`INSERT INTO "ArtifactManifest" ("artifactId","artifactKind","expectedCount")
+    VALUES (${artifactId},${artifactKind},${inputs.length})
+    ON CONFLICT ("artifactId") DO UPDATE SET "artifactKind"=EXCLUDED."artifactKind","expectedCount"=EXCLUDED."expectedCount"`;
+}
 
 /** Surface labels navigate evidence. Distinct source contexts remain explicit;
  * a shared spelling alone never asserts that two real-world entities are equal. */
@@ -45,7 +59,7 @@ export function graphProjection(shards:GraphShard[]) {
 export async function reconcileIncrementalGraph(db:PrismaClient,kbId:string,identity:unknown,reusable:boolean,
   extract:(doc:any)=>Promise<{entities:ExtractedEntity[];relations:ExtractedRelation[]}>) {
   if (!getRequestContext()?.servicePrincipal) throw new Error('Graph reconciliation requires an explicit worker identity');
-  const docs=await db.document.findMany({ where:{ kbId,status:'published',lifecycleStatus:{ not:'repealed' } },select:{ id:true,title:true,version:true,activeVersionId:true,contentHash:true,chunks:{ orderBy:{ ord:'asc' },take:Number(process.env.AUTO_GRAPH_EXTRACT_MAX_CHUNKS || 50),select:{ id:true,content:true,metadata:true } } },orderBy:{ id:'asc' } });
+  const docs=await db.document.findMany({ where:{ kbId,status:'published',lifecycleStatus:{ not:'repealed' } },select:{ id:true,title:true,version:true,activeVersionId:true,contentHash:true,chunks:{ orderBy:{ ord:'asc' },take:graphDocumentChunkLimit(),select:{ id:true,content:true,metadata:true } } },orderBy:{ id:'asc' } });
   const previous=await db.$queryRaw<Array<{ documentId:string;fingerprint:string;payload:any }>>`SELECT "documentId",fingerprint,payload FROM "GraphProjectionInput" WHERE "kbId"=${kbId}::uuid`;
   const byId=new Map(previous.map(row=>[row.documentId,row]));
   const prepared:Array<{ documentId:string;fingerprint:string;payload:{ entities:ExtractedEntity[];relations:ExtractedRelation[] };input:GraphInput }>=[];let extracted=0;
@@ -66,13 +80,12 @@ export async function reconcileIncrementalGraph(db:PrismaClient,kbId:string,iden
     const existingEdges=await tx.graphRelation.findMany({ where:{ kbId } });
     const nodeByName=new Map<string,any>(existingNodes.map((row:any)=>[row.name,row]));
     const ids=new Map<string,string>();const keepNodes:string[]=[];const keepEdges:string[]=[];
-    await tx.$executeRaw`SELECT set_config('app.artifact_replacement','verified',true)`;
     for (const node of projection.nodes) {
       const old=nodeByName.get(node.name),id=old?.id || randomUUID();ids.set(node.name,id);keepNodes.push(id);
       if ((old?.properties as any)?.projectionHash===node.properties.projectionHash) continue;
-      await tx.$executeRaw`SELECT set_config('app.artifact_inputs',${JSON.stringify(node.inputs)},true)`;
       const data={ kbId,name:node.name,type:node.type,description:node.description,properties:node.properties,aliases:[] };
       if (old) await tx.graphEntity.update({ where:{ id },data });else await tx.graphEntity.create({ data:{ id,...data } });
+      await replaceProjectionInputs(tx,id,'GraphEntity',node.inputs);
       changed++;
     }
     const edgeByKey=new Map<string,any>(existingEdges.map((row:any)=>[JSON.stringify([row.sourceId,row.targetId,row.relationType]),row]));
@@ -80,9 +93,9 @@ export async function reconcileIncrementalGraph(db:PrismaClient,kbId:string,iden
       const sourceId=ids.get(edge.sourceName)!,targetId=ids.get(edge.targetName)!;
       const old=edgeByKey.get(JSON.stringify([sourceId,targetId,edge.relationType])),id=old?.id || randomUUID();keepEdges.push(id);
       if ((old?.provenance as any)?.[0]?.projectionHash===edge.provenance[0]?.projectionHash) continue;
-      await tx.$executeRaw`SELECT set_config('app.artifact_inputs',${JSON.stringify(edge.inputs)},true)`;
       const data={ kbId,sourceId,targetId,relationType:edge.relationType,description:edge.description,weight:edge.weight,provenance:edge.provenance };
       if (old) await tx.graphRelation.update({ where:{ id },data });else await tx.graphRelation.create({ data:{ id,...data } });
+      await replaceProjectionInputs(tx,id,'GraphRelation',edge.inputs);
       changed++;
     }
     changed+=(await tx.graphRelation.deleteMany({ where:{ kbId,id:{ notIn:keepEdges } } })).count;
@@ -96,11 +109,23 @@ export async function reconcileIncrementalGraph(db:PrismaClient,kbId:string,iden
 export function communityInputFingerprint(cluster:any[],modelIdentity:unknown=process.env.GRAPH_LLM_DEPLOYMENT_REVISION || 'unversioned') {
   return hash(['community-input-v2',modelIdentity,cluster.map(entity=>[entity.id,entity.name,entity.type,entity.description,entity.properties,entity.outgoingRelations]).sort((a,b)=>String(a[0]).localeCompare(String(b[0])))]);
 }
-export async function withCommunityInputs<T>(db:PrismaClient,cluster:any[],work:()=>Promise<T>):Promise<T> {
+export async function withCommunityInputs<T>(db:PrismaClient,cluster:any[],work:(tx:any)=>Promise<T>):Promise<T> {
   const context=getRequestContext();
   if (!context?.servicePrincipal) throw new Error('Community projection requires worker identity');
   const ids=cluster.flatMap(entity=>[entity.id,...(entity.outgoingRelations || []).map((edge:any)=>edge.id)]);
-  const inputs=await db.$queryRaw<GraphInput[]>`SELECT DISTINCT "sourceDocumentId"::text AS "documentId","sourceVersionId"::text AS "versionId","sourceHash" FROM "ArtifactDependency" WHERE "artifactId"=ANY(${ids}::text[]) ORDER BY "documentId","versionId","sourceHash"`;
-  if (!inputs.length) throw new Error('Community has no verified original inputs');
-  return runWithRequestContext({ ...context,artifactInputs:JSON.stringify(inputs) },work);
+  return withServiceContext(db, async tx => {
+    const inputs:GraphInput[]=await tx.$queryRaw`SELECT DISTINCT "sourceDocumentId"::text AS "documentId","sourceVersionId"::text AS "versionId","sourceHash" FROM "ArtifactDependency" WHERE "artifactId"=ANY(${ids}::text[]) ORDER BY "documentId","versionId","sourceHash"`;
+    if (!inputs.length || new Set(inputs.map(input=>input.documentId)).size!==inputs.length) throw new Error('Community has no coherent verified original inputs');
+    const documents:any[]=await tx.$queryRaw`SELECT id::text,"activeVersionId"::text AS "versionId",COALESCE("contentHash",'') || ':' || version::text AS "sourceHash",status FROM "Document" WHERE id=ANY(${inputs.map(input=>input.documentId)}::uuid[]) FOR SHARE`;
+    const current=new Map(documents.map(document=>[document.id,document]));
+    if (inputs.some(input=> {
+      const doc=current.get(input.documentId);
+      return !doc || doc.status!=='published' || doc.versionId!==input.versionId || doc.sourceHash!==input.sourceHash;
+    })) throw new Error('Community input versions changed; retry rebuild');
+    const result=await work(tx);
+    const artifactId=(result as any)?.id;
+    if (!artifactId) throw new Error('Community write returned no artifact identity');
+    await replaceProjectionInputs(tx,artifactId,'GraphCommunity',inputs);
+    return result;
+  });
 }

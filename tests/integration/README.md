@@ -17,12 +17,25 @@ python3 tests/integration/run-core-checks.py --database gbrain_core_opt_test --u
 | --- | --- |
 | core-knowledge-versions.cjs | 核心索引覆盖回滚、旧版保持在线、乱序与幂等、generation build/switch/rollback、严格输出与撤权并发 |
 | core-graph-projection.cjs | 文档分片复用、差量节点/边、依赖最小来源、撤回及并发发布栅栏 |
-| core-knowledge-security.sql | 真实 NOBYPASSRLS 身份、权限矩阵、派生来源合取、更新依赖保护、时点和模型配额；事务回滚 |
-| artifact-read-guard.sql | 2232 个派生节点 × 908 个依赖；真实 NOBYPASSRLS 策略、旧守卫等价性、文档撤权、版本/hash/时点漂移、manifest 缺失与跨 KB 拒绝；事务回滚 |
+| core-ingestion-replacement.cjs | 替换上传/原版本保留、并发构建和发布栅栏 |
+| core-application-permissions.cjs | 实际 PermissionService/DocumentAclService：个人库隔离（含系统管理员）、组织继承/兄弟拒绝、角色/组织/过期授权、restricted 空 ACL、全部来源合取、版本/hash/生效时间漂移、撤权 |
 
-Node 检查使用显式后台上下文验证后台构建；用户身份/RLS 的真实性由 SQL 检查验证。禁止把后台构建测试通过描述为请求角色隔离证明。
+Node 构建检查使用显式后台上下文；应用权限检查显式传入用户与新鲜事务客户端。`core-knowledge-versions.cjs` 同时验证严格输出的真实事务共享锁：有效 manifest 可输出、缺失/过时 manifest 拒绝，撤权提交须等待输出完成。
 
-派生读取检查要求已应用 `20261005120000_artifact_set_read_guard`。运行器传入 `skip_original=1`，省略全量旧守卫计时，仍保留每种状态下对 12 个节点的旧函数比较。需要同一 fixture 的完整旧路径计时，单独运行：
+2026-10-07 已移除 RLS，默认运行器不再执行 `core-knowledge-security.sql` / `artifact-read-guard.sql` 的旧数据库行可见性断言。这两个文件保留历史回归记录，要求旧 RLS schema，不能描述为当前应用 ACL 证明。当前 `--reliability` 另运行真实服务丢失和迁移后的2232×908派生读取/模型配额场景，不依赖旧RLS函数。
+
+```bash
+python3 tests/integration/run-core-checks.py --database gbrain_core_opt_test --reliability
+node tests/integration/redis-reconnect.cjs
+```
+
+`core-service-loss.cjs` 只删除随机UUID队列前缀下的Redis任务，在实际BullMQ worker已领取版本索引任务后SIGKILL，并由新建真实outbox服务恢复数据库事件；验证原子发布一次，以及启动/周期恢复体重新排入丢失的解析任务。Redis故障使用本地共享6379的DB15，绝不FLUSHDB。
+
+`core-artifact-quota.cjs` 实际写入2232个派生节点、908个来源、2026656条依赖，按256节点分批记录进度。真实应用权限守卫检查restricted ACL、hash漂移、来源过期、缺失manifest/依赖、匿名与库撤权，并验证跨用户/模型共享的原子RPM与TPM。每批SQL限时120秒，守卫事务限时60秒；脚本清理自身UUID范围的fixture。2026-10-07 Luna批次8全部通过，批量守卫耗时8041–9120毫秒；这不是性能目标已达成的声明。
+
+`redis-reconnect.cjs` 使用三个独立OS进程和一次性Redis：优先本地redis-server，否则使用已经存在的redis:7-alpine镜像、随机loopback端口、64MB内存限制，不下载镜像。验证同库广播、跨Redis DB频道隔离、断线漏消息后缓存重置，以及真实Redis重启后的重订阅。
+
+以下为移除 RLS 前的历史派生读取检查命令，要求专用旧 RLS schema（不能在当前完整迁移的库上作为验收命令）：
 
 ```bash
 docker exec -i llmwiki-postgres psql -U llmwiki -d gbrain_core_opt_test \

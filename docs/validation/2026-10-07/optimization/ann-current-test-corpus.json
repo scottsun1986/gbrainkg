@@ -1,0 +1,57 @@
+{
+  "database": "llmwiki",
+  "k": 10,
+  "queries": 100,
+  "schema": "public",
+  "selectivity_buckets": {
+    "broad(>=30%)": 40,
+    "moderate(5-30%)": 24,
+    "selective(<5%)": 36
+  },
+  "configurations": [
+    {
+      "configuration": "exact_knn(gold)",
+      "hnsw_plan_queries": 0,
+      "recall_at_k_mean": 1.0,
+      "recall_at_k_min": 1.0,
+      "perfect_recall_share": 1.0,
+      "rows_returned_mean": 10.0,
+      "short_result_share": 0.0,
+      "latency_ms_p50": 6.11,
+      "latency_ms_p95": 13.25,
+      "by_selectivity": {
+        "broad(>=30%)": 1.0,
+        "moderate(5-30%)": 1.0,
+        "selective(<5%)": 1.0
+      }
+    },
+    {
+      "configuration": "ann ef_search=200 iterative_scan=relaxed_order",
+      "hnsw_plan_queries": 59,
+      "recall_at_k_mean": 1.0,
+      "recall_at_k_min": 1.0,
+      "perfect_recall_share": 1.0,
+      "rows_returned_mean": 10.0,
+      "short_result_share": 0.0,
+      "latency_ms_p50": 2.7,
+      "latency_ms_p95": 42.41,
+      "by_selectivity": {
+        "broad(>=30%)": 1.0,
+        "moderate(5-30%)": 1.0,
+        "selective(<5%)": 1.0
+      }
+    }
+  ],
+  "hnsw_indexes": [
+    "chunks_embedding_hnsw_idx"
+  ],
+  "sampling": "deterministic md5(chunk ID); published existing embeddings, query vector drawn from corpus including self-neighbor; identical model fingerprint in exact/ANN candidates; no generated vectors",
+  "model_fingerprints": [
+    "cc20318fdfa340e831b9366dfe6a969ba548cf2069d9c1d5ab4cc8c148da3bc0"
+  ],
+  "gate": {
+    "target_recall_at_k": 0.98,
+    "minimum_queries": 30,
+    "passes": false
+  }
+}

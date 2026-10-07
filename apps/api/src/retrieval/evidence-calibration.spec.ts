@@ -1,8 +1,9 @@
 import { mkdtempSync,writeFileSync,rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { calibrateRerankScore } from './evidence-calibration';
+import { calibrateRerankScore, calibratedRefusalThreshold } from './evidence-calibration';
 import * as fs from 'node:fs';
+import { createHash } from 'node:crypto';
 
 describe('calibrated evidence confidence', () => {
   const before = process.env.RERANK_CALIBRATION_FILE;
@@ -42,6 +43,25 @@ describe('calibrated evidence confidence', () => {
   it.each([undefined, null, '200', 200.5])('rejects an unverified sample count %s', sampleCount => {
     const path = join(directory, 'invalid.json'); process.env.RERANK_CALIBRATION_FILE = path;
     writeFileSync(path, JSON.stringify({ contract: 'rerank-platt-v1', route: 'route', model: 'model', revision: 'rev', corpusHash: 'corpus', validationSetHash: 'validation', sampleCount, slope: 2, intercept: 0 }));
+    expect(calibrateRerankScore(0, 'route', 'model', 'rev')).toBeNull();
+  });
+  it('pins an optional refusal operating point to the probability profile', () => {
+    const file = join(directory, 'threshold.json'); process.env.RERANK_CALIBRATION_FILE = file;
+    const profile = { contract: 'rerank-platt-v1', route: 'route', model: 'model', revision: 'rev', corpusHash: 'corpus', validationSetHash: 'validation', sampleCount: 200, slope: 2, intercept: 0, refusalThreshold: 0.7 };
+    writeFileSync(file, JSON.stringify(profile));
+    expect(calibratedRefusalThreshold('route', 'model', 'rev')).toBe(0.7);
+    expect(calibratedRefusalThreshold('route', 'model', 'wrong')).toBeNull();
+    writeFileSync(file, JSON.stringify({ ...profile, refusalThreshold: '0.7' }));
+    expect(calibratedRefusalThreshold('route', 'model', 'rev')).toBeNull();
+  });
+  it('accepts a secret-free route hash while rejecting mismatches or malformed hashes', () => {
+    const file = join(directory, 'hashed-route.json'); process.env.RERANK_CALIBRATION_FILE = file;
+    const profile = { contract: 'rerank-platt-v1', routeHash: createHash('sha256').update('route').digest('hex'), model: 'model', revision: 'rev', corpusHash: 'corpus', validationSetHash: 'validation', sampleCount: 200, slope: 2, intercept: 0, refusalThreshold: 0.7 };
+    writeFileSync(file, JSON.stringify(profile));
+    expect(calibrateRerankScore(0, 'route', 'model', 'rev')).toBe(0.5);
+    expect(calibratedRefusalThreshold('route', 'model', 'rev')).toBe(0.7);
+    expect(calibrateRerankScore(0, 'other-route', 'model', 'rev')).toBeNull();
+    writeFileSync(file, JSON.stringify({ ...profile, routeHash: 'invalid', route: 'route' }));
     expect(calibrateRerankScore(0, 'route', 'model', 'rev')).toBeNull();
   });
 });

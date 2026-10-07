@@ -1,0 +1,3 @@
+[data] corpus=100 queries=80 qrels=80
+[done] wrote run file: docs/validation/2026-10-07/optimization/sota20-current-r1/run-scifact.jsonl (40 queries)
+Next: python3 standard_ir_eval.py --qrels /home/scottsun/beir-data/scifact/qrels/test.tsv --run docs/validation/2026-10-07/optimization/sota20-current-r1/run-scifact.jsonl --k 1,5,10,100

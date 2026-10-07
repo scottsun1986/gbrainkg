@@ -1,0 +1,41 @@
+{
+  "api": "http://127.0.0.1:3202",
+  "prefix": "SOTA-Opt-20261007-R2-",
+  "initial_matches": [
+    {
+      "id": "3bb700fb-4df7-48bc-bed7-4c27f0cfb099",
+      "name": "SOTA-Opt-20261007-R2-arguana"
+    },
+    {
+      "id": "c8641c7e-d9e6-4822-a99a-d77e7f541bc7",
+      "name": "SOTA-Opt-20261007-R2-nfcorpus"
+    },
+    {
+      "id": "3bcbac8f-a97b-4df5-9b5e-6d447bb6c11d",
+      "name": "SOTA-Opt-20261007-R2-scifact"
+    }
+  ],
+  "deletions": [
+    {
+      "id": "3bb700fb-4df7-48bc-bed7-4c27f0cfb099",
+      "name": "SOTA-Opt-20261007-R2-arguana",
+      "http_status": 200,
+      "success": true
+    },
+    {
+      "id": "c8641c7e-d9e6-4822-a99a-d77e7f541bc7",
+      "name": "SOTA-Opt-20261007-R2-nfcorpus",
+      "http_status": 200,
+      "success": true
+    },
+    {
+      "id": "3bcbac8f-a97b-4df5-9b5e-6d447bb6c11d",
+      "name": "SOTA-Opt-20261007-R2-scifact",
+      "http_status": 200,
+      "success": true
+    }
+  ],
+  "remaining_matches": [],
+  "zero_remain": true,
+  "verified_at_epoch": 1791346853
+}

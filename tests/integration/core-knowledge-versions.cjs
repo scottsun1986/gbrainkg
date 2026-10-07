@@ -54,10 +54,16 @@ async function main() {
     assert.match(rolledBack[0].vector, /^\[1,0,0,/);
     assert.equal(await store.activateDenseGeneration(v1.id, firstGeneration.id), false, 'index rollback cannot revive an obsolete source version');
     const [auth] = await db.$queryRaw`SELECT revision,"policyVersion" FROM "AuthorizationState" WHERE id=1`;
+    const evidenceDoc = await db.document.findUnique({ where: { id: documentId } });
+    const manifest = [{ documentId, versionId: evidenceDoc.activeVersionId, number: evidenceDoc.version,
+      sourceHash: evidenceDoc.contentHash, effectiveTo: evidenceDoc.effectiveTo?.toISOString() ?? null }];
+    const snapshot = { revision: String(auth.revision), policyVersion: auth.policyVersion, expiresAt: Infinity };
+    await assert.rejects(withStrictOutputPermit(userId, snapshot, async () => {}, null), /Source evidence changed/);
+    await assert.rejects(withStrictOutputPermit(userId, snapshot, async () => {}, [{ ...manifest[0], sourceHash: 'outdated' }]), /Source evidence changed/);
     let entered, release;
     const enteredPromise = new Promise(resolve => { entered = resolve; });
     const drain = new Promise(resolve => { release = resolve; });
-    const permit = withStrictOutputPermit(userId, { revision: String(auth.revision), policyVersion: auth.policyVersion, expiresAt: Infinity }, async () => { entered(); await drain; });
+    const permit = withStrictOutputPermit(userId, snapshot, async () => { entered(); await drain; }, manifest);
     await enteredPromise;
     let committed = false;
     const revoke = db.document.update({ where: { id: documentId }, data: { aclMode: 'restricted' } }).then(() => { committed = true; });
@@ -65,7 +71,7 @@ async function main() {
     assert.equal(committed, false, 'revoke cannot commit while strict bytes drain');
     release(); await permit; await revoke;
     let leaked = false;
-    await assert.rejects(withStrictOutputPermit(userId, { revision: String(auth.revision), policyVersion: auth.policyVersion, expiresAt: Infinity }, async () => { leaked = true; }), /Authorization changed/);
+    await assert.rejects(withStrictOutputPermit(userId, snapshot, async () => { leaked = true; }, manifest), /Authorization changed/);
     assert.equal(leaked, false, 'revoked revision never emits buffered content');
     console.log('Generation build/switch/rollback and real strict-output/revoke commit serialization passed.');
 

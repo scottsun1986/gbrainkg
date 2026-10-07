@@ -35,9 +35,9 @@ export class AppThrottlerGuard extends ThrottlerGuard {
 
     const req: any = context.switchToHttp?.()?.getRequest?.();
     if (!req) return false;
-    const path = String(req.originalUrl || req.url || '');
+    const path = String(req.originalUrl || req.url || '').split('?')[0];
     // Only the login endpoint; a trailing slash or query string still matches.
-    if (!/\/auth\/login(?:[/?]|$)/.test(path)) return false;
+    if (!/^\/(?:api\/v1\/)?auth\/login\/?$/.test(path)) return false;
 
     // The master switch is a deliberate operator opt-in and works regardless of
     // NODE_ENV (the shared test box runs NODE_ENV=production but is not the real

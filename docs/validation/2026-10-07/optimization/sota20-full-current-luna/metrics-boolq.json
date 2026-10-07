@@ -1,0 +1,12 @@
+{
+  "ndcg@10": 0.8315600655685804,
+  "recall@10": 0.97,
+  "mrr@10": 0.7880912698412699,
+  "map@10": 0.7880912698412699,
+  "evaluated_queries": 100,
+  "total_queries": 100,
+  "ndcg@10__evaluated": 0.8315600655685804,
+  "recall@10__evaluated": 0.97,
+  "mrr@10__evaluated": 0.7880912698412699,
+  "map@10__evaluated": 0.7880912698412699
+}

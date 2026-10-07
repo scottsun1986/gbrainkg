@@ -13,6 +13,41 @@ function fakeRedis(instanceId: string) {
 }
 
 describe('PermissionService cross-replica cache invalidation', () => {
+  it('retires an in-flight role read rather than caching a revoked capability', async () => {
+    const service = new PermissionService(fakeRedis('a'));
+    let release!: (value: any) => void;
+    const first = new Promise(resolve => { release = resolve; });
+    const findMany = jest.fn().mockReturnValueOnce(first).mockResolvedValueOnce([]);
+    (service as any).prisma = { userRole: { findMany } };
+    const pending = service.getRolePermissions('u');
+    service.invalidatePermissionCaches('u');
+    release([{ role: { permissions: ['revoked-capability'] } }]);
+    expect((await pending).has('revoked-capability')).toBe(false);
+    expect((await service.getRolePermissions('u')).has('revoked-capability')).toBe(false);
+    expect(findMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('retires an in-flight visible-library result on a peer invalidation', async () => {
+    const service = new PermissionService(fakeRedis('a'));
+    let release!: (value: any) => void;
+    const first = new Promise(resolve => { release = resolve; });
+    const compute = jest.spyOn(service as any, 'computeVisibleKnowledgeBases')
+      .mockReturnValueOnce(first).mockResolvedValueOnce([]);
+    const pending = service.getVisibleKnowledgeBases('u');
+    (service as any).handleInvalidationMessage(JSON.stringify({ instanceId: 'b', userId: 'u' }));
+    release(['revoked-library']);
+    expect(await pending).toEqual([]);
+    expect(await service.getVisibleKnowledgeBases('u')).toEqual([]);
+    expect(compute).toHaveBeenCalledTimes(2);
+  });
+
+  it('reads explicit transaction authority without reusing a cached admin decision', async () => {
+    const service = new PermissionService();
+    (service as any).systemAdminCache.set('u', { expiresAt: Date.now() + 10000, value: true });
+    const transaction = { userRole: { findFirst: jest.fn().mockResolvedValue(null) } };
+    expect(await service.isSystemAdmin('u', transaction)).toBe(false);
+    expect(transaction.userRole.findFirst).toHaveBeenCalled();
+  });
   it('publishes an invalidation carrying this instance id and the affected user', () => {
     const redis = fakeRedis('inst-a');
     const service = new PermissionService(redis);

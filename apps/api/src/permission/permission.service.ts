@@ -29,6 +29,7 @@ export class PermissionService implements OnModuleInit {
   private readonly managedOrgIdsCache = new Map<string, { expiresAt: number; value: Set<string> }>();
   private readonly visibleKbsCache = new Map<string, { expiresAt: number; value: string[] }>();
   private orgNodeListCache: { expiresAt: number; nodes: { id: string; parentId: string | null }[] } | null = null;
+  private cacheRevision = 0;
 
   /** Cross-replica cache-invalidation channel (Redis pub/sub). */
   private static readonly INVALIDATION_CHANNEL = 'permission-cache-invalidation';
@@ -48,6 +49,9 @@ export class PermissionService implements OnModuleInit {
   }
 
   private invalidateLocalPermissionCaches(userId?: string): void {
+    // An invalidation must also retire computations started before the change;
+    // otherwise an in-flight read can repopulate the just-cleared cache.
+    this.cacheRevision += 1;
     if (userId) {
       this.systemAdminCache.delete(userId);
       this.rolePermissionsCache.delete(userId);
@@ -71,12 +75,14 @@ export class PermissionService implements OnModuleInit {
     // 该查询若走请求用户的 RLS 上下文，组织管理员只能看到自己挂载链向上的
     // 节点，子树 BFS 永远无法向下展开（2026-10-06 E2E BUG-2 复测发现的
     // 第二层根因）；因此这里用 service 范围读取，结果仅用于 id 集合计算。
+    const revision = this.cacheRevision;
     const nodes = (await withPermissionRead(this.prisma, (db: any) =>
       db.orgNode.findMany({
         where: { status: 'active' },
         select: { id: true, parentId: true },
       }),
     )) as { id: string; parentId: string | null }[];
+    if (revision !== this.cacheRevision) return this.cachedOrgNodeList();
     if (ttl > 0) this.orgNodeListCache = { expiresAt: Date.now() + ttl, nodes };
     return nodes;
   }
@@ -85,9 +91,10 @@ export class PermissionService implements OnModuleInit {
     await runAsService('permission-initialize', () => this.initializeInternal());
     // Cross-replica cache invalidation: another instance's permission change
     // drops this instance's caches immediately rather than after the TTL.
-    void this.redis?.subscribe(
+    await this.redis?.subscribe(
       PermissionService.INVALIDATION_CHANNEL,
       (message: string) => this.handleInvalidationMessage(message),
+      () => this.invalidateLocalPermissionCaches(),
     );
   }
 
@@ -188,12 +195,20 @@ export class PermissionService implements OnModuleInit {
   }
 
   async isSystemAdmin(userId: string, prisma: any = this.prisma): Promise<boolean> {
+    // A transaction client is an explicit fresh-read boundary (strict output).
+    if (prisma !== this.prisma) {
+      return Boolean(await prisma.userRole.findFirst({
+        where: { userId, role: { code: { in: ['system_admin', 'super_admin'] } } },
+        select: { userId: true },
+      }));
+    }
     const ttl = PermissionService.PERM_TTL_MS;
     const cached = this.systemAdminCache.get(userId);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
     // Only the dedicated system-admin role names grant system administration.
     // Matching on `builtin: true` alone would promote any future built-in
     // role (e.g. an internal service role) to system admin.
+    const revision = this.cacheRevision;
     const value = Boolean(
       await prisma.userRole.findFirst({
         where: {
@@ -205,6 +220,7 @@ export class PermissionService implements OnModuleInit {
         select: { userId: true },
       }),
     );
+    if (revision !== this.cacheRevision) return this.isSystemAdmin(userId, prisma);
     if (ttl > 0) this.systemAdminCache.set(userId, { expiresAt: Date.now() + ttl, value });
     return value;
   }
@@ -226,6 +242,7 @@ export class PermissionService implements OnModuleInit {
     const ttl = PermissionService.PERM_TTL_MS;
     const cached = this.rolePermissionsCache.get(userId);
     if (cached && cached.expiresAt > Date.now()) return new Set(cached.value);
+    const revision = this.cacheRevision;
     const roles = await this.prisma.userRole.findMany({
       where: { userId },
       select: { role: { select: { permissions: true } } },
@@ -240,6 +257,7 @@ export class PermissionService implements OnModuleInit {
           )
           .forEach((permission) => permissions.add(permission));
     }
+    if (revision !== this.cacheRevision) return this.getRolePermissions(userId);
     if (ttl > 0) this.rolePermissionsCache.set(userId, { expiresAt: Date.now() + ttl, value: permissions });
     return new Set(permissions);
   }
@@ -254,7 +272,9 @@ export class PermissionService implements OnModuleInit {
     const ttl = PermissionService.PERM_TTL_MS;
     const cached = this.managedOrgIdsCache.get(userId);
     if (cached && cached.expiresAt > Date.now()) return new Set(cached.value);
+    const revision = this.cacheRevision;
     const value = await this.computeManagedOrgIds(userId);
+    if (revision !== this.cacheRevision) return this.getManagedOrgIds(userId);
     if (ttl > 0) this.managedOrgIdsCache.set(userId, { expiresAt: Date.now() + ttl, value });
     return new Set(value);
   }
@@ -507,7 +527,9 @@ export class PermissionService implements OnModuleInit {
       select: { orgNodeId: true },
     });
     const nodes = prisma.orgNode
-      ? await this.cachedOrgNodeList()
+      ? prisma !== this.prisma
+        ? await prisma.orgNode.findMany({ where: { status: 'active' }, select: { id: true, parentId: true } })
+        : await this.cachedOrgNodeList()
       : [];
     const byId = new Map<string, any>(nodes.map((node: any) => [node.id, node]));
     const visibleOrgIds = new Set<string>();
@@ -535,7 +557,8 @@ export class PermissionService implements OnModuleInit {
    * 核心算法：计算用户的可见知识库集合
    * visible_kbs = 个人库 ∪ 组织库继承 ∪ 行业库ACL
    */
-  async getVisibleKnowledgeBases(userId: string): Promise<string[]> {
+  async getVisibleKnowledgeBases(userId: string, prisma?: any): Promise<string[]> {
+    if (prisma) return this.computeVisibleKnowledgeBases(prisma, userId);
     // One question triggers this 5+ times: the answer path itself, the
     // rerank-hop authorization, the citation ACL check and the search filter
     // each recompute it, and every call runs getUserOrgIds plus four KB
@@ -550,9 +573,11 @@ export class PermissionService implements OnModuleInit {
     // connection without GUC context fail-closes and returns [] -> 404 on
     // document lists. Run the ACL computation under the service context and
     // keep the application-level filters below as the authorization source.
+    const revision = this.cacheRevision;
     const value = await withServiceContext(this.prisma, (db) =>
       this.computeVisibleKnowledgeBases(db as any, userId),
     );
+    if (revision !== this.cacheRevision) return this.getVisibleKnowledgeBases(userId);
     if (PermissionService.PERM_TTL_MS > 0) {
       this.visibleKbsCache.set(userId, {
         expiresAt: Date.now() + PermissionService.PERM_TTL_MS,

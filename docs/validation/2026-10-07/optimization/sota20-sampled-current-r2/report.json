@@ -1,0 +1,50 @@
+{
+  "results": {
+    "scifact": {
+      "dataset": "scifact",
+      "group": "beir",
+      "status": "ok",
+      "kb_id": "3bcbac8f-a97b-4df5-9b5e-6d447bb6c11d",
+      "kb_name": "SOTA-Opt-20261007-R2-scifact",
+      "metrics": {
+        "ndcg@10": 0.3544648374693051,
+        "recall@10": 0.375,
+        "mrr@10": 0.35,
+        "map@10": 0.34517113095238094,
+        "evaluated_queries": 40,
+        "total_queries": 80,
+        "ndcg@10__evaluated": 0.7089296749386103,
+        "recall@10__evaluated": 0.75,
+        "mrr@10__evaluated": 0.7,
+        "map@10__evaluated": 0.6903422619047619
+      },
+      "ts": "20261007-121455",
+      "input_hashes": null,
+      "run_hash": "0439dab30c809b0fc7a592181e7951f66ba0e3c9f6d6bdd635dda0fc525acd23",
+      "wall_s": 47.7
+    },
+    "nfcorpus": {
+      "dataset": "nfcorpus",
+      "group": "beir",
+      "status": "ok",
+      "kb_id": "c8641c7e-d9e6-4822-a99a-d77e7f541bc7",
+      "kb_name": "SOTA-Opt-20261007-R2-nfcorpus",
+      "metrics": {
+        "ndcg@10": 0.5872978499985557,
+        "recall@10": 0.5244444444444445,
+        "mrr@10": 0.8,
+        "map@10": 0.5244444444444445,
+        "evaluated_queries": 5,
+        "total_queries": 5,
+        "ndcg@10__evaluated": 0.5872978499985557,
+        "recall@10__evaluated": 0.5244444444444445,
+        "mrr@10__evaluated": 0.8,
+        "map@10__evaluated": 0.5244444444444445
+      },
+      "ts": "20261007-121542",
+      "input_hashes": null,
+      "run_hash": "a5f40f0a5f7cffa83f29baf7559676f65af496796db6b1d947941fe2ea6453b3",
+      "wall_s": 298.2
+    }
+  }
+}

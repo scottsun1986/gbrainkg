@@ -1,0 +1,33 @@
+[data] corpus=100 queries=5 qrels=5
+[ingest] submitted 100 documents in 1.8s
+[readiness] published+ready=5/100
+[readiness] published+ready=75/100
+[readiness] published+ready=85/100
+[readiness] published+ready=90/100
+[readiness] published+ready=91/100
+[readiness] published+ready=91/100
+[readiness] published+ready=93/100
+[readiness] published+ready=94/100
+[readiness] published+ready=94/100
+[readiness] published+ready=94/100
+[readiness] published+ready=94/100
+[readiness] published+ready=94/100
+[readiness] published+ready=94/100
+[readiness] published+ready=96/100
+[readiness] published+ready=96/100
+[readiness] published+ready=97/100
+[readiness] published+ready=97/100
+[readiness] published+ready=97/100
+[readiness] published+ready=97/100
+[readiness] published+ready=98/100
+[readiness] published+ready=98/100
+[readiness] published+ready=98/100
+[readiness] published+ready=98/100
+[readiness] published+ready=98/100
+[readiness] published+ready=98/100
+[readiness] published+ready=99/100
+[readiness] published+ready=99/100
+[readiness] published+ready=99/100
+[readiness] published+ready=100/100
+[done] wrote run file: docs/validation/2026-10-07/optimization/sota20-sampled-current-r2/run-nfcorpus.jsonl (5 queries)
+Next: python3 standard_ir_eval.py --qrels /home/scottsun/beir-data/nfcorpus/qrels/test.tsv --run docs/validation/2026-10-07/optimization/sota20-sampled-current-r2/run-nfcorpus.jsonl --k 1,5,10,100

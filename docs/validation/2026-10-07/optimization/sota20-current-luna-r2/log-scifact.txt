@@ -1,0 +1,32 @@
+[data] corpus=100 queries=80 qrels=80
+Traceback (most recent call last):
+  File "/home/scottsun/gbrainkg/tests/evaluation/intl-benchmark/beir_pipeline.py", line 544, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/scottsun/gbrainkg/tests/evaluation/intl-benchmark/beir_pipeline.py", line 529, in main
+    run = retrieve_run(
+        client, args.kb_id, queries, qrels,
+        manifest=manifest,
+        top_k=args.top_k, workers=args.workers, limit_queries=args.limit_queries,
+    )
+  File "/home/scottsun/gbrainkg/tests/evaluation/intl-benchmark/beir_pipeline.py", line 323, in retrieve_run
+    for index, (qid, docids) in enumerate(pool.map(query_one, qids), start=1):
+                                ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.14/concurrent/futures/_base.py", line 639, in result_iterator
+    yield _result_or_cancel(fs.pop())
+          ~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "/usr/lib/python3.14/concurrent/futures/_base.py", line 311, in _result_or_cancel
+    return fut.result(timeout)
+           ~~~~~~~~~~^^^^^^^^^
+  File "/usr/lib/python3.14/concurrent/futures/_base.py", line 450, in result
+    return self.__get_result()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.14/concurrent/futures/_base.py", line 395, in __get_result
+    raise self._exception
+  File "/usr/lib/python3.14/concurrent/futures/thread.py", line 86, in run
+    result = ctx.run(self.task)
+  File "/usr/lib/python3.14/concurrent/futures/thread.py", line 73, in run
+    return fn(*args, **kwargs)
+  File "/home/scottsun/gbrainkg/tests/evaluation/intl-benchmark/beir_pipeline.py", line 314, in query_one
+    raise RuntimeError(f"{qid}: nonempty hit cannot be mapped to a BEIR corpus ID; run invalid")
+RuntimeError: 124: nonempty hit cannot be mapped to a BEIR corpus ID; run invalid

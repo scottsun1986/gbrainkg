@@ -1,4 +1,5 @@
 import { routeGraphQuery, graphProbeEnabledForQuery, resolveGraphLlmExtraction } from './graph-rag.service';
+import { graphDocumentChunkLimit } from './extraction-budget';
 
 describe('resolveGraphLlmExtraction (GraphRAG depth)', () => {
   it('defaults to a deeper budget than the original 30% / 20 chunks', () => {
@@ -14,6 +15,14 @@ describe('resolveGraphLlmExtraction (GraphRAG depth)', () => {
     } as NodeJS.ProcessEnv);
     expect(cfg.sampleRate).toBe(1);
     expect(cfg.maxLlmChunks).toBe(100000);
+    expect(resolveGraphLlmExtraction({ GRAPH_LLM_FULL_EXTRACTION: '1', GRAPH_LLM_SAMPLE_RATE: '0.1', GRAPH_LLM_MAX_CHUNKS: '2' })).toEqual({ sampleRate: 1, maxLlmChunks: 100000 });
+    expect(graphDocumentChunkLimit({ GRAPH_LLM_FULL_EXTRACTION: '1', AUTO_GRAPH_EXTRACT_MAX_CHUNKS: '2' })).toBe(100000);
+  });
+
+  it('uses one finite positive document budget on all graph paths', () => {
+    expect(graphDocumentChunkLimit({})).toBe(200);
+    for (const value of ['0.5', 'NaN', '-1']) expect(graphDocumentChunkLimit({ AUTO_GRAPH_EXTRACT_MAX_CHUNKS: value })).toBe(200);
+    expect(resolveGraphLlmExtraction({ GRAPH_LLM_MAX_CHUNKS: '0.5' }).maxLlmChunks).toBe(60);
   });
 
   it('honours explicit overrides and clamps invalid values', () => {

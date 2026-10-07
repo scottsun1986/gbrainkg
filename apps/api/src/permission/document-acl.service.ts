@@ -25,6 +25,8 @@ export interface AclEntry {
 const SUBJECT_TYPES: AclSubjectType[] = ['user', 'role', 'org'];
 
 export interface FilterReadableDocsOpts {
+  /** 内部受信任事务客户端：与调用方锁定的授权/版本快照保持一致。 */
+  prisma?: any;
   /** 调用方已知的可见 KB 集合（缺省时按 userId 现算）。 */
   visibleKbIds?: string[];
   /** 调用方已取到的文档行（id + kbId），避免重复查 Document。 */
@@ -197,7 +199,7 @@ export class DocumentAclService {
       ),
     ];
     if (!ids.length) return readable;
-    const p = this.prisma as any;
+    const p = opts.prisma ?? this.prisma as any;
 
     // 1) 文档 → kbId 映射。opts.docs 为权威集合（调用方刚查过 Document，
     //    未在其中的 id 直接视为不可读，不再回表，避免打乱调用方的查询序列）；
@@ -269,7 +271,7 @@ export class DocumentAclService {
     const visibleKbIds = new Set<string>(
       opts.visibleKbIds ??
         (this.permissionService
-          ? await this.permissionService.getVisibleKnowledgeBases(userId)
+          ? await this.permissionService.getVisibleKnowledgeBases(userId, opts.prisma)
           : []),
     );
     const adminKbIds = new Set<string>(

@@ -1,0 +1,441 @@
+{
+  "results": {
+    "scifact": {
+      "dataset": "scifact",
+      "group": "beir",
+      "status": "pipeline_failed",
+      "kb_id": "6f878759-bbff-43cc-8fb9-fca8fd2ac50e",
+      "log": "docs/validation/2026-10-07/optimization/sota20-current-luna-r2/log-scifact.txt",
+      "wall_s": 10.2
+    },
+    "nfcorpus": {
+      "dataset": "nfcorpus",
+      "group": "beir",
+      "status": "ok",
+      "kb_id": "ad817f68-a895-432e-802f-1408eebc494b",
+      "kb_name": "BEIR-Eval-nfcorpus",
+      "metrics": {
+        "ndcg@10": 0.559768167837959,
+        "recall@10": 0.5244444444444445,
+        "mrr@10": 0.8,
+        "map@10": 0.47777777777777775,
+        "evaluated_queries": 5,
+        "total_queries": 5,
+        "ndcg@10__evaluated": 0.559768167837959,
+        "recall@10__evaluated": 0.5244444444444445,
+        "mrr@10__evaluated": 0.8,
+        "map@10__evaluated": 0.47777777777777775
+      },
+      "ts": "20261007-121019",
+      "input_hashes": {
+        "corpus": "bcdf1cbe2f24186ee47d61bcc9b01c55df4d448e513c2320c71c46ffc0d97c82",
+        "queries": "03ca3ba41e100c174a3fcc7d5b9fe66d869f69aa92d0ec3bca47a450908da3a3",
+        "qrels": "429c0eb6fbeb08ca64577cba890466e61d55d5f587a30594becc798d4ed54ae1"
+      },
+      "run_hash": "9d33307e956f63912e3bd0d458e2b7c6f0bb94549fe3fe04e1a5dd6f3b92d833",
+      "wall_s": 3.8
+    }
+  },
+  "preflight": {
+    "scifact": {
+      "dataset": "scifact",
+      "group": "beir",
+      "kb_name": "BEIR-Eval-scifact",
+      "status": "ready",
+      "expected_documents": 100,
+      "hashes": {
+        "corpus": "390b24f6da40fcc055895efc123509c9067b2b390de4d08180c52749872bd84d",
+        "queries": "d2acedc6cda2f3d29a5204f8ba2538a1e396943afd57225f43692800d5be6cef",
+        "qrels": "e97c7fcedcc9a726db0ef61f41d0b70990000ec3a31b04636e036cb52beb9700"
+      },
+      "candidates": [
+        {
+          "kb_id": "6f878759-bbff-43cc-8fb9-fca8fd2ac50e",
+          "ready_documents": 100,
+          "exact_corpus_match": true
+        }
+      ],
+      "kb_id": "6f878759-bbff-43cc-8fb9-fca8fd2ac50e"
+    },
+    "nfcorpus": {
+      "dataset": "nfcorpus",
+      "group": "beir",
+      "kb_name": "BEIR-Eval-nfcorpus",
+      "status": "ready",
+      "expected_documents": 100,
+      "hashes": {
+        "corpus": "bcdf1cbe2f24186ee47d61bcc9b01c55df4d448e513c2320c71c46ffc0d97c82",
+        "queries": "03ca3ba41e100c174a3fcc7d5b9fe66d869f69aa92d0ec3bca47a450908da3a3",
+        "qrels": "429c0eb6fbeb08ca64577cba890466e61d55d5f587a30594becc798d4ed54ae1"
+      },
+      "candidates": [
+        {
+          "kb_id": "ad817f68-a895-432e-802f-1408eebc494b",
+          "ready_documents": 100,
+          "exact_corpus_match": true
+        }
+      ],
+      "kb_id": "ad817f68-a895-432e-802f-1408eebc494b"
+    },
+    "arguana": {
+      "dataset": "arguana",
+      "group": "beir",
+      "kb_name": "BEIR-Eval-arguana",
+      "status": "ready",
+      "expected_documents": 100,
+      "hashes": {
+        "corpus": "da53623168ca93db1933bc3c633c5d4b579e15db810b4cb8e609039735b95dcc",
+        "queries": "ea046b1eec6d6405ea29c0514185143e585d1748fb6ad30e7365e2bae1a9f651",
+        "qrels": "98a95e41e7c16b4600d964bb154e123e532c3fb384ad16bcb2ea89b3765644d3"
+      },
+      "candidates": [
+        {
+          "kb_id": "f8d789a5-c84c-41ea-af27-f2df0abed5d4",
+          "ready_documents": 100,
+          "exact_corpus_match": true
+        }
+      ],
+      "kb_id": "f8d789a5-c84c-41ea-af27-f2df0abed5d4"
+    },
+    "scidocs": {
+      "dataset": "scidocs",
+      "group": "beir",
+      "kb_name": "BEIR-Eval-scidocs",
+      "status": "ready",
+      "expected_documents": 100,
+      "hashes": {
+        "corpus": "3a27cdb731db4e21f0392a862c9226ab42a5e520e9795e993e179ccc6beaee5f",
+        "queries": "5a95b5d95296f979e28b893ad8dd77fe5757268cf4c511a5fff7bff75955917a",
+        "qrels": "70193a121b7c774e1800b3211152d79316f1d200b61a9374edec946a9c63bfde"
+      },
+      "candidates": [
+        {
+          "kb_id": "8ae19a6f-e5a0-485d-9d18-cac742e75974",
+          "ready_documents": 100,
+          "exact_corpus_match": true
+        }
+      ],
+      "kb_id": "8ae19a6f-e5a0-485d-9d18-cac742e75974"
+    },
+    "fiqa": {
+      "dataset": "fiqa",
+      "group": "beir",
+      "kb_name": "BEIR-Eval-fiqa",
+      "status": "ready",
+      "expected_documents": 100,
+      "hashes": {
+        "corpus": "cb00557810e8741dbdc10aaaca198ae87eb03d079b7bfd848179ce1bb7084885",
+        "queries": "0e7e2c7fc3dd2f3f46fea2a2a33997bdc2c92f0db0b2be5a77a57b17765e48bd",
+        "qrels": "958fbfe95b9dc1fca66c0f5f08bf4efac23513025b7fe3e5b9d57a91bca7fedb"
+      },
+      "candidates": [
+        {
+          "kb_id": "8e8744bc-2c90-483c-8c02-3dbe6aa641fa",
+          "ready_documents": 100,
+          "exact_corpus_match": true
+        }
+      ],
+      "kb_id": "8e8744bc-2c90-483c-8c02-3dbe6aa641fa"
+    },
+    "quora": {
+      "dataset": "quora",
+      "group": "beir",
+      "kb_name": "BEIR-Eval-quora",
+      "status": "ready",
+      "expected_documents": 100,
+      "hashes": {
+        "corpus": "3e4a2d0eb1bc47854b3f4199a9909e4cf2e602fab39a60b702e4e880aa0e0555",
+        "queries": "0e8fa76baf88dae7c93d232130c7fa97dbdb811af5ce69eddbf4ceb786988fbe",
+        "qrels": "6015a4336c929fc14ebc44a0d4f9a17c8343bb973f8cbdd2ab7d62781ffed997"
+      },
+      "candidates": [
+        {
+          "kb_id": "347737eb-ba80-40d7-9479-d1539fe99d5f",
+          "ready_documents": 100,
+          "exact_corpus_match": true
+        }
+      ],
+      "kb_id": "347737eb-ba80-40d7-9479-d1539fe99d5f"
+    },
+    "webis-touche2020": {
+      "dataset": "webis-touche2020",
+      "group": "beir",
+      "kb_name": "BEIR-Eval-webis-touche2020",
+      "status": "ready",
+      "expected_documents": 100,
+      "hashes": {
+        "corpus": "c864ce8b8f788af1c7240831039060b6d54c9d2d4f0c3ae79246920d0ced317a",
+        "queries": "667822aecad3f0f3df07060fb0c73c19e54841bf498c5586c7ab832b6486a022",
+        "qrels": "b67ef2df1911992d9f2008aac24c3b32d8c0dc8ef33ea2982185296b81c54bdb"
+      },
+      "candidates": [
+        {
+          "kb_id": "ca79bc6d-af61-44df-9ee4-ae305af6bb0e",
+          "ready_documents": 100,
+          "exact_corpus_match": true
+        }
+      ],
+      "kb_id": "ca79bc6d-af61-44df-9ee4-ae305af6bb0e"
+    },
+    "climate-fever": {
+      "dataset": "climate-fever",
+      "group": "beir",
+      "kb_name": "BEIR-Eval-climate-fever",
+      "status": "ready",
+      "expected_documents": 100,
+      "hashes": {
+        "corpus": "1366531e66d794fe19ed99df1ebd277c652c5eeae56cc671bd4ae38702805867",
+        "queries": "ba28aecb5e5a211c3c4910ec25f10fc5e907223379396971c6413f134761bcfc",
+        "qrels": "5bf0d93911ac3379062ee8e605a4a23aacde6eef26173d0ed10e8d006ccfca0f"
+      },
+      "candidates": [
+        {
+          "kb_id": "788713ba-9f0a-4791-b7c8-198768629fcf",
+          "ready_documents": 100,
+          "exact_corpus_match": true
+        }
+      ],
+      "kb_id": "788713ba-9f0a-4791-b7c8-198768629fcf"
+    },
+    "fever": {
+      "dataset": "fever",
+      "group": "beir",
+      "kb_name": "BEIR-Eval-fever",
+      "status": "ready",
+      "expected_documents": 100,
+      "hashes": {
+        "corpus": "5e2eca8dd56dc0f23aba1580573f575fc1bb05cbfdd6146f99d06748eb8d7a44",
+        "queries": "0887b058a3393cca0903218df49fd4872d1f192002ba33c8b5de973f24ce92e7",
+        "qrels": "04cf5a21ea239d03d672800e5d183fc6f23d7bc738e442b960353a5b8dfcd05d"
+      },
+      "candidates": [
+        {
+          "kb_id": "38b75430-2819-431c-a4b6-1ee798d805d4",
+          "ready_documents": 100,
+          "exact_corpus_match": true
+        }
+      ],
+      "kb_id": "38b75430-2819-431c-a4b6-1ee798d805d4"
+    },
+    "nq": {
+      "dataset": "nq",
+      "group": "beir",
+      "kb_name": "BEIR-Eval-nq",
+      "status": "ready",
+      "expected_documents": 100,
+      "hashes": {
+        "corpus": "5dbe6b8024679f3498afc8317a3a9918a08fd172fcbb64ff76f9b76a77c41041",
+        "queries": "4c8c46fa71699597dbbb7e9bc5ceabc9d3dd6acc35cb2039b9f899c8d982c9af",
+        "qrels": "d981e1bba7274118a04dcb61e43c59beafe1f07465419bfe9d97496e2824438b"
+      },
+      "candidates": [
+        {
+          "kb_id": "aab3705d-d5f4-400f-bf3b-948fbed8e41e",
+          "ready_documents": 100,
+          "exact_corpus_match": true
+        }
+      ],
+      "kb_id": "aab3705d-d5f4-400f-bf3b-948fbed8e41e"
+    },
+    "hotpotqa": {
+      "dataset": "hotpotqa",
+      "group": "beir",
+      "kb_name": "BEIR-Eval-hotpotqa",
+      "status": "ready",
+      "expected_documents": 100,
+      "hashes": {
+        "corpus": "7e393fda4e339459a469ad6d356f708d56073944e4b293d228cfbd5a2019055b",
+        "queries": "c3d3db1a89e7acc52e263f6d575dc4698617ad17e2c4f3ecf5bdc68a093aa783",
+        "qrels": "ab28748c0e5ce04b1012166708831de242baaf6656655516e9f46d4fd39e51f9"
+      },
+      "candidates": [
+        {
+          "kb_id": "09ac059e-5106-45bc-9d78-dce689ceb58b",
+          "ready_documents": 100,
+          "exact_corpus_match": true
+        }
+      ],
+      "kb_id": "09ac059e-5106-45bc-9d78-dce689ceb58b"
+    },
+    "triviaqa": {
+      "dataset": "triviaqa",
+      "group": "qa",
+      "kb_name": "BEIR-Eval-triviaqa",
+      "status": "ready",
+      "expected_documents": 100,
+      "hashes": {
+        "corpus": "a529eae818606af5e17dd4c13e81c600a64a49550fb8492143b166ed47628418",
+        "queries": "e51989daef34e4125c65f28bf727efb8dd7130eb4ec114c0c2972de143ab6cab",
+        "qrels": "829aff650410ad7aaa95f57844e0f8d07d639d4ad9d8af49b5b87746f76a7a2b"
+      },
+      "candidates": [
+        {
+          "kb_id": "e9d76b00-4366-4cd3-890e-dd4fe690fe6b",
+          "ready_documents": 100,
+          "exact_corpus_match": true
+        }
+      ],
+      "kb_id": "e9d76b00-4366-4cd3-890e-dd4fe690fe6b"
+    },
+    "squad": {
+      "dataset": "squad",
+      "group": "qa",
+      "kb_name": "BEIR-Eval-squad",
+      "status": "ready",
+      "expected_documents": 100,
+      "hashes": {
+        "corpus": "d1175770dbbb69872e5b301030e5bf940236a9449ae5a60123cc597de12b67a7",
+        "queries": "cbb51fdddf2290840fb539d08cc2cc15080cc26e8f903acd033ebe8268f60856",
+        "qrels": "e46223b1113128ea820720d991d3992f688c9d211480708b93ec1a61b9cc7cf6"
+      },
+      "candidates": [
+        {
+          "kb_id": "2c884d80-3b37-49f9-b97c-15d9573c6faf",
+          "ready_documents": 100,
+          "exact_corpus_match": true
+        }
+      ],
+      "kb_id": "2c884d80-3b37-49f9-b97c-15d9573c6faf"
+    },
+    "boolq": {
+      "dataset": "boolq",
+      "group": "qa",
+      "kb_name": "BEIR-Eval-boolq",
+      "status": "ready",
+      "expected_documents": 100,
+      "hashes": {
+        "corpus": "e959db5cf7cfdf7a6398cfb1e77ddce1e31d901f0446c3cd13012a055cf23d2a",
+        "queries": "dbdf4af05177c8bbff8e4b8311808abfca31ed4052dc380c951f7950f871a9b2",
+        "qrels": "e44d03ff7befacaebfbe1e46946c6771e8a26ec08e334bae5f44d6ec3b467c31"
+      },
+      "candidates": [
+        {
+          "kb_id": "d54ecaf5-bd6f-465d-901a-225a204f015c",
+          "ready_documents": 100,
+          "exact_corpus_match": true
+        }
+      ],
+      "kb_id": "d54ecaf5-bd6f-465d-901a-225a204f015c"
+    },
+    "pubmedqa": {
+      "dataset": "pubmedqa",
+      "group": "qa",
+      "kb_name": "BEIR-Eval-pubmedqa",
+      "status": "ready",
+      "expected_documents": 100,
+      "hashes": {
+        "corpus": "4a35c85dd9d122bc1fc3ede8e086c70b8466f30692a3e9c2738dc4ed9a599229",
+        "queries": "629b2afcd31fe708a93cab5b62e78fc9c22367c11304404f878ca08e77f6f504",
+        "qrels": "174c32e15e52b1b5b7cd14b8b6bdd98281ce34e4e275bf559f8ccb819af8c5a6"
+      },
+      "candidates": [
+        {
+          "kb_id": "ebdd4c82-6867-4c01-809a-bbe92c54f21a",
+          "ready_documents": 100,
+          "exact_corpus_match": true
+        }
+      ],
+      "kb_id": "ebdd4c82-6867-4c01-809a-bbe92c54f21a"
+    },
+    "msmarco": {
+      "dataset": "msmarco",
+      "group": "qa",
+      "kb_name": "BEIR-Eval-msmarco",
+      "status": "ready",
+      "expected_documents": 100,
+      "hashes": {
+        "corpus": "ab198b7a9032469b29e8508c5259802195e213cb21f4d36aac4373aa262b186f",
+        "queries": "08155f3b81ff962d368605a7d8fa2be76536aea46d6f0ed4f3f3eeec77fbb2cb",
+        "qrels": "5cd2e4e45d085527eb66be320f586b28a87cec22e4511bd5245cc0255cd320d3"
+      },
+      "candidates": [
+        {
+          "kb_id": "b069cc1b-57b4-4eae-a2a8-8de2b2a154a7",
+          "ready_documents": 100,
+          "exact_corpus_match": true
+        }
+      ],
+      "kb_id": "b069cc1b-57b4-4eae-a2a8-8de2b2a154a7"
+    },
+    "cmrc2018": {
+      "dataset": "cmrc2018",
+      "group": "qa",
+      "kb_name": "BEIR-Eval-cmrc2018",
+      "status": "ready",
+      "expected_documents": 100,
+      "hashes": {
+        "corpus": "3dbf76d209ed0ecb14e136c2c3d5048096e865029e794abe67cb19e41dc425f4",
+        "queries": "716728261d35e10aeee7481e9cfbf7da0c19b3a6893761b61391f0859bea44e2",
+        "qrels": "ca86da0597ba45e22d805cb94b2e43893f042bed0efa214a72b01148cb38573d"
+      },
+      "candidates": [
+        {
+          "kb_id": "2a97a86c-2a2d-465e-9a7f-38f08579ec74",
+          "ready_documents": 100,
+          "exact_corpus_match": true
+        }
+      ],
+      "kb_id": "2a97a86c-2a2d-465e-9a7f-38f08579ec74"
+    },
+    "tatqa": {
+      "dataset": "tatqa",
+      "group": "qa",
+      "kb_name": "BEIR-Eval-tatqa",
+      "status": "ready",
+      "expected_documents": 100,
+      "hashes": {
+        "corpus": "26cd3db13058d1a180d6925bfaa7f79a8adcfea95e27c57cdefd19b5a85691b6",
+        "queries": "13b8ab2644e8d59f732f00a943efecb0514ad9fc811d2aa158e6c15326d950a7",
+        "qrels": "815638e40d4058abbb5f72bbe6846f7d5da2b23ec00b45dd20cbdf8732204af2"
+      },
+      "candidates": [
+        {
+          "kb_id": "77085857-122a-442a-9a8e-f5ecdd5d0932",
+          "ready_documents": 100,
+          "exact_corpus_match": true
+        }
+      ],
+      "kb_id": "77085857-122a-442a-9a8e-f5ecdd5d0932"
+    },
+    "2wiki": {
+      "dataset": "2wiki",
+      "group": "qa",
+      "kb_name": "BEIR-Eval-2wiki",
+      "status": "ready",
+      "expected_documents": 100,
+      "hashes": {
+        "corpus": "77abd7497bcb93f45c99b06880ec92b654447c0fdfe8257fc8a7589c4017a2e6",
+        "queries": "84d8ee06af70b6444f18d826ba0aec2470fce911263a0354261cc27beb92a208",
+        "qrels": "49e60f91a919903814539449fd832ec5162ea5d1003062691728ae0290688aae"
+      },
+      "candidates": [
+        {
+          "kb_id": "a58fce2f-2d4c-4a93-9d43-e6e7744b5be2",
+          "ready_documents": 100,
+          "exact_corpus_match": true
+        }
+      ],
+      "kb_id": "a58fce2f-2d4c-4a93-9d43-e6e7744b5be2"
+    },
+    "musique": {
+      "dataset": "musique",
+      "group": "qa",
+      "kb_name": "BEIR-Eval-musique",
+      "status": "ready",
+      "expected_documents": 100,
+      "hashes": {
+        "corpus": "f286613962734f362fec06e3a0d41aba44681e996457a6715a512874efc1405b",
+        "queries": "30c40d06ab330511f673047ed8d86c4bcebe34e5065f53ff936b1bc7bb4b5a43",
+        "qrels": "a31fa082dad461a16ad0b73654cb0e526e0cf89ba77254b0a84c68f4e03a868f"
+      },
+      "candidates": [
+        {
+          "kb_id": "552a10c3-e71e-45c1-9260-36c11162ab48",
+          "ready_documents": 100,
+          "exact_corpus_match": true
+        }
+      ],
+      "kb_id": "552a10c3-e71e-45c1-9260-36c11162ab48"
+    }
+  }
+}

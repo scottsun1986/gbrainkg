@@ -234,9 +234,18 @@ export class CitationAssemblyService {
       if (!userId) continue;
       const sourceDocs = await this.prisma.document.findMany({
         where: { id: { in: docIds }, kbId: { in: visibleKbIds }, status: "published" },
-        select: { id: true, kbId: true, aclMode: true },
+        select: { id: true, kbId: true, aclMode: true, version: true, activeVersionId: true, contentHash: true },
       });
       if (sourceDocs.length !== new Set(docIds).size) continue;
+      type DerivedSource = { id: string; kbId: string; version: number; activeVersionId: string | null; contentHash: string | null };
+      const sourcesById = new Map<string, DerivedSource>(sourceDocs.map((doc: DerivedSource) => [doc.id, doc]));
+      const sourceManifest = Array.isArray(page.derivedFrom) ? page.derivedFrom : [];
+      if (sourceManifest.some((item: any) => {
+        const doc = sourcesById.get(item.docId);
+        return !doc || (item.version != null && item.version !== doc.version)
+          || (item.documentVersionId != null && item.documentVersionId !== doc.activeVersionId)
+          || (item.sourceHash != null && item.sourceHash !== doc.contentHash);
+      })) continue;
       const readableSources = await this.documentAclService.filterReadableDocuments(userId, docIds, {
         docs: sourceDocs,
         visibleKbIds,

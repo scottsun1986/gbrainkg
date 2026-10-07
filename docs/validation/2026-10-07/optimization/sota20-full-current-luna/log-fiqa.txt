@@ -1,0 +1,3 @@
+[data] corpus=100 queries=30 qrels=30
+[done] wrote run file: docs/validation/2026-10-07/optimization/sota20-full-current-luna/run-fiqa.jsonl (30 queries)
+Next: python3 standard_ir_eval.py --qrels /home/scottsun/beir-data/fiqa/qrels/test.tsv --run docs/validation/2026-10-07/optimization/sota20-full-current-luna/run-fiqa.jsonl --k 1,5,10,100

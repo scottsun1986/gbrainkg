@@ -1,0 +1,4 @@
+[data] corpus=100 queries=39 qrels=39
+[retrieve] excluded 4 explicitly marked summary hits (not corpus documents)
+[done] wrote run file: docs/validation/2026-10-07/optimization/sota20-full-current-luna/run-2wiki.jsonl (39 queries)
+Next: python3 standard_ir_eval.py --qrels /home/scottsun/qa-data/2wiki/qrels/test.tsv --run docs/validation/2026-10-07/optimization/sota20-full-current-luna/run-2wiki.jsonl --k 1,5,10,100

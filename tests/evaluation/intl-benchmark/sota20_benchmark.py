@@ -13,7 +13,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import subprocess
 import sys
 import time
@@ -22,7 +24,9 @@ import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-API = "http://127.0.0.1:3202"
+API = os.environ.get('API_BASE', 'http://127.0.0.1:3202')
+USER = os.environ.get('TEST_USER', 'admin')
+PASSWORD = os.environ.get('TEST_PASSWORD', '')
 OUT = HERE / "results" / "sota20"
 # 新建 KB 需等应用层可见性缓存（PERMISSION_CACHE_TTL_MS=5s）过期
 KB_VISIBILITY_WAIT_S = 10
@@ -30,6 +34,10 @@ BEIR_DIRS = {
     "beir": Path("/home/scottsun/beir-data"),
     "qa": Path("/home/scottsun/qa-data"),
 }
+
+
+class BenchmarkKbUnavailable(RuntimeError):
+    pass
 # 20 个主流数据集（来源分组：BEIR 官方 / QA 归一化 / 多跳原始集归一化）。
 # 注：trec-covid 与 dbpedia-entity 的官方 qrels 密度过高（单 query 金标文档数百篇），
 # 与"每个数据集 ≤100 篇知识"的评测约束不相容，改用 CMRC2018（中文阅读理解）与
@@ -62,13 +70,13 @@ def http(method, path, body=None, token=None, timeout=60):
 
 
 def login() -> str:
-    st, raw = http("POST", "/api/v1/auth/login",
-                   {"username": "admin", "password": "admin123"})
-    assert st == 200, f"login {st}"
-    return json.loads(raw)["token"]
+    from beir_pipeline import ApiClient
+    if not PASSWORD and not (os.environ.get('LLMWIKI_TOKEN') or os.environ.get('EVAL_BEARER_TOKEN')):
+        raise RuntimeError('Provide TEST_PASSWORD or an existing test session token')
+    return ApiClient(API, USER, PASSWORD).login()
 
 
-def ensure_kb(token: str, name: str) -> str:
+def ensure_kb(token: str, name: str, read_only=False) -> str:
     page = 1
     created = False
     while page <= 20:
@@ -84,6 +92,7 @@ def ensure_kb(token: str, name: str) -> str:
         if page * 100 >= total or not items:
             break
         page += 1
+    if read_only:raise BenchmarkKbUnavailable(f'Benchmark KB {name} missing or not visible; read-only evaluation cannot create it')
     st, raw = http("POST", "/api/v1/kbs/personal",
                    {"name": name, "description": f"SOTA-20 基准评测库 {name}"}, token=token)
     assert st in (200, 201), f"create kb {name}: {st} {raw[:200]}"
@@ -101,9 +110,10 @@ def ensure_kb(token: str, name: str) -> str:
     return kb_id
 
 
-def run_cmd(cmd: list[str], log: Path) -> int:
+def run_cmd(cmd: list[str], log: Path, token=None) -> int:
     with log.open("w") as f:
-        return subprocess.call(cmd, stdout=f, stderr=subprocess.STDOUT)
+        env={**os.environ, **({'LLMWIKI_TOKEN':token} if token else {})}
+        return subprocess.call(cmd, stdout=f, stderr=subprocess.STDOUT, env=env)
 
 
 def kb_ready_count(token: str, kb_id: str) -> int:
@@ -116,19 +126,63 @@ def kb_ready_count(token: str, kb_id: str) -> int:
     return int(json.loads(raw).get("total") or 0)
 
 
+def read_only_preflight(name, group, token, kb_prefix='BEIR-Eval-'):
+    """Match exact corpus IDs through the authenticated API before any searches."""
+    from beir_pipeline import parse_beir_id
+    from urllib.parse import quote
+    directory=BEIR_DIRS[group]/name
+    row={'dataset':name,'group':group,'kb_name':kb_prefix+name,'status':'missing_data'}
+    paths={key:directory/path for key,path in [('corpus','corpus.jsonl'),('queries','queries.jsonl'),('qrels','qrels/test.tsv')]}
+    if not all(path.exists() for path in paths.values()):return row
+    expected={str(json.loads(line)['_id']) for line in paths['corpus'].read_text().splitlines() if line.strip()}
+    row.update(expected_documents=len(expected),hashes={key:hashlib.sha256(path.read_bytes()).hexdigest() for key,path in paths.items()})
+    matches=[]
+    for page in range(1,21):
+        status,raw=http('GET',f'/api/v1/kbs?page={page}&limit=100',token=token)
+        if status!=200:return {**row,'status':'kb_inventory_failed','http_status':status}
+        payload=json.loads(raw);items=payload.get('items',[]) if isinstance(payload,dict) else payload
+        matches.extend(kb for kb in items if kb.get('name')==row['kb_name'])
+        if not items or page*100>=int(payload.get('total',len(items)) if isinstance(payload,dict) else len(items)):break
+    eligible=[];candidates=[]
+    for kb in matches:
+        ids=[];total=None;valid=True
+        for page in range(1,max(2,(len(expected)+99)//100+2)):
+            status,raw=http('GET',f"/api/v1/kbs/{kb['id']}/documents?status=published&indexReadiness=ready&search={quote('[BEIR:',safe='')}&page={page}&limit=100",token=token)
+            if status!=200:valid=False;break
+            payload=json.loads(raw);items=payload.get('items',[]) if isinstance(payload,dict) else payload
+            total=int(payload.get('total',len(items)) if isinstance(payload,dict) else len(items))
+            ids.extend(parse_beir_id(doc.get('title')) for doc in items)
+            if not items or page*100>=total:break
+        exact=valid and total==len(expected) and len(ids)==len(expected) and len(set(ids))==len(ids) and set(ids)==expected
+        candidates.append({'kb_id':kb['id'],'ready_documents':total,'exact_corpus_match':exact})
+        if exact:eligible.append(kb['id'])
+    row['candidates']=candidates
+    if len(eligible)==1:return {**row,'status':'ready','kb_id':eligible[0]}
+    return {**row,'status':'ambiguous_ready_corpus' if len(eligible)>1 else 'corpus_not_ready' if matches else 'benchmark_kb_unavailable'}
+
+
 def reset_kb(token: str, kb_id: str) -> None:
     http("DELETE", f"/api/v1/kbs/personal/{kb_id}", token=token)
 
 
-def evaluate_dataset(name: str, group: str, token: str, top_k: int = 100) -> dict:
+def evaluate_dataset(name: str, group: str, token: str, top_k: int = 100, all_queries=False, full_corpus=False, read_only=False, kb_prefix='BEIR-Eval-', preflight=None) -> dict:
     ddir = BEIR_DIRS[group] / name
     if not (ddir / "corpus.jsonl").exists():
         return {"dataset": name, "group": group, "status": "missing_data"}
     doc_count = sum(1 for _ in (ddir / "corpus.jsonl").open(encoding="utf-8"))
-    kb_name = f"BEIR-Eval-{name}"
-    kb_id = ensure_kb(token, kb_name)
+    kb_name = f"{kb_prefix}{name}"
+    if read_only:
+        preflight=preflight or read_only_preflight(name,group,token,kb_prefix)
+        if preflight['status']!='ready':return preflight
+        kb_id=preflight['kb_id']
+    else:kb_id=ensure_kb(token,kb_name)
     ready = kb_ready_count(token, kb_id)
-    if 0 <= ready < doc_count:
+    if ready<0:
+        return {'dataset':name,'group':group,'status':'readiness_failed','kb_id':kb_id}
+    if read_only and ready!=doc_count:
+        return {'dataset':name,'group':group,'status':'corpus_not_ready','kb_id':kb_id,'ready':ready,'expected':doc_count}
+    if ready < doc_count:
+        if read_only:return {'dataset':name,'group':group,'status':'corpus_not_ready','kb_id':kb_id,'ready':ready,'expected':doc_count}
         # 半灌状态：清库重灌，避免部分语料造成召回偏低
         if ready > 0:
             reset_kb(token, kb_id)
@@ -146,17 +200,18 @@ def evaluate_dataset(name: str, group: str, token: str, top_k: int = 100) -> dic
         run_out.unlink()
     cmd = [sys.executable, str(HERE / "beir_pipeline.py"),
            "--dataset-dir", str(ddir), "--api-base", API,
-           "--user", "admin", "--password", "admin123",
+           "--user", USER,
            "--kb-id", kb_id,
-           "--limit-docs", "100", "--limit-queries", "40",
            "--top-k", str(top_k),
            "--run-out", str(run_out),
            "--readiness-timeout", "1800"]
+    if not full_corpus:cmd += ['--limit-docs','100']
+    if not all_queries:cmd += ['--limit-queries','40']
     if need_ingest:
         cmd += ["--ingest", "--manifest-out", str(manifest_out)]
     elif manifest_out.exists():
         cmd += ["--manifest-out", str(manifest_out)]
-    rc = run_cmd(cmd, log)
+    rc = run_cmd(cmd, log, token)
     if rc != 0:
         return {"dataset": name, "group": group, "status": "pipeline_failed",
                 "kb_id": kb_id, "log": str(log)}
@@ -170,28 +225,51 @@ def evaluate_dataset(name: str, group: str, token: str, top_k: int = 100) -> dic
                 "kb_id": kb_id, "log": str(log)}
     metrics = json.loads(metrics_out.read_text())
     return {"dataset": name, "group": group, "status": "ok", "kb_id": kb_id,
-            "kb_name": kb_name, "metrics": metrics, "ts": stamp}
+            "kb_name": kb_name, "metrics": metrics, "ts": stamp,
+            'input_hashes':preflight.get('hashes') if preflight else None,
+            'run_hash':hashlib.sha256(run_out.read_bytes()).hexdigest()}
 
 
 def main() -> int:
+    global OUT
     ap = argparse.ArgumentParser()
     ap.add_argument("--datasets", help="逗号分隔子集")
     ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument('--out-dir',type=Path,default=OUT)
+    ap.add_argument('--all-queries',action='store_true')
+    ap.add_argument('--full-corpus',action='store_true')
+    ap.add_argument('--read-only',action='store_true')
+    ap.add_argument('--kb-prefix',default='BEIR-Eval-')
+    ap.add_argument('--beir-dir',type=Path)
+    ap.add_argument('--rerun',action='store_true')
     args = ap.parse_args()
+    wanted = {name.strip() for name in args.datasets.split(',') if name.strip()} if args.datasets else None
+    known={name for name,_ in DATASETS}
+    if wanted is not None and (not wanted or wanted-known):ap.error('Select existing dataset names')
+    OUT=args.out_dir
+    if args.beir_dir:BEIR_DIRS['beir']=args.beir_dir
+    subprocess.run([sys.executable,str(HERE.parents[2]/'scripts/assert-test-target.py'),API],check=True)
     OUT.mkdir(parents=True, exist_ok=True)
     token = login()
-    wanted = set(args.datasets.split(",")) if args.datasets else None
     report_path = OUT / "report.json"
     report = json.loads(report_path.read_text()) if report_path.exists() else {"results": {}}
+    preflights={}
+    if args.read_only:
+        for name,group in DATASETS:
+            if wanted and name not in wanted:continue
+            preflights[name]=read_only_preflight(name,group,token,args.kb_prefix)
+            print(f"[preflight] {name}: {preflights[name]['status']}",flush=True)
+        report['preflight']=preflights
+        report_path.write_text(json.dumps(report,ensure_ascii=False,indent=2))
     for name, group in DATASETS:
         if wanted and name not in wanted:
             continue
-        if report["results"].get(name, {}).get("status") == "ok":
+        if not args.rerun and report["results"].get(name, {}).get("status") == "ok":
             print(f"[skip] {name} already ok")
             continue
         print(f"[bench] {name} ({group}) ...", flush=True)
         started = time.time()
-        res = evaluate_dataset(name, group, token)
+        res = evaluate_dataset(name, group, token, all_queries=args.all_queries, full_corpus=args.full_corpus, read_only=args.read_only, kb_prefix=args.kb_prefix,preflight=preflights.get(name))
         res["wall_s"] = round(time.time() - started, 1)
         report["results"][name] = res
         report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2))
@@ -202,7 +280,7 @@ def main() -> int:
               f"({res['wall_s']}s)", flush=True)
     ok = [r for r in report["results"].values() if r["status"] == "ok"]
     print(f"[summary] {len(ok)}/{len(report['results'])} datasets evaluated")
-    return 0
+    return 0 if len(ok)==len(report['results']) else 1
 
 
 if __name__ == "__main__":

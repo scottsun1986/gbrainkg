@@ -33,6 +33,12 @@ describe('IngestionModule dependency graph', () => {
       builder.overrideProvider(getQueueToken(name)).useValue(stubQueue);
     }
     const moduleRef = await builder.compile();
-    expect(moduleRef.get(IngestionModule, { strict: false })).toBeDefined();
+    try {
+      expect(moduleRef.get(IngestionModule, { strict: false })).toBeDefined();
+    } finally {
+      // The real DI graph owns infrastructure providers in addition to the
+      // overridden queues. Compile-only probes must close that graph, too.
+      await moduleRef.close();
+    }
   }, 60000);
 });

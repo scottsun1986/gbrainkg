@@ -1,3 +1,4 @@
+import { compiledTruthDiff, compiledTimeline, truthContentHash, withSynthesisTimeout } from './compiled-truth';
 import { Injectable, Logger, Optional, Inject } from '@nestjs/common';
 import { getPrismaClient } from '../prisma';
 import { PermissionService } from '../permission/permission.service';
@@ -33,9 +34,9 @@ export function resolveScopeCompileDepth(
   const sources = Number(env.BRAIN_SCOPE_SYNTHESIZE_SOURCES ?? 5);
   return {
     docChunkDepth:
-      Number.isFinite(depth) && depth > 0 ? Math.min(Math.floor(depth), 200) : 40,
+      Number.isFinite(depth) && depth >= 1 ? Math.min(Math.floor(depth), 200) : 40,
     synthesizeSourceLimit:
-      Number.isFinite(sources) && sources > 0 ? Math.min(Math.floor(sources), 50) : 5,
+      Number.isFinite(sources) && sources >= 1 ? Math.min(Math.floor(sources), 50) : 5,
   };
 }
 
@@ -220,6 +221,7 @@ export class BrainScopeService {
     const sourceKeys: string[] = Array.isArray(scope.sourceKeys) ? scope.sourceKeys : [];
     this.logger.log(`Compiling derived intelligence for Scope ${scope.fingerprint} (sources: ${sourceKeys.join(',')})...`);
     const { docChunkDepth, synthesizeSourceLimit } = resolveScopeCompileDepth();
+    const fullCoverage = process.env.BRAIN_SCOPE_FULL_COVERAGE !== '0';
 
     // 查找当前 Scope 涉及的所有文档
     const sourceRecords = await db.brainSource.findMany({
@@ -230,7 +232,7 @@ export class BrainScopeService {
             document: {
               include: {
                 kb: { select: { id: true, name: true, type: true } },
-                chunks: { orderBy: { ord: 'asc' }, take: docChunkDepth, select: { id: true, content: true, ord: true } },
+                chunks: { orderBy: [{ ord: 'asc' }, { id: 'asc' }], ...(fullCoverage ? {} : { take: docChunkDepth }), select: { id: true, content: true, ord: true } },
               },
             },
           },
@@ -255,7 +257,7 @@ export class BrainScopeService {
     await db.brainScope.update({ where: { id: scope.id }, data: { status: 'compiling', compileStartedAt: new Date() } });
 
     const inputFingerprint = createHash('sha256')
-      .update(docs.map((d) => `${d.id}:${d.version}`).sort().join(';'))
+      .update(docs.map((d) => `${d.id}:${d.version}:${d.activeVersionId}:${d.contentHash}`).sort().join(';'))
       .digest('hex')
       .slice(0, 16);
 
@@ -273,6 +275,12 @@ export class BrainScopeService {
         snippet: heads.join('\n').slice(0, 1000),
         chunkOrd: doc.chunks[0]?.ord || 0,
         chunkCount: (doc.chunks || []).length,
+        version: doc.version,
+        documentVersionId: doc.activeVersionId || null,
+        sourceHash: doc.contentHash || null,
+        chunkContentHash: truthContentHash((doc.chunks || []).map((c: any) => `${c.id}:${c.ord}:${c.content}`).join('\n')),
+        coverage: fullCoverage ? 'complete' : 'bounded',
+
       };
     });
 
@@ -288,13 +296,10 @@ export class BrainScopeService {
     const synthesisBySource: Array<{ sourceKey: string; answer: string; status?: string; gaps?: unknown; warnings?: unknown; cost?: unknown }> = [];
     let synthesisFallbacks = 0;
     if (process.env.GBRAIN_SCOPE_SYNTHESIZE_ENABLED !== '0') {
-      const targetSources = sourceKeys.slice(0, synthesizeSourceLimit);
+      const targetSources = fullCoverage ? sourceKeys : sourceKeys.slice(0, synthesizeSourceLimit);
       for (const sourceKey of targetSources) {
         try {
-          const result = await Promise.race([
-            this.gbrain.synthesize(`gbrain://source/${sourceKey}`, synthesisQuestion),
-            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('synthesis_timeout')), 15000)),
-          ]);
+          const result = await withSynthesisTimeout(this.gbrain.synthesize(`gbrain://source/${sourceKey}`, synthesisQuestion));
           const answer = String(result.answer || '').trim();
           if (!answer) synthesisFallbacks += 1;
           synthesisBySource.push({
@@ -343,37 +348,26 @@ export class BrainScopeService {
         : ['_Scope synthesis 已由配置关闭。_']),
     ];
 
-    // 3. Pre-compiled validity and version matrix across documents in this Scope
-    const versionFamilies = new Map<string, any[]>();
-    for (const d of docs) {
-      const normTitle = String(d.title || '').replace(/\(V\d+.*?\)/i, '').replace(/\s+/g, '').trim();
-      const key = d.supersedesDocumentId || normTitle;
-      const list = versionFamilies.get(key) || [];
-      list.push(d);
-      versionFamilies.set(key, list);
-    }
-    const validityEntries: string[] = [];
-    for (const [, famDocs] of versionFamilies.entries()) {
-      if (famDocs.length > 1) {
-        const familyName = famDocs[0].title.replace(/\(V\d+.*?\)/i, '').trim();
-        validityEntries.push(`- **规范族系「${familyName}」**：`);
-        famDocs.sort((a, b) => (b.version || 1) - (a.version || 1));
-        for (let i = 0; i < famDocs.length; i++) {
-          const fd = famDocs[i];
-          const isEffective = i === 0 && fd.lifecycleStatus !== 'expired' && fd.lifecycleStatus !== 'repealed';
-          validityEntries.push(`  * 《${fd.title}》(版本: V${fd.version || 1}) -> ${isEffective ? '【现行有效】' : '【已废止/被替代】'}`);
-        }
-      }
-    }
-    if (validityEntries.length > 0) {
-      summaryLines.push(
-        '',
-        '## 五、 现行效力与版本替代裁决对照表 (Pre-compiled Validity Matrix)',
-        ...validityEntries,
-      );
-    }
+    summaryLines.push('', '## 五、来源生命周期', compiledTimeline(docs));
+    summaryLines.push('', `Coverage: ${fullCoverage ? 'complete source/document inventory' : 'bounded chunk/source budget'}`);
 
     const summaryContent = summaryLines.join('\n');
+    const previous = await db.brainDerivedPage.findUnique({ where: { scopeId_slug: { scopeId: scope.id, slug: 'derived/scope-summary' } } });
+    const truthDiff = compiledTruthDiff(previous?.content ?? null, summaryContent,
+      Array.isArray(previous?.derivedFrom) ? previous.derivedFrom : [], derivedEvidence);
+    // Any source replacement or scope invalidation during synthesis makes the
+    // output obsolete. Do not overwrite a current page with a stale snapshot.
+    const currentDocs = await db.document.findMany({
+      where: { id: { in: docs.map(doc => doc.id) }, status: 'published' },
+      select: { id: true, version: true, activeVersionId: true, contentHash: true },
+    });
+    const currentFingerprint = createHash('sha256').update(currentDocs.map((d: any) => `${d.id}:${d.version}:${d.activeVersionId}:${d.contentHash}`).sort().join(';')).digest('hex').slice(0, 16);
+    const currentScope = await db.brainScope.findUnique({ where: { id: scope.id } });
+    if (currentFingerprint !== inputFingerprint || currentScope?.aclEpoch !== scope.aclEpoch || currentScope?.knowledgeEpoch !== scope.knowledgeEpoch) {
+      await db.brainScope.update({ where: { id: scope.id }, data: { status: 'dirty' } });
+      throw new Error('Scope compile inputs changed during synthesis');
+    }
+
 
     await db.brainDerivedPage.upsert({
       where: { scopeId_slug: { scopeId: scope.id, slug: 'derived/scope-summary' } },
@@ -402,6 +396,40 @@ export class BrainScopeService {
       },
     });
 
+    // Reuse the persisted BGE-M3 chunk vectors. Similarity only creates
+    // navigation associations, never assertions of equivalence or truth.
+    let semanticRelations: any[] = [];
+    if (typeof db.$queryRaw === 'function') {
+      const docIds = docs.map(doc => doc.id);
+      semanticRelations = await db.$queryRaw`
+        WITH centroids AS (
+          SELECT c."documentId", avg(c.embedding) AS embedding, count(*)::int AS "embeddedChunks"
+          FROM "Chunk" c JOIN "Document" d ON d.id=c."documentId"
+          WHERE c."documentId" = ANY(${docIds}::uuid[]) AND d.status='published' AND c.embedding IS NOT NULL
+          GROUP BY c."documentId"
+        )
+        SELECT a."documentId"::text AS "sourceDocumentId", b."documentId"::text AS "targetDocumentId",
+          1-(a.embedding <=> b.embedding) AS similarity,
+          a."embeddedChunks" AS "sourceEmbeddedChunks", b."embeddedChunks" AS "targetEmbeddedChunks"
+        FROM centroids a CROSS JOIN LATERAL (
+          SELECT * FROM centroids other WHERE other."documentId"<>a."documentId"
+            AND 1-(a.embedding <=> other.embedding)>=0.65
+          ORDER BY a.embedding <=> other.embedding, other."documentId" LIMIT 5
+        ) b ORDER BY a."documentId", similarity DESC, b."documentId"
+      `;
+    }
+
+    const extraPages = [
+      { slug: 'derived/truth-diff', title: 'Compiled output and source delta', kind: 'gap', content: JSON.stringify(truthDiff, null, 2) },
+      { slug: 'derived/timeline', title: 'Source lifecycle timeline', kind: 'fact', content: compiledTimeline(docs) },
+      { slug: 'derived/topic-relations', title: 'Semantic source associations', kind: 'graph', content: JSON.stringify({ contract: 'source-topic-relations-v1', meaning: 'vector similarity is navigation, not proof of a factual relation', documents: docs.length, relations: semanticRelations }, null, 2) },
+    ];
+    for (const page of extraPages) {
+      const pageEvidence = page.slug === 'derived/truth-diff' ? [...(Array.isArray(previous?.derivedFrom) ? previous.derivedFrom : []), ...derivedEvidence] : derivedEvidence;
+      const data = { ...page, derivedFrom: pageEvidence, sourceKeys, inputFingerprint, aclEpoch: scope.aclEpoch, knowledgeEpoch: scope.knowledgeEpoch, modelVersion: 'compiled-source-v2' };
+      await db.brainDerivedPage.upsert({ where: { scopeId_slug: { scopeId: scope.id, slug: page.slug } }, create: { scopeId: scope.id, ...data }, update: data });
+    }
+
     // 3. 写入 Scope 专属派生源仓库并同步 (GBrain source ID 限制 <= 32 字符)
     const scopeSourceId = `llmwiki-d-${scope.fingerprint}`;
     await this.gbrain.initializeSource(scopeSourceId);
@@ -416,20 +444,19 @@ export class BrainScopeService {
         kbType: 'derived',
       },
     ];
+    scopeEvidences.push(...extraPages.filter(page => page.slug !== 'derived/truth-diff').map(page => ({ text: page.content, sourceFile: `${page.slug.split('/').pop()}.md`, topic: page.title, slug: page.slug, kbId: 'derived', kbName: 'Scope Derived Intelligence', kbType: 'derived' })));
 
     await this.gbrain.ingest(`gbrain://source/${scopeSourceId}`, scopeEvidences);
 
-    await db.brainScope.update({
-      where: { id: scope.id },
-      data: {
-        lastCompileAt: new Date(),
-        status: 'active',
-      },
+    const published = await db.brainScope.updateMany({
+      where: { id: scope.id, aclEpoch: scope.aclEpoch, knowledgeEpoch: scope.knowledgeEpoch },
+      data: { lastCompileAt: new Date(), status: 'active', compileStartedAt: null },
     });
+    if (published.count !== 1) throw new Error('Scope epochs changed before publication');
 
     this.logger.log(`Successfully compiled and published derived pages for Scope ${scope.fingerprint}.`);
     return {
-      derivedPagesCount: 1,
+      derivedPagesCount: 1 + extraPages.length,
       status: synthesisFallbacks ? 'partial' : 'completed',
       synthesizedSources: synthesisBySource.filter((item) => Boolean(item.answer)).length,
       synthesisFallbacks,

@@ -1,0 +1,37 @@
+[
+  {
+    "queryId": "test-education-ufsdfkhbwu-con03a",
+    "missingQuery": false,
+    "missingPositiveDocuments": [
+      "test-education-ufsdfkhbwu-con03b"
+    ]
+  },
+  {
+    "queryId": "test-free-speech-debate-yfsdfkhbwu-con03a",
+    "missingQuery": false,
+    "missingPositiveDocuments": [
+      "test-free-speech-debate-yfsdfkhbwu-con03b"
+    ]
+  },
+  {
+    "queryId": "test-politics-dhwem-pro06a",
+    "missingQuery": false,
+    "missingPositiveDocuments": [
+      "test-politics-dhwem-pro06b"
+    ]
+  },
+  {
+    "queryId": "test-science-sghwbdgmo-con03a",
+    "missingQuery": false,
+    "missingPositiveDocuments": [
+      "test-science-sghwbdgmo-con03b"
+    ]
+  },
+  {
+    "queryId": "test-society-asfhwapg-con04a",
+    "missingQuery": false,
+    "missingPositiveDocuments": [
+      "test-society-asfhwapg-con04b"
+    ]
+  }
+]

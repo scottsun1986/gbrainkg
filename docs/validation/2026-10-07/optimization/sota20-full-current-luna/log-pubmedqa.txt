@@ -1,0 +1,5 @@
+[data] corpus=100 queries=100 qrels=100
+[retrieve] 50/100
+[retrieve] 100/100
+[done] wrote run file: docs/validation/2026-10-07/optimization/sota20-full-current-luna/run-pubmedqa.jsonl (100 queries)
+Next: python3 standard_ir_eval.py --qrels /home/scottsun/qa-data/pubmedqa/qrels/test.tsv --run docs/validation/2026-10-07/optimization/sota20-full-current-luna/run-pubmedqa.jsonl --k 1,5,10,100

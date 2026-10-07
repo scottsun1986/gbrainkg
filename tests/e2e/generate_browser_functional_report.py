@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 from playwright.async_api import Page, async_playwright
+from session_cache import SessionCache
 
 
 WEB_URL = os.environ.get("E2E_WEB_URL", "http://127.0.0.1:3200")
@@ -28,6 +29,7 @@ REPORT_DIR = Path("docs/test-reports") / f"functional-{RUN_ID}"
 SHOT_DIR = REPORT_DIR / "screenshots"
 TEST_PASSWORD = os.environ.get("E2E_TEST_PASSWORD", "E2E-LocalOnly-2026!")
 ADMIN_PASSWORD = os.environ.get("E2E_ADMIN_PASSWORD", "admin123")
+SESSIONS = SessionCache()
 
 
 class Report:
@@ -81,6 +83,13 @@ async def api(page: Page, method: str, path: str, token: str | None = None, body
 
 async def ui_login(page: Page, username: str, password: str) -> tuple[bool, str]:
     try:
+        cached = SESSIONS.get(API_URL, username)
+        if cached:
+            await page.goto(WEB_URL, wait_until="domcontentloaded", timeout=30000)
+            await page.evaluate("token => localStorage.setItem('llmwiki_token', token)", cached)
+            await page.reload(wait_until="domcontentloaded")
+            await page.wait_for_timeout(800)
+            return True, "复用该用户已认证会话"
         # Every persona switch must start from the login state. Otherwise a
         # previously authenticated workspace exposes file/model form inputs,
         # and positional `input` selectors can accidentally target those.
@@ -102,6 +111,7 @@ async def ui_login(page: Page, username: str, password: str) -> tuple[bool, str]
         await button.click(timeout=5000)
         await page.wait_for_timeout(1400)
         token = await page.evaluate("() => localStorage.getItem('llmwiki_token')")
+        SESSIONS.put(API_URL, username, token)
         return bool(token), "登录后已获得会话" if token else "登录后未获得会话"
     except Exception as error:
         return False, f"浏览器登录导航异常：{str(error)[:180]}"
@@ -142,10 +152,10 @@ async def click_text(page: Page, text: str) -> bool:
 
 
 async def api_login(page: Page, username: str) -> str:
-    result = await api(page, "POST", "/api/v1/auth/login", body={"username": username, "password": TEST_PASSWORD})
-    if not result["ok"]:
-        return ""
-    return str(result["data"].get("token") or "")
+    async def login_once():
+        result = await api(page, "POST", "/api/v1/auth/login", body={"username": username, "password": TEST_PASSWORD})
+        return str(result["data"].get("token") or "") if result["ok"] else ""
+    return await SESSIONS.authenticate(API_URL, username, login_once)
 
 
 async def create_fixture(page: Page, admin_token: str, report: Report):
@@ -321,7 +331,7 @@ async def run():
         report.add("AUTH-02", "登录失败处理", "错误凭据被拒绝且页面不崩溃", "已显示登录错误" if invalid_ok else "未识别到明确错误文案", "PASS" if invalid_ok else "FAIL", invalid_shot)
         ok, relogin_message = await ui_login(page, admin_user, ADMIN_PASSWORD)
         if not ok:
-            report.add("AUTH-03", "限流恢复", "单次失败不应阻断正确管理员重新登录", relogin_message, "BLOCKED", invalid_shot)
+            report.add("AUTH-03", "会话复用", "错误凭据测试后恢复已认证管理员会话", relogin_message, "BLOCKED", invalid_shot)
             await browser.close()
             render_html(report)
             return

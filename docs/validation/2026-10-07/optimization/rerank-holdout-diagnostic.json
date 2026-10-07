@@ -1,0 +1,66 @@
+{
+  "method": "deterministic query-group-hash 70/30 disjoint split; regularized monotone Platt; predeclared threshold; Wilson intervals descriptive at pair level (pairs within queries correlated)",
+  "seed": "20261007",
+  "threshold": 0.95,
+  "trainingCount": 560,
+  "holdoutCount": 240,
+  "trainingQueries": 28,
+  "holdoutQueries": 12,
+  "refusalPrecision": {
+    "value": 0.957983193277311,
+    "count": 238,
+    "wilson95": [
+      0.9243972323958017,
+      0.9770197581526615
+    ],
+    "queryClusterBootstrap95": [
+      0.95,
+      0.9702127659574468
+    ]
+  },
+  "refusalRecall": {
+    "value": 1.0,
+    "count": 228,
+    "wilson95": [
+      0.9834306649024974,
+      0.9999999999999999
+    ],
+    "queryClusterBootstrap95": [
+      1.0,
+      1.0
+    ]
+  },
+  "answerPrecision": {
+    "value": 1.0,
+    "count": 2,
+    "wilson95": [
+      0.34238022750666547,
+      1.0
+    ],
+    "queryClusterBootstrap95": null
+  },
+  "answerRecall": {
+    "value": 0.16666666666666666,
+    "count": 12,
+    "wilson95": [
+      0.04696514218385531,
+      0.4480308622529653
+    ],
+    "queryClusterBootstrap95": [
+      0.0,
+      0.4166666666666667
+    ]
+  },
+  "brier": 0.03329450607511219,
+  "confusion": {
+    "refusalCorrect": 228,
+    "refusalIncorrect": 10,
+    "answerUnsupported": 0,
+    "answerSupported": 2
+  },
+  "validationSetHash": "f4930df0000e669defd7fc9e7cebd454fd760b1566830186e0fb94a06ebb63fb",
+  "intervalMethod": "2000 resamples of holdout query clusters; percentile 95%; pair Wilson intervals descriptive only",
+  "target": "official positive qrels define IR relevance; unjudged candidates count nonrelevant under closed-world IR convention; NOT factual entailment or query answerability labels",
+  "deploymentEligible": false,
+  "deploymentBlocker": "Missing immutable reranker deployment revision; diagnostics cannot activate a profile"
+}

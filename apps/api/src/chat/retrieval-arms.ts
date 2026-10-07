@@ -15,7 +15,6 @@ import { parseTermMappings, expandQueryWithTermMappings, type TermMapping } from
 import { numericClaimsSupportedBy, numberNearBound } from "./grounding-numeric";
 import { buildDocumentPreviewUrl } from "../ingestion/preview-url";
 import { buildBm25Pool, bm25Scores } from "./lexical-bm25";
-import { loadCorpusConfig } from "./corpus-agnostic-config";
 import { tokenizeQuery } from "../retrieval/lexical-tokenizer";
 import { measuredScoreOf } from "../retrieval/score-contract";
 import { retrievalConfigFingerprint } from "../retrieval/retrieval-config";
@@ -265,23 +264,19 @@ export function calibratedScoreOf(citation: any): number | null {
 }
 
 /**
- * Detect structural (clause-shaped) query intents. Only meaningful for
- * clause-shaped corpora: when `legalStructure` is false every structural flag
- * is off, so a technical manual or English corpus never receives Chinese
- * chapter/article heuristics (AGENTS.md §2). Pure and exported so the gating
- * itself is regression-tested rather than only exercised through the full
- * retrieval pipeline.
+ * Parse document-structure tasks in query language. These flags request
+ * structure recall; they never change ranking weights for a domain.
  */
 export function detectStructuralQueryShape(
   query: string,
-  legalStructure: boolean,
+  structuralRecall = true,
 ): { isChapterListing: boolean; isArticleCountQuery: boolean } {
-  if (!legalStructure) return { isChapterListing: false, isArticleCountQuery: false };
+  if (!structuralRecall) return { isChapterListing: false, isArticleCountQuery: false };
   const q = String(query || '');
   return {
-    isChapterListing: /哪些章|所有章|全部章|章名|一共有哪些章/.test(q),
+    isChapterListing: /哪些章|所有章|全部章|章名|一共有哪些章|(?:list|enumerate)\s+(?:all\s+)?(?:chapters|sections|headings)|table\s+of\s+contents/iu.test(q),
     isArticleCountQuery:
-      /(?:一共|共有|总共|全部)?(?:有多少|几条|几章|哪些章节|全文结构).*(?:条|章|篇)/.test(q),
+      /(?:一共|共有|总共|全部)?(?:有多少|几条|几章|哪些章节|全文结构).*(?:条|章|篇)|how\s+many\s+(?:chapters|sections|articles)/iu.test(q),
   };
 }
 
@@ -480,11 +475,6 @@ export class RetrievalArmsService {
   decomposeComplexQuery(query: string): string[] {
     const raw = query.trim();
     const subQueries = new Set<string>();
-    // Legal/clause structure is a corpus shape, not a business fact: a Chinese
-    // regulation has 章/节/条 while a technical manual or English contract does
-    // not. It is therefore opt-out via ENABLE_LEGAL_STRUCTURE_BOOST rather than
-    // hardcoded into the decomposition rules (AGENTS.md §2).
-    const legalStructure = loadCorpusConfig().enableLegalStructureBoost;
 
     // Document-FORM nouns only (条例/规范/办法/指引 …). No industry or scenario
     // vocabulary (e.g. a specific device, department or product) may appear
@@ -495,9 +485,7 @@ export class RetrievalArmsService {
     const subject = subjectMatch ? subjectMatch[0] : "";
 
     // 1. Cross-chapter patterns (第X章...第Y章...第Z章)
-    const chapterMatches = legalStructure
-      ? Array.from(raw.matchAll(/第[一二三四五六七八九十百0-9]+[章节]/g)).map((m) => m[0])
-      : [];
+    const chapterMatches = Array.from(raw.matchAll(/第[一二三四五六七八九十百0-9]+[章节]|(?:chapter|section)\s+(?:[0-9]+|[ivxlcdm]+)\b/giu)).map((m) => m[0]);
     if (chapterMatches.length >= 2) {
       const themeMatch = raw.match(/关于(.+?)[，,]/);
       const theme = themeMatch ? themeMatch[1].trim() : "";
@@ -531,13 +519,12 @@ export class RetrievalArmsService {
       }
     }
 
-    // 4. Chapter listing pattern (legal/clause-shaped corpora only)
+    // 4. Structure request: language syntax, independent of corpus domain.
     if (
-      legalStructure &&
       subQueries.size === 0 &&
-      /哪些章|全部章|所有章|章名|一共有哪些章/.test(raw)
+      detectStructuralQueryShape(raw).isChapterListing
     ) {
-      subQueries.add(subject ? `${subject} 章 目录` : "章 目录");
+      subQueries.add(subject ? `${subject} 目录` : this.cleanRetrievalQuery(raw));
 
     }
 
@@ -555,7 +542,6 @@ export class RetrievalArmsService {
   }
 
   extractSearchKeywords(query: string, domainTerms: string[] = []): string[] {
-    const legalStructure = loadCorpusConfig().enableLegalStructureBoost;
     const cleaned = this.cleanRetrievalQuery(query);
     const delimiterRegex = /[\s，。！？；：、“”（）《》【】\n\r\t,.;:?!"'()\[\]{}、\/\\|`~@#$%^&*+=<>——…]+/g;
     const stopPhrases = [
@@ -586,17 +572,9 @@ export class RetrievalArmsService {
         }
       }
 
-      // 2. Structural/legal anchors — only when the corpus is clause-shaped.
-      //    A technical manual or an English contract has no 第X章/附则, and
-      //    emitting chapter terms for it only injects noise into the lexical
-      //    arm. Controlled by ENABLE_LEGAL_STRUCTURE_BOOST (AGENTS.md §2).
-      if (legalStructure) {
-        for (const m of qText.match(/第[一二三四五六七八九十百0-9]+[章节条款]/g) || []) set.add(m);
-        if (/附则/.test(qText)) set.add("附则");
-        if (/总则/.test(qText)) set.add("总则");
-        if (/罚则/.test(qText)) set.add("罚则");
-
-      }
+      // Exact structural references written by the user are ordinary lexical
+      // terms, without any legal-domain bonus or injected section vocabulary.
+      for (const m of qText.match(/第[一二三四五六七八九十百0-9]+[章节条款]|(?:chapter|section|article)\s+(?:[0-9]+|[ivxlcdm]+)\b/giu) || []) set.add(m);
 
       // 3. Numbers with units
       for (const m of qText.match(/\d+(?:\.\d+)?(?:位|毫秒|ms|秒|米|m|度|分|%|赫兹|Hz|小时|天|月|年|万|亿)/gi) || []) set.add(m);
@@ -1412,13 +1390,7 @@ export class RetrievalArmsService {
     })().catch(() => [] as any[]);
 
     try {
-      // Corpus shape, not a business fact: 章/节/条 headings only exist in
-      // clause-shaped corpora. Enabling this for every deployment leaked the
-      // Chinese legal shape into generic retrieval (chapter boosts, article-
-      // count sorting). It is now opt-out per deployment via
-      // ENABLE_LEGAL_STRUCTURE_BOOST=0 (AGENTS.md §2).
-      const legalStructure = loadCorpusConfig().enableLegalStructureBoost;
-      const { isChapterListing } = detectStructuralQueryShape(query, legalStructure);
+      const { isChapterListing } = detectStructuralQueryShape(query);
 
       // Tier 1: High Specificity Tokens (structural identifiers only). Domain
       // vocabulary is deployment-specific and comes from KnowledgeBase.domainTerms
@@ -1426,8 +1398,7 @@ export class RetrievalArmsService {
       const highPriorityTokens = keywords.filter((kw) =>
         /[\u0370-\u03FF]/.test(kw) || // Greek letters like ΨOmega-7
         /^[A-Za-z0-9]+-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(kw) || // EQ-0077, PRD-2026-8899, SUM-2026-5566, BIGDOC-VERIFY, WP-2026-R9
-        /^[A-Za-z][A-Za-z_]*\d+$/i.test(kw) || // Compact identifiers, regardless of prefix
-        (legalStructure && /第[0-9一二三四五六七八九十百]+[条款章节]/.test(kw)),
+        /^[A-Za-z][A-Za-z_]*\d+$/i.test(kw), // Compact identifiers, regardless of prefix
       );
 
       const chunkMap = new Map<string, any>();
@@ -1481,14 +1452,8 @@ export class RetrievalArmsService {
                 document: { status: "published" },
                 ...(targetDocIds.length > 0 ? { documentId: { in: targetDocIds } } : {}),
                 OR: [
-                  { content: { startsWith: "## " } },
-                  { content: { contains: "## 第" } },
-                  { content: { contains: "## 附则" } },
-                  { content: { contains: "## 第一章" } },
-                  { content: { contains: "## 第二章" } },
-                  { content: { contains: "## 第三章" } },
-                  { content: { contains: "## 第四章" } },
-                  { content: { contains: "## 罚则" } },
+                  { content: { startsWith: "#" } },
+                  { content: { contains: "\n#" } },
                 ],
               },
               select: {
@@ -1770,7 +1735,6 @@ export class RetrievalArmsService {
           keywords.some((k) => k.toLowerCase() === normalized)
         );
       });
-      const { isArticleCountQuery } = detectStructuralQueryShape(query, legalStructure);
 
       // Lexical channel scoring: local BM25 over the candidate pool (real
       // IDF/TF/length normalisation) replaces the fixed per-keyword points.
@@ -1900,31 +1864,11 @@ export class RetrievalArmsService {
           if (normalized && text.includes(normalized)) boost += 0.5;
         }
 
-        if (isChapterListing && /(?:##\s*第[一二三四五六七八九十百0-9]+章|##\s*附则)/.test(c.content)) {
-          boost += 3.0;
-        }
-
-        if (isArticleCountQuery && baseTitle.length >= 2 && lowQuery.includes(baseTitle)) {
-          if (c.ord === 0 || /(?:##\s*第[一二三四五六七八九十百0-9]+章|##\s*附则|\*\*第[一二三四五六七八九十百0-9]+条\*\*)/.test(c.content)) {
-            boost += 1.2;
-          }
-        }
-
         const score = (rrfScore > 0 ? rrfScore : 0.0005) * boost;
         return { chunk: c, score };
       }).filter((item) => item.score > 0);
 
       scored.sort((a, b) => {
-        if (isChapterListing) {
-          const aIsHeading = /(?:##\s*第[一二三四五六七八九十百0-9]+章|##\s*附则)/.test(a.chunk.content);
-          const bIsHeading = /(?:##\s*第[一二三四五六七八九十百0-9]+章|##\s*附则)/.test(b.chunk.content);
-          if (aIsHeading && !bIsHeading) return -1;
-          if (!aIsHeading && bIsHeading) return 1;
-          if (aIsHeading && bIsHeading) {
-            if (b.score !== a.score) return b.score - a.score;
-            return (a.chunk.ord || 0) - (b.chunk.ord || 0);
-          }
-        }
         // Final tie-break on (ord, chunkId). Two arms can return identical
         // scores, and `Array.prototype.sort` is only stable within one input
         // order: when an arm times out on one run but not the next, the same

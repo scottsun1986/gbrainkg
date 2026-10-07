@@ -468,6 +468,7 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
         // Paginate with cursor to avoid loading all docs + chunks into memory at once.
         let cursor: string | undefined;
         let batchIndex = 0;
+        if (!allDocIds.length) await this.gbrain.rebuild(sourceRef, []);
         while (true) {
           const batch = await this.prisma.document.findMany({
             where: { id: { in: allDocIds } },
@@ -484,6 +485,7 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
               },
             },
             take: BATCH_SIZE,
+            orderBy: { id: 'asc' },
             ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
           });
           if (!batch.length) break;
@@ -503,7 +505,11 @@ export class BrainCompilerService implements OnModuleInit, OnModuleDestroy {
               slug: `docs/${document.id}`,
             })),
           );
-          await this.gbrain.rebuild(sourceRef, evidences);
+          // Rebuild is destructive replacement: repeating it for a later
+          // page would erase the preceding 500 documents. Reset once, then
+          // add each subsequent stable page to the same source.
+          if (batchIndex === 0) await this.gbrain.rebuild(sourceRef, evidences);
+          else await this.gbrain.ingest(sourceRef, evidences);
           for (const document of batch) {
             await db.brainSourceDocument.upsert({
               where: {

@@ -1,0 +1,58 @@
+{
+  "profile": "official-topics-full-corpus-v1",
+  "seed": "20261007",
+  "topics": 1000,
+  "availableTopics": 1401,
+  "officialTopics": 1406,
+  "corpusDocuments": 8674,
+  "inputScope": "full-distributed-official-corpus",
+  "corpus": "/tmp/gbrain-beir-download-20261007/arguana-raw/arguana/corpus.jsonl",
+  "corpusHash": "0627982cec4ee896df6dc98604ef6b499c83fd87a19eaaeb3f23b88bbef6cbce",
+  "sourceQrelsHash": "0c47b481fa8b47fb9ca5e74bc8a017bdea14518c0e4a5d21345291180b3aca76",
+  "sourceQueriesHash": "f8b7c903f95d9a2d291de3915a8fac25085e9db679f19f59fea4145bfd1df618",
+  "qrelsHash": "fd56382f4d9cb1701c4263172688df682b490187fff3697ee816f7b0cea51a6f",
+  "queriesHash": "185dc218bf1fb17428aa1f44bd1b5131ee803c8d8051b47ad1eefbf89d3f4127",
+  "exclusionPolicy": "explicit incomplete-topic exclusion; never remove positive judgments from retained topics",
+  "excludedTopicCount": 5,
+  "excludedTopics": [
+    {
+      "queryId": "test-education-ufsdfkhbwu-con03a",
+      "missingQuery": false,
+      "missingPositiveDocuments": [
+        "test-education-ufsdfkhbwu-con03b"
+      ]
+    },
+    {
+      "queryId": "test-free-speech-debate-yfsdfkhbwu-con03a",
+      "missingQuery": false,
+      "missingPositiveDocuments": [
+        "test-free-speech-debate-yfsdfkhbwu-con03b"
+      ]
+    },
+    {
+      "queryId": "test-politics-dhwem-pro06a",
+      "missingQuery": false,
+      "missingPositiveDocuments": [
+        "test-politics-dhwem-pro06b"
+      ]
+    },
+    {
+      "queryId": "test-science-sghwbdgmo-con03a",
+      "missingQuery": false,
+      "missingPositiveDocuments": [
+        "test-science-sghwbdgmo-con03b"
+      ]
+    },
+    {
+      "queryId": "test-society-asfhwapg-con04a",
+      "missingQuery": false,
+      "missingPositiveDocuments": [
+        "test-society-asfhwapg-con04b"
+      ]
+    }
+  ],
+  "excludedTopicsHash": "a2e550fe430af240e5a82cef0f5e1396fa097868f39a00c1f1176a5d8bb12819",
+  "leaderboardComparable": false,
+  "profileCorpusHash": "0627982cec4ee896df6dc98604ef6b499c83fd87a19eaaeb3f23b88bbef6cbce",
+  "profileQrelsPath": "qrels/test.tsv"
+}

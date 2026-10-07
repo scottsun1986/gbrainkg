@@ -1599,6 +1599,12 @@ export class BrainRepoAdapter {
     return result;
   }
 
+  /** Read an exact canonical/compiled page for output audit; callers provide
+   * their already authorized source reference and page identity. */
+  async readCompiledPage(repoPath: string, slug: string, signal?: AbortSignal): Promise<string> {
+    return this.getPage(repoPath, slug, signal);
+  }
+
   private async getPage(repoPath: string, slug: string, signal?: AbortSignal): Promise<string> {
     const sourceId = this.sourceId(repoPath);
     // Fast-path: read page directly from disk repository when available (0.1ms vs 100ms spawn)

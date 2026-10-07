@@ -158,8 +158,9 @@ def evaluate(
     every qrels topic, so a 40-of-100 sample is reported at ~40% of its true
     value. The same metrics are therefore also emitted with an ``__evaluated``
     suffix, averaged over the topics that were actually submitted. That suffix
-    is the fair estimate of full-corpus quality for a sampled run; the primary
-    keys stay conservative and comparable with official TREC tooling.
+    describes only the submitted sample. It estimates the population fairly
+    only when sampling is representative and failed queries are not omitted;
+    the primary keys stay conservative and comparable with official TREC tooling.
     """
     totals: dict[str, float] = {}
     evaluated_totals: dict[str, float] = {}
@@ -183,12 +184,12 @@ def evaluate(
     if count == 0:
         return {}
     result: dict[str, float] = {key: value / count for key, value in totals.items()}
+    result["evaluated_queries"] = evaluated_count
+    result["total_queries"] = count
     if evaluated_count:
         result.update(
             {key: value / evaluated_count for key, value in evaluated_totals.items()}
         )
-        result["evaluated_queries"] = evaluated_count
-        result["total_queries"] = count
     return result
 
 
@@ -243,13 +244,19 @@ def _selftest() -> int:
     # …while the evaluated-only view estimates the sampled queries fairly.
     assert abs(partial["recall@1__evaluated"] - 1.0) < 1e-9, partial
     assert partial["evaluated_queries"] == 1 and partial["total_queries"] == 2, partial
+    empty = evaluate({"q1": {"d1": 1}, "q2": {"d3": 1}}, {}, [1])
+    assert empty["evaluated_queries"] == 0 and empty["total_queries"] == 2, empty
+    assert empty["recall@1"] == 0 and "recall@1__evaluated" not in empty, empty
+    # A submitted empty ranking is a measured failure, not an omitted query.
+    submitted_empty = evaluate({"q1": {"d1": 1}}, {"q1": []}, [1])
+    assert submitted_empty["evaluated_queries"] == 1 and submitted_empty["recall@1__evaluated"] == 0, submitted_empty
     assert ndcg_at_k(["x"], {}, 10) == 0.0
     # Duplicate relevant ids must never create a metric greater than one.
     assert ndcg_at_k(["d1", "d1"], {"d1": 1}, 10) == 1.0
     assert average_precision_at_k(["d1", "d1"], {"d1": 1}, 10) == 1.0
     assert recall_at_k(["d1", "d1"], {"d1": 1}, 10) == 1.0
     duplicate_run = evaluate({"q": {"d1": 1}}, {"q": ["d1", "d1"]}, [10])
-    assert all(0.0 <= value <= 1.0 for value in duplicate_run.values()), duplicate_run
+    assert all(0.0 <= value <= 1.0 for key, value in duplicate_run.items() if "@" in key), duplicate_run
     assert parse_thresholds(["ndcg@10=0.5,recall@100=0.9"]) == {"ndcg@10": 0.5, "recall@100": 0.9}
     assert check_thresholds(result, {"ndcg@2": 0.5}) == []
     assert check_thresholds(result, {"ndcg@2": 0.99}) != []

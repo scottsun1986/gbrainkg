@@ -13,6 +13,7 @@ import { readCanonicalDocument } from "./canonical-document";
 import { getSharedBrainRepoAdapter } from "./brain-adapter.provider";
 import { ChunkEmbeddingService } from "../embedding/chunk-embedding.service";
 import { uploadRoot as resolveUploadRoot } from "../storage/upload-paths";
+import { compiledTruthDiff } from './compiled-truth';
 
 // Cross-source parallelism: different knowledge bases own different GBrain
 // repositories, so their syncs are independent. Same-source syncs remain
@@ -346,6 +347,13 @@ export class BrainCompilerProcessor extends WorkerHost {
         })),
       );
 
+      const outputRef = sourceKey ? `gbrain://source/${sourceKey}` : brainRepo.gitRepoUrl;
+      const readOutput = async (slug: string): Promise<string | null> => {
+        if (typeof this.gbrain.readCompiledPage !== 'function') return null;
+        return this.gbrain.readCompiledPage(outputRef, slug).catch(() => null);
+      };
+      const previousOutputs = await Promise.all(evidences.map(evidence => readOutput(evidence.slug)));
+
       if (sourceKey) {
         await this.compilerService.syncSourceIncremental(
           sourceKey,
@@ -399,6 +407,7 @@ export class BrainCompilerProcessor extends WorkerHost {
 
       const compileJobModel: any = (this.prisma as any).compileJob;
       if (brainTopicId && compileJobModel?.create) {
+        const currentOutputs = await Promise.all(evidences.map(evidence => readOutput(evidence.slug)));
         await compileJobModel.create({
           data: {
             brainTopicId,
@@ -407,6 +416,10 @@ export class BrainCompilerProcessor extends WorkerHost {
             status: "completed",
             attempt: Number(job.attemptsMade || 0) + 1,
             inputEvidenceIds: docIds,
+            truthDiff: JSON.stringify({ contract: 'compiled-topic-output-diff-v1', pages: evidences.map((evidence, index) => ({
+              slug: evidence.slug, outputRead: currentOutputs[index] !== null,
+              diff: currentOutputs[index] === null ? null : compiledTruthDiff(previousOutputs[index], currentOutputs[index]!),
+            })) }),
             durationMs: Date.now() - compileStartedAt,
             completedAt: new Date(),
           },
@@ -438,7 +451,7 @@ export class BrainCompilerProcessor extends WorkerHost {
               status: "failed",
               attempt: Number(job.attemptsMade || 0) + 1,
               inputEvidenceIds: docIds,
-              truthDiff: message.slice(0, 2000),
+              truthDiff: JSON.stringify({ contract: 'compile-error-v1', message: message.slice(0, 2000) }),
               durationMs: Date.now() - compileStartedAt,
               completedAt: new Date(),
             },

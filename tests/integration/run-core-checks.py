@@ -9,6 +9,8 @@ root = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser()
 parser.add_argument("--database", default="gbrain_core_opt_test")
 parser.add_argument("--unit", action="store_true")
+parser.add_argument("--reliability", action="store_true", help="real process loss and application artifact/quota scale checks")
+parser.add_argument("--compiler", action="store_true", help="large source scan and compiled truth/graph checks")
 args = parser.parse_args()
 if not args.database.startswith("gbrain_core_opt_test") or not args.database.replace("_", "").isalnum():
     parser.error("database must be an isolated gbrain_core_opt_test database")
@@ -31,8 +33,12 @@ run(["pnpm", "--filter", "api", "build"])
 run(["node", "tests/integration/core-knowledge-versions.cjs"])
 run(["node", "tests/integration/core-graph-projection.cjs"])
 run(["node", "tests/integration/core-ingestion-replacement.cjs"])
-for name in ("core-knowledge-security.sql", "artifact-read-guard.sql"):
-    with (root / "tests/integration" / name).open() as sql:
-        subprocess.run(["docker", "exec", "-i", "llmwiki-postgres", "psql", "-U", "llmwiki", "-d", args.database, "-v", "ON_ERROR_STOP=1", "-v", "skip_original=1"], stdin=sql, check=True)
+run(["node", "tests/integration/core-application-permissions.cjs"])
+if args.compiler:
+    run(["node", "tests/integration/core-compiler-coverage.cjs"])
+if args.reliability:
+    env.update(REDIS_HOST="127.0.0.1", REDIS_PORT="6379", REDIS_DB="15")
+    run(["node", "tests/integration/core-service-loss.cjs"])
+    run(["node", "tests/integration/core-artifact-quota.cjs"])
 if args.unit:
     run(["pnpm", "run", "test", "--env-mode=loose", "--force"])

@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import math
 import statistics
 import sys
 import time
@@ -31,7 +32,7 @@ from typing import Any
 
 DEFAULT_DATABASE_URL = os.environ.get(
     "ANN_EVAL_DATABASE_URL",
-    os.environ.get("DATABASE_URL", "postgresql://llmwiki:llmwiki_pass@localhost:5433/llmwiki"),
+    os.environ.get("DATABASE_URL", ""),
 )
 
 
@@ -66,15 +67,16 @@ def recall_at_k(gold: list[str], system: list[str]) -> float:
     if not gold:
         return 0.0
     gold_set = set(gold)
-    return len([x for x in system if x in gold_set]) / len(gold_set)
+    return len(set(system) & gold_set) / len(gold_set)
 
 
 def percentile(values: list[float], p: float) -> float:
     if not values:
         return 0.0
     ordered = sorted(values)
-    idx = min(len(ordered) - 1, int(round((p / 100.0) * (len(ordered) - 1))))
-    return ordered[idx]
+    position = (p / 100.0) * (len(ordered) - 1)
+    lower=math.floor(position);upper=math.ceil(position)
+    return ordered[lower]+(ordered[upper]-ordered[lower])*(position-lower)
 
 
 def selectivity_bucket(ratio: float) -> str:
@@ -91,6 +93,7 @@ class AnnEvaluator:
     def __init__(self, conn, schema: str | None = None):
         self.conn = conn
         self.schema = schema
+        self.last_ann_plan = False
         if schema:
             if not schema.replace("_", "").isalnum():
                 raise ValueError(f"unsafe schema name: {schema}")
@@ -99,10 +102,14 @@ class AnnEvaluator:
             # benchmark schema, never at the application schema.
             cur.execute(f'SET search_path TO "{schema}", public')
             self.conn.commit()
+        cur = self.conn.cursor()
+        cur.execute("SELECT indexname FROM pg_indexes WHERE schemaname=%s AND tablename='Chunk' AND indexdef ILIKE '%%USING hnsw%%'", (schema or 'public',))
+        self.ann_indexes = {row[0] for row in cur.fetchall()}
+        self.conn.commit()
 
     def sample_queries(self, limit: int, kb: str | None) -> list[dict[str, Any]]:
         sql = """
-            SELECT c.id::text, c."kbId"::text, c.embedding::text
+            SELECT c.id::text, c."kbId"::text, c.embedding::text, c.embedding_fingerprint
             FROM "Chunk" c
             JOIN "Document" d ON d.id = c."documentId"
             WHERE c.embedding IS NOT NULL AND d.status = 'published'
@@ -115,7 +122,7 @@ class AnnEvaluator:
         params.append(limit)
         cur = self.conn.cursor()
         cur.execute(sql, tuple(params))
-        return [{"id": r[0], "kbId": r[1], "embedding": r[2]} for r in cur.fetchall()]
+        return [{"id": r[0], "kbId": r[1], "embedding": r[2], "fingerprint":r[3]} for r in cur.fetchall()]
 
     def knn(
         self,
@@ -126,6 +133,7 @@ class AnnEvaluator:
         exact: bool,
         ef_search: int = 40,
         iterative_scan: str = "off",
+        fingerprint: str | None = None,
     ) -> tuple[list[str], float, int]:
         cur = self.conn.cursor()
         cur.execute("SET LOCAL statement_timeout = 60000")
@@ -147,12 +155,23 @@ class AnnEvaluator:
             JOIN "Document" d ON d.id = c."documentId"
             WHERE c."kbId" = ANY(%s::uuid[])
               AND c.embedding IS NOT NULL
+              AND c.embedding_fingerprint IS NOT DISTINCT FROM %s
               AND d.status = 'published'
             ORDER BY c.embedding <=> %s::vector
             LIMIT %s
         """
         started = time.perf_counter()
-        cur.execute(sql, (kb_scope, vector_literal(vector), k))
+        if not exact:
+            cur.execute('EXPLAIN (FORMAT JSON) ' + sql, (kb_scope, fingerprint, vector_literal(vector), k))
+            plan = cur.fetchone()[0]
+            if isinstance(plan, str): plan = json.loads(plan)
+            def uses_ann(node):
+                if isinstance(node, dict):
+                    return node.get('Index Name') in self.ann_indexes or any(uses_ann(value) for value in node.values())
+                return isinstance(node, list) and any(uses_ann(value) for value in node)
+            self.last_ann_plan = uses_ann(plan)
+            started = time.perf_counter()
+        cur.execute(sql, (kb_scope, fingerprint, vector_literal(vector), k))
         ids = [row[0] for row in cur.fetchall()]
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         # End the transaction so the SET LOCAL overrides (notably disabling the
@@ -160,17 +179,18 @@ class AnnEvaluator:
         self.conn.commit()
         return ids, elapsed_ms, len(ids)
 
-    def filter_ratio(self, kb_scope: list[str]) -> float:
+    def filter_ratio(self, kb_scope: list[str], fingerprint: str | None = None) -> float:
         cur = self.conn.cursor()
         cur.execute(
             """
             SELECT
               (SELECT count(*) FROM "Chunk" c JOIN "Document" d ON d.id = c."documentId"
                 WHERE c."kbId" = ANY(%s::uuid[]) AND c.embedding IS NOT NULL
+                  AND c.embedding_fingerprint IS NOT DISTINCT FROM %s
                   AND d.status = 'published')::float,
               (SELECT count(*) FROM "Chunk" WHERE embedding IS NOT NULL)::float
             """,
-            (kb_scope,),
+            (kb_scope,fingerprint),
         )
         filtered, total = cur.fetchone()
         self.conn.commit()
@@ -190,9 +210,9 @@ def evaluate(args) -> dict[str, Any]:
         bucket_counts: dict[str, int] = {}
         for query in queries:
             scope = [query["kbId"]]
-            gold, exact_ms, _ = evaluator.knn(scope, query["embedding"], args.k, exact=True)
+            gold, exact_ms, _ = evaluator.knn(scope, query["embedding"], args.k, exact=True,fingerprint=query['fingerprint'])
             golds.append((query, gold, exact_ms))
-            bucket = selectivity_bucket(evaluator.filter_ratio(scope))
+            bucket = selectivity_bucket(evaluator.filter_ratio(scope,query['fingerprint']))
             bucket_counts[bucket] = bucket_counts.get(bucket, 0) + 1
 
         configurations = [{"name": "exact_knn(gold)", "exact": True}]
@@ -214,13 +234,18 @@ def evaluate(args) -> dict[str, Any]:
             "schema": args.schema or "public",
             "selectivity_buckets": bucket_counts,
             "configurations": [],
+            "hnsw_indexes": sorted(evaluator.ann_indexes),
+            "sampling": "deterministic md5(chunk ID); published existing embeddings, query vector drawn from corpus including self-neighbor; identical model fingerprint in exact/ANN candidates; no generated vectors",
+            "model_fingerprints": sorted({query['fingerprint'] or 'unversioned' for query in queries}),
         }
 
         for config in configurations:
             recalls: list[float] = []
             latencies: list[float] = []
             rows_returned: list[int] = []
+            short_results = 0
             per_bucket: dict[str, list[float]] = {}
+            ann_plans = 0
             for query, gold, exact_ms in golds:
                 scope = [query["kbId"]]
                 if config["exact"]:
@@ -233,16 +258,20 @@ def evaluate(args) -> dict[str, Any]:
                         exact=False,
                         ef_search=config["ef_search"],
                         iterative_scan=config["iterative_scan"],
+                        fingerprint=query['fingerprint'],
                     )
+                    ann_plans += int(evaluator.last_ann_plan)
                 value = recall_at_k(gold, system)
                 recalls.append(value)
                 latencies.append(latency)
                 rows_returned.append(rows)
-                bucket = selectivity_bucket(evaluator.filter_ratio(scope))
+                short_results += int(rows < len(gold))
+                bucket = selectivity_bucket(evaluator.filter_ratio(scope,query['fingerprint']))
                 per_bucket.setdefault(bucket, []).append(value)
             report["configurations"].append(
                 {
                     "configuration": config["name"],
+                    "hnsw_plan_queries": ann_plans,
                     "recall_at_k_mean": round(statistics.fmean(recalls), 4),
                     "recall_at_k_min": round(min(recalls), 4),
                     "perfect_recall_share": round(
@@ -250,7 +279,7 @@ def evaluate(args) -> dict[str, Any]:
                     ),
                     "rows_returned_mean": round(statistics.fmean(rows_returned), 2),
                     "short_result_share": round(
-                        len([r for r in rows_returned if r < args.k]) / len(rows_returned), 4
+                        short_results / len(rows_returned), 4
                     ),
                     "latency_ms_p50": round(percentile(latencies, 50), 2),
                     "latency_ms_p95": round(percentile(latencies, 95), 2),
@@ -263,8 +292,11 @@ def evaluate(args) -> dict[str, Any]:
 
         report["gate"] = {
             "target_recall_at_k": args.target_recall,
-            "passes": all(
+            "minimum_queries": getattr(args, 'min_queries', 30),
+            "passes": len(queries) >= getattr(args, 'min_queries', 30) and all(
                 entry["recall_at_k_mean"] >= args.target_recall
+                and all(value >= args.target_recall for value in entry['by_selectivity'].values())
+                and entry['hnsw_plan_queries'] == len(queries)
                 for entry in report["configurations"]
                 if not entry["configuration"].startswith("exact")
             ),
@@ -280,9 +312,10 @@ def selftest() -> int:
     assert recall_at_k(["a"], ["a"]) == 1.0
     assert recall_at_k(["a"], ["b"]) == 0.0
     assert recall_at_k([], ["a"]) == 0.0
+    assert recall_at_k(["a", "b"], ["a", "a"]) == 0.5
     assert vector_literal([1, 2]) == "[1.000000,2.000000]"
     assert vector_literal("[1,2]") == "[1,2]"
-    assert percentile([1.0, 2.0, 3.0, 4.0], 50) == 3.0
+    assert percentile([1.0, 2.0, 3.0, 4.0], 50) == 2.5
     assert parse_dsn("postgresql://u:p@h:5433/db")["port"] == 5433
     assert selectivity_bucket(0.01) == "selective(<5%)"
     print("ann_recall_eval selftest OK")
@@ -293,6 +326,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Filtered HNSW recall vs exact KNN")
     parser.add_argument("--database-url", default=DEFAULT_DATABASE_URL)
     parser.add_argument("--limit", type=int, default=100, help="number of query vectors")
+    parser.add_argument("--min-queries", type=int, default=30, help="minimum real query vectors; exact planner fallback cannot pass ANN gate")
     parser.add_argument("--k", type=int, default=10)
     parser.add_argument("--kb", default=None, help="restrict sampling to one knowledge base")
     parser.add_argument(
@@ -314,6 +348,9 @@ def main() -> int:
 
     if args.selftest:
         return selftest()
+
+    if not args.database_url:parser.error('Set ANN_EVAL_DATABASE_URL or DATABASE_URL from the authorized test configuration')
+    if args.limit<1 or args.min_queries<2 or args.k<1 or any(value<1 for value in args.ef_search) or not 0<args.target_recall<=1:parser.error('Invalid ANN measurement settings')
 
     report = evaluate(args)
     text = json.dumps(report, indent=2, ensure_ascii=False)

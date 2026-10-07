@@ -1,0 +1,7 @@
+[data] corpus=100 queries=80 qrels=80
+[ingest] submitted 100 documents in 1.9s
+[readiness] published+ready=0/100
+[readiness] published+ready=100/100
+[retrieve] excluded 1 explicitly marked summary hits (not corpus documents)
+[done] wrote run file: docs/validation/2026-10-07/optimization/sota20-sampled-current-r2/run-scifact.jsonl (40 queries)
+Next: python3 standard_ir_eval.py --qrels /home/scottsun/beir-data/scifact/qrels/test.tsv --run docs/validation/2026-10-07/optimization/sota20-sampled-current-r2/run-scifact.jsonl --k 1,5,10,100

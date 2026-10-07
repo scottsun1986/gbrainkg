@@ -1,0 +1,239 @@
+{
+  "created_at_local": "2026-10-07 Asia/Shanghai",
+  "scope": "read-only metadata preflight for authorized local test API http://127.0.0.1:3202",
+  "health": {
+    "status": "pass",
+    "method": "GET",
+    "path": "/ready",
+    "http_status": 200
+  },
+  "test_target": {
+    "status": "pass",
+    "command": "python3 scripts/assert-test-target.py http://127.0.0.1:3202",
+    "exit_code": 0
+  },
+  "database": {
+    "target": "loopback:5433/llmwiki",
+    "read_only_verified": true,
+    "method": "pg8000; SET default_transaction_read_only=on; committed; subsequent transaction_read_only=on"
+  },
+  "authentication_key_presence_only": {
+    "sources": [
+      "process environment",
+      "root .env",
+      "apps/api/.env",
+      "packages/database/.env"
+    ],
+    "keys": {
+      "LLMWIKI_TOKEN": false,
+      "EVAL_BEARER_TOKEN": false,
+      "AUTH_TOKEN": false,
+      "TEST_PASSWORD": false,
+      "LLMWIKI_PASS": false,
+      "E2E_ADMIN_PASSWORD": false
+    },
+    "valid_test_session_credential_available": false,
+    "blocker": "No available valid test-session credential (no LLMWIKI_TOKEN, EVAL_BEARER_TOKEN, AUTH_TOKEN, TEST_PASSWORD, LLMWIKI_PASS, or E2E_ADMIN_PASSWORD found in inspected process/env sources)."
+  },
+  "summary": {
+    "dataset_count": 20,
+    "ready_total": 18,
+    "not_ready_or_ambiguous_total": 2,
+    "benchmark_started": false,
+    "search_calls": 0,
+    "corpus_writes": 0
+  },
+  "cases": [
+    {
+      "dataset": "scifact",
+      "group": "beir",
+      "status": "ready",
+      "ready_document_count": 100,
+      "corpus_expected_count": 100,
+      "available_topic_count": 81,
+      "same_name_kb_count": 1
+    },
+    {
+      "dataset": "nfcorpus",
+      "group": "beir",
+      "status": "ready",
+      "ready_document_count": 100,
+      "corpus_expected_count": 100,
+      "available_topic_count": 6,
+      "same_name_kb_count": 1
+    },
+    {
+      "dataset": "arguana",
+      "group": "beir",
+      "status": "ambiguous_kb_name",
+      "ready_document_count": null,
+      "corpus_expected_count": 100,
+      "available_topic_count": 101,
+      "same_name_kb_count": 2,
+      "active_kb_with_active_owner_count": 1
+    },
+    {
+      "dataset": "scidocs",
+      "group": "beir",
+      "status": "ambiguous_kb_name",
+      "ready_document_count": null,
+      "corpus_expected_count": 100,
+      "available_topic_count": 4,
+      "same_name_kb_count": 3,
+      "active_kb_with_active_owner_count": 1
+    },
+    {
+      "dataset": "fiqa",
+      "group": "beir",
+      "status": "ready",
+      "ready_document_count": 100,
+      "corpus_expected_count": 100,
+      "available_topic_count": 31,
+      "same_name_kb_count": 1
+    },
+    {
+      "dataset": "quora",
+      "group": "beir",
+      "status": "ready",
+      "ready_document_count": 100,
+      "corpus_expected_count": 100,
+      "available_topic_count": 51,
+      "same_name_kb_count": 1
+    },
+    {
+      "dataset": "webis-touche2020",
+      "group": "beir",
+      "status": "ready",
+      "ready_document_count": 100,
+      "corpus_expected_count": 100,
+      "available_topic_count": 2,
+      "same_name_kb_count": 1
+    },
+    {
+      "dataset": "climate-fever",
+      "group": "beir",
+      "status": "ready",
+      "ready_document_count": 100,
+      "corpus_expected_count": 100,
+      "available_topic_count": 21,
+      "same_name_kb_count": 1
+    },
+    {
+      "dataset": "fever",
+      "group": "beir",
+      "status": "ready",
+      "ready_document_count": 100,
+      "corpus_expected_count": 100,
+      "available_topic_count": 11,
+      "same_name_kb_count": 1
+    },
+    {
+      "dataset": "nq",
+      "group": "beir",
+      "status": "ready",
+      "ready_document_count": 100,
+      "corpus_expected_count": 100,
+      "available_topic_count": 21,
+      "same_name_kb_count": 1
+    },
+    {
+      "dataset": "hotpotqa",
+      "group": "beir",
+      "status": "ready",
+      "ready_document_count": 100,
+      "corpus_expected_count": 100,
+      "available_topic_count": 21,
+      "same_name_kb_count": 1
+    },
+    {
+      "dataset": "triviaqa",
+      "group": "qa",
+      "status": "ready",
+      "ready_document_count": 100,
+      "corpus_expected_count": 100,
+      "available_topic_count": 67,
+      "same_name_kb_count": 1
+    },
+    {
+      "dataset": "squad",
+      "group": "qa",
+      "status": "ready",
+      "ready_document_count": 100,
+      "corpus_expected_count": 100,
+      "available_topic_count": 101,
+      "same_name_kb_count": 1
+    },
+    {
+      "dataset": "boolq",
+      "group": "qa",
+      "status": "ready",
+      "ready_document_count": 100,
+      "corpus_expected_count": 100,
+      "available_topic_count": 101,
+      "same_name_kb_count": 1
+    },
+    {
+      "dataset": "pubmedqa",
+      "group": "qa",
+      "status": "ready",
+      "ready_document_count": 100,
+      "corpus_expected_count": 100,
+      "available_topic_count": 101,
+      "same_name_kb_count": 1
+    },
+    {
+      "dataset": "msmarco",
+      "group": "qa",
+      "status": "ready",
+      "ready_document_count": 100,
+      "corpus_expected_count": 100,
+      "available_topic_count": 93,
+      "same_name_kb_count": 1
+    },
+    {
+      "dataset": "cmrc2018",
+      "group": "qa",
+      "status": "ready",
+      "ready_document_count": 100,
+      "corpus_expected_count": 100,
+      "available_topic_count": 101,
+      "same_name_kb_count": 1
+    },
+    {
+      "dataset": "tatqa",
+      "group": "qa",
+      "status": "ready",
+      "ready_document_count": 100,
+      "corpus_expected_count": 100,
+      "available_topic_count": 101,
+      "same_name_kb_count": 1
+    },
+    {
+      "dataset": "2wiki",
+      "group": "qa",
+      "status": "ready",
+      "ready_document_count": 100,
+      "corpus_expected_count": 100,
+      "available_topic_count": 40,
+      "same_name_kb_count": 1
+    },
+    {
+      "dataset": "musique",
+      "group": "qa",
+      "status": "ready",
+      "ready_document_count": 100,
+      "corpus_expected_count": 100,
+      "available_topic_count": 60,
+      "same_name_kb_count": 1
+    }
+  ],
+  "metadata_caveats": [
+    "Ready counts are Document rows matching exact KB selection, title LIKE [BEIR:% and status=published and indexReadiness=ready.",
+    "Counts do not prove exact document-ID mapping to corpus rows.",
+    "Duplicate exact-name KBs are ambiguous; no document counts were assigned to those cases.",
+    "No IDs, document bodies, user IDs, password hashes, secret values, or response bodies were read or recorded.",
+    "No auth guessing, token minting, /chat/search calls, benchmark execution, or corpus writes were performed."
+  ],
+  "exit_status": 1,
+  "exit_status_reason": "Safe incomplete preflight: valid test-session credential unavailable; benchmark/search phase not run."
+}

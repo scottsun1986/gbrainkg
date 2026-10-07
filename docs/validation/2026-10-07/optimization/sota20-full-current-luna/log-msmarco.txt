@@ -1,0 +1,5 @@
+[data] corpus=100 queries=92 qrels=92
+[retrieve] 50/92
+[retrieve] excluded 147 explicitly marked summary hits (not corpus documents)
+[done] wrote run file: docs/validation/2026-10-07/optimization/sota20-full-current-luna/run-msmarco.jsonl (92 queries)
+Next: python3 standard_ir_eval.py --qrels /home/scottsun/qa-data/msmarco/qrels/test.tsv --run docs/validation/2026-10-07/optimization/sota20-full-current-luna/run-msmarco.jsonl --k 1,5,10,100

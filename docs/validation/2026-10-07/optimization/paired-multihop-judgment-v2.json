@@ -1,0 +1,1831 @@
+{
+  "contract": "paired-multihop-adjudication-v1",
+  "inputHash": "8dde990e6ee4f3fee7fa9cdde81a8d29397d59fa7894f086d7286e5026567194",
+  "model": "deepseek-chat",
+  "independentModel": false,
+  "limits": [
+    "Same-model judgment when independentModel=false is an additional diagnostic, not independent human evidence.",
+    "Oracle context excludes retrieval, permissions, production runtime and official leaderboard claims."
+  ],
+  "results": [
+    {
+      "dataset": "hotpot",
+      "qid": "5a85fb085542994775f606de",
+      "baseline": {
+        "judgment": {
+          "shortAnswer": "Ronald Shusett is the executive producer of the film whose score was composed by Jerry Goldsmith [1][2].",
+          "assertions": [
+            {
+              "text": "Ronald Shusett is the executive producer of the film whose score was composed by Jerry Goldsmith.",
+              "supported": true,
+              "sourceNumbers": [
+                1,
+                2
+              ]
+            },
+            {
+              "text": "The film is Alien (1979).",
+              "supported": true,
+              "sourceNumbers": [
+                1,
+                2
+              ]
+            },
+            {
+              "text": "Alien was directed by Ridley Scott.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Alien's score was composed by Jerry Goldsmith.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "Dan O'Bannon wrote the screenplay from a story he co-authored with Ronald Shusett.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Ronald Shusett served as executive producer.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": true,
+          "missingLinks": [],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"Ronald Shusett is the executive producer of the film whose score was composed by Jerry Goldsmith [1][2].\",\n  \"assertions\": [\n    {\n      \"text\": \"Ronald Shusett is the executive producer of the film whose score was composed by Jerry Goldsmith.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1, 2]\n    },\n    {\n      \"text\": \"The film is Alien (1979).\",\n      \"supported\": true,\n      \"sourceNumbers\": [1, 2]\n    },\n    {\n      \"text\": \"Alien was directed by Ridley Scott.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Alien's score was composed by Jerry Goldsmith.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"Dan O'Bannon wrote the screenplay from a story he co-authored with Ronald Shusett.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Ronald Shusett served as executive producer.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    }\n  ],\n  \"allRequiredLinksSupported\": true,\n  \"missingLinks\": [],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 0.25
+      },
+      "candidate": {
+        "judgment": {
+          "shortAnswer": "Shusett is the executive producer of the film whose score was composed by Jerry Goldsmith [1][2].",
+          "assertions": [
+            {
+              "text": "Goldsmith composed the score for *Alien*.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "Shusett was the executive producer of *Alien*.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Shusett is the executive producer of the film whose score was composed by Jerry Goldsmith.",
+              "supported": true,
+              "sourceNumbers": [
+                1,
+                2
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": true,
+          "missingLinks": [],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"Shusett is the executive producer of the film whose score was composed by Jerry Goldsmith [1][2].\",\n  \"assertions\": [\n    {\n      \"text\": \"Goldsmith composed the score for *Alien*.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"Shusett was the executive producer of *Alien*.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Shusett is the executive producer of the film whose score was composed by Jerry Goldsmith.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1, 2]\n    }\n  ],\n  \"allRequiredLinksSupported\": true,\n  \"missingLinks\": [],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 0.13333333333333336
+      }
+    },
+    {
+      "dataset": "hotpot",
+      "qid": "5ae1e22a5542997f29b3c160",
+      "candidate": {
+        "judgment": {
+          "shortAnswer": "Tricia Helfer, who plays \"Celene\" in *Walk All Over Me* [2], voices Sarah Kerrigan, the Queen of Blades, in the \"Starcraft 2\" trilogy [1].",
+          "assertions": [
+            {
+              "text": "Tricia Helfer plays \"Celene\" in *Walk All Over Me*.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "Tricia Helfer voices Sarah Kerrigan, the Queen of Blades, in the \"Starcraft 2\" trilogy.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": true,
+          "missingLinks": [],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"Tricia Helfer, who plays \\\"Celene\\\" in *Walk All Over Me* [2], voices Sarah Kerrigan, the Queen of Blades, in the \\\"Starcraft 2\\\" trilogy [1].\",\n  \"assertions\": [\n    {\n      \"text\": \"Tricia Helfer plays \\\"Celene\\\" in *Walk All Over Me*.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"Tricia Helfer voices Sarah Kerrigan, the Queen of Blades, in the \\\"Starcraft 2\\\" trilogy.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    }\n  ],\n  \"allRequiredLinksSupported\": true,\n  \"missingLinks\": [],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 0.18181818181818182
+      },
+      "baseline": {
+        "judgment": {
+          "shortAnswer": "Sarah Kerrigan, the Queen of Blades",
+          "assertions": [
+            {
+              "text": "Tricia Helfer played \"Celene\" in Walk All Over Me.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "Tricia Helfer is known for voicing Sarah Kerrigan, the Queen of Blades, in the Starcraft 2 trilogy.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": true,
+          "missingLinks": [],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"Sarah Kerrigan, the Queen of Blades\",\n  \"assertions\": [\n    {\n      \"text\": \"Tricia Helfer played \\\"Celene\\\" in Walk All Over Me.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"Tricia Helfer is known for voicing Sarah Kerrigan, the Queen of Blades, in the Starcraft 2 trilogy.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    }\n  ],\n  \"allRequiredLinksSupported\": true,\n  \"missingLinks\": [],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 0.5714285714285715
+      }
+    },
+    {
+      "dataset": "hotpot",
+      "qid": "5ab700ca5542991d32223736",
+      "baseline": {
+        "judgment": {
+          "shortAnswer": "Rita Wilson, a supporting cast member in \"Sleepless in Seattle,\" appeared in \"Now and Then\" (1995) [1].",
+          "assertions": [
+            {
+              "text": "Rita Wilson was a supporting cast member in \"Sleepless in Seattle.\"",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "Rita Wilson appeared in \"Now and Then\" (1995).",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Rita Wilson appeared in \"Jingle All the Way\" (1996).",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Rita Wilson appeared in \"The Story of Us\" (1999).",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Rita Wilson appeared in \"Runaway Bride\" (1999).",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Bill Pullman, Ross Malinger, Rob Reiner, Rosie O'Donnell, Gaby Hoffmann, and Victor Garber are supporting cast members of \"Sleepless in Seattle.\"",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "The materials do not record other films for the remaining supporting cast members (Bill Pullman, Ross Malinger, Rob Reiner, Rosie O'Donnell, Gaby Hoffmann, Victor Garber).",
+              "supported": true,
+              "sourceNumbers": [
+                1,
+                2
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": true,
+          "missingLinks": [],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"Rita Wilson, a supporting cast member in \\\"Sleepless in Seattle,\\\" appeared in \\\"Now and Then\\\" (1995) [1].\",\n  \"assertions\": [\n    {\n      \"text\": \"Rita Wilson was a supporting cast member in \\\"Sleepless in Seattle.\\\"\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"Rita Wilson appeared in \\\"Now and Then\\\" (1995).\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Rita Wilson appeared in \\\"Jingle All the Way\\\" (1996).\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Rita Wilson appeared in \\\"The Story of Us\\\" (1999).\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Rita Wilson appeared in \\\"Runaway Bride\\\" (1999).\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Bill Pullman, Ross Malinger, Rob Reiner, Rosie O'Donnell, Gaby Hoffmann, and Victor Garber are supporting cast members of \\\"Sleepless in Seattle.\\\"\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"The materials do not record other films for the remaining supporting cast members (Bill Pullman, Ross Malinger, Rob Reiner, Rosie O'Donnell, Gaby Hoffmann, Victor Garber).\",\n      \"supported\": true,\n      \"sourceNumbers\": [1, 2]\n    }\n  ],\n  \"allRequiredLinksSupported\": true,\n  \"missingLinks\": [],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 0.4210526315789474
+      },
+      "candidate": {
+        "judgment": {
+          "shortAnswer": "Rita Wilson, a supporting cast member in \"Sleepless in Seattle,\" appeared in \"Runaway Bride\" (1999) [1][2].",
+          "assertions": [
+            {
+              "text": "Rita Wilson was a supporting cast member in \"Sleepless in Seattle.\"",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "Rita Wilson appeared in \"Runaway Bride\" (1999).",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Rita Wilson appeared in \"Sleepless in Seattle\" (1993).",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Rita Wilson appeared in \"Now and Then\" (1995).",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Rita Wilson appeared in \"Jingle All the Way\" (1996).",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Rita Wilson appeared in \"The Story of Us\" (1999).",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": true,
+          "missingLinks": [],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"Rita Wilson, a supporting cast member in \\\"Sleepless in Seattle,\\\" appeared in \\\"Runaway Bride\\\" (1999) [1][2].\",\n  \"assertions\": [\n    {\n      \"text\": \"Rita Wilson was a supporting cast member in \\\"Sleepless in Seattle.\\\"\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"Rita Wilson appeared in \\\"Runaway Bride\\\" (1999).\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Rita Wilson appeared in \\\"Sleepless in Seattle\\\" (1993).\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Rita Wilson appeared in \\\"Now and Then\\\" (1995).\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Rita Wilson appeared in \\\"Jingle All the Way\\\" (1996).\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Rita Wilson appeared in \\\"The Story of Us\\\" (1999).\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    }\n  ],\n  \"allRequiredLinksSupported\": true,\n  \"missingLinks\": [],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 0
+      }
+    },
+    {
+      "dataset": "hotpot",
+      "qid": "5a716ec85542994082a3e82d",
+      "candidate": {
+        "judgment": {
+          "shortAnswer": "\"You're Next\" was filmed first, as it is a 2011 film [2], while \"The Guest\" is a 2014 film [1].",
+          "assertions": [
+            {
+              "text": "\"You're Next\" was filmed first.",
+              "supported": false,
+              "sourceNumbers": []
+            },
+            {
+              "text": "\"You're Next\" is a 2011 film.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "\"The Guest\" is a 2014 film.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Both were directed by Adam Wingard.",
+              "supported": true,
+              "sourceNumbers": [
+                1,
+                2
+              ]
+            },
+            {
+              "text": "Both were written by Simon Barrett.",
+              "supported": true,
+              "sourceNumbers": [
+                1,
+                2
+              ]
+            },
+            {
+              "text": "Adam Wingard and Simon Barrett previously collaborated on \"You're Next\" (2011) before \"The Guest\".",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": false,
+          "missingLinks": [
+            "\"You're Next\" was filmed first."
+          ],
+          "score": 0.8333333333333334
+        },
+        "raw": "{\n  \"shortAnswer\": \"\\\"You're Next\\\" was filmed first, as it is a 2011 film [2], while \\\"The Guest\\\" is a 2014 film [1].\",\n  \"assertions\": [\n    {\n      \"text\": \"\\\"You're Next\\\" was filmed first.\",\n      \"supported\": false,\n      \"sourceNumbers\": []\n    },\n    {\n      \"text\": \"\\\"You're Next\\\" is a 2011 film.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"\\\"The Guest\\\" is a 2014 film.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Both were directed by Adam Wingard.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1, 2]\n    },\n    {\n      \"text\": \"Both were written by Simon Barrett.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1, 2]\n    },\n    {\n      \"text\": \"Adam Wingard and Simon Barrett previously collaborated on \\\"You're Next\\\" (2011) before \\\"The Guest\\\".\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    }\n  ],\n  \"allRequiredLinksSupported\": false,\n  \"missingLinks\": [\n    \"\\\"You're Next\\\" was filmed first.\"\n  ],\n  \"score\": 0.8333333333333334\n}",
+        "faithfulness": 0.8333333333333334,
+        "extractedAnswerF1": 0.3157894736842105
+      },
+      "baseline": {
+        "judgment": {
+          "shortAnswer": "\"You're Next\" was filmed first, as it is a 2011 American slasher film [2], while \"The Guest\" is a 2014 American action horror-thriller film [1].",
+          "assertions": [
+            {
+              "text": "\"You're Next\" was filmed first.",
+              "supported": false,
+              "sourceNumbers": []
+            },
+            {
+              "text": "\"You're Next\" is a 2011 American slasher film.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "\"The Guest\" is a 2014 American action horror-thriller film.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Both were directed by Adam Wingard.",
+              "supported": true,
+              "sourceNumbers": [
+                1,
+                2
+              ]
+            },
+            {
+              "text": "Both were written by Simon Barrett.",
+              "supported": true,
+              "sourceNumbers": [
+                1,
+                2
+              ]
+            },
+            {
+              "text": "Adam Wingard and Simon Barrett previously collaborated on \"You're Next\" (2011) before \"The Guest\".",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": false,
+          "missingLinks": [
+            "The sources do not state that \"You're Next\" was filmed before \"The Guest\"; release years do not establish filming order."
+          ],
+          "score": 0.8333333333333334
+        },
+        "raw": "{\n  \"shortAnswer\": \"\\\"You're Next\\\" was filmed first, as it is a 2011 American slasher film [2], while \\\"The Guest\\\" is a 2014 American action horror-thriller film [1].\",\n  \"assertions\": [\n    {\n      \"text\": \"\\\"You're Next\\\" was filmed first.\",\n      \"supported\": false,\n      \"sourceNumbers\": []\n    },\n    {\n      \"text\": \"\\\"You're Next\\\" is a 2011 American slasher film.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"\\\"The Guest\\\" is a 2014 American action horror-thriller film.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Both were directed by Adam Wingard.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1, 2]\n    },\n    {\n      \"text\": \"Both were written by Simon Barrett.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1, 2]\n    },\n    {\n      \"text\": \"Adam Wingard and Simon Barrett previously collaborated on \\\"You're Next\\\" (2011) before \\\"The Guest\\\".\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    }\n  ],\n  \"allRequiredLinksSupported\": false,\n  \"missingLinks\": [\n    \"The sources do not state that \\\"You're Next\\\" was filmed before \\\"The Guest\\\"; release years do not establish filming order.\"\n  ],\n  \"score\": 0.8333333333333334\n}",
+        "faithfulness": 0.8333333333333334,
+        "extractedAnswerF1": 0.24000000000000002
+      }
+    },
+    {
+      "dataset": "hotpot",
+      "qid": "5a87081755429960ec39b6fe",
+      "baseline": {
+        "judgment": {
+          "shortAnswer": "Daredevil is the show released on Netflix earlier, as Jessica Jones is the second in a series of shows that lead to \"The Defenders\" crossover miniseries [1].",
+          "assertions": [
+            {
+              "text": "Daredevil is the show released on Netflix earlier.",
+              "supported": false,
+              "sourceNumbers": []
+            },
+            {
+              "text": "Jessica Jones is the second in a series of shows that lead to \"The Defenders\" crossover miniseries.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "The Defenders is the culmination of a series of interconnected shows from Marvel and Netflix based on Daredevil, Jessica Jones, Luke Cage and Iron Fist.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "The materials do not explicitly name the first show in that sequence.",
+              "supported": true,
+              "sourceNumbers": [
+                1,
+                2
+              ]
+            },
+            {
+              "text": "The identity of the earlier show is not recorded in the provided sources.",
+              "supported": true,
+              "sourceNumbers": [
+                1,
+                2
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": false,
+          "missingLinks": [
+            "The first show in the series leading to The Defenders, released on Netflix earlier than Jessica Jones, is not identified in the sources."
+          ],
+          "score": 0.8
+        },
+        "raw": "{\n  \"shortAnswer\": \"Daredevil is the show released on Netflix earlier, as Jessica Jones is the second in a series of shows that lead to \\\"The Defenders\\\" crossover miniseries [1].\",\n  \"assertions\": [\n    {\n      \"text\": \"Daredevil is the show released on Netflix earlier.\",\n      \"supported\": false,\n      \"sourceNumbers\": []\n    },\n    {\n      \"text\": \"Jessica Jones is the second in a series of shows that lead to \\\"The Defenders\\\" crossover miniseries.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"The Defenders is the culmination of a series of interconnected shows from Marvel and Netflix based on Daredevil, Jessica Jones, Luke Cage and Iron Fist.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"The materials do not explicitly name the first show in that sequence.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1, 2]\n    },\n    {\n      \"text\": \"The identity of the earlier show is not recorded in the provided sources.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1, 2]\n    }\n  ],\n  \"allRequiredLinksSupported\": false,\n  \"missingLinks\": [\n    \"The first show in the series leading to The Defenders, released on Netflix earlier than Jessica Jones, is not identified in the sources.\"\n  ],\n  \"score\": 0.8\n}",
+        "faithfulness": 0.8,
+        "extractedAnswerF1": 0.08695652173913045
+      },
+      "candidate": {
+        "judgment": {
+          "shortAnswer": "The reference materials do not record which show was released on Netflix earlier than *Jessica Jones*; they only confirm that *Jessica Jones* is \"the second in a series of shows that lead to 'The Defenders' crossover miniseries\" [1], and that *The Defenders* is \"the culmination of a series of interconnected shows from Marvel and Netflix\" [2]. The identity of the first show in that series is not stated in the provided materials.",
+          "assertions": [
+            {
+              "text": "The reference materials do not record which show was released on Netflix earlier than Jessica Jones.",
+              "supported": true,
+              "sourceNumbers": [
+                1,
+                2
+              ]
+            },
+            {
+              "text": "Jessica Jones is \"the second in a series of shows that lead to 'The Defenders' crossover miniseries\".",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "The Defenders is \"the culmination of a series of interconnected shows from Marvel and Netflix\".",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "The identity of the first show in that series is not stated in the provided materials.",
+              "supported": true,
+              "sourceNumbers": [
+                1,
+                2
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": false,
+          "missingLinks": [
+            "The identity of the show released on Netflix earlier than Jessica Jones, which is the first show in the series leading to The Defenders"
+          ],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"The reference materials do not record which show was released on Netflix earlier than *Jessica Jones*; they only confirm that *Jessica Jones* is \\\"the second in a series of shows that lead to 'The Defenders' crossover miniseries\\\" [1], and that *The Defenders* is \\\"the culmination of a series of interconnected shows from Marvel and Netflix\\\" [2]. The identity of the first show in that series is not stated in the provided materials.\",\n  \"assertions\": [\n    {\n      \"text\": \"The reference materials do not record which show was released on Netflix earlier than Jessica Jones.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1, 2]\n    },\n    {\n      \"text\": \"Jessica Jones is \\\"the second in a series of shows that lead to 'The Defenders' crossover miniseries\\\".\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"The Defenders is \\\"the culmination of a series of interconnected shows from Marvel and Netflix\\\".\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"The identity of the first show in that series is not stated in the provided materials.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1, 2]\n    }\n  ],\n  \"allRequiredLinksSupported\": false,\n  \"missingLinks\": [\n    \"The identity of the show released on Netflix earlier than Jessica Jones, which is the first show in the series leading to The Defenders\"\n  ],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 0
+      }
+    },
+    {
+      "dataset": "hotpot",
+      "qid": "5a80071f5542992bc0c4a684",
+      "candidate": {
+        "judgment": {
+          "shortAnswer": "Crystal Dynamics",
+          "assertions": [
+            {
+              "text": "Alice David is the voice of Lara Croft in the French dub of the video game \"Tomb Raider\".",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "The video game \"Tomb Raider\" was developed by Crystal Dynamics.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": true,
+          "missingLinks": [],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"Crystal Dynamics\",\n  \"assertions\": [\n    {\n      \"text\": \"Alice David is the voice of Lara Croft in the French dub of the video game \\\"Tomb Raider\\\".\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"The video game \\\"Tomb Raider\\\" was developed by Crystal Dynamics.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    }\n  ],\n  \"allRequiredLinksSupported\": true,\n  \"missingLinks\": [],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 1
+      },
+      "baseline": {
+        "judgment": {
+          "shortAnswer": "Crystal Dynamics",
+          "assertions": [
+            {
+              "text": "Alice David is the voice of the French dub of Lara Croft in the video game \"Tomb Raider\".",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "The video game \"Tomb Raider\" was developed by Crystal Dynamics.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": true,
+          "missingLinks": [],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"Crystal Dynamics\",\n  \"assertions\": [\n    {\n      \"text\": \"Alice David is the voice of the French dub of Lara Croft in the video game \\\"Tomb Raider\\\".\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"The video game \\\"Tomb Raider\\\" was developed by Crystal Dynamics.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    }\n  ],\n  \"allRequiredLinksSupported\": true,\n  \"missingLinks\": [],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 1
+      }
+    },
+    {
+      "dataset": "hotpot",
+      "qid": "5ade25ed5542997c77aded70",
+      "baseline": {
+        "judgment": {
+          "shortAnswer": "The materials do not record a specific war in which the two were in a state of rivalry after that abdication; they note only that the Russians and British were allies again in World Wars I and II, though relations were strained by the 1917 revolution [2].",
+          "assertions": [
+            {
+              "text": "The Russia–United Kingdom relations were strained by the Russian Revolution of 1917, which followed the abdication of Emperor Nicholas II.",
+              "supported": true,
+              "sourceNumbers": [
+                1,
+                2
+              ]
+            },
+            {
+              "text": "The materials do not record a specific war in which the two were in a state of rivalry after that abdication.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "The Russians and British were allies again in World Wars I and II.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "Relations were strained by the 1917 revolution.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": false,
+          "missingLinks": [
+            "A specific war in which Russia–United Kingdom relations were in a state of rivalry after the abdication of Emperor Nicholas II"
+          ],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"The materials do not record a specific war in which the two were in a state of rivalry after that abdication; they note only that the Russians and British were allies again in World Wars I and II, though relations were strained by the 1917 revolution [2].\",\n  \"assertions\": [\n    {\n      \"text\": \"The Russia–United Kingdom relations were strained by the Russian Revolution of 1917, which followed the abdication of Emperor Nicholas II.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1, 2]\n    },\n    {\n      \"text\": \"The materials do not record a specific war in which the two were in a state of rivalry after that abdication.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"The Russians and British were allies again in World Wars I and II.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"Relations were strained by the 1917 revolution.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    }\n  ],\n  \"allRequiredLinksSupported\": false,\n  \"missingLinks\": [\n    \"A specific war in which Russia–United Kingdom relations were in a state of rivalry after the abdication of Emperor Nicholas II\"\n  ],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 0.045454545454545456
+      },
+      "candidate": {
+        "judgment": {
+          "shortAnswer": "The materials do not record a specific war during which those relations were in a state of rivalry after that abdication; they note only that the two were allies in World Wars I and II and at sword's point during the Cold War (1947–91) [2].",
+          "assertions": [
+            {
+              "text": "The Russia–United Kingdom relations were strained by the Russian Revolution of 1917, which followed the abdication of Emperor Nicholas II.",
+              "supported": true,
+              "sourceNumbers": [
+                1,
+                2
+              ]
+            },
+            {
+              "text": "The materials do not record a specific war during which those relations were in a state of rivalry after that abdication.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "The two were allies in World Wars I and II.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "The two were at sword's point during the Cold War (1947–91).",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": false,
+          "missingLinks": [
+            "A specific war during which Russia–United Kingdom relations were in a state of rivalry after the abdication of Emperor Nicholas II"
+          ],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"The materials do not record a specific war during which those relations were in a state of rivalry after that abdication; they note only that the two were allies in World Wars I and II and at sword's point during the Cold War (1947–91) [2].\",\n  \"assertions\": [\n    {\n      \"text\": \"The Russia–United Kingdom relations were strained by the Russian Revolution of 1917, which followed the abdication of Emperor Nicholas II.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1, 2]\n    },\n    {\n      \"text\": \"The materials do not record a specific war during which those relations were in a state of rivalry after that abdication.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"The two were allies in World Wars I and II.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"The two were at sword's point during the Cold War (1947–91).\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    }\n  ],\n  \"allRequiredLinksSupported\": false,\n  \"missingLinks\": [\n    \"A specific war during which Russia–United Kingdom relations were in a state of rivalry after the abdication of Emperor Nicholas II\"\n  ],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 0.17777777777777776
+      }
+    },
+    {
+      "dataset": "hotpot",
+      "qid": "5a7b63eb55429931da12ca7e",
+      "candidate": {
+        "judgment": {
+          "shortAnswer": "Albany, New York",
+          "assertions": [
+            {
+              "text": "David Soares is the Albany County, N.Y. District Attorney.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Paul Clyne was the District Attorney of Albany County, New York from January 2001 through December 2004.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "Paul Clyne and David Soares have Albany, New York in common.",
+              "supported": true,
+              "sourceNumbers": [
+                1,
+                2
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": true,
+          "missingLinks": [],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"Albany, New York\",\n  \"assertions\": [\n    {\n      \"text\": \"David Soares is the Albany County, N.Y. District Attorney.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Paul Clyne was the District Attorney of Albany County, New York from January 2001 through December 2004.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"Paul Clyne and David Soares have Albany, New York in common.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1, 2]\n    }\n  ],\n  \"allRequiredLinksSupported\": true,\n  \"missingLinks\": [],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 0.8
+      },
+      "baseline": {
+        "judgment": {
+          "shortAnswer": "Albany, New York",
+          "assertions": [
+            {
+              "text": "David Soares is the Albany County, N.Y. District Attorney.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Paul Clyne was the District Attorney of Albany County, New York from January 2001 through December 2004.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "Paul Clyne and David Soares have Albany, New York in common.",
+              "supported": true,
+              "sourceNumbers": [
+                1,
+                2
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": true,
+          "missingLinks": [],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"Albany, New York\",\n  \"assertions\": [\n    {\n      \"text\": \"David Soares is the Albany County, N.Y. District Attorney.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Paul Clyne was the District Attorney of Albany County, New York from January 2001 through December 2004.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"Paul Clyne and David Soares have Albany, New York in common.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1, 2]\n    }\n  ],\n  \"allRequiredLinksSupported\": true,\n  \"missingLinks\": [],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 0.8
+      }
+    },
+    {
+      "dataset": "hotpot",
+      "qid": "5adf1b8a5542995534e8c750",
+      "baseline": {
+        "judgment": {
+          "shortAnswer": "Duane Roland, the Gator Country guitarist who co-wrote \"Bloody Reunion,\" came from the Southern hard rock band Molly Hatchet [1].",
+          "assertions": [
+            {
+              "text": "Duane Roland was the Gator Country guitarist who co-wrote \"Bloody Reunion.\"",
+              "supported": true,
+              "sourceNumbers": [
+                1,
+                2
+              ]
+            },
+            {
+              "text": "Duane Roland came from the Southern hard rock band Molly Hatchet.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "He was a member of Molly Hatchet from its founding in the mid-1970s until his departure in 1990.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "He is credited with co-writing some of the band's biggest hits, including \"Bloody Reunion\" and \"Boogie No More.\"",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Gator Country itself was formed in Davie, Florida, in 2005 by several ex-members of Molly Hatchet, including guitarist Duane Roland.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": true,
+          "missingLinks": [],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"Duane Roland, the Gator Country guitarist who co-wrote \\\"Bloody Reunion,\\\" came from the Southern hard rock band Molly Hatchet [1].\",\n  \"assertions\": [\n    {\n      \"text\": \"Duane Roland was the Gator Country guitarist who co-wrote \\\"Bloody Reunion.\\\"\",\n      \"supported\": true,\n      \"sourceNumbers\": [1, 2]\n    },\n    {\n      \"text\": \"Duane Roland came from the Southern hard rock band Molly Hatchet.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"He was a member of Molly Hatchet from its founding in the mid-1970s until his departure in 1990.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"He is credited with co-writing some of the band's biggest hits, including \\\"Bloody Reunion\\\" and \\\"Boogie No More.\\\"\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Gator Country itself was formed in Davie, Florida, in 2005 by several ex-members of Molly Hatchet, including guitarist Duane Roland.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    }\n  ],\n  \"allRequiredLinksSupported\": true,\n  \"missingLinks\": [],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 0.19999999999999998
+      },
+      "candidate": {
+        "judgment": {
+          "shortAnswer": "Molly Hatchet",
+          "assertions": [
+            {
+              "text": "Duane Roland was the Gator Country guitarist who co-wrote \"Bloody Reunion\".",
+              "supported": true,
+              "sourceNumbers": [
+                1,
+                2
+              ]
+            },
+            {
+              "text": "Duane Roland was a guitarist for Molly Hatchet from its mid-1970s founding until 1990.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": true,
+          "missingLinks": [],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"Molly Hatchet\",\n  \"assertions\": [\n    {\n      \"text\": \"Duane Roland was the Gator Country guitarist who co-wrote \\\"Bloody Reunion\\\".\",\n      \"supported\": true,\n      \"sourceNumbers\": [1, 2]\n    },\n    {\n      \"text\": \"Duane Roland was a guitarist for Molly Hatchet from its mid-1970s founding until 1990.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    }\n  ],\n  \"allRequiredLinksSupported\": true,\n  \"missingLinks\": [],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 1
+      }
+    },
+    {
+      "dataset": "hotpot",
+      "qid": "5ae7535c5542997b22f6a6d8",
+      "candidate": {
+        "judgment": {
+          "shortAnswer": "1998",
+          "assertions": [
+            {
+              "text": "The 53rd National Hockey League All-Star Game was held at the Office Depot Center in Sunrise, Florida.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "The BB&T Center — previously known as the Office Depot Center — was completed in 1998.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": true,
+          "missingLinks": [],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"1998\",\n  \"assertions\": [\n    {\n      \"text\": \"The 53rd National Hockey League All-Star Game was held at the Office Depot Center in Sunrise, Florida.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"The BB&T Center — previously known as the Office Depot Center — was completed in 1998.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    }\n  ],\n  \"allRequiredLinksSupported\": true,\n  \"missingLinks\": [],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 1
+      },
+      "baseline": {
+        "judgment": {
+          "shortAnswer": "1998",
+          "assertions": [
+            {
+              "text": "The 53rd National Hockey League All-Star Game was held at the Office Depot Center in Sunrise, Florida.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "The Office Depot Center is now known as the BB&T Center.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "The arena was completed in 1998.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": true,
+          "missingLinks": [],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"1998\",\n  \"assertions\": [\n    {\n      \"text\": \"The 53rd National Hockey League All-Star Game was held at the Office Depot Center in Sunrise, Florida.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"The Office Depot Center is now known as the BB&T Center.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"The arena was completed in 1998.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    }\n  ],\n  \"allRequiredLinksSupported\": true,\n  \"missingLinks\": [],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 1
+      }
+    },
+    {
+      "dataset": "musique",
+      "qid": "2hop__804417_126089",
+      "baseline": {
+        "judgment": {
+          "shortAnswer": "Johan Remkes was the King's Commissioner of North Holland, the province where Bergen is located, serving since 2010 [2].",
+          "assertions": [
+            {
+              "text": "Johan Remkes was the King's Commissioner of North Holland.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "North Holland is the province where Bergen is located.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Johan Remkes served as King's Commissioner since 2010.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "Bergen is a municipality and town in the Netherlands, in the province of North Holland.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "The capital and seat of the provincial government of North Holland is Haarlem.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "The province's largest city is Amsterdam.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": true,
+          "missingLinks": [],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"Johan Remkes was the King's Commissioner of North Holland, the province where Bergen is located, serving since 2010 [2].\",\n  \"assertions\": [\n    {\n      \"text\": \"Johan Remkes was the King's Commissioner of North Holland.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"North Holland is the province where Bergen is located.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Johan Remkes served as King's Commissioner since 2010.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"Bergen is a municipality and town in the Netherlands, in the province of North Holland.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"The capital and seat of the provincial government of North Holland is Haarlem.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"The province's largest city is Amsterdam.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    }\n  ],\n  \"allRequiredLinksSupported\": true,\n  \"missingLinks\": [],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 0.21052631578947367
+      },
+      "candidate": {
+        "judgment": {
+          "shortAnswer": "Johan Remkes was the King's Commissioner of North Holland, the province where Bergen is located, serving since 2010",
+          "assertions": [
+            {
+              "text": "Johan Remkes was the King's Commissioner of North Holland",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "North Holland is the province where Bergen is located",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Johan Remkes served as King's Commissioner since 2010",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "Bergen is a municipality and town in the province of North Holland",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": true,
+          "missingLinks": [],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"Johan Remkes was the King's Commissioner of North Holland, the province where Bergen is located, serving since 2010\",\n  \"assertions\": [\n    {\n      \"text\": \"Johan Remkes was the King's Commissioner of North Holland\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"North Holland is the province where Bergen is located\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Johan Remkes served as King's Commissioner since 2010\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"Bergen is a municipality and town in the province of North Holland\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    }\n  ],\n  \"allRequiredLinksSupported\": true,\n  \"missingLinks\": [],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 0.21052631578947367
+      }
+    },
+    {
+      "dataset": "musique",
+      "qid": "3hop2__668732_223623_162182",
+      "candidate": {
+        "judgment": {
+          "shortAnswer": "Da Nang is in the South Central Coast region of Vietnam",
+          "assertions": [
+            {
+              "text": "Da Nang is in the South Central Coast region of Vietnam.",
+              "supported": true,
+              "sourceNumbers": [
+                3
+              ]
+            },
+            {
+              "text": "John Phan was born in Da Nang, Vietnam.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "The South Central Coast region consists of the independent municipality of Đà Nẵng and seven other provinces.",
+              "supported": true,
+              "sourceNumbers": [
+                3
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": true,
+          "missingLinks": [],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"Da Nang is in the South Central Coast region of Vietnam\",\n  \"assertions\": [\n    {\n      \"text\": \"Da Nang is in the South Central Coast region of Vietnam.\",\n      \"supported\": true,\n      \"sourceNumbers\": [3]\n    },\n    {\n      \"text\": \"John Phan was born in Da Nang, Vietnam.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"The South Central Coast region consists of the independent municipality of Đà Nẵng and seven other provinces.\",\n      \"supported\": true,\n      \"sourceNumbers\": [3]\n    }\n  ],\n  \"allRequiredLinksSupported\": true,\n  \"missingLinks\": [],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 0.4615384615384615
+      },
+      "baseline": {
+        "judgment": {
+          "shortAnswer": "John Phan's birthplace, Da Nang, is in the South Central Coast region of Vietnam",
+          "assertions": [
+            {
+              "text": "John Phan's birthplace is Da Nang.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "Da Nang is in the South Central Coast region of Vietnam.",
+              "supported": true,
+              "sourceNumbers": [
+                3
+              ]
+            },
+            {
+              "text": "An Phú is a district of An Giang Province in the Mekong Delta region.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "The South Central Coast consists of the independent municipality of Đà Nẵng and seven other provinces.",
+              "supported": true,
+              "sourceNumbers": [
+                3
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": true,
+          "missingLinks": [],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"John Phan's birthplace, Da Nang, is in the South Central Coast region of Vietnam\",\n  \"assertions\": [\n    {\n      \"text\": \"John Phan's birthplace is Da Nang.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"Da Nang is in the South Central Coast region of Vietnam.\",\n      \"supported\": true,\n      \"sourceNumbers\": [3]\n    },\n    {\n      \"text\": \"An Phú is a district of An Giang Province in the Mekong Delta region.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"The South Central Coast consists of the independent municipality of Đà Nẵng and seven other provinces.\",\n      \"supported\": true,\n      \"sourceNumbers\": [3]\n    }\n  ],\n  \"allRequiredLinksSupported\": true,\n  \"missingLinks\": [],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 0.35294117647058826
+      }
+    },
+    {
+      "dataset": "musique",
+      "qid": "4hop2__103790_14670_8987_8529",
+      "baseline": {
+        "judgment": {
+          "shortAnswer": "The word \"Slavs\" was used in the national anthem of Yugoslavia (1943–1992) and the Federal Republic of Yugoslavia (1992–2003), later Serbia and Montenegro (2003–2006) [3].",
+          "assertions": [
+            {
+              "text": "Ivo Werner was originally from Czechoslovakia.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "In April 1969 Tito removed generals Ivan Gošnjak and Rade Hamović because of the unpreparedness of the Yugoslav army to respond to an invasion similar to that of Czechoslovakia.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "The Yugoslav army is the military branch in question.",
+              "supported": false,
+              "sourceNumbers": []
+            },
+            {
+              "text": "The word \"Slavs\" was used in the national anthem of Yugoslavia (1943–1992).",
+              "supported": true,
+              "sourceNumbers": [
+                3
+              ]
+            },
+            {
+              "text": "The word \"Slavs\" was used in the national anthem of the Federal Republic of Yugoslavia (1992–2003), later Serbia and Montenegro (2003–2006).",
+              "supported": true,
+              "sourceNumbers": [
+                3
+              ]
+            },
+            {
+              "text": "The materials do not record a specific US Army branch as the direct \"equivalent\" of the Yugoslav army.",
+              "supported": true,
+              "sourceNumbers": [
+                4
+              ]
+            },
+            {
+              "text": "Source 4 only lists Air Defense Artillery among the U.S. Army's major branches.",
+              "supported": false,
+              "sourceNumbers": [
+                4
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": false,
+          "missingLinks": [
+            "The US Army branch equivalent of the Yugoslav army contains the Air Defense Artillery.",
+            "The unprepared country is Yugoslavia."
+          ],
+          "score": 0.714
+        },
+        "raw": "{\n  \"shortAnswer\": \"The word \\\"Slavs\\\" was used in the national anthem of Yugoslavia (1943–1992) and the Federal Republic of Yugoslavia (1992–2003), later Serbia and Montenegro (2003–2006) [3].\",\n  \"assertions\": [\n    {\n      \"text\": \"Ivo Werner was originally from Czechoslovakia.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"In April 1969 Tito removed generals Ivan Gošnjak and Rade Hamović because of the unpreparedness of the Yugoslav army to respond to an invasion similar to that of Czechoslovakia.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"The Yugoslav army is the military branch in question.\",\n      \"supported\": false,\n      \"sourceNumbers\": []\n    },\n    {\n      \"text\": \"The word \\\"Slavs\\\" was used in the national anthem of Yugoslavia (1943–1992).\",\n      \"supported\": true,\n      \"sourceNumbers\": [3]\n    },\n    {\n      \"text\": \"The word \\\"Slavs\\\" was used in the national anthem of the Federal Republic of Yugoslavia (1992–2003), later Serbia and Montenegro (2003–2006).\",\n      \"supported\": true,\n      \"sourceNumbers\": [3]\n    },\n    {\n      \"text\": \"The materials do not record a specific US Army branch as the direct \\\"equivalent\\\" of the Yugoslav army.\",\n      \"supported\": true,\n      \"sourceNumbers\": [4]\n    },\n    {\n      \"text\": \"Source 4 only lists Air Defense Artillery among the U.S. Army's major branches.\",\n      \"supported\": false,\n      \"sourceNumbers\": [4]\n    }\n  ],\n  \"allRequiredLinksSupported\": false,\n  \"missingLinks\": [\n    \"The US Army branch equivalent of the Yugoslav army contains the Air Defense Artillery.\",\n    \"The unprepared country is Yugoslavia.\"\n  ],\n  \"score\": 0.714\n}",
+        "faithfulness": 0.7142857142857143,
+        "extractedAnswerF1": 0.15384615384615385
+      },
+      "candidate": {
+        "judgment": {
+          "shortAnswer": "The word \"Slavs\" was used in the national anthem of Yugoslavia (1943–1992) and the Federal Republic of Yugoslavia (1992–2003), later Serbia and Montenegro (2003–2006) [3].",
+          "assertions": [
+            {
+              "text": "The word \"Slavs\" was used in the national anthem of Yugoslavia (1943–1992) and the Federal Republic of Yugoslavia (1992–2003), later Serbia and Montenegro (2003–2006).",
+              "supported": true,
+              "sourceNumbers": [
+                3
+              ]
+            },
+            {
+              "text": "The Yugoslav army was unprepared to respond to an invasion of Yugoslavia, which led Tito to remove generals Ivan Gošnjak and Rade Hamović in April 1969.",
+              "supported": false,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "The U.S. Army branch containing the Air Defense Artillery is the Army itself.",
+              "supported": true,
+              "sourceNumbers": [
+                4
+              ]
+            },
+            {
+              "text": "Ivo Werner's country is Czechoslovakia.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "The materials do not establish that Ivo Werner's country (Czechoslovakia) is the same as the unprepared country (Yugoslavia), so the chain linking Werner to Yugoslavia is not supported.",
+              "supported": true,
+              "sourceNumbers": [
+                1,
+                2
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": false,
+          "missingLinks": [
+            "Ivo Werner's country (Czechoslovakia) is the same as the unprepared country (Yugoslavia)."
+          ],
+          "score": 0.8
+        },
+        "raw": "{\n  \"shortAnswer\": \"The word \\\"Slavs\\\" was used in the national anthem of Yugoslavia (1943–1992) and the Federal Republic of Yugoslavia (1992–2003), later Serbia and Montenegro (2003–2006) [3].\",\n  \"assertions\": [\n    {\n      \"text\": \"The word \\\"Slavs\\\" was used in the national anthem of Yugoslavia (1943–1992) and the Federal Republic of Yugoslavia (1992–2003), later Serbia and Montenegro (2003–2006).\",\n      \"supported\": true,\n      \"sourceNumbers\": [3]\n    },\n    {\n      \"text\": \"The Yugoslav army was unprepared to respond to an invasion of Yugoslavia, which led Tito to remove generals Ivan Gošnjak and Rade Hamović in April 1969.\",\n      \"supported\": false,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"The U.S. Army branch containing the Air Defense Artillery is the Army itself.\",\n      \"supported\": true,\n      \"sourceNumbers\": [4]\n    },\n    {\n      \"text\": \"Ivo Werner's country is Czechoslovakia.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"The materials do not establish that Ivo Werner's country (Czechoslovakia) is the same as the unprepared country (Yugoslavia), so the chain linking Werner to Yugoslavia is not supported.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1, 2]\n    }\n  ],\n  \"allRequiredLinksSupported\": false,\n  \"missingLinks\": [\n    \"Ivo Werner's country (Czechoslovakia) is the same as the unprepared country (Yugoslavia).\"\n  ],\n  \"score\": 0.8\n}",
+        "faithfulness": 0.8,
+        "extractedAnswerF1": 0.15384615384615385
+      }
+    },
+    {
+      "dataset": "musique",
+      "qid": "2hop__109131_343058",
+      "candidate": {
+        "judgment": {
+          "shortAnswer": "The reference materials do not record the spouse of Jennifer Saunders, the creator of *Absolutely Fabulous* [1].",
+          "assertions": [
+            {
+              "text": "The reference materials do not record the spouse of Jennifer Saunders, the creator of *Absolutely Fabulous*.",
+              "supported": true,
+              "sourceNumbers": [
+                1,
+                2
+              ]
+            },
+            {
+              "text": "*Absolutely Fabulous* was created by Jennifer Saunders.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "*Absolutely Fabulous* was written by Jennifer Saunders.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "*Absolutely Fabulous* starred Jennifer Saunders.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "*Mirrorball* was written by Jennifer Saunders.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": false,
+          "missingLinks": [
+            "spouse of Jennifer Saunders"
+          ],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"The reference materials do not record the spouse of Jennifer Saunders, the creator of *Absolutely Fabulous* [1].\",\n  \"assertions\": [\n    {\n      \"text\": \"The reference materials do not record the spouse of Jennifer Saunders, the creator of *Absolutely Fabulous*.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1, 2]\n    },\n    {\n      \"text\": \"*Absolutely Fabulous* was created by Jennifer Saunders.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"*Absolutely Fabulous* was written by Jennifer Saunders.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"*Absolutely Fabulous* starred Jennifer Saunders.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"*Mirrorball* was written by Jennifer Saunders.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    }\n  ],\n  \"allRequiredLinksSupported\": false,\n  \"missingLinks\": [\n    \"spouse of Jennifer Saunders\"\n  ],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 0
+      },
+      "baseline": {
+        "judgment": {
+          "shortAnswer": "The reference materials do not record the spouse of Jennifer Saunders, the creator of *Absolutely Fabulous* [1].",
+          "assertions": [
+            {
+              "text": "The reference materials do not record the spouse of Jennifer Saunders, the creator of Absolutely Fabulous.",
+              "supported": true,
+              "sourceNumbers": [
+                1,
+                2
+              ]
+            },
+            {
+              "text": "Jennifer Saunders is the creator of Absolutely Fabulous.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "She created, wrote, and starred in the sitcom.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "The sitcom is based on the 1990 \"French & Saunders\" sketch \"Modern Mother and Daughter\".",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": false,
+          "missingLinks": [
+            "The spouse of Jennifer Saunders is not provided in the reference sources."
+          ],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"The reference materials do not record the spouse of Jennifer Saunders, the creator of *Absolutely Fabulous* [1].\",\n  \"assertions\": [\n    {\n      \"text\": \"The reference materials do not record the spouse of Jennifer Saunders, the creator of Absolutely Fabulous.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1, 2]\n    },\n    {\n      \"text\": \"Jennifer Saunders is the creator of Absolutely Fabulous.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"She created, wrote, and starred in the sitcom.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"The sitcom is based on the 1990 \\\"French & Saunders\\\" sketch \\\"Modern Mother and Daughter\\\".\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    }\n  ],\n  \"allRequiredLinksSupported\": false,\n  \"missingLinks\": [\n    \"The spouse of Jennifer Saunders is not provided in the reference sources.\"\n  ],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 0
+      }
+    },
+    {
+      "dataset": "musique",
+      "qid": "4hop3__312119_132409_371500_35031",
+      "baseline": {
+        "judgment": {
+          "shortAnswer": "Veoh's headquarters city, San Diego, ranks third-largest urban area in California [3][4].",
+          "assertions": [
+            {
+              "text": "Veoh's headquarters city is San Diego.",
+              "supported": true,
+              "sourceNumbers": [
+                4
+              ]
+            },
+            {
+              "text": "San Diego ranks third-largest urban area in California.",
+              "supported": true,
+              "sourceNumbers": [
+                3
+              ]
+            },
+            {
+              "text": "Papa Roach is the performer of \"Getting Away with Murder.\"",
+              "supported": true,
+              "sourceNumbers": [
+                1,
+                2
+              ]
+            },
+            {
+              "text": "Papa Roach was formed in Vacaville, California.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "San Diego's urban area had a total population of 2,956,746.",
+              "supported": true,
+              "sourceNumbers": [
+                3
+              ]
+            },
+            {
+              "text": "San Diego is the third-largest urban area in the state, after the Los Angeles metropolitan area and San Francisco metropolitan area.",
+              "supported": true,
+              "sourceNumbers": [
+                3
+              ]
+            },
+            {
+              "text": "The materials do not record a ranking of the top five largest urban areas in California.",
+              "supported": true,
+              "sourceNumbers": [
+                3
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": false,
+          "missingLinks": [
+            "The top five largest urban areas in California are not enumerated in the sources, so the specific rank of San Diego within that top-five list is not documented."
+          ],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"Veoh's headquarters city, San Diego, ranks third-largest urban area in California [3][4].\",\n  \"assertions\": [\n    {\n      \"text\": \"Veoh's headquarters city is San Diego.\",\n      \"supported\": true,\n      \"sourceNumbers\": [4]\n    },\n    {\n      \"text\": \"San Diego ranks third-largest urban area in California.\",\n      \"supported\": true,\n      \"sourceNumbers\": [3]\n    },\n    {\n      \"text\": \"Papa Roach is the performer of \\\"Getting Away with Murder.\\\"\",\n      \"supported\": true,\n      \"sourceNumbers\": [1, 2]\n    },\n    {\n      \"text\": \"Papa Roach was formed in Vacaville, California.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"San Diego's urban area had a total population of 2,956,746.\",\n      \"supported\": true,\n      \"sourceNumbers\": [3]\n    },\n    {\n      \"text\": \"San Diego is the third-largest urban area in the state, after the Los Angeles metropolitan area and San Francisco metropolitan area.\",\n      \"supported\": true,\n      \"sourceNumbers\": [3]\n    },\n    {\n      \"text\": \"The materials do not record a ranking of the top five largest urban areas in California.\",\n      \"supported\": true,\n      \"sourceNumbers\": [3]\n    }\n  ],\n  \"allRequiredLinksSupported\": false,\n  \"missingLinks\": [\n    \"The top five largest urban areas in California are not enumerated in the sources, so the specific rank of San Diego within that top-five list is not documented.\"\n  ],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 0.2666666666666667
+      },
+      "candidate": {
+        "judgment": {
+          "shortAnswer": "Veoh's headquarters city, San Diego, ranks third-largest urban area in California [3][4].",
+          "assertions": [
+            {
+              "text": "\"Getting Away with Murder\" is by Papa Roach.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Papa Roach was formed in Vacaville, California.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "San Diego's urban area is the third-largest in the state, after the Los Angeles and San Francisco metropolitan areas.",
+              "supported": true,
+              "sourceNumbers": [
+                3
+              ]
+            },
+            {
+              "text": "Veoh is based in San Diego, California.",
+              "supported": true,
+              "sourceNumbers": [
+                4
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": true,
+          "missingLinks": [],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"Veoh's headquarters city, San Diego, ranks third-largest urban area in California [3][4].\",\n  \"assertions\": [\n    {\n      \"text\": \"\\\"Getting Away with Murder\\\" is by Papa Roach.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Papa Roach was formed in Vacaville, California.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"San Diego's urban area is the third-largest in the state, after the Los Angeles and San Francisco metropolitan areas.\",\n      \"supported\": true,\n      \"sourceNumbers\": [3]\n    },\n    {\n      \"text\": \"Veoh is based in San Diego, California.\",\n      \"supported\": true,\n      \"sourceNumbers\": [4]\n    }\n  ],\n  \"allRequiredLinksSupported\": true,\n  \"missingLinks\": [],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 0.2666666666666667
+      }
+    },
+    {
+      "dataset": "musique",
+      "qid": "2hop__678516_179720",
+      "candidate": {
+        "judgment": {
+          "shortAnswer": "Harold Knight was married to Laura Knight, the creator of *Ruby Loftus Screwing a Breech Ring*",
+          "assertions": [
+            {
+              "text": "Harold Knight was married to Laura Knight.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "Laura Knight was the creator of *Ruby Loftus Screwing a Breech Ring*.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Laura Knight painted *Ruby Loftus Screwing a Breech Ring* in 1943.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Laura Knight kept a studio in the village of Staithes with her husband and fellow painter Harold Knight.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": true,
+          "missingLinks": [],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"Harold Knight was married to Laura Knight, the creator of *Ruby Loftus Screwing a Breech Ring*\",\n  \"assertions\": [\n    {\n      \"text\": \"Harold Knight was married to Laura Knight.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"Laura Knight was the creator of *Ruby Loftus Screwing a Breech Ring*.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Laura Knight painted *Ruby Loftus Screwing a Breech Ring* in 1943.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Laura Knight kept a studio in the village of Staithes with her husband and fellow painter Harold Knight.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    }\n  ],\n  \"allRequiredLinksSupported\": true,\n  \"missingLinks\": [],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 0.25
+      },
+      "baseline": {
+        "judgment": {
+          "shortAnswer": "Harold Knight was married to Laura Knight, the creator of *Ruby Loftus Screwing a Breech Ring*",
+          "assertions": [
+            {
+              "text": "Harold Knight was married to Laura Knight.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "Laura Knight was the creator of *Ruby Loftus Screwing a Breech Ring*.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Laura Knight painted *Ruby Loftus Screwing a Breech Ring* in 1943.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Laura Knight kept a studio in the village of Staithes with her husband and fellow painter Harold Knight.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": true,
+          "missingLinks": [],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"Harold Knight was married to Laura Knight, the creator of *Ruby Loftus Screwing a Breech Ring*\",\n  \"assertions\": [\n    {\n      \"text\": \"Harold Knight was married to Laura Knight.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"Laura Knight was the creator of *Ruby Loftus Screwing a Breech Ring*.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Laura Knight painted *Ruby Loftus Screwing a Breech Ring* in 1943.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Laura Knight kept a studio in the village of Staithes with her husband and fellow painter Harold Knight.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    }\n  ],\n  \"allRequiredLinksSupported\": true,\n  \"missingLinks\": [],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 0.25
+      }
+    },
+    {
+      "dataset": "musique",
+      "qid": "3hop1__305282_282081_73772",
+      "baseline": {
+        "judgment": {
+          "shortAnswer": "The Battle of New Orleans began on December 14, 1814 [1].",
+          "assertions": [
+            {
+              "text": "The Battle of New Orleans began on December 14, 1814.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Stanton Moore is the performer of III.",
+              "supported": true,
+              "sourceNumbers": [
+                3
+              ]
+            },
+            {
+              "text": "Stanton Moore is a New Orleans drummer.",
+              "supported": true,
+              "sourceNumbers": [
+                2,
+                3
+              ]
+            },
+            {
+              "text": "The Battle of New Orleans was fought between December 14, 1814 and January 18, 1815.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "The materials do not record a specific birth date or birthplace for Stanton Moore beyond identifying him as a New Orleans drummer.",
+              "supported": true,
+              "sourceNumbers": [
+                2,
+                3
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": false,
+          "missingLinks": [
+            "Stanton Moore's birthplace is not stated in the sources; only 'New Orleans drummer' is given, which does not establish birthplace."
+          ],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"The Battle of New Orleans began on December 14, 1814 [1].\",\n  \"assertions\": [\n    {\n      \"text\": \"The Battle of New Orleans began on December 14, 1814.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Stanton Moore is the performer of III.\",\n      \"supported\": true,\n      \"sourceNumbers\": [3]\n    },\n    {\n      \"text\": \"Stanton Moore is a New Orleans drummer.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2, 3]\n    },\n    {\n      \"text\": \"The Battle of New Orleans was fought between December 14, 1814 and January 18, 1815.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"The materials do not record a specific birth date or birthplace for Stanton Moore beyond identifying him as a New Orleans drummer.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2, 3]\n    }\n  ],\n  \"allRequiredLinksSupported\": false,\n  \"missingLinks\": [\n    \"Stanton Moore's birthplace is not stated in the sources; only 'New Orleans drummer' is given, which does not establish birthplace.\"\n  ],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 0.5
+      },
+      "candidate": {
+        "judgment": {
+          "shortAnswer": "December 14, 1814",
+          "assertions": [
+            {
+              "text": "Stanton Moore is the performer of III.",
+              "supported": true,
+              "sourceNumbers": [
+                3
+              ]
+            },
+            {
+              "text": "Stanton Moore is a New Orleans drummer.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "The Battle of New Orleans was fought between December 14, 1814 and January 18, 1815.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "The start of the Battle of New Orleans was December 14, 1814.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": true,
+          "missingLinks": [],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"December 14, 1814\",\n  \"assertions\": [\n    {\n      \"text\": \"Stanton Moore is the performer of III.\",\n      \"supported\": true,\n      \"sourceNumbers\": [3]\n    },\n    {\n      \"text\": \"Stanton Moore is a New Orleans drummer.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"The Battle of New Orleans was fought between December 14, 1814 and January 18, 1815.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"The start of the Battle of New Orleans was December 14, 1814.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    }\n  ],\n  \"allRequiredLinksSupported\": true,\n  \"missingLinks\": [],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 1
+      }
+    },
+    {
+      "dataset": "musique",
+      "qid": "2hop__24697_578772",
+      "candidate": {
+        "judgment": {
+          "shortAnswer": "Chang'an, the Chinese Tang capital that the Heian capital was patterned on, is an instance of the surname Táng (唐) [1][2].",
+          "assertions": [
+            {
+              "text": "The Heian capital was patterned on the Chinese Tang capital at Chang'an.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Tang (唐) is a Chinese surname.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "Chang'an is an instance of the surname Táng (唐).",
+              "supported": false,
+              "sourceNumbers": []
+            }
+          ],
+          "allRequiredLinksSupported": false,
+          "missingLinks": [
+            "Chang'an is an instance of the surname Táng (唐)"
+          ],
+          "score": 0.6666666666666666
+        },
+        "raw": "{\n  \"shortAnswer\": \"Chang'an, the Chinese Tang capital that the Heian capital was patterned on, is an instance of the surname Táng (唐) [1][2].\",\n  \"assertions\": [\n    {\n      \"text\": \"The Heian capital was patterned on the Chinese Tang capital at Chang'an.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Tang (唐) is a Chinese surname.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"Chang'an is an instance of the surname Táng (唐).\",\n      \"supported\": false,\n      \"sourceNumbers\": []\n    }\n  ],\n  \"allRequiredLinksSupported\": false,\n  \"missingLinks\": [\n    \"Chang'an is an instance of the surname Táng (唐)\"\n  ],\n  \"score\": 0.6666666666666666\n}",
+        "faithfulness": 0.6666666666666666,
+        "extractedAnswerF1": 0.2222222222222222
+      },
+      "baseline": {
+        "judgment": {
+          "shortAnswer": "a Tang-dynasty capital",
+          "assertions": [
+            {
+              "text": "The Chinese capital Kammu modeled his government after is Chang'an",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "\"Chang'an\" is an instance of a Tang-dynasty capital",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "The Heian capital was patterned on the Chinese Tang capital at Chang'an",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Nara was patterned on the Chinese Tang capital at Chang'an",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "The Heian capital was patterned on Chang'an on a larger scale than Nara",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Source 2 discusses \"Tang\" only as a Chinese surname and its pronunciations/romanizations in various languages",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "Source 2 does not address Chang'an or Tang-dynasty capitals",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": true,
+          "missingLinks": [],
+          "score": 1
+        },
+        "raw": "{\"shortAnswer\":\"a Tang-dynasty capital\",\"assertions\":[{\"text\":\"The Chinese capital Kammu modeled his government after is Chang'an\",\"supported\":true,\"sourceNumbers\":[1]},{\"text\":\"\\\"Chang'an\\\" is an instance of a Tang-dynasty capital\",\"supported\":true,\"sourceNumbers\":[1]},{\"text\":\"The Heian capital was patterned on the Chinese Tang capital at Chang'an\",\"supported\":true,\"sourceNumbers\":[1]},{\"text\":\"Nara was patterned on the Chinese Tang capital at Chang'an\",\"supported\":true,\"sourceNumbers\":[1]},{\"text\":\"The Heian capital was patterned on Chang'an on a larger scale than Nara\",\"supported\":true,\"sourceNumbers\":[1]},{\"text\":\"Source 2 discusses \\\"Tang\\\" only as a Chinese surname and its pronunciations/romanizations in various languages\",\"supported\":true,\"sourceNumbers\":[2]},{\"text\":\"Source 2 does not address Chang'an or Tang-dynasty capitals\",\"supported\":true,\"sourceNumbers\":[2]}],\"allRequiredLinksSupported\":true,\"missingLinks\":[],\"score\":1.0}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 0
+      }
+    },
+    {
+      "dataset": "musique",
+      "qid": "2hop__580231_162399",
+      "baseline": {
+        "judgment": {
+          "shortAnswer": "Vallabhbhai Patel, the father of Dahyabhai Patel, died on 15 December 1950 [1][2].",
+          "assertions": [
+            {
+              "text": "Vallabhbhai Patel was the father of Dahyabhai Patel.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Vallabhbhai Patel died on 15 December 1950.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "Dahyabhai Patel was the son of Indian leader Sardar Vallabhbhai Patel.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Vallabhbhai Patel's life dates are recorded as 31 October 1875 – 15 December 1950.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": true,
+          "missingLinks": [],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"Vallabhbhai Patel, the father of Dahyabhai Patel, died on 15 December 1950 [1][2].\",\n  \"assertions\": [\n    {\n      \"text\": \"Vallabhbhai Patel was the father of Dahyabhai Patel.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Vallabhbhai Patel died on 15 December 1950.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"Dahyabhai Patel was the son of Indian leader Sardar Vallabhbhai Patel.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Vallabhbhai Patel's life dates are recorded as 31 October 1875 – 15 December 1950.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    }\n  ],\n  \"allRequiredLinksSupported\": true,\n  \"missingLinks\": [],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 0.42857142857142855
+      },
+      "candidate": {
+        "judgment": {
+          "shortAnswer": "15 December 1950",
+          "assertions": [
+            {
+              "text": "Dahyabhai Patel was the son of Indian leader Sardar Vallabhbhai Patel.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Vallabhbhai Patel's recorded dates are 31 October 1875 – 15 December 1950.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "The father of Dahyabhai Patel died on 15 December 1950.",
+              "supported": true,
+              "sourceNumbers": [
+                1,
+                2
+              ]
+            }
+          ],
+          "allRequiredLinksSupported": true,
+          "missingLinks": [],
+          "score": 1
+        },
+        "raw": "{\n  \"shortAnswer\": \"15 December 1950\",\n  \"assertions\": [\n    {\n      \"text\": \"Dahyabhai Patel was the son of Indian leader Sardar Vallabhbhai Patel.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Vallabhbhai Patel's recorded dates are 31 October 1875 – 15 December 1950.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"The father of Dahyabhai Patel died on 15 December 1950.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1, 2]\n    }\n  ],\n  \"allRequiredLinksSupported\": true,\n  \"missingLinks\": [],\n  \"score\": 1.0\n}",
+        "faithfulness": 1,
+        "extractedAnswerF1": 1
+      }
+    },
+    {
+      "dataset": "musique",
+      "qid": "2hop__485221_544917",
+      "candidate": {
+        "judgment": {
+          "shortAnswer": "Lake Superior includes the terrain feature where Coffee Swamp is located [2].",
+          "assertions": [
+            {
+              "text": "Coffee Swamp is a two-acre freshwater swamp on the northern edge of Washington Island in Door County, Wisconsin.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Washington Island is an uninhabited island in Lake Superior within Keweenaw County and Isle Royale National Park, Michigan.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "Lake Superior includes the terrain feature where Coffee Swamp is located.",
+              "supported": false,
+              "sourceNumbers": []
+            }
+          ],
+          "allRequiredLinksSupported": false,
+          "missingLinks": [
+            "Coffee Swamp is located on the Washington Island that is in Lake Superior; the cited sources describe a Washington Island in Door County, Wisconsin and a different Washington Island in Lake Superior, Michigan."
+          ],
+          "score": 0.6666666666666666
+        },
+        "raw": "{\n  \"shortAnswer\": \"Lake Superior includes the terrain feature where Coffee Swamp is located [2].\",\n  \"assertions\": [\n    {\n      \"text\": \"Coffee Swamp is a two-acre freshwater swamp on the northern edge of Washington Island in Door County, Wisconsin.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Washington Island is an uninhabited island in Lake Superior within Keweenaw County and Isle Royale National Park, Michigan.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"Lake Superior includes the terrain feature where Coffee Swamp is located.\",\n      \"supported\": false,\n      \"sourceNumbers\": []\n    }\n  ],\n  \"allRequiredLinksSupported\": false,\n  \"missingLinks\": [\n    \"Coffee Swamp is located on the Washington Island that is in Lake Superior; the cited sources describe a Washington Island in Door County, Wisconsin and a different Washington Island in Lake Superior, Michigan.\"\n  ],\n  \"score\": 0.6666666666666666\n}",
+        "faithfulness": 0.6666666666666666,
+        "extractedAnswerF1": 0.33333333333333337
+      },
+      "baseline": {
+        "judgment": {
+          "shortAnswer": "The reference materials do not specify the body of water associated with that Washington Island",
+          "assertions": [
+            {
+              "text": "Coffee Swamp is located on the northern edge of Washington Island, in Door County, Wisconsin.",
+              "supported": true,
+              "sourceNumbers": [
+                1
+              ]
+            },
+            {
+              "text": "Source 2 describes a different, uninhabited Washington Island in Lake Superior within Isle Royale National Park, Michigan.",
+              "supported": true,
+              "sourceNumbers": [
+                2
+              ]
+            },
+            {
+              "text": "The Washington Island in Source 2 is not the island referenced by Source 1.",
+              "supported": false,
+              "sourceNumbers": []
+            }
+          ],
+          "allRequiredLinksSupported": false,
+          "missingLinks": [
+            "The body of water that includes the terrain feature where Coffee Swamp is located is not identified in the answer or sources."
+          ],
+          "score": 0.6666666666666666
+        },
+        "raw": "{\n  \"shortAnswer\": \"The reference materials do not specify the body of water associated with that Washington Island\",\n  \"assertions\": [\n    {\n      \"text\": \"Coffee Swamp is located on the northern edge of Washington Island, in Door County, Wisconsin.\",\n      \"supported\": true,\n      \"sourceNumbers\": [1]\n    },\n    {\n      \"text\": \"Source 2 describes a different, uninhabited Washington Island in Lake Superior within Isle Royale National Park, Michigan.\",\n      \"supported\": true,\n      \"sourceNumbers\": [2]\n    },\n    {\n      \"text\": \"The Washington Island in Source 2 is not the island referenced by Source 1.\",\n      \"supported\": false,\n      \"sourceNumbers\": []\n    }\n  ],\n  \"allRequiredLinksSupported\": false,\n  \"missingLinks\": [\n    \"The body of water that includes the terrain feature where Coffee Swamp is located is not identified in the answer or sources.\"\n  ],\n  \"score\": 0.6666666666666666\n}",
+        "faithfulness": 0.6666666666666666,
+        "extractedAnswerF1": 0
+      }
+    }
+  ],
+  "completePairs": 20,
+  "expectedPairs": 20,
+  "complete": true,
+  "summary": {
+    "baseline": {
+      "extractedAnswerF1": 0.3388722005772753,
+      "assertionFaithfulness": 0.9507142857142858,
+      "requiredChainSupportRate": 0.6
+    },
+    "candidate": {
+      "extractedAnswerF1": 0.42534259600049074,
+      "assertionFaithfulness": 0.9483333333333335,
+      "requiredChainSupportRate": 0.65
+    }
+  }
+}

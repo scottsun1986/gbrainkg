@@ -1,0 +1,19 @@
+{
+  "status": "cancelled_duplicate_run",
+  "reason": "Coordinator continues the sole complete20profile run; this duplicate stopped on instruction",
+  "preflight_ready": 20,
+  "completed_profiles": {
+    "scifact": {
+      "submitted_topics": 40,
+      "runHash": "766076f42ff5ace47bd0b1b66012906a40d32057fed6b5381262d2eaa1e10573"
+    },
+    "nfcorpus": {
+      "submitted_topics": 5,
+      "runHash": "793fb272047bc82f96f428c275878718e5c8c7d0994b8bb1b2c893348964767a"
+    }
+  },
+  "active_profile_at_cancellation": "arguana",
+  "runtime_provenance": "unverified; not a pinned candidate/baseline pair",
+  "source_mutations": false,
+  "normal_query_quota_metadata_side_effects": "authorized"
+}

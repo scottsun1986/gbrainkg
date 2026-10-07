@@ -1,0 +1,3 @@
+[data] corpus=100 queries=5 qrels=5
+[done] wrote run file: docs/validation/2026-10-07/optimization/sota20-current-luna-r2/run-nfcorpus.jsonl (5 queries)
+Next: python3 standard_ir_eval.py --qrels /home/scottsun/beir-data/nfcorpus/qrels/test.tsv --run docs/validation/2026-10-07/optimization/sota20-current-luna-r2/run-nfcorpus.jsonl --k 1,5,10,100

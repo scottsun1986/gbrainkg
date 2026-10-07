@@ -37,10 +37,14 @@ describe('GraphRagService', () => {
   // under test. Pin the flag instead of depending on the machine's .env: the
   // incremental branch has its own coverage in incremental-projection.spec.ts.
   const originalIncremental = process.env.CORE_GRAPH_INCREMENTAL_ENABLED;
+  const originalAuth = process.env.CORE_AUTH_ENFORCE;
   beforeAll(() => {
     process.env.CORE_GRAPH_INCREMENTAL_ENABLED = '0';
+    process.env.CORE_AUTH_ENFORCE = '0';
   });
   afterAll(() => {
+    if (originalAuth === undefined) delete process.env.CORE_AUTH_ENFORCE;
+    else process.env.CORE_AUTH_ENFORCE = originalAuth;
     if (originalIncremental === undefined) delete process.env.CORE_GRAPH_INCREMENTAL_ENABLED;
     else process.env.CORE_GRAPH_INCREMENTAL_ENABLED = originalIncremental;
   });

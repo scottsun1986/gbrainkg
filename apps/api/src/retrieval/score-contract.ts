@@ -47,13 +47,13 @@ export interface ScoredCandidate {
 export function measuredScoreOf(citation: any): number | null {
   if (!citation) return null;
   if (citation.rerankSkipped === true) return null;
+  if (String(citation.scoreSource || '') === 'synthetic') return null;
   if (getRequestContext()?.execution?.adaptive) {
     const probability = citation.calibratedProbability;
     return typeof probability === 'number' && Number.isFinite(probability) && probability >= 0 && probability <= 1
       ? probability
       : null;
   }
-  if (String(citation.scoreSource || '') === 'synthetic') return null;
   const value = Number(citation.relevanceScore ?? citation.rerankScore ?? citation.score);
   return Number.isFinite(value) && value > 0 ? value : null;
 }

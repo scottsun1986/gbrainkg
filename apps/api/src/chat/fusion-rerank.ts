@@ -1,4 +1,4 @@
-import { calibrateRerankScore } from '../retrieval/evidence-calibration';
+import { calibrateRerankScore, calibratedRefusalThreshold } from '../retrieval/evidence-calibration';
 import { getRequestContext } from '../observability/request-context';
 import { metricsService } from '../observability/metrics.service';
 import { rerankPairs } from '../retrieval/pair-reranker';
@@ -464,6 +464,7 @@ export class FusionRerankService {
             if (!Number.isFinite(raw)) continue;
             target.relevanceScore = raw;
             target.calibratedProbability = calibrateRerankScore(raw,config.provider.baseUrl,config.modelName);
+            target.calibratedRefusalThreshold = calibratedRefusalThreshold(config.provider.baseUrl,config.modelName);
             target.rerankScore = raw;
             target.score = Number((raw * weight).toFixed(4));
             target.scoreSource = 'rerank';
@@ -571,6 +572,7 @@ export class FusionRerankService {
         rerankScore: cached.scores[rank],
         relevanceScore: cached.scores[rank],
         calibratedProbability: calibrateRerankScore(cached.scores[rank],config.provider.baseUrl,config.modelName),
+        calibratedRefusalThreshold: calibratedRefusalThreshold(config.provider.baseUrl,config.modelName),
         scoreSource: "rerank",
         // The rerank cache stores only order+scores, so re-derive the multi-hop
         // floor exemption here too; otherwise a bridge candidate recalled by a
@@ -676,6 +678,7 @@ export class FusionRerankService {
         rerankScore: item.score,
         relevanceScore: item.score,
         calibratedProbability: calibrateRerankScore(item.score,config.provider.baseUrl,config.modelName),
+        calibratedRefusalThreshold: calibratedRefusalThreshold(config.provider.baseUrl,config.modelName),
         // Measured cross-encoder output: the only score kind an absolute
         // threshold (refusal floor, relevance floor) may be compared against.
         scoreSource: "rerank",

@@ -16,7 +16,7 @@ describe('shared model host allocation', () => {
     await admitModelCall('https://gateway.invalid/v1/chat/completions','chat',100);
     await admitModelCall('https://gateway.invalid/v1/embeddings','embedding',100);
     expect(query.mock.calls[0][1]).toBe(query.mock.calls[1][1]);
-    expect(query.mock.calls[0].slice(2)).toEqual([10,1000,100]);
+    expect(query.mock.calls[0].slice(2)).toEqual([100,10,1000]);
   });
   it('rejects malformed quota configuration and exhausted allocation', async () => {
     process.env.MODEL_HOST_RPM='1';process.env.HOST_INSTANCE_COUNT='10';

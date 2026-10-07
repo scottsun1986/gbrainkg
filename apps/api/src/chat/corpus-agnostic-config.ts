@@ -1,11 +1,9 @@
 /**
  * Corpus-Agnostic 检索提示配置。
- * 禁止在业务代码硬编码行业词表/场景示例；结构启发式（法条/章条）可按语料开关。
+ * 禁止在业务代码硬编码行业词表/场景示例或语料专用结构加权。
  * 禁词清单与扫描逻辑放在 corpus-agnostic-policy.spec.ts / corpus-agnostic-config.spec.ts。
  */
 export interface CorpusAgnosticConfig {
-  /** 法条/章条结构加权（中文法规类语料默认开；技术文档/英文合同可关） */
-  enableLegalStructureBoost: boolean;
   /** 关系词表：默认空 = 交由 LLM 判别；可由 KB domainTerms 注入 */
   relationSurfaceForms: Record<string, string[]>;
   /** 提示词场景示例：默认通用，禁止业务场景泄漏 */
@@ -21,8 +19,6 @@ const GENERIC_EXAMPLES = [
 export function loadCorpusConfig(env: NodeJS.ProcessEnv = process.env): CorpusAgnosticConfig {
   const relation = resolveRelationSurfaceForms(env);
   return {
-    enableLegalStructureBoost:
-      String(env.ENABLE_LEGAL_STRUCTURE_BOOST ?? '1').toLowerCase() !== '0',
     relationSurfaceForms: relation,
     promptDomainExamples: GENERIC_EXAMPLES,
   };

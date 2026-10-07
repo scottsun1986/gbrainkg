@@ -1,0 +1,5 @@
+[data] corpus=100 queries=50 qrels=50
+[retrieve] 50/50
+[retrieve] excluded 29 explicitly marked summary hits (not corpus documents)
+[done] wrote run file: docs/validation/2026-10-07/optimization/sota20-full-current-luna/run-quora.jsonl (50 queries)
+Next: python3 standard_ir_eval.py --qrels /home/scottsun/beir-data/quora/qrels/test.tsv --run docs/validation/2026-10-07/optimization/sota20-full-current-luna/run-quora.jsonl --k 1,5,10,100

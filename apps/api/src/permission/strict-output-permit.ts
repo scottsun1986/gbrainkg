@@ -3,6 +3,7 @@ import { getPrismaClient } from '../prisma';
 import { randomUUID } from 'node:crypto';
 import { runWithRequestContext, getRequestContext } from '../observability/request-context';
 import type { AuthorizationSnapshot } from './authorization-revision';
+import { validateEvidenceDependenciesInClient } from './evidence-dependencies';
 
 /** Mutation commits serialize with buffered transport acceptance. This does not recall bytes already sent. */
 export async function withStrictOutputPermit(userId: string, snapshot: AuthorizationSnapshot, emitAndDrain: () => Promise<void>, manifest: unknown = getRequestContext()?.evidenceDependencies) {
@@ -20,10 +21,11 @@ export async function withStrictOutputPermit(userId: string, snapshot: Authoriza
       && (manifest as any).kind === 'non_evidence' && (manifest as any).version === 1
       && ['failure', 'refusal'].includes((manifest as any).outcome);
     if (!nonEvidence) {
-      const valid = await tx.$queryRaw<Array<{ readable: boolean }>>`
-        SELECT app_manifest_documents_readable(${JSON.stringify(manifest ?? null)}::jsonb, true) AS readable
-      `;
-      if (valid[0]?.readable !== true) throw new ForbiddenException('Source evidence changed; buffered answer discarded');
+      // RLS GUCs no longer exist; use the application authority on this locked
+      // transaction, bypassing permission caches and legacy SQL predicates.
+      if (!await validateEvidenceDependenciesInClient(userId, manifest, tx)) {
+        throw new ForbiddenException('Source evidence changed; buffered answer discarded');
+      }
     }
     if (getRequestContext()?.cancellation?.aborted) throw getRequestContext()!.cancellation!.reason;
     await emitAndDrain();

@@ -14,6 +14,8 @@ To map chunk-level search hits back to corpus ids, ingested documents are
 titled ``[BEIR:<corpus_id>] <original title>``. The marker survives retrieval
 and is parsed from the result title; a manifest (written during ingestion) maps
 system document ids to corpus ids as a fallback.
+The search API also returns explicitly marked derived summaries; those are not
+original corpus documents and are excluded from document-level rankings.
 
 Usage:
     # smoke test the loaders/mapping without any API
@@ -305,7 +307,15 @@ def retrieve_run(client, kb_id, queries, qrels, *, manifest=None, top_k=100, wor
             raise RuntimeError(f"{qid}: malformed retrieval hit; run invalid")
         docids: list[str] = []
         seen = set()
+        excluded_summaries = 0
         for item in results:
+            # Derived summaries have no BEIR corpus identity. Do not infer one
+            # from their text/title or let them consume document-ranking slots.
+            # Only the API's explicit boolean contract authorizes exclusion;
+            # an unmapped original/unknown hit still invalidates the run below.
+            if item.get("isSummary") is True:
+                excluded_summaries += 1
+                continue
             beir_id = parse_beir_id(item.get("title"))
             if not beir_id and manifest:
                 system_id = item.get("document_id") or item.get("documentId") or item.get("docId")
@@ -316,16 +326,20 @@ def retrieve_run(client, kb_id, queries, qrels, *, manifest=None, top_k=100, wor
                 continue
             seen.add(beir_id)
             docids.append(beir_id)
-        return qid, docids
+        return qid, docids, excluded_summaries
 
     run: dict[str, list[str]] = {}
+    excluded_summaries = 0
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        for index, (qid, docids) in enumerate(pool.map(query_one, qids), start=1):
+        for index, (qid, docids, excluded) in enumerate(pool.map(query_one, qids), start=1):
             run[qid] = docids
+            excluded_summaries += excluded
             if index % 50 == 0:
                 print(f"[retrieve] {index}/{len(qids)}", flush=True)
     if set(run) != set(qids):
         raise RuntimeError("retrieval query count mismatch; run invalid")
+    if excluded_summaries:
+        print(f"[retrieve] excluded {excluded_summaries} explicitly marked summary hits (not corpus documents)", flush=True)
     return run
 
 
@@ -385,6 +399,17 @@ def _selftest() -> int:
                         "kb", queries, judgments) == {"q": ["d"]}
     assert retrieve_run(FakeClient((200, '{"results": [{"title": "original", "documentId": "system"}]}')),
                         "kb", queries, judgments, manifest={"system": "d"}) == {"q": ["d"]}
+    # RAPTOR/derived summaries are not original corpus items. Keep the submitted
+    # query even when excluding them leaves no measurable corpus retrieval.
+    summary = {"title": "Document overview", "documentId": None, "isSummary": True, "raptor": True}
+    assert retrieve_run(FakeClient((200, json.dumps({"results": [summary]}))),
+                        "kb", queries, judgments) == {"q": []}
+    assert retrieve_run(FakeClient((200, json.dumps({"results": [summary,
+                        {"title": "[BEIR:d] original", "documentId": "system"}, summary]}))),
+                        "kb", queries, judgments) == {"q": ["d"]}
+    # A marker in a summary title cannot promote synthetic evidence to a corpus doc.
+    assert retrieve_run(FakeClient((200, json.dumps({"results": [{**summary, "title": "[BEIR:d]"}]}))),
+                        "kb", queries, judgments) == {"q": []}
     for response in ((401, '{}'), (403, '{}'), (500, '{}'), (200, 'invalid'),
                      (200, '{}'), (200, '{"results": [null]}'), (200, '{"results": [{"title": "unmapped"}]}'), OSError("transport")):
         with patch("time.sleep"):
@@ -394,6 +419,15 @@ def _selftest() -> int:
                 pass
             else:
                 raise AssertionError(f"invalid retrieval response accepted: {response}")
+    for unmarked in ({"title": "unmapped", "documentId": None},
+                     {"title": "unmapped", "documentId": None, "raptor": True},
+                     {**summary, "isSummary": False}, {**summary, "isSummary": "true"}):
+        try:
+            retrieve_run(FakeClient((200, json.dumps({"results": [unmarked]}))), "kb", queries, judgments)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("unmapped hit excluded without explicit summary contract")
     try:
         retrieve_run(FakeClient((200, '{"results": []}')), "kb", {}, judgments)
     except ValueError:
