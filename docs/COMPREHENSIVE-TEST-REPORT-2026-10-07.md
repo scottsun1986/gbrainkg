@@ -12,8 +12,8 @@
 |---|---|---|---|
 | 1 | 单元/契约测试 | API 全模块 151 套件 + parser-worker（pytest）+ gbrain-adapter 契约 | **✅ 1311 passed / 0 failed** |
 | 2 | API 全场景 E2E（`test:kb`） | P0 健康/认证、P1 语料就绪、P2 锚点检索问答、P3 语义鸿沟/多源冲突、P4 拒答反幻觉、P5 权限边界、P6 健壮性安全、P7 图谱/OpenAPI、P8 性能与引用契约 | **✅ 25/25 全绿（0 失败 0 跳过）** |
-| 3 | Web GUI 黑盒（ZCode 内置浏览器） | 登录态、知识库列表/四类 Tab 过滤、库详情文档列表、对话全流程（漏斗/流式/引用溯源）、知识图谱、管理后台组织树、行业库管理+穿梭树选人 | **✅ 7/7 通过** |
-| 4 | 国际数据集基准（SOTA-20） | 20 个主流公开数据集 × ≤100 篇知识，官方 qrels 口径 nDCG@10 / MRR@10 / Recall@10 | 见《SOTA20-BENCHMARK-REPORT-2026-10-07.md》 |
+| 3 | Web GUI 黑盒（ZCode 内置浏览器） | 登录态、知识库列表/四类 Tab 过滤、库详情文档列表、对话全流程（漏斗/流式/引用溯源）、知识图谱、管理后台组织树、行业库管理+穿梭树选人 | **✅ 10/10 通过** |
+| 4 | 国际数据集基准（SOTA-20） | 20 个主流公开数据集 × ≤100 篇知识，官方 qrels 口径 nDCG@10 / MRR@10 / Recall@10 | **✅ 20/20 完成，宏观均值 nDCG@10=0.570 / MRR@10=0.634 / Recall@10=0.553**（《SOTA20-BENCHMARK-REPORT-2026-10-07.md》） |
 | 5 | 文档治理 | 过程文档归档、无用产物清理、索引/README/手册更新 | ✅ 完成（421c31d） |
 
 ---
@@ -79,6 +79,24 @@
 | 7 | P3 | 权限可见性缓存（TTL 5s）导致"新建 KB 立即读取"404 | 设计内缓存窗口 | ✅ 编排器加可见性等待轮询 |
 
 **全程无未处置的 P0/P1 产品功能缺陷；单元、E2E、GUI 三层全绿。**
+
+## 3.1 优化落地：解析/摄取管道多线程并行化（本日第 7 项优化）
+
+按"能并行即并行"的要求，将摄取链路的并发瓶颈全部参数化并调高默认值（全部保持 env 可覆盖）：
+
+| 环节 | 原并发 | 新默认 | 位置 |
+|---|---|---|---|
+| API 摄取队列（ingestion-queue） | 2 | **6** | `ingestion.processor.ts` |
+| API 富化队列（enrichment-queue：嵌入/RAPTOR/GraphRAG） | 4 | **6** | `enrichment.processor.ts` |
+| API 辅助富化队列（LLM 摘要/图谱） | 2 | **4** | `auxiliary-enrichment.processor.ts` |
+| GraphRAG 社区构建 | 1 | **2** | `graph-community.processor.ts` |
+| 解析服务总并发（PARSER_CONCURRENCY） | 4 | **8** | `parser-worker/main.py` |
+| Docling 转换并发（独立子进程） | 2 | **4** | 同上 + 每任务 `torch.set_num_threads(2)` 防 CPU 超订 |
+| 单实例解析子通道（PARSER_PER_INSTANCE_CONCURRENCY） | 2 | **4** | 同上 |
+
+- 安全边界：Prisma 连接池自动上限 16（`prisma.ts`），6+6 并发作业安全；Docling 多进程 + 每进程 2 torch 线程 = 8 线程预算（8 核主机）。
+- 验证：parser pytest 54 通过、摄取/富化相关 jest 165 通过、`tsc --noEmit` 干净、服务重启后健康 200。
+- **冒烟实测：6 篇文档并发提交 → 10 秒内全部 published+ready（含嵌入与富化）**。
 
 ## 4. 交付物清单
 

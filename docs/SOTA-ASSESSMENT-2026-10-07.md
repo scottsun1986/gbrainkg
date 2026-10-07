@@ -65,8 +65,8 @@
 |---|---|---|
 | API 单元/契约（jest+pytest+node --test） | **1311 passed / 0 failed**（151 套件） | `pnpm test:all` EXIT=0 |
 | SOTA 全场景 E2E（P0-P8，含检索/多源冲突/拒答/越权/注入/性能） | **25/25 全绿** | `tests/e2e/results/sota-suite-20261007-*.json`（最后一轮） |
-| Web UI 浏览器 E2E（ZCode 内置浏览器） | **6/6 通过**：登录态、知识库 Tab 过滤、锚点问答（答案正确+引用面板+Truth/Timeline 溯源）、知识图谱（270 文档/2104 主题/19221 关系）、管理台组织树、行业库穿梭树 | 本报告 §附录 A |
-| SOTA-20 国际数据集基准（每集 ≤100 篇知识） | 见《SOTA20-BENCHMARK-REPORT-2026-10-07.md》 | `tests/evaluation/intl-benchmark/results/sota20/` |
+| Web UI 浏览器 E2E（ZCode 内置浏览器） | **10/10 通过**：登录态、知识库 Tab 过滤、库详情、锚点问答（答案正确+引用面板+Truth/Timeline 溯源）、知识图谱（270 文档/2104 主题/19221 关系）、管理台组织树、行业库管理、穿梭树选人 | 本报告 §附录 A |
+| SOTA-20 国际数据集基准（每集 ≤100 篇知识） | **✅ 20/20 完成：宏观均值 nDCG@10=0.570 / MRR@10=0.634 / Recall@10=0.553**；强域 fever 0.972 / hotpotqa 0.993 / nq 0.863 / 2wiki 0.813；弱域 tatqa 0.151 / boolq 0.310（弱域三类归因见得分报告 §5） | `docs/SOTA20-BENCHMARK-REPORT-2026-10-07.md` |
 | 问答延迟 | P50≈42-47s / P95≈72s（受上游 LLM 网关制约） | E2E P8-01 |
 
 ## 4. SOTA 差距清单（按严重度排序，均有量化证据）

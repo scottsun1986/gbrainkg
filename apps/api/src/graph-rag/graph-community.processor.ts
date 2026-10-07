@@ -17,7 +17,7 @@ export interface GraphCommunityJobData {
  * it twice only re-derives the same communities.
  */
 @Processor('graph-community-queue', {
-  concurrency: Number(process.env.GRAPHRAG_COMMUNITY_CONCURRENCY || 1),
+  concurrency: Number(process.env.GRAPHRAG_COMMUNITY_CONCURRENCY || 2),
 })
 export class GraphCommunityProcessor extends WorkerHost {
   private readonly logger = new Logger(GraphCommunityProcessor.name);

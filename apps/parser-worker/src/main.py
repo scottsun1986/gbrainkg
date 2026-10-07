@@ -146,9 +146,12 @@ _baidu_access_tokens: dict[tuple[str, str], tuple[str, float]] = {}
 # timed-out conversion keeps consuming CPU/GPU until it finishes on its own.
 # Bound the number of concurrent Docling conversions so abandoned/timed-out
 # requests cannot pile up threads and model memory without limit.
-DOCLING_MAX_CONCURRENCY = max(1, env_int("DOCLING_MAX_CONCURRENCY", 2))
+# Defaults sized for parallel ingestion: the API keeps 6 ingestion workers in
+# flight, so the parser side allows 8 parallel parses (4 Docling) — bounded by
+# semaphores, memory-safe on an 8-core host; tune down first if RAM binds.
+DOCLING_MAX_CONCURRENCY = max(1, env_int("DOCLING_MAX_CONCURRENCY", 4))
 _docling_semaphore = asyncio.Semaphore(DOCLING_MAX_CONCURRENCY)
-_parse_limiter = FairLimiter(env_int("PARSER_CONCURRENCY", 4), env_int("PARSER_QUEUE_LIMIT", 64), env_int("PARSER_PER_INSTANCE_CONCURRENCY", 2))
+_parse_limiter = FairLimiter(env_int("PARSER_CONCURRENCY", 8), env_int("PARSER_QUEUE_LIMIT", 64), env_int("PARSER_PER_INSTANCE_CONCURRENCY", 4))
 
 
 try:

@@ -204,7 +204,9 @@ def ingest_corpus(client, kb_id, corpus, *, ids=None, workers=4):
         item = corpus[doc_id]
         body = {
             "title": build_beir_title(doc_id, item.get("title", "")),
-            "content": item.get("text", ""),
+            # 个别 BEIR 语料存在空正文文档；API 拒绝空内容，以标题兜底保住
+            # 金标映射（标题含 [BEIR:id] 标记，仍可被检索与回溯）。
+            "content": item.get("text", "") or item.get("title", "") or doc_id,
         }
         try:
             status, raw = client._request(f"/api/v1/kbs/{kb_id}/documents/text", "POST", body)

@@ -35,7 +35,7 @@ export interface EnrichmentJobData {
  * (pending → enriching → ready | degraded) so callers and the UI can tell
  * whether a document is fully indexed.
  */
-@Processor('enrichment-queue', { concurrency: Number(process.env.ENRICHMENT_CONCURRENCY || 4) })
+@Processor('enrichment-queue', { concurrency: Number(process.env.ENRICHMENT_CONCURRENCY || 6) })
 export class EnrichmentProcessor extends WorkerHost {
   private readonly logger = new Logger(EnrichmentProcessor.name);
   private readonly prisma = getPrismaClient();

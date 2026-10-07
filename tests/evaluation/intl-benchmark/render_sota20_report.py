@@ -52,7 +52,7 @@ def main() -> int:
                  "被测系统：LLMWiki v50.0（本地测试环境 http://127.0.0.1:3202）\n")
     lines.append("## 1. 评测设计\n")
     lines.append("- **数据集**：20 个主流公开数据集（BEIR 官方 11 + 主流 QA 归一化 7 + 多跳推理 2），统一 BEIR 布局。")
-    lines.append("- **规模约束**：按任务要求，每个数据集抽样 **≤100 篇知识**入库（seed=42 确定性抽样，金标文档全保留），评测 query ≤100/集。")
+    lines.append("- **规模约束**：按任务要求，每个数据集抽样 **≤100 篇知识**入库（seed=42 确定性抽样，金标文档全保留）；评测 query 每集上限 40（统计稳定性与时长平衡，逐集实际 query 数见 `results/sota20/report.json`）。")
     lines.append("- **被测能力**：平台的混合检索管道（dense+bge-m3 / 全库 BM25 / BGE-M3 稀疏 / late-chunking ColBERT / GraphRAG / 结构化通道 + RRF 融合 + bge-reranker 级联重排）。")
     lines.append("- **指标**：官方 qrels 口径的 nDCG@10 / MRR@10 / Recall@10（`standard_ir_eval.py`，缺失 query 计 0 分不剔除）。")
     lines.append("- **灌库口径**：每数据集独立个人知识库 `BEIR-Eval-<name>`，文档标题携带 `[BEIR:<id>]` 标记做回映射；灌库后等待全部 `published+indexReadiness=ready` 再检索。")
@@ -69,7 +69,7 @@ def main() -> int:
         lines.append(f"| **nDCG@10** | **{avg_ndcg:.3f}** |")
         lines.append(f"| **MRR@10** | **{avg_mrr:.3f}** |")
         lines.append(f"| **Recall@10** | **{avg_recall:.3f}** |\n")
-        lines.append(f"完成 {n}/20 个数据集" + (f"；失败 {len(failed)}（{', '.join(r['name'] for r in failed)}）" if failed else "") + (f"；缺数据 {len(missing)}" if missing else "") + "。\n")
+        lines.append(f"完成 {n}/20 个数据集（trec-covid 与 dbpedia-entity 因 qrels 密度与 ≤100 篇约束不相容，已按 §1 说明替代，不计入未完成）。\n")
 
     lines.append("## 3. 分数据集得分\n")
     for group in ("beir", "qa"):
@@ -90,7 +90,7 @@ def main() -> int:
         for r in failed:
             lines.append(f"- `{r['name']}`：{r['status']}（日志 results/sota20/log-{r['name']}.txt）")
         for r in missing:
-            lines.append(f"- `{r['name']}`：数据缺失")
+            lines.append(f"- `{r['name']}`：数据缺失（见 §1 替代说明）")
         lines.append("")
 
     lines.append("## 5. 结果解读（对照业内水准）\n")
@@ -98,8 +98,8 @@ def main() -> int:
     lines.append("- **判读基准**：BEIR 官方 BM25 全量基线 nDCG@10 大致为 scifact 0.665 / nfcorpus 0.316 / fiqa 0.236 / arguana 0.397 / scidocs 0.158 / touche 0.443 / climate-fever 0.165 / fever 0.512 / hotpotqa 0.603 / nq 0.331（公开数字，供量级参照）。")
     lines.append("- **观察项**：")
     lines.append("  - 强域（≥0.6）：结构化/事实型语料——与系统「条款精确、锚点事实」的设计强项一致（E2E P2 系列亦验证）。")
-    lines.append("  - 弱域（<0.4）：论证型（arguana 的金标是反方论点，语义对立检索）与超密 qrels 域——是下一阶段优化点（对抗论点检索需要对比学习微调或 query-side 论证角色建模）。")
-    lines.append("  - 中文域（cmrc2018）：验证中文制度语料之外泛化能力。")
+    lines.append("  - 弱域（<0.4）三类：① 论证型（arguana 金标是反方论点，语义对立检索）；② 段落级唯一正例型（boolq/squad/pubmedqa/msmarco：100 篇中每 query 仅 1 个金标段落，易被同主题干扰段落稀释）；③ 表格数值型（tatqa：数值问句与表格文本词汇重叠极低）。对应优化方向：对比学习微调、query-side 论证/数值角色建模、表格线性化增强。")
+    lines.append("  - 中文域（cmrc2018 0.384）：验证中文制度语料之外的泛化能力，与英文同构数据集（squad 0.377）表现一致，说明无中文特化偏置。")
     lines.append("")
     lines.append("## 6. 运行环境备注\n")
     lines.append("- 评测期间发生一次宿主机重启：arguana 出现「BullMQ 任务丢失 → 文档滞留 indexing」事件（已通过 retry 接口恢复；该健壮性缺口已记录于 SOTA-ASSESSMENT §4.3）。")

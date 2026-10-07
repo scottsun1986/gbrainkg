@@ -8,6 +8,9 @@ def main():
     limit = env_int("PARSER_MAX_RETAINED_BYTES", 200 * 1024 * 1024)
     resource.setrlimit(resource.RLIMIT_FSIZE, (limit, limit))
     import torch
+    # 并行转换时多个 Docling 子进程同时运行：限制单进程 torch 线程数，
+    # 避免 N 个进程 × 全核线程造成 CPU 超订（总线程预算 = 并发数 × 该值）。
+    torch.set_num_threads(max(1, env_int("DOCLING_TORCH_THREADS", 2)))
     try:
         compat = torch.library.Library("torchvision", "DEF")
     except RuntimeError:

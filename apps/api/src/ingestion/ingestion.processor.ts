@@ -5,11 +5,13 @@ import { Job, Queue } from "bullmq";
 import { setIngestionQueueDepth } from "../observability/failopen";
 import { IngestionService } from "./ingestion.service";
 
-// A layout-heavy PDF can legitimately consume several minutes. Two workers
-// prevent a small text/DOCX upload from sitting behind that single slow job;
-// keep the default conservative because Docling is memory intensive.
+// A layout-heavy PDF can legitimately consume several minutes. Six parallel
+// workers keep small text/DOCX uploads from sitting behind one slow layout job;
+// Docling memory pressure is bounded per instance by the parser-worker's own
+// semaphores (DOCLING_MAX_CONCURRENCY / PARSER_CONCURRENCY), so the API side
+// can stay comfortably parallel — tune PARSER_* first if memory binds.
 @Processor("ingestion-queue", {
-  concurrency: Number(process.env.INGESTION_CONCURRENCY || 2),
+  concurrency: Number(process.env.INGESTION_CONCURRENCY || 6),
 })
 export class IngestionProcessor extends WorkerHost {
   constructor(

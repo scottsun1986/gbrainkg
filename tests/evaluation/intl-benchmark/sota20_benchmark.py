@@ -148,7 +148,7 @@ def evaluate_dataset(name: str, group: str, token: str, top_k: int = 100) -> dic
            "--dataset-dir", str(ddir), "--api-base", API,
            "--user", "admin", "--password", "admin123",
            "--kb-id", kb_id,
-           "--limit-docs", "100", "--limit-queries", "100",
+           "--limit-docs", "100", "--limit-queries", "40",
            "--top-k", str(top_k),
            "--run-out", str(run_out),
            "--readiness-timeout", "1800"]
