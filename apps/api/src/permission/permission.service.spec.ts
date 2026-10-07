@@ -9,7 +9,7 @@ const mockPrisma: any = {
     findFirst: jest.fn(),
     updateMany: jest.fn(),
   },
-  role: { findUnique: jest.fn(), upsert: jest.fn(), update: jest.fn() },
+  role: { findUnique: jest.fn(), findMany: jest.fn().mockResolvedValue([]), upsert: jest.fn(), update: jest.fn() },
   user: { findMany: jest.fn(), findFirst: jest.fn() },
   userOrg: {
     findMany: jest.fn(),
@@ -58,11 +58,13 @@ describe("PermissionService", () => {
     mockPrisma.kbAdmin.findMany.mockResolvedValue([]);
   });
 
-  it('does not rewrite unchanged defaults or issue an empty owner backfill on startup', async () => {
-    mockPrisma.role.findUnique.mockImplementation(async ({ where }: any) => {
-      if (where.name === '研发中心员工') return { id: 'legacy', builtin: false, permissions: BASE_USER_PERMISSIONS };
-      return DEFAULT_ROLES.find((role) => where.code ? ('code' in role && role.code === where.code) : role.name === where.name);
-    });
+  it('does not rewrite unchanged defaults or converge a valid non-builtin role on startup', async () => {
+    mockPrisma.role.findUnique.mockImplementation(async ({ where }: any) =>
+      DEFAULT_ROLES.find((role) => where.code ? ('code' in role && role.code === where.code) : role.name === where.name),
+    );
+    mockPrisma.role.findMany.mockResolvedValue([
+      { id: 'custom', name: '自定义角色', builtin: false, permissions: [...BASE_USER_PERMISSIONS] },
+    ]);
     mockPrisma.user.findMany.mockResolvedValue([]);
     mockPrisma.user.findFirst.mockResolvedValue({ id: 'admin' });
     mockPrisma.knowledgeBase.findFirst.mockResolvedValue(null);
@@ -70,6 +72,30 @@ describe("PermissionService", () => {
     expect(mockPrisma.role.upsert).not.toHaveBeenCalled();
     expect(mockPrisma.role.update).not.toHaveBeenCalled();
     expect(mockPrisma.knowledgeBase.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('converges a non-builtin role carrying a wildcard or an unknown permission, generically', async () => {
+    mockPrisma.role.findUnique.mockImplementation(async ({ where }: any) =>
+      DEFAULT_ROLES.find((role) => where.code ? ('code' in role && role.code === where.code) : role.name === where.name),
+    );
+    mockPrisma.role.findMany.mockResolvedValue([
+      { id: 'wildcard', name: '遗留角色', builtin: false, permissions: ['*'] },
+      { id: 'stale', name: '过期角色', builtin: false, permissions: ['chat.use', 'old.permission'] },
+      { id: 'valid', name: '有效角色', builtin: false, permissions: ['chat.use', 'kb.read'] },
+    ]);
+    mockPrisma.user.findMany.mockResolvedValue([]);
+    mockPrisma.user.findFirst.mockResolvedValue({ id: 'admin' });
+    mockPrisma.knowledgeBase.findFirst.mockResolvedValue(null);
+    await service.onModuleInit();
+    expect(mockPrisma.role.update).toHaveBeenCalledTimes(2);
+    expect(mockPrisma.role.update).toHaveBeenCalledWith({
+      where: { id: 'wildcard' },
+      data: { permissions: [...BASE_USER_PERMISSIONS] },
+    });
+    expect(mockPrisma.role.update).toHaveBeenCalledWith({
+      where: { id: 'stale' },
+      data: { permissions: [...BASE_USER_PERMISSIONS] },
+    });
   });
 
   it('repairs changed defaults rather than suppressing real authorization changes', async () => {

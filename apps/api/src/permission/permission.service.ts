@@ -148,16 +148,25 @@ export class PermissionService implements OnModuleInit {
       });
     }
 
-    // 旧版验收数据中的员工角色曾携带过量管理权限，统一收敛为普通阅读权限。
-    const legacyEmployeeRole = await this.prisma.role.findUnique({
-      where: { name: "研发中心员工" },
+    // A non-builtin role must never carry a wildcard or an unknown permission.
+    // The role API forbids "*" for unprotected roles, so its presence — or a
+    // stale permission string from an older release — marks legacy/escalated
+    // data. Converge any such role to the base user permissions, keyed on the
+    // permission set, never on a specific role name.
+    const knownPermissions = new Set<string>(Object.values(PERMISSIONS));
+    const nonBuiltinRoles = await this.prisma.role.findMany({
+      where: { builtin: false },
+      select: { id: true, name: true, permissions: true },
     });
-    if (legacyEmployeeRole && !legacyEmployeeRole.builtin &&
-        JSON.stringify(legacyEmployeeRole.permissions) !== JSON.stringify(BASE_USER_PERMISSIONS)) {
+    for (const role of nonBuiltinRoles) {
+      const permissions: string[] = Array.isArray(role.permissions) ? (role.permissions as string[]) : [];
+      const hasInvalid = permissions.some((permission) => permission === '*' || !knownPermissions.has(permission));
+      if (!hasInvalid) continue;
       await this.prisma.role.update({
-        where: { id: legacyEmployeeRole.id },
-        data: { permissions: BASE_USER_PERMISSIONS },
+        where: { id: role.id },
+        data: { permissions: [...BASE_USER_PERMISSIONS] },
       });
+      this.logger.warn(`Converged legacy/over-privileged role "${role.name}" to the base user permissions.`);
     }
     const usersWithoutRole = await this.prisma.user.findMany({
       where: { status: "active", roles: { none: {} } },
