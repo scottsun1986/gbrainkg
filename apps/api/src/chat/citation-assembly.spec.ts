@@ -252,7 +252,7 @@ describe('selectEvidence floorMode trace (P0-1: adaptive without calibration mus
     logger: { debug: () => undefined, warn: () => undefined, log: () => undefined } as any,
   });
 
-  it('reports floorMode=calibrated when rerank/measured scores drive the floor', () => {
+  it('reports floorMode=relative for raw measured scores without a calibration profile', () => {
     const out = svc.selectEvidence({
       citations: [
         { id: 'a', topic: 'doc1', relevanceScore: 0.8, context: 'text a' },
@@ -260,7 +260,7 @@ describe('selectEvidence floorMode trace (P0-1: adaptive without calibration mus
       ],
       reranked: true,
     }, { breadth: false, tokenBudget: 4000, question: '测试' });
-    expect(out.evidenceSelection.floorMode).toBe('calibrated');
+    expect(out.evidenceSelection.floorMode).toBe('relative');
   });
 
   it('reports floorMode=uncalibrated in adaptive mode when no calibration profile exists', () => {
@@ -290,6 +290,56 @@ describe('selectEvidence floorMode trace (P0-1: adaptive without calibration mus
         reranked: true,
       }, { breadth: false, tokenBudget: 4000, question: '测试' });
       expect(out.evidenceSelection.floorMode).toBe('calibrated');
+    });
+  });
+});
+
+describe('quality-first uncalibrated evidence selection', () => {
+  const svc = new CitationAssemblyService({ logger: { debug: jest.fn(), warn: jest.fn() } as any });
+  const originalEnv = { ...process.env };
+  afterEach(() => { process.env = { ...originalEnv }; });
+
+  it.each([true, false])('keeps low raw-score answer passages for grounding (adaptive=%s)', (adaptive) => {
+    process.env.RETRIEVAL_RELEVANCE_FLOOR_RATIO = '0.2';
+    process.env.RETRIEVAL_MAX_GROUPS = '8';
+    runWithRequestContext({ requestId: 'rank-selection', execution: { adaptive, qualityFirst: true } as any }, () => {
+      const out = svc.selectEvidence({ reranked: true, citations: [
+        { id: 'intro', docId: 'doc', scoreSource: 'rerank', relevanceScore: .92, context: 'The regulation describes measurement.' },
+        { id: 'categories', docId: 'doc', scoreSource: 'rerank', relevanceScore: .004, context: 'Measurements comprise length, mass, and time.' },
+        { id: 'boundary', docId: 'doc', scoreSource: 'rerank', relevanceScore: 0, context: 'This applies only to laboratory samples.' },
+      ] }, { breadth: false, tokenBudget: 4000, question: 'What does measurement comprise?' });
+      expect(out.citations.map((c: any) => c.id)).toEqual(expect.arrayContaining(['intro', 'categories', 'boundary']));
+      expect(out.citations.every((c: any) => c.selectionReason === 'rank')).toBe(true);
+      expect(out.evidenceSelection).toMatchObject({ floorMode: 'uncalibrated', calibrationAvailable: false,
+        floorApplied: false, selectionScoreMode: 'rerank_ordinal', effectiveFloor: 0 });
+      expect(out.evidenceSelection.eliminatedByStage.floor).toBeUndefined();
+    });
+  });
+
+  it('does not let unscored placement scores displace ranked evidence or ignore the group limit', () => {
+    process.env.RETRIEVAL_MAX_GROUPS = '2';
+    process.env.RETRIEVAL_MULTISOURCE_COVERAGE_RATIO = '0';
+    runWithRequestContext({ requestId: 'rank-cap', execution: { adaptive: true, qualityFirst: true } as any }, () => {
+      const out = svc.selectEvidence({ reranked: true, citations: [
+        { id: 'overflow', docId: 'overflow', rerankSkipped: true, scoreSource: 'synthetic', score: .99, context: 'Unmeasured.' },
+        ...[.92, .004, .0001].map((score, i) => ({ id: `ranked-${i}`, docId: 'doc', relevanceScore: score,
+          scoreSource: 'rerank', context: `Passage ${i}.` })),
+      ] }, { breadth: false, tokenBudget: 4000 });
+      expect(out.citations.map((c: any) => c.id)).toEqual(['ranked-0', 'ranked-1']);
+      expect(out.evidenceSelection.eliminatedByStage).toMatchObject({ rerank_cap: 1, max_groups: 1 });
+    });
+  });
+
+  it('keeps a calibrated floor active when a validated probability is available', () => {
+    process.env.RETRIEVAL_SOFT_FLOOR_ENABLED = 'false';
+    process.env.RETRIEVAL_RELEVANCE_FLOOR_RATIO = '0.2';
+    runWithRequestContext({ requestId: 'calibrated-selection', execution: { adaptive: true, qualityFirst: true } as any }, () => {
+      const out = svc.selectEvidence({ reranked: true, citations: [
+        { id: 'supported', relevanceScore: .9, calibratedProbability: .9, scoreSource: 'rerank', context: 'Supported.' },
+        { id: 'noise', relevanceScore: .001, calibratedProbability: .01, scoreSource: 'rerank', context: 'Noise.' },
+      ] }, { breadth: false, tokenBudget: 4000 });
+      expect(out.citations.map((c: any) => c.id)).toEqual(['supported']);
+      expect(out.evidenceSelection).toMatchObject({ floorMode: 'calibrated', floorApplied: true });
     });
   });
 });
@@ -338,7 +388,7 @@ describe('selectEvidence unified score contract (P0-2: no dimension mixing)', ()
     // normalised-to-~1 synthetic candidates.
     const overflowSelected = ids.filter((id: string) => id.startsWith('s'));
     expect(overflowSelected.length).toBeLessThanOrEqual(2);
-    expect(out.evidenceSelection.floorMode).toBe('calibrated');
+    expect(out.evidenceSelection.floorMode).toBe('relative');
     expect(out.evidenceSelection.guaranteedGroups).toBe(3);
     // Fill order follows recall ordinal: s0 before s1.
     if (overflowSelected.length === 2) {

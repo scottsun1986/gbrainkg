@@ -51,5 +51,5 @@ export const RETRIEVAL_ENV_KEYS = [
 /** Stable short fingerprint of the currently effective retrieval config. */
 export function retrievalConfigFingerprint(): string {
   const material = RETRIEVAL_ENV_KEYS.map((key) => `${key}=${process.env[key] ?? ''}`).join(';');
-  return createHash('sha256').update('retrieval-contract-2026-10-06|' + material + '|' + calibrationProfileFingerprint()).digest('hex').slice(0, 16);
+  return createHash('sha256').update('retrieval-contract-2026-10-07-rank-selection|' + material + '|' + calibrationProfileFingerprint()).digest('hex').slice(0, 16);
 }

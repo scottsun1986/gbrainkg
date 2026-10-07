@@ -315,7 +315,7 @@ export class CitationAssemblyService {
               docTitle: doc.title,
               version: doc.version,
               documentVersionId: doc.activeVersionId,
-              ...(block ? { ...(block.rawContent != null ? { context: block.rawContent, evidence: block.rawContent, snippet: block.rawContent.slice(0, 1000) } : {}), chunkId: block.id, span: { charStart: block.charStart, charEnd: block.charEnd }, contentHash: block.rawHash } : {}),
+              ...(block ? { ...(block.rawContent != null ? { context: block.rawContent, evidence: block.rawContent, snippet: block.rawContent.slice(0, 1000) } : {}), chunkId: block.id, ord: block.ord, span: { charStart: block.charStart, charEnd: block.charEnd }, contentHash: block.rawHash } : {}),
               kbName: (doc as any).kb?.name || citation.kbName || "默认知识库",
               kbType: (doc as any).kb?.type,
             }
@@ -369,12 +369,26 @@ export class CitationAssemblyService {
     // the cross-encoder never saw normalised to ~1, dragged the floor onto a
     // fake scale and took the guaranteed slots from genuinely scored evidence
     // (review P0-2).
-    const measuredOfCitation = citations.map((c: any) => measuredScoreOf(c));
+    const hasCalibrated = citations.some((c: any) => c?.scoreSource !== 'synthetic' && c?.rerankSkipped !== true
+      && typeof c?.calibratedProbability === 'number' && Number.isFinite(c.calibratedProbability)
+      && c.calibratedProbability >= 0 && c.calibratedProbability <= 1);
+    // Hosted reranker scores are ordering signals unless a matching held-out
+    // calibration exists. In quality-first mode, a steep raw-score tail must
+    // not erase the answer before the original-evidence grounding gate sees it.
+    const rankOnly = getRequestContext()?.execution?.qualityFirst === true && !hasCalibrated
+      && citations.some((c: any) => c?.scoreSource === 'rerank' && c?.rerankSkipped !== true
+        && Number.isFinite(Number(c?.relevanceScore ?? c?.rerankScore ?? c?.score)));
+    const measuredOfCitation = citations.map((c: any) => rankOnly
+      ? c?.scoreSource === 'rerank' && c?.rerankSkipped !== true && Number.isFinite(Number(c?.relevanceScore ?? c?.rerankScore ?? c?.score))
+        ? rawScore(c) : null
+      : measuredScoreOf(c));
+    const rerankOrdinal = new Map(citations.map((c: any, index: number) => ({ c, index }))
+      .filter(({ index }: any) => measuredOfCitation[index] !== null)
+      .sort((a: any, b: any) => rawScore(b.c) - rawScore(a.c) || a.index - b.index)
+      .map(({ index }: any, rank: number) => [index, rank]));
     const measuredList = measuredOfCitation.filter((v: any): v is number => v !== null);
     const hasMeasured = measuredList.length > 0;
     const maxMeasured = hasMeasured ? Math.max(...measuredList) : 0;
-    const calibratedScores = measuredList;
-    const hasCalibrated = hasMeasured;
     const raw = citations.map(rawScore);
     const max = Math.max(...raw);
     const norm = (v: number) => (max > 0 ? Math.max(0, v) / max : 1);
@@ -468,7 +482,9 @@ export class CitationAssemblyService {
       // pool only, so a synthetic 0.95 can no longer define the scale. Groups
       // without any measured member score 0 in measured mode — they do not
       // compete in MMR and enter only via the capped synthetic fill below.
-      const selectionScore = hasMeasured
+      const selectionScore = rankOnly
+        ? memberMeasured != null ? 1 / (1 + Number(rerankOrdinal.get(index))) : 0
+        : hasMeasured
         ? entry.measuredBest != null && maxMeasured > 0
           ? entry.measuredBest / maxMeasured
           : 0
@@ -516,8 +532,9 @@ export class CitationAssemblyService {
     // bounded by 1, baselineScore*ratio ≤ ratio < 0.28 whenever ratio ≤ 0.22,
     // so the min() could never bind under the shipped defaults — and under a
     // 0.35 ratio it silently acted as an absolute 0.28 cap the operator never
-    // asked for. The floor is exactly baselineScore * ratio now.
-    const effectiveFloor = baselineScore * relFloor;
+    // asked for. Score-floor mode uses baselineScore * ratio; uncalibrated
+    // quality-first selection uses rank and applies no score floor.
+    const effectiveFloor = rankOnly ? 0 : baselineScore * relFloor;
 
     const questionText = `${opts.question || ""} ${(opts.subQueries || []).join(" ")}`;
     const wantsSummarySection =
@@ -545,9 +562,10 @@ export class CitationAssemblyService {
     const guaranteeDefault = hasSubQueries ? 0 : softFloorEnabled ? 6 : 0;
     const configuredMinGroups = Number(process.env.RETRIEVAL_MIN_FLOOR_GROUPS ?? guaranteeDefault);
     const defaultMinGroups = softFloorEnabled && Number.isFinite(configuredMinGroups) ? Math.max(0, configuredMinGroups) : 0;
-    const minGuaranteedGroups = Math.max(0, defaultMinGroups);
+    const minGuaranteedGroups = rankOnly ? 0 : Math.max(0, defaultMinGroups);
     const viabilityOf = (g: (typeof allEntries)[number]) =>
-      hasMeasured ? (g.measuredBest ?? -Infinity) : g.best;
+      rankOnly ? g.measuredBest != null ? g.best : -Infinity
+        : hasMeasured ? (g.measuredBest ?? -Infinity) : g.best;
     const sortedByBest = [...allEntries].sort((a, b) => viabilityOf(b) - viabilityOf(a));
     const guaranteedKeys = new Set(
       sortedByBest
@@ -560,7 +578,7 @@ export class CitationAssemblyService {
     );
 
     const passesFloor = (g: (typeof allEntries)[number]) =>
-      hasMeasured
+      rankOnly ? g.measuredBest != null : hasMeasured
         ? (g.measuredBest ?? -Infinity) >= effectiveFloor
         : g.best >= effectiveFloor;
 
@@ -760,7 +778,7 @@ export class CitationAssemblyService {
         ? 'exempt'
         : guaranteedKeys.has(group.key) && !passesFloor(group)
           ? 'guaranteed'
-          : 'floor';
+          : rankOnly ? 'rank' : 'floor';
       for (const m of membersToAdd) {
         if (m !== representative) selected.push(m);
         markReason(m, groupReason);
@@ -1031,12 +1049,12 @@ export class CitationAssemblyService {
         usedTokens,
         relevanceFloorRatio: relFloor,
         effectiveFloor,
-        // Which scale the floor was anchored on. Adaptive mode without a
-        // Platt calibration profile yields no measured/calibrated score at all,
-        // so the floor silently degrades to a ratio over normalised synthetic
-        // scores. Making the mode explicit in the trace keeps that degradation
-        // observable instead of discoverable only by reading the code.
-        floorMode: hasCalibrated ? 'calibrated' : getRequestContext()?.execution?.adaptive ? 'uncalibrated' : 'relative',
+        // Only real calibrated probabilities count as available calibration.
+        // Rank-only selection is explicit so a disabled raw-score floor cannot
+        // be mistaken for a calibrated threshold in the trace.
+        floorMode: hasCalibrated ? 'calibrated' : rankOnly || getRequestContext()?.execution?.adaptive ? 'uncalibrated' : 'relative',
+        floorApplied: !rankOnly,
+        selectionScoreMode: rankOnly ? 'rerank_ordinal' : 'score_ratio',
         calibrationAvailable: hasCalibrated,
         guaranteedGroups: guaranteedKeys.size,
         measuredGroups: hasMeasured ? allEntries.filter((g) => g.measuredBest != null).length : undefined,

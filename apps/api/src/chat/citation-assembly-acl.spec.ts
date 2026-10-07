@@ -8,6 +8,7 @@ describe('CitationAssemblyService ACL revalidation', () => {
     const prisma = {
   $transaction: jest.fn(async (fn: any) => fn({})),
       document: { findMany: jest.fn().mockResolvedValue([]) },
+      blockArtifact: { findMany: jest.fn().mockResolvedValue([]) },
       documentAcl: { findMany: jest.fn().mockResolvedValue(restrictedDocs) },
       brainDerivedPage: { findMany: jest.fn().mockResolvedValue([]) },
     };
@@ -29,6 +30,25 @@ describe('CitationAssemblyService ACL revalidation', () => {
       expect(service.assessWeakEvidence({reranked:true,citations:[]}).shouldEscalate).toBe(true);
       expect(service.assessWeakEvidence({reranked:true,citations:[{calibratedProbability:0.1}]}).shouldEscalate).toBe(true);
     });
+  });
+
+  it('hydrates physical block order with authorized originals for pre-selection stitching', async () => {
+    const { service, prisma } = createService(['doc']);
+    prisma.document.findMany.mockResolvedValue([{ id: 'doc', kbId: 'kb-1', version: 2, activeVersionId: 'v2' }]);
+    prisma.blockArtifact.findMany.mockResolvedValue([
+      { id: 'block-a', versionId: 'v2', ord: 6, rawHash: 'a', charStart: 0, charEnd: 6, rawContent: 'First.' },
+      { id: 'block-b', versionId: 'v2', ord: 7, rawHash: 'b', charStart: 6, charEnd: 13, rawContent: 'Second.' },
+    ]);
+    const result = await service.filterQueryResultByCurrentPermission({ citations: [
+      { docId: 'doc', chunkId: 'block-a', context: 'preview' },
+      { docId: 'doc', chunkId: 'block-b', context: 'preview', ord: 999 },
+    ] }, ['kb-1'], guard);
+    expect(result.citations.map((c: any) => [c.chunkId, c.ord, c.context])).toEqual([
+      ['block-a', 6, 'First.'], ['block-b', 7, 'Second.'],
+    ]);
+    expect(prisma.blockArtifact.findMany.mock.calls[0][0].where.OR).toEqual([
+      { versionId: 'v2', id: 'block-a' }, { versionId: 'v2', id: 'block-b' },
+    ]);
   });
 
   it('drops obsolete evidence instead of stamping it with the current version', async () => {
