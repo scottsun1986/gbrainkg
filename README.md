@@ -66,4 +66,4 @@ bash scripts/deploy-prod.sh --target=all       # 全实例发布
 
 ## 版本
 
-当前版本 v50.0（权限治理与授权体验大版本：RLS 移除、行业库角色只读全貌视图、穿梭树用户选择）。历史发布记录见 [docs/archive/](docs/archive/)。
+当前版本 v53.0（语料无关与去业务硬编码大版本：标题判定去业务词、权限初始化去角色名、问答提示词全量审计）。近版发布记录见 [docs/RELEASE-v53.0.md](docs/RELEASE-v53.0.md)、[docs/RELEASE-v52.0.md](docs/RELEASE-v52.0.md)、[docs/RELEASE-v51.0.md](docs/RELEASE-v51.0.md)；历史发布记录见 [docs/archive/](docs/archive/)。
