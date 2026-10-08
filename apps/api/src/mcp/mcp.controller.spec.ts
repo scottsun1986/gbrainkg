@@ -182,6 +182,21 @@ describe('McpController', () => {
     expect(mockMcpService.handleJsonRpc).toHaveBeenCalled();
   });
 
+  it('skips the wire write when the client transport is already gone', async () => {
+    // A client timeout must not cancel the run: the answer is still persisted
+    // (like the web chat path), and only the socket write is dropped here.
+    const res: any = {
+      destroyed: true, writableEnded: true,
+      status: jest.fn().mockReturnThis(), json: jest.fn(), setHeader: jest.fn(), write: jest.fn(), end: jest.fn(),
+    };
+    const req: any = { headers: { 'x-app-id': 'app_valid', 'x-app-secret': 'sec_valid' }, query: {} };
+    await controller.handleDirectRpc(req, res, {
+      jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'chat_knowledge', arguments: { prompt: 'q' } },
+    });
+    expect(mockMcpService.handleJsonRpc).toHaveBeenCalled();
+    expect(res.json).not.toHaveBeenCalled();
+  });
+
   it('should bind the credential user into the request context for RLS', async () => {
     const mockReq = {
       headers: {

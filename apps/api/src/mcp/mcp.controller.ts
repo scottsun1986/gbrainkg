@@ -26,7 +26,6 @@ import { McpService } from './mcp.service';
 import { UserCredentialService } from '../auth/user-credential.service';
 import { OpenApiRateLimitService } from '../open-api/open-api-rate-limit.service';
 import { AuthService } from '../auth/auth.service';
-import { getRequestContext } from '../observability/request-context';
 import { withAuthorizedRequest, assertAuthorizationSnapshot, readAuthorizationSnapshot, authorizationEnforced, AuthorizationSnapshot } from '../permission/authorization-revision';
 import { withStrictOutputPermit, withStrictResourceOutput } from '../permission/strict-output-permit';
 
@@ -47,14 +46,12 @@ export class McpController implements OnModuleDestroy {
 
   private async withRpcRequest<T>(userId: string, res: Response, work: (snapshot: AuthorizationSnapshot) => Promise<T>): Promise<T> {
     if (process.env.KNOWLEDGE_STRICT_OUTPUT === '1' && !authorizationEnforced()) throw new BadRequestException('Strict output requires authorization enforcement');
-    return withAuthorizedRequest(userId,async snapshot => {
-      const cancellation = new AbortController();
-      getRequestContext()!.cancellation = cancellation.signal;
-      const disconnected = () => { if (!res.writableFinished) cancellation.abort(new Error('MCP transport disconnected')); };
-      res.once?.('close',disconnected);
-      try { return await work(snapshot); }
-      finally { res.off?.('close',disconnected); }
-    });
+    // A dropped client transport must not cancel the knowledge run. The web chat
+    // keeps the pipeline running and persists the answer, skipping only the wire
+    // write; MCP mirrors that so a client timeout (slow answer) never leaves a
+    // dangling user turn rendered as "该回答未完成，请重新提问。". Emission is
+    // skipped when the socket is already gone (see the emit guards below).
+    return withAuthorizedRequest(userId, snapshot => work(snapshot));
   }
 
   private async emitAuthorized(userId: string, snapshot: AuthorizationSnapshot, emit: () => Promise<void>, manifest?: unknown, knowledge = true) {
@@ -220,14 +217,15 @@ export class McpController implements OnModuleDestroy {
 
     return this.withRpcRequest(user.id,res, async snapshot => {
       const result = await this.mcpService.handleJsonRpc(user, body);
-      if (result === null) return res.status(202).send();
+      if (result === null) return res.destroyed || res.writableEnded ? undefined : res.status(202).send();
       if (Buffer.byteLength(JSON.stringify(result)) > 8 * 1024 * 1024) throw new BadRequestException('MCP output buffer capacity exceeded');
       await this.emitRpcResult(user,snapshot,body,result,async current => {
-        if (session && !session.res.writableEnded) {
+        if (session && !session.res.writableEnded && !session.res.destroyed) {
           const event = `event: message\ndata: ${JSON.stringify(current)}\n\n`;
           if (process.env.KNOWLEDGE_STRICT_OUTPUT === '1') await this.drain(session.res,() => session!.res.write(event));
           else session.res.write(event);
         }
+        if (res.destroyed || res.writableEnded) return;
         if (process.env.KNOWLEDGE_STRICT_OUTPUT === '1') await this.drain(res,() => res.status(200).json(current));
         else res.status(200).json(current);
       });
@@ -301,7 +299,7 @@ export class McpController implements OnModuleDestroy {
       let progress = 0;
       try {
         const onProgress = strict || (!progressEnabled && !customStream) ? undefined : (frame: any) => {
-          if (res.writableEnded) return;
+          if (res.writableEnded || res.destroyed) return;
           if (frame?.type === 'progress' && progressEnabled) {
             const payload = { jsonrpc: '2.0', method: 'notifications/progress',
               params: { progressToken, progress: ++progress, ...(frame.message ? { message: frame.message } : {}) } };
@@ -313,17 +311,18 @@ export class McpController implements OnModuleDestroy {
         };
         const result = await this.mcpService.handleJsonRpc(user, body, onProgress);
 
-        if (result !== null && !res.writableEnded) {
+        if (result !== null && !res.writableEnded && !res.destroyed) {
           const event = `event: message\ndata: ${JSON.stringify(result)}\n\n`;
           if (Buffer.byteLength(event) > 8 * 1024 * 1024) throw new BadRequestException('MCP output buffer capacity exceeded');
           await this.emitRpcResult(user,snapshot,body,result,async current => {
+            if (res.destroyed || res.writableEnded) return;
             const frame = `event: message\ndata: ${JSON.stringify(current)}\n\n`;
             if (strict) await this.drain(res,() => { res.write(frame);res.end(); });
             else res.write(frame);
           });
         }
       } catch (err: any) {
-        if (!res.writableEnded) {
+        if (!res.writableEnded && !res.destroyed) {
           res.write(
             `event: error\ndata: ${JSON.stringify({
               jsonrpc: '2.0',
@@ -333,7 +332,7 @@ export class McpController implements OnModuleDestroy {
           );
         }
       } finally {
-        if (!res.writableEnded) {
+        if (!res.writableEnded && !res.destroyed) {
           res.end();
         }
       }
@@ -341,9 +340,10 @@ export class McpController implements OnModuleDestroy {
     }
 
     const result = await this.mcpService.handleJsonRpc(user, body);
-    if (result === null) return res.status(202).send();
+    if (result === null) return res.destroyed || res.writableEnded ? undefined : res.status(202).send();
     if (Buffer.byteLength(JSON.stringify(result)) > 8 * 1024 * 1024) throw new BadRequestException('MCP output buffer capacity exceeded');
     await this.emitRpcResult(user,snapshot,body,result,async current => {
+      if (res.destroyed || res.writableEnded) return;
       if (strict) await this.drain(res,() => res.status(200).json(current));
       else res.status(200).json(current);
     });
@@ -404,10 +404,13 @@ export class McpController implements OnModuleDestroy {
         const docIds = 'documents' in result && result.documents ? result.documents.map((doc: any) => doc.document_id) : [result.document_id];
         await withStrictResourceOutput(user.id, snapshot,
           tx => this.mcpService.readResource(user.id, { kind: 'mutation_receipt', args: { kb_id: kbId, doc_ids: docIds, action: 'upload' } }, tx),
-          current => this.drain(res, () => res.status(200).json(current)));
+          current => {
+            if (res.destroyed || res.writableEnded) return Promise.resolve();
+            return this.drain(res, () => res.status(200).json(current));
+          });
         return;
       }
-      if (res) { res.status(200).json(result); return; }
+      if (res && !res.destroyed && !res.writableEnded) { res.status(200).json(result); return result; }
       return result;
     } catch (err: any) {
       if (err?.getStatus) throw err;
