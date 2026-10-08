@@ -213,6 +213,10 @@ export function ChatScreen(){
   const pollersRef = useRef(new Map<string, () => void>());
   /** Runs that completed while another conversation was on screen. */
   const renderMeasurementsRef = useRef(new Map<string, { startedAt: number; messageId?: string; firstVisibleMs?: number; recorded?: boolean }>());
+  /** Conversation → assistant message id currently measurable in the viewport.
+   *  Kept in state (not read from the ref during render) so the render-timing
+   *  observation effect actually re-runs when a run completes. */
+  const [measurableMessages, setMeasurableMessages] = useState<Record<string, string>>({});
   const pendingAnswersRef = useRef(new Map<string, Pick<RunPollResult, 'runId' | 'messageId' | 'status'>>());
 
   // 当前视图归属：activeConv 非空时看它；为空时看持有这个空视图的草稿流。
@@ -297,7 +301,11 @@ export function ChatScreen(){
             return;
           }
           const measurement = renderMeasurementsRef.current.get(id);
-          if (measurement && state.status === 'completed') measurement.messageId = state.messageId;
+          if (measurement && state.status === 'completed' && state.messageId) {
+            const messageId = state.messageId;
+            measurement.messageId = messageId;
+            setMeasurableMessages(prev => prev[id] === messageId ? prev : { ...prev, [id]: messageId });
+          }
           pendingAnswersRef.current.set(id, { runId: state.runId, messageId: state.messageId, status: state.status });
           if (viewKeyRef.current === id) applyAnswer(state);
           stop();
@@ -424,6 +432,10 @@ export function ChatScreen(){
       body: JSON.stringify({ firstVisibleMs: measurement.firstVisibleMs, finalVisibleMs: elapsed }),
     }).catch(() => undefined);
     renderMeasurementsRef.current.delete(conversationId);
+    setMeasurableMessages(prev => {
+      if (!(conversationId in prev)) return prev;
+      const next = { ...prev }; delete next[conversationId]; return next;
+    });
   }, []);
 
   // 流式期间自动滚底（除非用户主动上滑）
@@ -846,7 +858,7 @@ export function ChatScreen(){
                 onResend={resend}
                 onFeedback={saveFeedback}
                 onVisible={recordVisibleAnswer}
-                measureRender={Boolean(activeConv && renderMeasurementsRef.current.get(activeConv)?.messageId === msg.id)}
+                measureRender={Boolean(activeConv && measurableMessages[activeConv] === msg.id)}
               />
             ))}
 

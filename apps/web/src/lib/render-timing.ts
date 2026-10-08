@@ -4,10 +4,9 @@ export function observeAnswerVisibility(root: HTMLElement, onVisible: (at: numbe
   let firstFrame = 0; let secondFrame = 0;
   let intersecting = false;
   let target: Element | null = null;
-  let intersection: IntersectionObserver;
   const ready = () => !stopped && document.visibilityState === 'visible' && intersecting
     && Boolean(root.querySelector('.answer-markdown')?.textContent?.trim());
-  const check = () => {
+  function check(): void {
     const nextTarget = root.querySelector('.answer-markdown');
     if (nextTarget !== target) {
       if (target) intersection.unobserve(target);
@@ -25,8 +24,8 @@ export function observeAnswerVisibility(root: HTMLElement, onVisible: (at: numbe
         }
       });
     });
-  };
-  intersection = new IntersectionObserver(entries => {
+  }
+  const intersection = new IntersectionObserver(entries => {
     intersecting = entries.some(entry => entry.isIntersecting); check();
   });
   const mutations = new MutationObserver(check);
