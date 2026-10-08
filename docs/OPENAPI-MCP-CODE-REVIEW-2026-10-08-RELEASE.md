@@ -36,6 +36,15 @@
 
 `quality-first` 发布门禁要求在线 `LLMWIKI_TOKEN`、已重启的候选测试 API 指纹一致，以及隔离的 SOTA E2E 库；本机不具备这些前置（与 v49.0 发布记录披露的测试基础设施缺口相同），故经脚本既有逃生通道 `--skip-gate` 发布。补偿验证：本版 `nest build` + 全量 API 单测 1547 项通过、演示环境真实构建/重启/接口验证通过、生产发布前快照可回滚。
 
+## 4b. 追加修复：MCP 上传 PDF 显示为 md（2026-10-08 19:40）
+
+- 现象：用 MCP 上传 PDF 后，文档在 Web 端显示为 `.md`。
+- 根因：`POST /mcp/upload` 的可选 `title` 若不带扩展名（如 `员工手册`），落库标题即丢失原始格式；Web 端按标题扩展名判断类型，取不到时回退到解析路径 `content.md`，故 PDF 渲染成 md。
+- 修复：`McpService.saveUploadAndEnqueue` 以原始文件扩展名为准，`title` 缺扩展名时补上（提交 `ce7cde1`）。新增 2 条回归用例；API 全量单测 176 套 / 1549 项通过。
+- 演示环境：真实 PDF 复测通过（`title=员工手册` → 落库 `员工手册.pdf`；不传 title → 原名保留）。
+- 生产环境 inst1：`deploy-prod.sh --target=inst1 --skip-gate` 发布成功；快照 `/data/llmwiki/.releases/20261008114144`；新指纹 `886f5339…`；服务 active、公网 200；`dist/mcp/mcp.service.js` 含修复逻辑。
+- 回滚：`bash scripts/rollback-release.sh 20261008114144 --target=inst1`。
+
 ## 5. 既有状态（非本次引入）
 
 - GBrain 编排器 `v0.53.0 PARTIAL`（shared-skills 内容根待运维处理）与 `gbrain 0.60.84.0 -> 0.60.108.0` 升级提示，均为发布前既有状态，本版未改变。
