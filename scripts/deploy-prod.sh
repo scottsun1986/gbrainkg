@@ -615,6 +615,15 @@ deploy_single_instance() {
     --exclude='docs' --exclude='design' --exclude='.releases' --exclude='.venv' \
     "$LOCAL_ROOT/" "$PROD_HOST:$PROD_REPO/"
 
+  # 3.2a Compiled artifacts must be pruned, not just overlayed: rsync without
+  # --delete leaves modules removed in this release on disk, so /ready's
+  # aggregate dist fingerprint no longer matches the candidate build. Scope
+  # --delete to dist/.next only (never the whole tree: node_modules, .env,
+  # runtime data and prod-only files must survive).
+  log "[$INST_NAME] Pruning stale build artifacts (dist, .next)..."
+  rsync -a --delete "$LOCAL_ROOT/apps/api/dist/" "$PROD_HOST:$PROD_REPO/apps/api/dist/"
+  rsync -a --delete --exclude='cache' "$LOCAL_ROOT/apps/web/.next/" "$PROD_HOST:$PROD_REPO/apps/web/.next/"
+
   # 3.2b 共享 parser-worker 的代码只存在于 inst1 的发布目录
   # (/home/ubuntu/gbrainkg/apps/parser-worker + 同目录 .venv)。只发布 inst2+ 时，
   # 共享 parser 会继续跑旧代码，形成"parser 版本漂移"。这里把 parser 源码同步到

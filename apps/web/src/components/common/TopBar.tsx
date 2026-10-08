@@ -15,7 +15,7 @@ export interface TopBarProps {
 
 export function TopBar({ title, sub, theme, onToggleTheme, onOpenPalette, onOpenHelp, onToggleSidebar, collapsed = false, onToggleCollapse = () => {} }: TopBarProps) {
   return (
-    <div className="topbar">
+    <header className="topbar">
       <button type="button" className="icon-btn sidebar-toggle-btn" onClick={onToggleSidebar} title="打开主菜单" aria-label="打开主菜单">
         <Icon name="menu" size={18}/>
       </button>
@@ -39,6 +39,6 @@ export function TopBar({ title, sub, theme, onToggleTheme, onOpenPalette, onOpen
         <button className="icon-btn" title={theme === 'dark' ? '切换为亮色模式' : '切换为暗色模式'} aria-label={theme === 'dark' ? '切换为亮色模式' : '切换为暗色模式'} onClick={onToggleTheme}><Icon name={theme === 'dark' ? 'sun' : 'moon'} size={16}/></button>
         <button className="icon-btn" title="快捷键与帮助 (?)" onClick={onOpenHelp}><Icon name="help" size={16}/></button>
       </div>
-    </div>
+    </header>
   );
 }

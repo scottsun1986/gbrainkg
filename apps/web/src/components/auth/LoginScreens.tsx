@@ -19,11 +19,11 @@ export function LoginScreen({ onSubmit, error, loading, oidcEnabled, onOidcLogin
   const [password, setPassword] = useState('');
   const inputStyle = { width: '100%', boxSizing: 'border-box' as const, padding: '11px 12px', borderRadius: 8, marginBottom: 16 };
   return (
-    <div className="login-shell">
+    <div className="login-shell" role="main">
       <form className="login-card" onSubmit={(event) => { event.preventDefault(); onSubmit(username, password); }}>
         <div className="login-brand-row">
           <div className="login-brand-mark">百</div>
-          <div className="login-title">百纳<small>企业级知识库</small></div>
+          <h1 className="login-title">百纳<small>企业级知识库</small></h1>
         </div>
         <div className="login-lead">登录你的企业大脑 · 答案可溯源</div>
         <label className="login-label" htmlFor="login-username">账号</label>

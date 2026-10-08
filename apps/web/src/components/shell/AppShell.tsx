@@ -509,7 +509,7 @@ export default function AppShell() {
           collapsed={sideCollapsed}
           onToggleCollapse={toggleSideCollapsed}
         />
-        <div className="content">
+        <div className="content" role="main">
           {/* 常驻挂载已访问过的屏幕：跨屏切换不丢会话/表单状态；
               未访问过的屏幕不挂载、代码分包按需加载。 */}
           <div style={{ display: visibleScreen === 'chat' ? 'flex' : 'none', flex: 1, minWidth: 0 }}>
