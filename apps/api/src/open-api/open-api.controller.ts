@@ -405,6 +405,10 @@ export class OpenApiController {
       let bytes = 0;
       let answer = '';
       let citations: any[] = [];
+      // Persist the REST envelope shape (`{ topic_slug, timeline_entry }`) so the
+      // web mapper can resolve doc_title/document_id when the conversation is
+      // reloaded; the bare timeline entry is only the transport payload.
+      const citationEnvelopes: any[] = [];
       let manifest: unknown = undefined;
       await new Promise<void>((resolve, reject) => {
         let subscription: any;
@@ -417,8 +421,8 @@ export class OpenApiController {
             const item = event?.data || event;
             if (item?.type === 'done') manifest = item.dependency_manifest;
             if (item?.type === 'delta' || item?.type === 'token') answer += item.content || item.token || '';
-            if (item?.type === 'citations') citations = item.citations || [];
-            if (item?.type === 'citation') citations.push(item.timeline_entry);
+            if (item?.type === 'citations') { citations = item.citations || []; citationEnvelopes.length = 0; for (const c of citations) citationEnvelopes.push(c?.timeline_entry ? c : { type: 'citation', topic_slug: c?.topic_slug ?? c?.doc_title, timeline_entry: c }); }
+            if (item?.type === 'citation') { citations.push(item.timeline_entry); citationEnvelopes.push({ type: 'citation', index: item.index, topic_slug: item.topic_slug ?? item.timeline_entry?.doc_title, timeline_entry: item.timeline_entry }); }
             const frame = `data: ${JSON.stringify(item)}\n\n`;
             bytes += Buffer.byteLength(frame);
             if (bytes > 8 * 1024 * 1024) {
@@ -438,7 +442,7 @@ export class OpenApiController {
       manifest ??= outputContext?.evidenceDependencies;
       await withStrictOutputPermit(userId, snapshot, async () => {
         await this.prisma.message.create({ data: { conversationId: conversation.id, role: 'assistant', content: answer,
-          citationsSummary: citations, dependencyManifest: manifest as any, latencyMs: Date.now() - requestStartedAt } });
+          citationsSummary: citationEnvelopes, dependencyManifest: manifest as any, latencyMs: Date.now() - requestStartedAt } });
         if (wantsStream) {
           res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
           res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -514,6 +518,7 @@ export class OpenApiController {
     return new Promise<void>((resolve) => {
       let accumulatedAnswer = '';
       let citations: any[] = [];
+      const citationEnvelopes: any[] = [];
       let processingTrace: any = null;
 
       stream$.subscribe({
@@ -523,8 +528,11 @@ export class OpenApiController {
             accumulatedAnswer += item.content || item.token || '';
           } else if (item?.type === 'citation') {
             citations.push(item.timeline_entry);
+            citationEnvelopes.push({ type: 'citation', index: item.index, topic_slug: item.topic_slug ?? item.timeline_entry?.doc_title, timeline_entry: item.timeline_entry });
           } else if (item?.type === 'citations') {
             citations = item.citations || [];
+            citationEnvelopes.length = 0;
+            for (const c of citations) citationEnvelopes.push(c?.timeline_entry ? c : { type: 'citation', topic_slug: c?.topic_slug ?? c?.doc_title, timeline_entry: c });
           } else if (item?.type === 'trace') {
             processingTrace = item.node || null;
           }
@@ -541,7 +549,7 @@ export class OpenApiController {
                 conversationId: conversation.id,
                 role: 'assistant',
                 content: finalContent,
-                citationsSummary: citations,
+                citationsSummary: citationEnvelopes,
                 processingTrace: processingTrace ? [processingTrace] : undefined,
                 latencyMs: Date.now() - requestStartedAt,
               },

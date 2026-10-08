@@ -498,6 +498,11 @@ export class McpService {
         return new Promise((resolve, reject) => {
           let answer = '';
           const citations: any[] = [];
+          // Persisted citationsSummary must use the same envelope shape as the
+          // REST path (`{ type, index, topic_slug, timeline_entry }`); storing
+          // bare timeline entries made the web mapper read `cite.timeline_entry`
+          // as undefined and render every MCP citation as an un-openable entry.
+          const citationEnvelopes: any[] = [];
           let trace: any = null;
           let dependencyManifest: any = null;
 
@@ -517,6 +522,12 @@ export class McpService {
                 }
               } else if (item?.type === 'citation') {
                 citations.push(item.timeline_entry);
+                citationEnvelopes.push({
+                  type: 'citation',
+                  index: item.index,
+                  topic_slug: item.topic_slug ?? item.timeline_entry?.doc_title,
+                  timeline_entry: item.timeline_entry,
+                });
                 if (onProgress) {
                   onProgress({
                     type: 'citation',
@@ -546,7 +557,7 @@ export class McpService {
                     conversationId,
                     role: 'assistant',
                     content: finalContent,
-                    citationsSummary: citations,
+                    citationsSummary: citationEnvelopes,
                     dependencyManifest: dependencyManifest || undefined,
                     processingTrace: trace ? [trace] : undefined,
                     latencyMs: Date.now() - startedAt,

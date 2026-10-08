@@ -171,6 +171,8 @@ describe('McpService', () => {
       const parsed = JSON.parse(res.result.content[0].text);
       expect(parsed.conversation_id).toBe('conv-123');
       expect(parsed.answer).toBe('测试回答');
+      // Transport keeps the bare timeline entry; only persistence is enveloped.
+      expect(parsed.citations).toEqual([{ title: '测试引用' }]);
 
       // Conversation created with all visible KBs scope
       expect(mockPrisma.conversation.create).toHaveBeenCalledWith({
@@ -204,7 +206,7 @@ describe('McpService', () => {
           conversationId: 'conv-123',
           role: 'assistant',
           content: '测试回答',
-          citationsSummary: [{ title: '测试引用' }],
+          citationsSummary: [{ type: 'citation', index: undefined, topic_slug: undefined, timeline_entry: { title: '测试引用' } }],
           processingTrace: undefined,
           latencyMs: expect.any(Number),
         },

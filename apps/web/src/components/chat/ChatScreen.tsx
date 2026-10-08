@@ -49,11 +49,15 @@ interface ConversationMessagePayload {
 interface ConversationPayload { messages?: ConversationMessagePayload[]; hasMore?: boolean; nextCursor?: string | null; activeRun?: RunState | null }
 
 function mapCitation(cite: ConversationCitationPayload, messageId: string | undefined, index: number): Citation {
-  const entry = cite.timeline_entry;
+  // Two persisted shapes exist: the REST path stores `{ topic_slug, timeline_entry }`
+  // while the MCP path stored the timeline entry directly. Accept both so an
+  // MCP-created answer does not collapse to an un-openable "未命名来源".
+  const entry = cite.timeline_entry ?? (cite as unknown as NonNullable<ConversationCitationPayload['timeline_entry']>);
+  const topicSlug = cite.topic_slug ?? entry?.doc_title ?? '';
   return {
     id: `${messageId ?? 'm'}-${index}`,
     citationIndex: Number(cite.index || index + 1),
-    title: entry?.doc_title || cite.topic_slug || '知识主题',
+    title: entry?.doc_title || topicSlug || '未命名来源',
     kb: entry?.source_kb ?? '',
     documentId: entry?.document_id ?? '',
     kbName: entry?.kb_name || entry?.source_kb || '知识库',
@@ -61,7 +65,7 @@ function mapCitation(cite: ConversationCitationPayload, messageId: string | unde
     evidences: 1,
     lastUpdate: '',
     snippet: entry?.snippet || '',
-    path: cite.topic_slug ?? '',
+    path: topicSlug,
     pageNo: entry?.page_no,
     bbox: entry?.bbox,
   };
