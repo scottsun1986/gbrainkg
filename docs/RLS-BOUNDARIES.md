@@ -68,3 +68,29 @@ PostgreSQL 官方行安全语义文档仍可作为历史迁移的参考：
 - `GraphRagService.searchGlobalCommunities` 在严格权限模式要求请求userId，先于dense/lexical最终LIMIT在同一RepeatableRead事务中调用批量artifact守卫；所有来源ACL/version/hash/time/manifest合取后才排序。DRIFT社区仅导航，原文事实仍通过普通证据路径。
 - `withCommunityInputs` 只允许明确worker；锁定并核对所有实际原文版本后在同一应用事务写社区、替换ArtifactDependency与ArtifactManifest，不依赖已移除的RLS GUC。
 - `scanDeterministicChunks` 接收调用方已限定的文档/KB/published谓词，不扩大资源范围；在RepeatableRead内完整keyset扫描。后续原文hydration与最终输出权限门禁仍必须执行。
+
+## 2026-10-08 聚合证据与预览传输
+
+- `CitationAssemblyService` 聚合引用必须提供完整 sourceDocumentIds；逐一验证 published、时效与文档 ACL，restricted 空 ACL 同样拒绝。Scope 派生页返回完整 source manifest，持久化复用同一集合。
+- `captureEvidenceDependencies` 记录全部原文与聚合来源版本/hash；显式 inventory manifest 在读侧重验 KB 可见性和完整可读 published 集，零库存仅在仍为零时通过。
+- `KnowledgeBaseController.getPreviewFile` 仅方法级 document-preview-transport 接受签名传输 token；绑定用户、KB、文档、版本与到期时间。出口实时检查用户 active、KB 可见性、文档 ACL、版本，再流式读取。其他路由仍使用普通登录凭证。
+- `RaptorService` 全局摘要依赖逐层解析至 Level 1 文档及当前 Chunk；缺失/换版本来源拒绝返回，全局引用携带精确 sourceDocumentIds。
+
+### 2026-10-08 检索前置范围与预算
+
+- `retrieval/readable-document-scope.ts`：调用方先提供可见 KB 范围；SQL（Document 别名 d）与 Prisma 条件按当前请求用户的 KB owner/admin、user/role/org ACL、restricted 空 ACL 拒绝语义编译范围，asOf 有效期在分页/Top-K 前执行。无用户且启用强授权时拒绝查询。`boundedRead`/`boundedReadSql` 使用事务局部 statement_timeout，不赋予读权限。
+- `graph-rag.service.ts`：实体、关系种子与关联边在截断前按来源授权收敛；强授权要求完整有效 ArtifactManifest/Dependency；旧路径按可读来源文档收敛，返回 chunk 再与可读文档条件交集。用户请求的关联检索在受限只读事务内执行。
+- `knowledge-graph.controller.ts`：文档浏览在 take 前应用同一文档授权及有效期条件，并保留读取后复验。
+- `brain-scope.service.ts`：Scope 编译保持源集合、版本与 ACL/知识 epoch 发布复验；变动文档分批计算完整 chunk hash，不变文档复用版本 manifest；源综合缓存绑定完整源 manifest、模型路由/参数、源同步时间和 ACL epoch，发布结果仍携带全部源文档依赖。
+
+- `scripts/graph-quality-audit.ts`：显式 KB 的管理员离线只读审计；直接 Prisma 连接，以 PostgreSQL READ ONLY 事务约束，输出来源缺失、旧版本、重复出处和别名消歧候选，不作为用户接口。运行者负责选择测试数据库及合法审计范围。
+- 图浏览分页与局部展开：`knowledge-graph.controller.ts` 的 page/root 仅在可见 KB + 文档 ACL/有效期条件内缩小范围；统计 total 与页面使用相同谓词，根文档先鉴权，局部边出处只来自本次已授权节点。缓存按授权修订、可读集合更新和页面源文档版本/hash 指纹失效，命中也重验权限与版本。
+- Scope 元数据：`brain-scope.service.ts` 按已批准 sourceId 对 BrainSourceDocument 使用 documentId keyset 分页；仅改变传输批次，完整输入与发布依赖集合不截断。
+
+- 图谱失败反馈：仅已收敛 KB 的成功零命中记录有限查询词，用于未来系统抽取排序，不输出事实；版本指纹仅聚合该 KB 文档计数/版本和/更新时间，抽取与反馈同指纹才能使用，进程内限量24h过期，不暴露文档内容或用户历史。
+
+## 2026-10-08 响应计量与浏览器 ACK
+
+- `POST /api/v1/chat/messages/:messageId/render-timing` 使用普通登录身份，验证 UUID/有限非负客户端相对耗时；只读本人会话 assistant Message，来源依赖仍有效才写两个数字时点。非 owner/撤权拒绝，客户端钟明确区分服务器钟。
+- `ChatRunService.replaceTimingNode` 原子 JSON 替换仅固定 timing 节点，UPDATE 同时带 Message assistant 与 Conversation.userId 谓词，保留并发的其他 trace 节点；不扩大资源范围。
+- 服务端 queue/auth/retrieval/rerank/context/generation/verification/persistence 来自实际 span；provider first text、prepared、transport emit/complete 与 run ready 分开记录。浏览器在可见文档、回答元素相交、Markdown 已挂载后观察两次 rAF 渲染机会；不承诺物理屏幕已显示。

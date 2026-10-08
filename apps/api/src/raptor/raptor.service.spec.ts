@@ -1,5 +1,11 @@
 import { RaptorService } from './raptor.service';
 
+function allowReadTransaction(service: any): void {
+  const db = service.prisma;
+  db.$queryRaw = jest.fn().mockResolvedValue([]);
+  db.$transaction = jest.fn((callback: any) => callback(db));
+}
+
 describe('RaptorService', () => {
   let service: RaptorService;
 
@@ -61,10 +67,11 @@ describe('RaptorService', () => {
   it('scores and maps summary nodes into citation-like hits when enabled', async () => {
     process.env.RAPTOR_ENABLED = 'true';
     const findMany = jest.fn().mockResolvedValue([
-      { id: 'n1', kbId: 'kb-1', documentId: 'doc-1', level: 1, title: '员工手册 · 全文摘要', content: '本手册规定考勤与休假制度。' },
-      { id: 'n2', kbId: 'kb-1', documentId: 'doc-2', level: 0, title: '第一章', content: '无关内容。' },
+      { id: 'n1', kbId: 'kb-1', documentId: 'doc-1', level: 1, sourceChunkIds: ['c1'], title: '员工手册 · 全文摘要', content: '本手册规定考勤与休假制度。' },
+      { id: 'n2', kbId: 'kb-1', documentId: 'doc-2', level: 0, sourceChunkIds: ['c2'], title: '第一章', content: '无关内容。' },
     ]);
-    (service as any).prisma = { raptorNode: { findMany } };
+    (service as any).prisma = { raptorNode: { findMany }, chunk: { findMany: jest.fn().mockResolvedValue([{ id: 'c1', documentId: 'doc-1' }, { id: 'c2', documentId: 'doc-2' }]) }, document: { findMany: jest.fn().mockResolvedValue([{ id: 'doc-1', version: 1 }, { id: 'doc-2', version: 1 }]) } };
+    allowReadTransaction(service);
     const hits = await service.search(['kb-1'], '员工手册 考勤 休假 制度', 5);
     expect(hits.length).toBeGreaterThan(0);
     expect(hits[0]).toMatchObject({ documentId: 'doc-1', kbId: 'kb-1', raptor: true, level: 1 });
@@ -155,11 +162,17 @@ describe('RaptorService', () => {
 
   it('searchGlobal prioritizes Level 2 KB global nodes over Level 1 document nodes', async () => {
     const findMany = jest.fn().mockResolvedValue([
-      { id: 'n-doc', kbId: 'kb-1', documentId: 'doc-1', level: 1, title: '请假制度全文', content: '员工手册全文概述' },
-      { id: 'n-global', kbId: 'kb-1', documentId: null, level: 2, title: '全库业务架构与制度演进全景', content: '全库涵盖人事与财务全景' },
+      { id: 'n-doc', kbId: 'kb-1', documentId: 'doc-1', level: 1, sourceChunkIds: ['c1'], title: '请假制度全文', content: '员工手册全文概述' },
+      { id: 'n-global', kbId: 'kb-1', documentId: null, level: 2, sourceChunkIds: ['n-doc'], title: '全库业务架构与制度演进全景', content: '全库涵盖人事与财务全景' },
     ]);
-    (service as any).prisma = { raptorNode: { findMany } };
+    (service as any).prisma = { raptorNode: { findMany }, chunk: { findMany: jest.fn().mockResolvedValue([{ id: 'c1', documentId: 'doc-1' }, { id: 'c2', documentId: 'doc-2' }]) }, document: { findMany: jest.fn().mockResolvedValue([{ id: 'doc-1', version: 1 }, { id: 'doc-2', version: 1 }]) } };
 
+    findMany.mockImplementation(async (input: any) => input.where?.level === 1
+      ? [{ id: 'n-doc', kbId: 'kb-1', documentId: 'doc-1', sourceChunkIds: ['c1'] }]
+      : [{ id: 'n-doc', kbId: 'kb-1', documentId: 'doc-1', level: 1, sourceChunkIds: ['c1'], title: '请假制度全文', content: '员工手册全文概述' },
+        { id: 'n-global', kbId: 'kb-1', documentId: null, level: 2, sourceChunkIds: ['n-doc'], title: '全库业务架构与制度演进全景', content: '全库涵盖人事与财务全景' }]);
+
+    allowReadTransaction(service);
     const hits = await service.searchGlobal(['kb-1'], '全库有哪些制度体系演进历程', 2);
     expect(hits.length).toBe(2);
     expect(hits[0].level).toBe(2);
@@ -188,7 +201,7 @@ describe('RaptorService', () => {
     process.env.RAPTOR_ENABLED = 'true';
     const findManyNodes = jest.fn().mockResolvedValue([
       { id: 'n1', kbId: 'kb-1', documentId: 'doc-xlsx', level: 1, title: '打分表.xlsx · 全文摘要', content: '队伍数据' },
-      { id: 'n2', kbId: 'kb-1', documentId: 'doc-txt', level: 1, title: '常规文档.md · 全文摘要', content: '常规文本' },
+      { id: 'n2', kbId: 'kb-1', documentId: 'doc-txt', level: 1, sourceChunkIds: ['txt-chunk'], title: '常规文档.md · 全文摘要', content: '常规文本' },
     ]);
     const findManyDocs = jest.fn().mockResolvedValue([
       { id: 'doc-xlsx', kbId: 'kb-1', title: '打分表.xlsx', chunks: [{ content: '# 表头\n数据' }] },
@@ -197,8 +210,10 @@ describe('RaptorService', () => {
     (service as any).prisma = {
       raptorNode: { findMany: findManyNodes },
       document: { findMany: findManyDocs },
+      chunk: { findMany: jest.fn().mockResolvedValue([{ id: 'txt-chunk', documentId: 'doc-txt' }]) },
     };
 
+    allowReadTransaction(service);
     const summaries = await service.getDocumentSummaries(['doc-xlsx', 'doc-txt'], 5);
     expect(summaries).toHaveLength(1);
     expect(summaries[0].documentId).toBe('doc-txt');
@@ -207,5 +222,29 @@ describe('RaptorService', () => {
     expect(outlines).toHaveLength(1);
     expect(outlines[0].documentId).toBe('doc-txt');
     delete process.env.RAPTOR_ENABLED;
+  });
+});
+
+describe('RAPTOR global provenance', () => {
+  it('resolves Level 2 node references into exact documents and raw chunks', async () => {
+    const service = new RaptorService();
+    (service as any).prisma = {
+      raptorNode: { findMany: jest.fn().mockResolvedValue([{ id: 'node', kbId: 'kb', documentId: 'doc', sourceChunkIds: ['chunk'] }]) },
+      chunk: { findMany: jest.fn().mockResolvedValue([{ id: 'chunk', documentId: 'doc' }]) },
+      document: { findMany: jest.fn().mockResolvedValue([{ id: 'doc', version: 1, activeVersionId: 'v1', contentHash: 'hash' }]) },
+    };
+    allowReadTransaction(service);
+    await expect((service as any).withSourceDocuments([{ documentId: null, kbId: 'kb', sourceChunkIds: ['node'] }]))
+      .resolves.toEqual([{ documentId: null, kbId: 'kb', sourceChunkIds: ['chunk'], sourceDocumentIds: ['doc'], sourceManifest: [{ docId: 'doc', version: 1, documentVersionId: 'v1', sourceHash: 'hash' }] }]);
+  });
+  it('rejects global summaries whose source chunks were replaced', async () => {
+    const service = new RaptorService();
+    (service as any).prisma = {
+      raptorNode: { findMany: jest.fn().mockResolvedValue([{ id: 'node', kbId: 'kb', documentId: 'doc', sourceChunkIds: ['old-chunk'] }]) },
+      chunk: { findMany: jest.fn().mockResolvedValue([]) },
+      document: { findMany: jest.fn().mockResolvedValue([{ id: 'doc', version: 2 }]) },
+    };
+    allowReadTransaction(service);
+    await expect((service as any).withSourceDocuments([{ documentId: null, kbId: 'kb', sourceChunkIds: ['node'] }])).resolves.toEqual([]);
   });
 });

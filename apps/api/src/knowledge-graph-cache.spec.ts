@@ -1,5 +1,10 @@
 import { KnowledgeGraphController } from './knowledge-graph.controller';
 
+jest.mock('./retrieval/readable-document-scope', () => ({
+  ...jest.requireActual('./retrieval/readable-document-scope'),
+  readableDocumentWhere: async () => ({}),
+}));
+
 jest.mock('./permission/authorization-revision', () => ({
   authorizationEnforced: () => true,
   readAuthorizationSnapshot: async () => ({ revision: '42', policyVersion: 'core-auth-v1', expiresAt: Infinity }),
@@ -24,11 +29,12 @@ describe('knowledge-graph snapshot cache', () => {
       undefined,
       acl as any,
     );
+    ctrl.prisma = { document: { aggregate: jest.fn(async () => ({ _count: 0, _max: { updatedAt: null } })), findMany: jest.fn(async () => []) } };
     ctrl.buildGraph = jest.fn(async (cacheKey: string, ttl: number) => {
       ctrl.graphCache.set(cacheKey, {
         expiresAt: Date.now() + ttl,
         storedAt: Date.now(),
-        fingerprint: 'f',
+        fingerprint: ctrl.documentProjectionVersion([]),
         payload: { key: cacheKey, nodes: [] },
       });
       return { key: cacheKey, nodes: [] };
@@ -41,7 +47,7 @@ describe('knowledge-graph snapshot cache', () => {
     ctrl.graphCache.set(key, {
       expiresAt: Date.now() + 60_000,
       storedAt: Date.now(),
-      fingerprint: 'f',
+      fingerprint: ctrl.documentProjectionVersion([]),
       payload: { key, nodes: [] },
     });
   };
@@ -72,7 +78,7 @@ describe('knowledge-graph snapshot cache', () => {
 
   it('serves an expired snapshot as a cache hit and marks it stale', async () => {
     const ctrl = build();
-    const key = 'u1|42|Infinity|1000|40|kb-1'; // userId | auth revision | expiry | limit | maxChunksPerDoc | visible KB ids
+    const key = `u1|42|Infinity|${JSON.stringify({ _count: 0, _max: { updatedAt: null } })}|0||1000|40|kb-1`;
     seed(ctrl, key);
     // Age the snapshot past its TTL: the next read must take the
     // stale-while-revalidate path rather than rebuilding inline.

@@ -121,10 +121,11 @@ describe('CitationAssemblyService ACL revalidation', () => {
     expect(result.answer).toBe('');
   });
 
-  it('retains KB-wide summaries when all ACL-restricted sources are readable', async () => {
-    const { service } = createService(['private-doc'], [{ documentId: 'private-doc', document: { kbId: 'kb-1' } }]);
+  it('retains KB-wide summaries only with a complete readable source manifest', async () => {
+    const { service, prisma } = createService(['private-doc'], [{ documentId: 'private-doc', document: { kbId: 'kb-1' } }]);
+    prisma.document.findMany.mockResolvedValue([{ id: 'private-doc', kbId: 'kb-1', aclMode: 'restricted' }] as any);
     const result = await service.filterQueryResultByCurrentPermission({
-      citations: [{ raptor: true, kbId: 'kb-1', context: 'safe summary' }],
+      citations: [{ raptor: true, kbId: 'kb-1', sourceDocumentIds: ['private-doc'], context: 'safe summary' }],
     }, ['kb-1'], guard);
     expect(result.citations).toHaveLength(1);
   });

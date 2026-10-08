@@ -1,6 +1,8 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { PermissionService } from '../permission/permission.service';
+import { DOCUMENT_PREVIEW_TRANSPORT, verifyPreviewPayload } from './document-preview-token';
+import { setRequestContextUser } from '../observability/request-context';
 
 const ADMIN_CAPABILITIES = [
   'org.read', 'org.user.read', 'org.user.manage', 'org.node.create',
@@ -15,6 +17,16 @@ export class AuthGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
+    const handler = context.getHandler?.();
+    if (handler && Reflect.getMetadata(DOCUMENT_PREVIEW_TRANSPORT, handler) === true) {
+      const payload = verifyPreviewPayload(request.query?.token);
+      if (!payload || typeof payload.userId !== 'string' || !payload.userId
+        || payload.kbId !== request.params?.kbId || payload.docId !== request.params?.docId
+        || !Number.isInteger(payload.version)) throw new UnauthorizedException('Invalid preview credentials.');
+      request.user = { id: payload.userId };
+      setRequestContextUser(payload.userId);
+      return true;
+    }
     // Missing/invalid credentials must surface as 401 (RFC 6750) so clients
     // can distinguish "re-authenticate" from "authenticated but forbidden".
     let userId: string;

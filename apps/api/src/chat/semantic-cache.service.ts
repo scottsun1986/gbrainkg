@@ -185,7 +185,7 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
   ): Promise<void> {
     if (!this.enabled || !responseContent?.trim()) return;
     const dependencies = getRequestContext()?.evidenceDependencies;
-    if (authorizationEnforced() && (!dependencies?.length || !await validateEvidenceDependencies(getRequestContext()?.userId || '', dependencies))) return;
+    if (authorizationEnforced() && (!dependencies || !await validateEvidenceDependencies(getRequestContext()?.userId || '', dependencies))) return;
 
     try {
       // Exact matching needs no extra model call. The nullable vector is only
@@ -194,7 +194,7 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
 
       const expiresAt = new Date(Math.min(Date.now() + this.ttlHours * 3600000,
         getRequestContext()?.authorization?.expiresAt ?? Infinity,
-        ...(dependencies || []).flatMap(d => d.effectiveTo ? [Date.parse(d.effectiveTo)] : [])));
+        ...(Array.isArray(dependencies) ? dependencies : dependencies?.documents || []).flatMap(d => d.effectiveTo ? [Date.parse(d.effectiveTo)] : [])));
 
       // Save to L1 cache immediately
       const normalized = SemanticCacheService.normalizeQuery(queryText);

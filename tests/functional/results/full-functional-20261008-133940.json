@@ -1,0 +1,570 @@
+[
+ {
+  "module": "A认证",
+  "id": "AUTH-001",
+  "name": "正确凭据登录返回 token",
+  "status": "PASS",
+  "actual": "200 token_len=128",
+  "duration_s": 0.11
+ },
+ {
+  "module": "A认证",
+  "id": "AUTH-002",
+  "name": "错误密码被拒绝",
+  "status": "PASS",
+  "actual": "401 {'message': 'Invalid username or password.', 'error': 'Unauthorized', 'statusCod",
+  "duration_s": 0.07
+ },
+ {
+  "module": "A认证",
+  "id": "AUTH-003",
+  "name": "空凭据被拒绝",
+  "status": "PASS",
+  "actual": "401",
+  "duration_s": 0.01
+ },
+ {
+  "module": "A认证",
+  "id": "AUTH-004",
+  "name": "缺少密码字段被拒绝(等价类:缺参)",
+  "status": "PASS",
+  "actual": "401",
+  "duration_s": 0.06
+ },
+ {
+  "module": "A认证",
+  "id": "AUTH-005",
+  "name": "无 token 访问受保护接口 → 401",
+  "status": "PASS",
+  "actual": "401",
+  "duration_s": 0.01
+ },
+ {
+  "module": "A认证",
+  "id": "AUTH-006",
+  "name": "伪造 token → 401",
+  "status": "PASS",
+  "actual": "401",
+  "duration_s": 0.0
+ },
+ {
+  "module": "A认证",
+  "id": "AUTH-007",
+  "name": "超长用户名/密码(500字)被安全拒绝",
+  "status": "PASS",
+  "actual": "401",
+  "duration_s": 0.01
+ },
+ {
+  "module": "A认证",
+  "id": "AUTH-008",
+  "name": "token 换取当前用户信息",
+  "status": "PASS",
+  "actual": "200 name=admin",
+  "duration_s": 0.0
+ },
+ {
+  "module": "A认证",
+  "id": "AUTH-009",
+  "name": "重复登录均有效(状态)",
+  "status": "PASS",
+  "actual": "both logins ok",
+  "duration_s": 0.11
+ },
+ {
+  "module": "A认证",
+  "id": "AUTH-010",
+  "name": "登录响应不回显密码(安全)",
+  "status": "PASS",
+  "actual": "password not echoed",
+  "duration_s": 0.05
+ },
+ {
+  "module": "C知识库",
+  "id": "KB-001",
+  "name": "创建个人库(中文名+emoji)",
+  "status": "PASS",
+  "actual": "201",
+  "duration_s": 0.01
+ },
+ {
+  "module": "C知识库",
+  "id": "KB-002",
+  "name": "创建 1 字符名库(边界:最小)",
+  "status": "PASS",
+  "actual": "201",
+  "duration_s": 0.01
+ },
+ {
+  "module": "C知识库",
+  "id": "KB-003",
+  "name": "120 字符名(边界:上限)完整保留",
+  "status": "PASS",
+  "actual": "201 len=120",
+  "duration_s": 0.01
+ },
+ {
+  "module": "C知识库",
+  "id": "KB-004",
+  "name": "300 字符名被拒绝(边界:超限)",
+  "status": "FAIL",
+  "actual": "201",
+  "duration_s": 0.01
+ },
+ {
+  "module": "C知识库",
+  "id": "KB-005",
+  "name": "重复名创建被拒绝(负向)",
+  "status": "PASS",
+  "actual": "400",
+  "duration_s": 0.01
+ },
+ {
+  "module": "C知识库",
+  "id": "KB-006",
+  "name": "空名创建被拒绝(边界:空等价类)",
+  "status": "PASS",
+  "actual": "400",
+  "duration_s": 0.0
+ },
+ {
+  "module": "C知识库",
+  "id": "KB-007",
+  "name": "名称含脚本载荷:允许创建或拒绝,不 500(安全)",
+  "status": "PASS",
+  "actual": "201",
+  "duration_s": 0.02
+ },
+ {
+  "module": "C知识库",
+  "id": "KB-008",
+  "name": "新建库全部出现在列表(状态一致性)",
+  "status": "FAIL",
+  "actual": "200 listed=25",
+  "duration_s": 0.01
+ },
+ {
+  "module": "C知识库",
+  "id": "KB-009",
+  "name": "缺 name 字段创建被拒绝(负向)",
+  "status": "PASS",
+  "actual": "400",
+  "duration_s": 0.0
+ },
+ {
+  "module": "C知识库",
+  "id": "KB-010",
+  "name": "删除不存在的库 → 404/400(负向)",
+  "status": "PASS",
+  "actual": "400",
+  "duration_s": 0.01
+ },
+ {
+  "module": "D文档",
+  "id": "DOC-001",
+  "name": "text 文档入库(正向)",
+  "status": "FAIL",
+  "actual": "403",
+  "duration_s": 0.0
+ },
+ {
+  "module": "D文档",
+  "id": "DOC-002",
+  "name": "空内容入库(边界:空等价类)",
+  "status": "FAIL",
+  "actual": "403",
+  "duration_s": 0.0
+ },
+ {
+  "module": "D文档",
+  "id": "DOC-003",
+  "name": "单字符内容(边界:最小)",
+  "status": "FAIL",
+  "actual": "403",
+  "duration_s": 0.0
+ },
+ {
+  "module": "D文档",
+  "id": "DOC-004",
+  "name": "~90KB 长文本入库(边界:大文本)",
+  "status": "FAIL",
+  "actual": "403 len=48000",
+  "duration_s": 0.01
+ },
+ {
+  "module": "D文档",
+  "id": "DOC-005",
+  "name": "多语言 unicode 内容入库",
+  "status": "FAIL",
+  "actual": "403",
+  "duration_s": 0.01
+ },
+ {
+  "module": "D文档",
+  "id": "DOC-006",
+  "name": "XSS 载荷内容入库(安全,入库或拦截)",
+  "status": "FAIL",
+  "actual": "403",
+  "duration_s": 0.0
+ },
+ {
+  "module": "D文档",
+  "id": "DOC-007",
+  "name": "全部入库文档发布完成(状态一致性)",
+  "status": "FAIL",
+  "actual": "['timeout']",
+  "duration_s": 601.79
+ },
+ {
+  "module": "D文档",
+  "id": "DOC-008",
+  "name": "文档列表包含已入库文档",
+  "status": "FAIL",
+  "actual": "200 n=0",
+  "duration_s": 0.01
+ },
+ {
+  "module": "D文档",
+  "id": "DOC-009",
+  "name": "发布后检索可见(状态一致性)",
+  "status": "FAIL",
+  "actual": "201 n=0",
+  "duration_s": 4.16
+ },
+ {
+  "module": "D文档",
+  "id": "DOC-010",
+  "name": "向不存在库入库 → 4xx(负向)",
+  "status": "PASS",
+  "actual": "400",
+  "duration_s": 0.0
+ },
+ {
+  "module": "D文档",
+  "id": "DOC-011",
+  "name": "对不存在文档 retry → 4xx(负向)",
+  "status": "PASS",
+  "actual": "400",
+  "duration_s": 0.01
+ },
+ {
+  "module": "D文档",
+  "id": "DOC-012",
+  "name": "并发 5 路入库全部成功并发布(并发)",
+  "status": "FAIL",
+  "actual": "posts_ok=True statuses=['timeout']",
+  "duration_s": 602.24
+ },
+ {
+  "module": "D文档",
+  "id": "DOC-013",
+  "name": "删除文档成功且状态一致",
+  "status": "PASS",
+  "actual": "del=200 n_before=5",
+  "duration_s": 2.96
+ },
+ {
+  "module": "B问答",
+  "id": "CHAT-001",
+  "name": "正常问答返回锚点答案(正向)",
+  "status": "FAIL",
+  "actual": "200 ans=已知知识库资料中未记载“GBRAIN-FUNC-TEST 的锚点城市”这一信息，且各来源均无“锚点城市”这一属性的表述；资料中出现的是与 FUNC-TEST 并",
+  "duration_s": 30.28
+ },
+ {
+  "module": "B问答",
+  "id": "CHAT-002",
+  "name": "空白消息被拒或安全处理(边界:空等价类)",
+  "status": "PASS",
+  "actual": "400",
+  "duration_s": 0.0
+ },
+ {
+  "module": "B问答",
+  "id": "CHAT-003",
+  "name": "单字符消息(边界:最小长度)",
+  "status": "PASS",
+  "actual": "200",
+  "duration_s": 0.17
+ },
+ {
+  "module": "B问答",
+  "id": "CHAT-004",
+  "name": "超长消息 ~44k 字(边界:上限附近)",
+  "status": "PASS",
+  "actual": "400 len=44009",
+  "duration_s": 0.01
+ },
+ {
+  "module": "B问答",
+  "id": "CHAT-005",
+  "name": "emoji/多语言混排消息",
+  "status": "PASS",
+  "actual": "200",
+  "duration_s": 31.37
+ },
+ {
+  "module": "B问答",
+  "id": "CHAT-006",
+  "name": "SQL 注入消息不致 500 且系统存活(安全)",
+  "status": "PASS",
+  "actual": "200/200",
+  "duration_s": 35.24
+ },
+ {
+  "module": "B问答",
+  "id": "CHAT-007",
+  "name": "XSS 载荷消息不致 500(安全)",
+  "status": "PASS",
+  "actual": "200",
+  "duration_s": 37.25
+ },
+ {
+  "module": "B问答",
+  "id": "CHAT-008",
+  "name": "提示注入不泄露系统提示(安全)",
+  "status": "PASS",
+  "actual": "leak=False",
+  "duration_s": 55.17
+ },
+ {
+  "module": "B问答",
+  "id": "CHAT-009",
+  "name": "kb_scope 指向不存在库被安全处理(负向)",
+  "status": "PASS",
+  "actual": "403",
+  "duration_s": 0.01
+ },
+ {
+  "module": "B问答",
+  "id": "CHAT-010",
+  "name": "kb_scope 空数组(负向边界)",
+  "status": "PASS",
+  "actual": "200",
+  "duration_s": 67.78
+ },
+ {
+  "module": "B问答",
+  "id": "CHAT-011",
+  "name": "多轮对话指代消解(状态)",
+  "status": "FAIL",
+  "actual": "200/200 ans2=已知知识库资料中未包含相关信息，无法回答该问题。",
+  "duration_s": 79.01
+ },
+ {
+  "module": "B问答",
+  "id": "CHAT-012",
+  "name": "并发 3 路相同问答全部成功(并发)",
+  "status": "FAIL",
+  "actual": "[(200, 312), (200, 254), (200, 231)]",
+  "duration_s": 74.12
+ },
+ {
+  "module": "B问答",
+  "id": "CHAT-013",
+  "name": "未知 API 路径 → 404(负向)",
+  "status": "PASS",
+  "actual": "404",
+  "duration_s": 0.0
+ },
+ {
+  "module": "E检索",
+  "id": "SRCH-001",
+  "name": "正常检索返回结果(正向)",
+  "status": "PASS",
+  "actual": "201",
+  "duration_s": 0.9
+ },
+ {
+  "module": "E检索",
+  "id": "SRCH-002",
+  "name": "limit=1(边界:最小)最多返回 1 条",
+  "status": "PASS",
+  "actual": "201 n=1",
+  "duration_s": 0.47
+ },
+ {
+  "module": "E检索",
+  "id": "SRCH-003",
+  "name": "limit=0(边界:零值)",
+  "status": "PASS",
+  "actual": "400",
+  "duration_s": 0.0
+ },
+ {
+  "module": "E检索",
+  "id": "SRCH-004",
+  "name": "limit=-5(边界:负值)",
+  "status": "PASS",
+  "actual": "400",
+  "duration_s": 0.0
+ },
+ {
+  "module": "E检索",
+  "id": "SRCH-005",
+  "name": "空查询串(边界:空等价类)",
+  "status": "PASS",
+  "actual": "400",
+  "duration_s": 0.0
+ },
+ {
+  "module": "E检索",
+  "id": "SRCH-006",
+  "name": "检索词含 SQL 注入不 500 且系统存活(安全)",
+  "status": "PASS",
+  "actual": "201/200",
+  "duration_s": 0.79
+ },
+ {
+  "module": "E检索",
+  "id": "SRCH-007",
+  "name": "省略 kb_scope(全范围检索)",
+  "status": "PASS",
+  "actual": "201",
+  "duration_s": 0.74
+ },
+ {
+  "module": "F分页",
+  "id": "PAGE-001",
+  "name": "limit=2 分页(边界:小页)",
+  "status": "PASS",
+  "actual": "200 n=2",
+  "duration_s": 0.02
+ },
+ {
+  "module": "F分页",
+  "id": "PAGE-002",
+  "name": "page=0(边界:零值)",
+  "status": "PASS",
+  "actual": "200",
+  "duration_s": 0.01
+ },
+ {
+  "module": "F分页",
+  "id": "PAGE-003",
+  "name": "page=-1(边界:负值)",
+  "status": "PASS",
+  "actual": "200",
+  "duration_s": 0.01
+ },
+ {
+  "module": "F分页",
+  "id": "PAGE-004",
+  "name": "page=99999 超界 → 空列表(边界:越界)",
+  "status": "PASS",
+  "actual": "200 n=0",
+  "duration_s": 0.01
+ },
+ {
+  "module": "F分页",
+  "id": "PAGE-005",
+  "name": "limit=1000(边界:超大页)",
+  "status": "PASS",
+  "actual": "200",
+  "duration_s": 0.01
+ },
+ {
+  "module": "F分页",
+  "id": "PAGE-006",
+  "name": "非数字分页参数(负向)",
+  "status": "PASS",
+  "actual": "200",
+  "duration_s": 0.01
+ },
+ {
+  "module": "F分页",
+  "id": "PAGE-007",
+  "name": "KB 列表 limit=5 + total 字段类型",
+  "status": "PASS",
+  "actual": "200 n=5 total=30",
+  "duration_s": 0.01
+ },
+ {
+  "module": "G越权",
+  "id": "ISO-000",
+  "name": "准备第二测试用户",
+  "status": "PASS",
+  "actual": "user2 created",
+  "duration_s": 0.1
+ },
+ {
+  "module": "G越权",
+  "id": "ISO-001",
+  "name": "第二用户创建自己的库",
+  "status": "PASS",
+  "actual": "201",
+  "duration_s": 0.02
+ },
+ {
+  "module": "G越权",
+  "id": "ISO-002",
+  "name": "user2 列表不含 admin 个人库(隔离)",
+  "status": "PASS",
+  "actual": "leaked=[]",
+  "duration_s": 0.04
+ },
+ {
+  "module": "G越权",
+  "id": "ISO-003",
+  "name": "user2 访问 admin 库文档 → 403/404(IDOR)",
+  "status": "PASS",
+  "actual": "404",
+  "duration_s": 0.01
+ },
+ {
+  "module": "G越权",
+  "id": "ISO-004",
+  "name": "user2 向 admin 库写入 → 403/404(越权写)",
+  "status": "PASS",
+  "actual": "403",
+  "duration_s": 0.01
+ },
+ {
+  "module": "G越权",
+  "id": "ISO-005",
+  "name": "跨用户读个人库按属主语义处理",
+  "status": "PASS",
+  "actual": "404 (个人库属主语义)",
+  "duration_s": 0.0
+ },
+ {
+  "module": "G越权",
+  "id": "ISO-006",
+  "name": "user2 访问 admin 会话 → 403/404(IDOR)",
+  "status": "PASS",
+  "actual": "404",
+  "duration_s": 0.06
+ },
+ {
+  "module": "G越权",
+  "id": "ISO-007",
+  "name": "普通用户访问 admin 接口 → 403(角色)",
+  "status": "PASS",
+  "actual": "403",
+  "duration_s": 0.02
+ },
+ {
+  "module": "G越权",
+  "id": "ISO-008",
+  "name": "user2 删除 admin 库 → 403/404(越权删)",
+  "status": "PASS",
+  "actual": "403",
+  "duration_s": 0.04
+ },
+ {
+  "module": "H清理",
+  "id": "CLEAN-001",
+  "name": "清理测试创建的全部知识库",
+  "status": "PASS",
+  "actual": "[('3a7d597a', 404), ('74d15bd1', 200), ('7709bf08', 404), ('565579c9', 404), ('9fe0ab56', 404)]",
+  "duration_s": 0.08
+ },
+ {
+  "module": "H清理",
+  "id": "CLEAN-002",
+  "name": "清理 user2 测试库",
+  "status": "PASS",
+  "actual": "200",
+  "duration_s": 0.01
+ }
+]

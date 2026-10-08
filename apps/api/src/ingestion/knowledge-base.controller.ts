@@ -28,8 +28,7 @@ import { PermissionService } from "../permission/permission.service";
 import { DocumentAclService } from '../permission/document-acl.service';
 import { AuthService } from "../auth/auth.service";
 import { BrainCompilerService } from "../brain-compiler/brain-compiler.service";
-import { signingSecretFor } from "../auth/auth-secret";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { DocumentPreviewTransport, signPreviewPayload, verifyPreviewPayload } from "../auth/document-preview-token";
 import { AuthGuard } from "../auth/auth.guard";
 
 function isUuid(value: string): boolean {
@@ -63,37 +62,6 @@ function contentTypeFor(filename: string): string {
       "application/vnd.openxmlformats-officedocument.presentationml.presentation",
   };
   return types[extname(filename).toLowerCase()] || "application/octet-stream";
-}
-
-function previewSecret(): string {
-  return signingSecretFor('document preview tokens', 'PREVIEW_TOKEN_SECRET');
-}
-
-function signPreviewPayload(payload: Record<string, unknown>): string {
-  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  const signature = createHmac("sha256", previewSecret())
-    .update(body)
-    .digest("base64url");
-  return `${body}.${signature}`;
-}
-
-function verifyPreviewPayload(token: string): Record<string, any> | null {
-  const [body, signature] = String(token || "").split(".");
-  if (!body || !signature) return null;
-  const expected = createHmac("sha256", previewSecret())
-    .update(body)
-    .digest("base64url");
-  if (
-    signature.length !== expected.length ||
-    !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))
-  )
-    return null;
-  try {
-    const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
-    return payload?.exp > Math.floor(Date.now() / 1000) ? payload : null;
-  } catch {
-    return null;
-  }
 }
 
 function onlyOfficeDocumentType(
@@ -253,6 +221,11 @@ export class KnowledgeBaseController {
       },
       include: { _count: { select: { documents: true } } },
     });
+    // Creating a personal KB changes the owner's visible-KB set. Without this
+    // the owner's cached visibility (PERMISSION_CACHE_TTL_MS, default 5s) would
+    // not contain the new KB, so an immediate document ingest/list returned 403
+    // until the TTL expired.
+    this.permissionService.invalidatePermissionCaches(userId);
     // Keep the compile layer's membership in sync without waiting for the
     // next 15-minute reconciliation sweep.
     await this.compilerService
@@ -340,6 +313,9 @@ export class KnowledgeBaseController {
       where: { id: kbId },
       data: { status: "archived" },
     });
+    // Symmetric with creation: archiving removes the KB from the owner's
+    // visible set, so drop the cached set instead of exposing it for the TTL.
+    this.permissionService.invalidatePermissionCaches(userId);
     await this.compilerService
       .queueAccessReconciliation()
       .catch(() => undefined);
@@ -630,7 +606,7 @@ export class KnowledgeBaseController {
     if (!document?.rawFileOid)
       throw new NotFoundException("Original file not found.");
     const exp = Math.floor(Date.now() / 1000) + 5 * 60;
-    const fileToken = signPreviewPayload({ userId, kbId, docId, exp });
+    const fileToken = signPreviewPayload({ userId, kbId, docId, version: document.version, exp });
     const storageBase =
       process.env.PREVIEW_STORAGE_BASE_URL ||
       (() => { throw new Error('PREVIEW_STORAGE_BASE_URL is not configured'); })();
@@ -917,6 +893,7 @@ export class KnowledgeBaseController {
     await pipeline(createReadStream(cachedPdf), response);
   }
 
+  @DocumentPreviewTransport()
   @Get(":kbId/documents/:docId/preview-file")
   async getPreviewFile(
     @Param("kbId") kbId: string,
@@ -934,8 +911,8 @@ export class KnowledgeBaseController {
       !payload.userId
     )
       throw new UnauthorizedException("Preview token is invalid or expired.");
-    // Re-check current authorization at the storage endpoint as well. The
-    // short-lived token is only a transport credential for OnlyOffice.
+    const user = await this.prisma.user.findUnique({ where: { id: payload.userId }, select: { status: true } });
+    if (user?.status !== 'active') throw new UnauthorizedException('Preview user is inactive.');
     const visibleIds = await this.permissionService.getVisibleKnowledgeBases(
       payload.userId,
     );
@@ -943,10 +920,14 @@ export class KnowledgeBaseController {
       throw new UnauthorizedException(
         "Preview access is no longer authorized.",
       );
+    if (!(await new DocumentAclService(this.permissionService).isDocumentReadable(payload.userId, docId))) {
+      throw new UnauthorizedException('Preview access is no longer authorized.');
+    }
     const document = await this.prisma.document.findFirst({
       where: { id: docId, kbId },
-      select: { title: true, rawFileOid: true },
+      select: { title: true, rawFileOid: true, version: true },
     });
+    if (document && document.version !== payload.version) throw new UnauthorizedException('Preview document changed.');
     if (!document?.rawFileOid)
       throw new NotFoundException("Original file not found.");
     await stat(resolveUploadPath(document.rawFileOid)).catch(() => { throw new NotFoundException("Original file not found."); });

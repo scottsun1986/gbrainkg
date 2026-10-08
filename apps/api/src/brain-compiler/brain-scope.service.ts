@@ -223,22 +223,30 @@ export class BrainScopeService {
     const { docChunkDepth, synthesizeSourceLimit } = resolveScopeCompileDepth();
     const fullCoverage = process.env.BRAIN_SCOPE_FULL_COVERAGE !== '0';
 
+    const previous = await db.brainDerivedPage.findUnique({ where: { scopeId_slug: { scopeId: scope.id, slug: 'derived/scope-summary' } } });
+
     // 查找当前 Scope 涉及的所有文档
     const sourceRecords = await db.brainSource.findMany({
-      where: { sourceKey: { in: sourceKeys } },
-      include: {
-        documents: {
-          include: {
-            document: {
-              include: {
-                kb: { select: { id: true, name: true, type: true } },
-                chunks: { orderBy: [{ ord: 'asc' }, { id: 'asc' }], ...(fullCoverage ? {} : { take: docChunkDepth }), select: { id: true, content: true, ord: true } },
-              },
-            },
-          },
-        },
-      },
+      where: { sourceKey: { in: sourceKeys } }, select: { id: true, sourceKey: true, lastSyncAt: true },
     });
+    for (const source of sourceRecords) {
+      source.documents = [];
+      let after: string | undefined;
+      for (;;) {
+        const rows = await db.brainSourceDocument.findMany({
+          where: { sourceId: source.id, ...(after ? { documentId: { gt: after } } : {}) },
+          orderBy: { documentId: 'asc' }, take: 200,
+          include: { document: { include: {
+            kb: { select: { id: true, name: true, type: true } },
+            chunks: { orderBy: [{ ord: 'asc' }, { id: 'asc' }], take: fullCoverage ? 4 : docChunkDepth, select: { id: true, content: true, ord: true } },
+          } } },
+        });
+        if (!rows.length) break;
+        source.documents.push(...rows);
+        after = rows[rows.length - 1].documentId;
+        if (rows.length < 200) break;
+      }
+    }
 
     const allDocsMap = new Map<string, any>();
     for (const s of sourceRecords) {
@@ -261,28 +269,44 @@ export class BrainScopeService {
       .digest('hex')
       .slice(0, 16);
 
-    const derivedEvidence = docs.map((doc) => {
-      // A single 200-char head was too little to represent a document in the
-      // macro layer; carry the ordered heads of several chunks instead.
-      const heads = (doc.chunks || [])
-        .slice(0, 4)
-        .map((c: any) => String(c?.content || '').slice(0, 200).trim())
-        .filter(Boolean);
-      return {
-        docId: doc.id,
-        title: doc.title,
-        kbName: doc.kb?.name,
-        snippet: heads.join('\n').slice(0, 1000),
-        chunkOrd: doc.chunks[0]?.ord || 0,
-        chunkCount: (doc.chunks || []).length,
-        version: doc.version,
-        documentVersionId: doc.activeVersionId || null,
-        sourceHash: doc.contentHash || null,
-        chunkContentHash: truthContentHash((doc.chunks || []).map((c: any) => `${c.id}:${c.ord}:${c.content}`).join('\n')),
-        coverage: fullCoverage ? 'complete' : 'bounded',
-
-      };
-    });
+    const previousEvidence = new Map<string, any>((Array.isArray(previous?.derivedFrom) ? previous.derivedFrom : []).map((item: any) => [item.docId, item]));
+    const derivedEvidence: any[] = [];
+    for (const doc of docs) {
+      const old = previousEvidence.get(doc.id);
+      let chunkCount = (doc.chunks || []).length;
+      let chunkContentHash = truthContentHash((doc.chunks || []).map((c: any) => `${c.id}:${c.ord}:${c.content}`).join('\n'));
+      if (fullCoverage) {
+        if (old?.coverage === 'complete' && old.version === doc.version && old.documentVersionId === (doc.activeVersionId || null) && old.sourceHash === (doc.contentHash || null)) {
+          chunkCount = old.chunkCount;
+          chunkContentHash = old.chunkContentHash;
+        } else {
+          const hash = createHash('sha256');
+          chunkCount = 0;
+          let after: { ord: number; id: string } | undefined;
+          for (;;) {
+            const chunks = await db.chunk.findMany({
+              where: { documentId: doc.id, ...(after ? { OR: [{ ord: { gt: after.ord } }, { ord: after.ord, id: { gt: after.id } }] } : {}) },
+              orderBy: [{ ord: 'asc' }, { id: 'asc' }], take: 200, select: { id: true, content: true, ord: true },
+            });
+            if (!chunks.length) break;
+            for (const chunk of chunks) {
+              if (chunkCount++) hash.update('\n');
+              hash.update(`${chunk.id}:${chunk.ord}:${chunk.content}`);
+            }
+            after = chunks[chunks.length - 1];
+            if (chunks.length < 200) break;
+          }
+          chunkContentHash = hash.digest('hex');
+        }
+      }
+      derivedEvidence.push({
+        docId: doc.id, title: doc.title, kbName: doc.kb?.name,
+        snippet: (doc.chunks || []).slice(0, 4).map((c: any) => String(c?.content || '').slice(0, 200).trim()).filter(Boolean).join('\n').slice(0, 1000),
+        chunkOrd: doc.chunks[0]?.ord || 0, chunkCount, version: doc.version,
+        documentVersionId: doc.activeVersionId || null, sourceHash: doc.contentHash || null,
+        chunkContentHash, coverage: fullCoverage ? 'complete' : 'bounded',
+      });
+    }
 
     // 1. Run GBrain's official cross-page synthesis separately inside every
     // stable Source. We never issue an unscoped global call: combining source
@@ -297,27 +321,41 @@ export class BrainScopeService {
     let synthesisFallbacks = 0;
     if (process.env.GBRAIN_SCOPE_SYNTHESIZE_ENABLED !== '0') {
       const targetSources = fullCoverage ? sourceKeys : sourceKeys.slice(0, synthesizeSourceLimit);
-      for (const sourceKey of targetSources) {
-        try {
-          const result = await withSynthesisTimeout(this.gbrain.synthesize(`gbrain://source/${sourceKey}`, synthesisQuestion));
-          const answer = String(result.answer || '').trim();
-          if (!answer) synthesisFallbacks += 1;
-          synthesisBySource.push({
-            sourceKey,
-            answer,
-            status: typeof result.synthesis_status === 'string' ? result.synthesis_status : undefined,
-            gaps: result.gaps,
-            warnings: result.warnings,
-            cost: result.cost,
-          });
-        } catch (error: any) {
-          // A deterministic inventory remains available when the model gateway
-          // is unavailable. The status records that it is not a synthesis.
-          synthesisFallbacks += 1;
-          synthesisBySource.push({ sourceKey, answer: '', status: 'unavailable', warnings: [String(error?.message || error)] });
-        }
+      const model = await this.modelConfigService?.getDefault('llm');
+      const modelFingerprint = model ? truthContentHash(JSON.stringify([model.id, model.modelName, model.contextLen, model.provider.id, model.provider.baseUrl, model.provider.defaultParams, process.env.GBRAIN_CHAT_MODEL])) : null;
+      const cached = new Map<string, any>((Array.isArray(previous?.derivedFrom) ? previous.derivedFrom : [])
+        .filter((item: any) => item.sourceSynthesis).map((item: any) => [item.sourceSynthesis.sourceKey, item.sourceSynthesis]));
+      for (let start = 0; start < targetSources.length; start += 3) {
+        const batch = await Promise.all(targetSources.slice(start, start + 3).map(async (sourceKey) => {
+          const record = sourceRecords.find((source: any) => source.sourceKey === sourceKey);
+          const sourceDocIds = new Set((record?.documents || []).map((item: any) => item.document?.id));
+          const evidence = derivedEvidence.filter(item => sourceDocIds.has(item.docId));
+          const fingerprint = truthContentHash(JSON.stringify([synthesisQuestion, modelFingerprint, fullCoverage, record?.lastSyncAt,
+            evidence.map(item => [item.docId, item.version, item.documentVersionId, item.sourceHash, item.chunkContentHash]).sort()]));
+          const old = cached.get(sourceKey);
+          let output: any;
+          if (modelFingerprint && old?.fingerprint === fingerprint && previous?.aclEpoch === scope.aclEpoch && old.answer) {
+            output = old;
+          } else {
+            try {
+              const result = await withSynthesisTimeout(this.gbrain.synthesize(`gbrain://source/${sourceKey}`, synthesisQuestion));
+              const answer = String(result.answer || '').trim();
+              if (!answer) synthesisFallbacks += 1;
+              output = { sourceKey, answer, fingerprint,
+                status: typeof result.synthesis_status === 'string' ? result.synthesis_status : undefined,
+                gaps: result.gaps, warnings: result.warnings, cost: result.cost };
+            } catch (error: any) {
+              synthesisFallbacks += 1;
+              output = { sourceKey, answer: '', fingerprint, status: 'unavailable', warnings: [String(error?.message || error)] };
+            }
+          }
+          if (evidence[0]) evidence[0].sourceSynthesis = JSON.parse(JSON.stringify(output));
+          return output;
+        }));
+        synthesisBySource.push(...batch);
       }
     }
+
 
     // 2. Publish a provenance-first Scope summary. This is not treated as a
     // source of truth unless its exact source set and epochs still match.
@@ -352,7 +390,6 @@ export class BrainScopeService {
     summaryLines.push('', `Coverage: ${fullCoverage ? 'complete source/document inventory' : 'bounded chunk/source budget'}`);
 
     const summaryContent = summaryLines.join('\n');
-    const previous = await db.brainDerivedPage.findUnique({ where: { scopeId_slug: { scopeId: scope.id, slug: 'derived/scope-summary' } } });
     const truthDiff = compiledTruthDiff(previous?.content ?? null, summaryContent,
       Array.isArray(previous?.derivedFrom) ? previous.derivedFrom : [], derivedEvidence);
     // Any source replacement or scope invalidation during synthesis makes the

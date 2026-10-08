@@ -43,7 +43,8 @@ describeIntegration('full-corpus BM25 channel (integration)', () => {
     `CREATE SCHEMA IF NOT EXISTS "${schema}"`,
     `CREATE TABLE "${schema}"."Document" (
        id uuid PRIMARY KEY, "kbId" uuid NOT NULL, title text NOT NULL,
-       status text NOT NULL DEFAULT 'published', version integer NOT NULL DEFAULT 1)`,
+       status text NOT NULL DEFAULT 'published', version integer NOT NULL DEFAULT 1,
+       "effectiveFrom" timestamptz, "effectiveTo" timestamptz, "lifecycleStatus" text NOT NULL DEFAULT 'current')`,
     `CREATE TABLE "${schema}"."Chunk" (
        id uuid PRIMARY KEY, "documentId" uuid NOT NULL, "kbId" uuid NOT NULL,
        ord integer NOT NULL, content text NOT NULL, metadata jsonb)`,

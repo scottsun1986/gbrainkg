@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { API_BASE_URL, apiHeaders } from '@/lib/api';
 import { Icon } from '@/components/common/Icon';
 
-/* ============== 知识图谱（Obsidian 风格力导向布局） ============== */
+/* ============== 文档关系浏览（Obsidian 风格力导向布局） ============== */
 
 export interface GraphNode {
   id: string;
@@ -20,12 +20,14 @@ export interface GraphEdge {
   target: string;
   type: string;
   weight?: number;
+  evidence?: Array<{ documentId?: string; chunkId?: string; snippet?: string; provenance?: string }>;
 }
 
 export interface GraphData {
   nodes: GraphNode[];
   edges: GraphEdge[];
   stats?: { documents?: number; concepts?: number; relations?: number };
+  pagination?: { page: number; limit: number; total: number; hasMore: boolean };
   stale?: boolean;
   snapshotAgeSeconds?: number;
 }
@@ -174,6 +176,7 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: Knowl
   const [showSettings, setShowSettings] = useState(false);
   const [params, setParams] = useState({ charge: -320, link: 60, showLabels: 'auto' });
   const [reloadToken, setReloadToken] = useState(0);
+  const [page, setPage] = useState(0);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<NodeDragState | null>(null);
@@ -200,7 +203,10 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: Knowl
       setLoading(true);
       setError('');
       // 手动刷新（reloadToken 变化）带 fresh=1 强制同步重建；首次进入走 SWR 快照
-      const qs = reloadToken > 0 ? '?fresh=1' : '';
+      const search = new URLSearchParams({ limit: '100', page: String(page) });
+      if (reloadToken > 0) search.set('fresh', '1');
+      if (localRoot) search.set('root', localRoot);
+      const qs = `?${search}`;
       try {
         const response = await fetch(`${API_BASE_URL}/api/v1/knowledge-graph${qs}`, { headers: apiHeaders() });
         const payload: unknown = await response.json().catch(() => ({}));
@@ -217,17 +223,22 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: Knowl
             id: edge.id || `${edge.source}|${edge.type}|${edge.target}`,
           }));
         }
-        setGraph(data);
+        setGraph(previous => {
+          if (page === 0 || !previous) return data;
+          const nodes = [...new Map([...previous.nodes, ...data.nodes].map(node => [node.id, node])).values()];
+          const edges = [...new Map([...previous.edges, ...data.edges].map(edge => [edge.id, edge])).values()];
+          return { ...data, nodes, edges, stats: { documents: nodes.filter(node => node.type === 'document').length, concepts: nodes.filter(node => node.type === 'concept').length, relations: edges.length } };
+        });
         setError('');
       } catch (reason) {
-        if (isMounted) setError(reason instanceof Error ? reason.message : '知识图谱加载失败');
+        if (isMounted) setError(reason instanceof Error ? reason.message : '文档关系浏览加载失败');
       } finally {
         if (isMounted) setLoading(false);
       }
     };
     void load();
     return () => { isMounted = false; };
-  }, [hasBeenActive, reloadToken]);
+  }, [hasBeenActive, reloadToken, page, localRoot]);
 
   const allNodes: GraphNode[] = graph?.nodes || [];
   const allEdges: GraphEdge[] = graph?.edges || [];
@@ -525,7 +536,7 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: Knowl
             <span className="graph-orbit g3" />
             <span className="graph-orbit-core" />
           </div>
-          <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--ink-2)' }}>正在构建你的知识图谱…</div>
+          <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--ink-2)' }}>正在构建你的文档关系浏览…</div>
           <div style={{ fontSize: 12.5, color: 'var(--ink-4)' }}>聚合可见知识库的实体与关系，通常需要几秒钟</div>
         </div>
       </div>
@@ -538,7 +549,7 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: Knowl
         <button
           type="button"
           style={{ padding: '6px 16px', fontSize: 13, cursor: 'pointer', borderRadius: 6, border: '1px solid var(--line, #ccc)', background: 'var(--surface-2, #f5f5f5)' }}
-          onClick={() => setReloadToken((t) => t + 1)}
+          onClick={() => { setPage(0); setReloadToken((t) => t + 1); }}
         >
           重新加载
         </button>
@@ -550,13 +561,14 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: Knowl
     <div className="graph-page">
       <div className="graph-head">
         <div>
-          <div className="h1">知识图谱</div>
-          <div className="subline">展示你有权访问的已发布知识 · 滚轮缩放、拖拽节点、悬停高亮邻居</div>
+          <div className="h1">文档关系浏览</div>
+          <div className="subline">按共同主题浏览已授权文档 · 关联用于导航 · 滚轮缩放、拖拽节点、悬停高亮邻居</div>
         </div>
         <div className="graph-stats">
           <span>{graph?.stats?.documents || 0} 文档</span>
           <span>{graph?.stats?.concepts || 0} 个主题</span>
-          <span>{graph?.stats?.relations || 0} 条关系</span>
+          <span>{graph?.stats?.relations || 0} 条关联</span>
+          {graph?.pagination?.hasMore && <button type="button" className="btn" disabled={loading} onClick={() => setPage(value => value + 1)}>加载更多文档</button>}
           {filteredNodes.length > 350 && !localRoot && (
             <span style={{ color: '#b45309', fontSize: 11.5 }}>（展示前 350 个核心节点，搜索可定位任意节点）</span>
           )}
@@ -599,8 +611,8 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: Knowl
           {matchIds && <span className="graph-search-hint">{matchIds.size} 命中</span>}
         </div>
         {localRoot && (
-          <button type="button" className="graph-local-back" onClick={() => { setLocalRoot(null); setSelected(null); }}>
-            ← 返回全局图谱
+          <button type="button" className="graph-local-back" onClick={() => { setPage(0); setLocalRoot(null); setSelected(null); }}>
+            ← 返回全局文档关联
           </button>
         )}
         <div className="graph-toolbar-spacer" />
@@ -638,7 +650,7 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: Knowl
               viewBox={`0 0 ${canvasSize.w} ${canvasSize.h}`}
               preserveAspectRatio="xMidYMid meet"
               role="img"
-              aria-label="个人知识图谱"
+              aria-label="个人文档关系浏览"
               onWheel={onWheel}
               onMouseDown={onMouseDown}
               style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
@@ -729,8 +741,8 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: Knowl
                     进入知识库
                   </button>
                 )}
-                <button type="button" className="btn" onClick={() => setLocalRoot(selectedNode.id)}>
-                  展开局部图谱
+                <button type="button" className="btn" onClick={() => { setPage(0); setLocalRoot(selectedNode.id); }}>
+                  展开局部关联
                 </button>
               </div>
               <p>
@@ -738,10 +750,10 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: Knowl
                 {selectedNode.type === 'concept' && '该主题由章节、标题、显式引用和文档内容共同提取。'}
                 {selectedNode.type === 'knowledge_base' && '该节点表示一个可见知识库。'}
               </p>
-              {(['contains', 'mentions', 'related_to'] as const).map((type) => {
+              {(['contains', 'mentions', 'related_to', 'references'] as const).map((type) => {
                 const list = relatedByType[type] || [];
                 if (list.length === 0) return null;
-                const label = type === 'contains' ? '包含的文档' : type === 'mentions' ? '提及该主题的文档' : '相关文档';
+                const label = type === 'contains' ? '包含的文档' : type === 'mentions' ? '提及该主题的文档' : type === 'references' ? '文档引用' : '相关文档';
                 return (
                   <div className="graph-related" key={type}>
                     <b>{label} <em>· {list.length}</em></b>
@@ -752,6 +764,7 @@ export function KnowledgeGraphScreen({ onOpenDocument, onOpenKb, active }: Knowl
                         <div key={edge.id} className="graph-related-row" onClick={() => setSelected(otherId)}>
                           <span style={{ color: nodeColor[type === 'contains' ? 'document' : 'concept'] }}>·</span>
                           {other?.label || '—'}
+                          {edge.evidence?.length ? <details onClick={event => event.stopPropagation()}><summary>关联出处</summary>{edge.evidence.map((item, index) => <p key={index}>{item.snippet || item.provenance || '文档结构关联'}{item.documentId && <button type="button" className="btn" onClick={() => { const source = allNodes.find(node => node.documentId === item.documentId); if (source?.kbId) onOpenDocument?.(source.kbId, item.documentId!, source.label); }}>查看文档</button>}</p>)}</details> : null}
                         </div>
                       );
                     })}

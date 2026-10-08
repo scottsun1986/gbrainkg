@@ -1,9 +1,13 @@
-import { distinctRankedPassages } from './evidence-identity';
+import { fallbackChunkToCitation } from './fallback-citation';
+import { selectDerivedContext } from './derived-context';
+import { Prisma } from '@prisma/client';
+import { boundedRead, boundedReadSql, readableDocumentSql, readableDocumentWhere } from '../retrieval/readable-document-scope';
+import { distinctRankedPassages, evidenceIdentity } from './evidence-identity';
 import { outlineDocumentTitle, normalizeDocumentTitle } from './document-outline';
 import { VerifiedLateChunking } from '../embedding/verified-late-chunking';
 import { rethrowAuthorizationFailure } from '../permission/authorization-revision';
 import { getRequestContext } from '../observability/request-context';
-import { currentQueryExecution } from '../retrieval/query-execution';
+import { retrievalEvidenceId, currentQueryExecution } from '../retrieval/query-execution';
 import { embeddingFingerprint } from '../embedding/model-fingerprint';
 import { filterRescueHits, pickRescueTargets, RescueChunk } from './section-rescue';
 import { recordFailopen } from '../observability/failopen';
@@ -734,7 +738,8 @@ export class RetrievalArmsService {
           topic: s.title,
           docId: s.documentId,
           kbId: s.kbId,
-          version: 1,
+          version: s.version,
+          documentVersionId: s.documentVersionId,
           evidence: s.evidence,
           snippet: s.evidence,
           context: s.evidence,
@@ -751,6 +756,8 @@ export class RetrievalArmsService {
           raptor: true,
           isSummary: true,
           sourceChunkIds: Array.isArray(s.sourceChunkIds) ? s.sourceChunkIds : undefined,
+          sourceDocumentIds: s.sourceDocumentIds,
+          sourceManifest: s.sourceManifest,
         };
       });
 
@@ -785,19 +792,20 @@ export class RetrievalArmsService {
 
       const citations = Array.isArray(queryResult?.citations) ? [...queryResult.citations] : [];
       const existingEvidence = new Set(
-        citations.map((c: any) => String(c.evidence || c.snippet || "").replace(/\s+/g, "").slice(0, 30)),
+        citations.map((c: any) => evidenceIdentity(String(c.evidence || c.snippet || ""))),
       );
 
       let added = 0;
       for (const h of hits) {
-        const key = String(h.evidence || "").replace(/\s+/g, "").slice(0, 30);
+        const key = evidenceIdentity(String(h.evidence || ""));
         if (!key || existingEvidence.has(key)) continue;
         existingEvidence.add(key);
         citations.unshift({
           topic: h.title,
           docId: h.documentId,
           kbId: h.kbId,
-          version: 1,
+          version: h.version,
+          documentVersionId: h.documentVersionId,
           evidence: h.evidence,
           snippet: h.evidence,
           context: h.evidence,
@@ -809,6 +817,8 @@ export class RetrievalArmsService {
           isSummary: true,
           level: h.level,
           sourceChunkIds: Array.isArray(h.sourceChunkIds) ? h.sourceChunkIds : undefined,
+          sourceDocumentIds: (h as any).sourceDocumentIds,
+          sourceManifest: h.sourceManifest,
         });
         added++;
       }
@@ -875,8 +885,8 @@ export class RetrievalArmsService {
         const alreadyIncluded = existingCitations.some((c: any) => c.slug === page.slug || c.topic === page.title);
         if (alreadyIncluded) continue;
 
-        const snippet = page.content.slice(0, 400);
-        const context = page.content.length > 2000 ? page.content.slice(0, 2000) + "\n..." : page.content;
+        const context = selectDerivedContext(page.content, question);
+        const snippet = context.slice(0, 400);
 
         existingCitations.unshift({
           topic: page.title,
@@ -1001,7 +1011,7 @@ export class RetrievalArmsService {
             }
             const chunkIds = Array.from(provenanceByChunk.keys()).slice(0, 12);
             if (chunkIds.length) {
-              const rows: any[] = await this.prisma.$queryRaw`
+              const rows: any[] = await boundedReadSql(this.prisma, Prisma.sql`
                 SELECT c.id, c."documentId", c."kbId", c.ord, c.content, c.metadata,
                        d.title AS "docTitle", d.version AS "docVersion"
                 FROM "Chunk" c
@@ -1009,7 +1019,8 @@ export class RetrievalArmsService {
                 WHERE c.id = ANY(${chunkIds}::uuid[])
                   AND c."kbId" = ANY(${scope}::uuid[])
                   AND d.status = 'published'
-              `;
+              AND ${readableDocumentSql()}
+              `);
               for (const row of rows || []) {
                 const rel = provenanceByChunk.get(String(row.id));
                 graphHits.push({
@@ -1091,9 +1102,9 @@ export class RetrievalArmsService {
       const config = await this.embeddingService?.getConfig();
       const currentModel = config?.modelName;
       if (!currentModel) return null;
-      const rows: any[] = await this.prisma.$queryRaw`
+      const rows: any[] = await boundedReadSql(this.prisma, Prisma.sql`
         SELECT DISTINCT "modelName" FROM "EmbeddingModelState" WHERE "kbId" = ANY(${scope}::uuid[])
-      `;
+      `);
       const recorded = (rows || [])
         .map((row) => String(row.modelName))
         .filter((name) => name && name !== currentModel);
@@ -1154,33 +1165,17 @@ export class RetrievalArmsService {
       // pool and produced "Unable to start a transaction in the given time"
       // while the enrichment queue was running. A plain query has no such cost
       // and still benefits from the database-level settings.
-      const rows = scope.length === 1
-        ? await this.prisma.$queryRaw<any[]>`
-            SELECT c.id, c."documentId", c."kbId", c.ord, c.content, c.metadata,
-                   d.title AS "docTitle", d.version AS "docVersion",
-                   (1 - (c.embedding <=> ${literal}::vector)) AS similarity
-            FROM "Chunk" c
-            JOIN "Document" d ON d.id = c."documentId"
-            WHERE c."kbId" = ${scope[0]}::uuid
-              AND c.embedding IS NOT NULL
-              AND (${fingerprint}::text IS NULL OR c.embedding_fingerprint = ${fingerprint})
-              AND d.status = 'published'
-            ORDER BY c.embedding <=> ${literal}::vector
-            LIMIT ${limit}
-          `
-        : await this.prisma.$queryRaw<any[]>`
-            SELECT c.id, c."documentId", c."kbId", c.ord, c.content, c.metadata,
-                   d.title AS "docTitle", d.version AS "docVersion",
-                   (1 - (c.embedding <=> ${literal}::vector)) AS similarity
-            FROM "Chunk" c
-            JOIN "Document" d ON d.id = c."documentId"
-            WHERE c."kbId" = ANY(${scope}::uuid[])
-              AND c.embedding IS NOT NULL
-              AND (${fingerprint}::text IS NULL OR c.embedding_fingerprint = ${fingerprint})
-              AND d.status = 'published'
-            ORDER BY c.embedding <=> ${literal}::vector
-            LIMIT ${limit}
-          `;
+      const rows = await boundedReadSql(this.prisma, Prisma.sql`
+        SELECT c.id, c."documentId", c."kbId", c.ord, c.content, c.metadata,
+          d.title AS "docTitle", d.version AS "docVersion",
+          (1 - (c.embedding <=> ${literal}::vector)) AS similarity
+        FROM "Chunk" c JOIN "Document" d ON d.id = c."documentId"
+        WHERE c."kbId" = ANY(${scope}::uuid[])
+          AND c.embedding IS NOT NULL
+          AND (${fingerprint}::text IS NULL OR c.embedding_fingerprint = ${fingerprint})
+          AND d.status = 'published' AND ${readableDocumentSql()}
+        ORDER BY c.embedding <=> ${literal}::vector LIMIT ${limit}
+      `);
       return rows
         .map((row: any) => ({
           id: String(row.id),
@@ -1310,6 +1305,7 @@ export class RetrievalArmsService {
       return [];
     }
 
+    const readableWhere = await readableDocumentWhere(this.prisma);
     const sharedExecution = getRequestContext()?.execution;
     if (sharedExecution?.adaptive && !sharedExecution.reserveProbeFor(query)) return [];
     const subQueryCacheKey = extraQueries.length === 0 && !variant
@@ -1318,9 +1314,10 @@ export class RetrievalArmsService {
     if (subQueryCacheKey) {
       const cached = this.subQueryChunkCache.get(subQueryCacheKey);
       if (cached && cached.expiresAt > Date.now()) {
-        const checked = await this.filterQueryResultByCurrentPermission({ citations: cached.hits.map(h => ({ ...h })) }, scope,
+        const checked = await this.filterQueryResultByCurrentPermission({ citations: cached.hits.map(fallbackChunkToCitation) }, scope,
           { scopeId: '', sourceKeys: [], aclEpoch: -1, knowledgeEpoch: -1 });
-        return checked.citations;
+        const allowed = new Map(checked.citations.map((c: any) => [c.chunkId, c]));
+        return cached.hits.filter(h => allowed.has(h.id)).map(h => ({ ...h, evidence: (allowed.get(h.id) as any).context || h.evidence }));
       }
     }
 
@@ -1358,16 +1355,29 @@ export class RetrievalArmsService {
       .filter(q => !execution?.adaptive || execution.reserveProbeFor(q))
       .slice(0, 3);
     const embeddingTextsToPrime = [query, ...subs].filter((t) => typeof t === "string" && t.trim().length >= 2);
-    if (this.embeddingService?.isEnabled() && embeddingTextsToPrime.length > 0) {
-      await this.embeddingService.embed(embeddingTextsToPrime).catch(() => [] as any[]);
-    }
+    const embeddingPrime = this.embeddingService?.isEnabled() && embeddingTextsToPrime.length > 0
+      ? this.embeddingService.embed(embeddingTextsToPrime).catch(() => [])
+      : Promise.resolve([]);
 
     // Semantic arm: embed the query and retrieve nearest chunks by cosine
     // distance over Chunk.embedding (pgvector/HNSW). Already in memory cache from batch above!
-    const runArm = <T>(work: () => Promise<T>, fallback: T, label: string) =>
-      deadline.guard(() => this.retrievalBulkhead.runOrFallback(work, fallback), fallback, label);
+    const runArm = async <T>(work: () => Promise<T>, fallback: T, label: string): Promise<T> => {
+      execution?.startArm(label);
+      const result = await deadline.guard(() => this.retrievalBulkhead.runOrFallback(work, fallback), fallback, label);
+      const evidence = Array.isArray(result) ? result : [];
+      for (const item of evidence) {
+        if (item && typeof item === "object") item.evidenceId ||= retrievalEvidenceId(item);
+      }
+      execution?.finishArm(label, evidence, deadline.expired() ? "deadline" : "complete");
+      return result;
+    };
+    let structuralArm = 0;
+    const readChunks = (args: any) => runArm(
+      () => boundedRead(this.prisma, tx => tx.chunk.findMany(args)), [] as any[], `structure-${++structuralArm}`,
+    );
+    const readDocs = (args: any) => boundedRead(this.prisma, tx => tx.document.findMany(args));
     const vectorHitsPromise = runArm(
-      async () => { const take=execution?.adaptive ? execution.plan.dense : Math.max(limit*3,40);
+      async () => { await embeddingPrime; const take=execution?.adaptive ? execution.plan.dense : Math.max(limit*3,40);
         const [dense,late] = await Promise.all([this.searchChunksByVector(scope,query,take), new VerifiedLateChunking().search(scope,query,take).catch(error => { rethrowAuthorizationFailure(error); return []; })]);
         const merged = new Map(dense.map((row:any) => [row.id,row]));
         for (const row of late) if (!merged.has(row.id)) merged.set(row.id,row);
@@ -1378,7 +1388,7 @@ export class RetrievalArmsService {
     const subQueryVectorPromise = (async () => {
       const perSub = Math.max(8, Number(process.env.RETRIEVAL_SUBQUERY_VECTOR_TAKE || 15));
       const results = await Promise.all(
-        subs.map(sub => runArm(() => this.searchChunksByVector(scope, sub, perSub), [] as any[], 'sub-vector')),
+        subs.map(sub => runArm(() => this.searchChunksByVector(scope, sub, perSub), [] as any[], `sub-vector-${subs.indexOf(sub)}`)),
       );
       const byId = new Map<string, any>();
       results.forEach((hits, i) => {
@@ -1408,10 +1418,10 @@ export class RetrievalArmsService {
 
       // 1. High-priority token retrieval promise (exact structural guarantee)
       const pChunksPromise = highPriorityTokens.length > 0
-        ? (this.prisma as any).chunk.findMany({
+        ? readChunks({
             where: {
               kbId: { in: scope },
-              document: { status: "published" },
+              document: { status: "published", ...readableWhere },
               OR: highPriorityTokens.map((kw) => ({
                 content: { contains: kw, mode: "insensitive" },
               })),
@@ -1435,10 +1445,11 @@ export class RetrievalArmsService {
             let targetDocIds: string[] = [];
             const cleanQuery = outlineDocumentTitle(query) || query.replace(/[？?。！!,，\s]+|一共有哪些章|有哪些章|所有章|全部章|章名|一共有几章|目录|结构/g, "").trim();
             if (cleanQuery.length >= 2) {
-              const docRows = await (this.prisma as any).document.findMany({
+              const docRows = await readDocs({
                 where: {
                   kbId: { in: scope },
                   status: "published",
+                  ...readableWhere,
                   title: { contains: cleanQuery },
                 },
                 select: { id: true, title: true },
@@ -1448,10 +1459,10 @@ export class RetrievalArmsService {
               }
             }
             if (outlineDocumentTitle(query) && !targetDocIds.length) return [];
-            return (this.prisma as any).chunk.findMany({
+            return readChunks({
               where: {
                 kbId: { in: scope },
-                document: { status: "published" },
+                document: { status: "published", ...readableWhere },
                 ...(targetDocIds.length > 0 ? { documentId: { in: targetDocIds } } : {}),
                 OR: [
                   { content: { startsWith: "#" } },
@@ -1495,10 +1506,10 @@ export class RetrievalArmsService {
       }
       const generalChunksPromise = Promise.all(
         tokenBatches.map((tokens) =>
-          (this.prisma as any).chunk.findMany({
+          readChunks({
             where: {
               kbId: { in: scope },
-              document: { status: "published" },
+              document: { status: "published", ...readableWhere },
               OR: tokens.map((kw) => ({ content: { contains: kw, mode: "insensitive" } })),
             },
             select: {
@@ -1523,10 +1534,11 @@ export class RetrievalArmsService {
 
       const affinityChunksPromise = titleTokens.length > 0
         ? (async () => {
-            const affinityDocs = await (this.prisma as any).document.findMany({
+            const affinityDocs = await readDocs({
               where: {
                 kbId: { in: scope },
                 status: "published",
+                ...readableWhere,
                 OR: titleTokens.map((kw) => ({ title: { contains: kw, mode: "insensitive" } })),
               },
               select: { id: true, title: true, updatedAt: true },
@@ -1561,8 +1573,8 @@ export class RetrievalArmsService {
               .map((doc: any) => doc.id);
             const affinityDocIds = rankedDocs;
             if (!affinityDocIds.length) return [];
-            return (this.prisma as any).chunk.findMany({
-              where: { kbId: { in: scope }, documentId: { in: affinityDocIds }, document: { status: "published" } },
+            return readChunks({
+              where: { kbId: { in: scope }, documentId: { in: affinityDocIds }, document: { status: "published", ...readableWhere } },
               select: {
                 id: true,
                 documentId: true,
@@ -1586,7 +1598,7 @@ export class RetrievalArmsService {
       //       characters of text after ranking had already happened, so a chunk
       //       that only the graph could find could never displace a weaker
       //       lexical/vector hit.
-      const graphArmPromise: Promise<any[]> = (async () => {
+      const graphArmPromise: Promise<any[]> = runArm(async () => {
         if (!this.graphRagService || !scope.length) return [];
         if (process.env.ENABLE_GRAPHRAG_CONTEXT === "false") return [];
         try {
@@ -1597,7 +1609,7 @@ export class RetrievalArmsService {
           );
           if (!related.length) return [];
           const ids = related.map((r) => r.chunkId);
-          const rows: any[] = await this.prisma.$queryRaw`
+          const rows: any[] = await boundedReadSql(this.prisma, Prisma.sql`
             SELECT c.id, c."documentId", c."kbId", c.ord, c.content, c.metadata,
                    d.title AS "docTitle", d.version AS "docVersion"
             FROM "Chunk" c
@@ -1605,7 +1617,8 @@ export class RetrievalArmsService {
             WHERE c.id = ANY(${ids}::uuid[])
               AND c."kbId" = ANY(${scope}::uuid[])
               AND d.status = 'published'
-          `;
+              AND ${readableDocumentSql()}
+          `);
           const rankById = new Map(related.map((entry, idx) => [entry.chunkId, idx + 1]));
           return (rows || [])
             .map((row: any) => ({
@@ -1623,7 +1636,7 @@ export class RetrievalArmsService {
           this.logger.debug(`Graph retrieval arm unavailable: ${err instanceof Error ? err.message : String(err)}`);
           return [];
         }
-      })();
+      }, [] as any[], "graph");
 
       // 5. Full-corpus BM25 (engine-side lexical channel). PostgreSQL resolves
       //    the matching set over the whole ACL scope through the tsvector GIN
@@ -2067,6 +2080,7 @@ export class RetrievalArmsService {
           // Chunk identity: lets downstream dedup key on the actual chunk
           // instead of collapsing every chunk on a page into one candidate.
           id: String(c.id),
+          evidenceId: (c as any).evidenceId,
           documentId: c.documentId,
           kbId: c.kbId,
           title: c.document?.title || "未知文档",
@@ -2147,6 +2161,8 @@ export class RetrievalArmsService {
               sectionGroup: undefined,
               subQueryOrigin: undefined,
               previewUrl: hit.previewUrl,
+              sourceDocumentIds: (hit as any).sourceDocumentIds,
+              sourceManifest: hit.sourceManifest,
               raptor: true,
               isSummary: true,
               // Carry the raw chunk ids so the answer layer can expand this

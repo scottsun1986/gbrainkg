@@ -97,7 +97,7 @@ const CHINESE_ANSWER_RULES = `你是一个专业的企业级知识库智能助�
 9. 【时间相对问法】：当问题使用“今年、本月、现在、最新”等相对时间或时效表述时，以参考资料明示的时间、版本或生效状态为准；资料未明示时说明无法据资料确定，不得凭当前日期臆断。
 10. 【仅列所问字段】：仅问“由几部分构成”“有哪些组成”“有哪些类别”时，只输出各项名称、所问数量、必需适用范围及支撑角标。对仅要求列举组成部分、类别或阶段的简单问题，列出有证据支持的名称、适用范围和角标即可。除非用户要求，不展开子条件、子指标、阈值、计算或实施细节；完整性指覆盖所问的各项名称，不是展开每项的全部细节。只有用户明确询问占比或详细说明时，才加入相应细节，且每项必须有提供的原文直接支持。不得主动附加权重、占比、子指标、评价或流程框架、原理及实施说明。
 11. 【反事实与诱导性提问甄别】：若用户提问中包含假设性事实、诱导性错误前提（如询问不存在的人物关系、虚构的机构或篡改的事件时间），而参考资料中明确未提及或与事实相反，必须明确指出参考资料中无此记载或前提不成立，严禁顺从提问中的错误设定进行虚构脑补。
-12. 【决定性取值必须逐字照抄】：回答中的决定性取值——完整日期、数值、编号、专有名词——必须逐字来自参考资料中被引证的句子。当被引句给出的取值与你记忆中的不同时，严禁用记忆中的取值替代；参考资料未陈述该取值时，应说明资料未记载。主题相近的邻近句子不能替代承载该取值的句子。
+12. 【决定性取值必须逐字照抄】：回答中的决定性取值——完整日期、数值、编号、专有名词——须忠实保留被引证的取值；应用提供的类型化计算结果可按其单位和口径表达，翻译日期不得改变含义。当被引句给出的取值与你记忆中的不同时，严禁用记忆中的取值替代；参考资料未陈述该取值时，应说明资料未记载。主题相近的邻近句子不能替代承载该取值的句子。
 13. 【资料与常识冲突加注】：若参考资料中被引证的陈述与公认的常识明显矛盾，仍以资料为准作答（资料是本知识库的权威），但须在回答末尾用一句话注明“该记载与常识存在差异”。严禁默不作声地用常识值替换资料值。
 ${answerStyleRule(false)}
 
@@ -115,14 +115,16 @@ ${answerStyleRule(false)}
  * set, so the Chinese body stays the single authority.
  */
 const ENGLISH_SECONDARY_ADDENDUM = `[English response — secondary instructions]
-The user asked in English. The Chinese rules above are authoritative; apply them and answer entirely in English, preserving original entity names; do not answer in Chinese.
-Binding points: ground every claim in the provided sources and cite it with its [n] marker; carry the source text that directly matches the question (quoted or faithfully paraphrased) with its citation so the basis is visible, without dropping directly relevant source points to be brief; copy decisive values (dates, numbers, identifiers, proper names) character-for-character from the cited sentence; when several sources state different values for the same requested property, present every one with its own citation and stated scope and never choose, rank, merge or average them; preserve each source's stated scope (population, conditions, time range, version) as the grammatical subject and never inherit a broader subject from the question; never merge distinct relations; check all sources before declaring a gap; if no source addresses the subject, reply exactly: "Based on the provided reference materials, the relevant information is not available."
+The Chinese rules above are authoritative. Answer in the language explicitly requested by the user; otherwise use the question’s language, preserving original entity names.
+Binding points: ground every claim in the provided sources and cite it with its [n] marker; carry the source text that directly matches the question (quoted or faithfully paraphrased) with its citation so the basis is visible, without dropping directly relevant source points to be brief; preserve decisive values from the cited sentence; translated dates and application-provided typed calculations must retain their meaning, units and scope; when several sources state different values for the same requested property, present every one with its own citation and stated scope and never choose, rank, merge or average them; preserve each source's stated scope (population, conditions, time range, version) as the grammatical subject and never inherit a broader subject from the question; never merge distinct relations; check all sources before declaring a gap; if no source addresses the subject, reply exactly: "Based on the provided reference materials, the relevant information is not available."
 ${answerStyleRule(true)}`;
 
-export function buildStaticAnswerRules(isEnglishQuery: boolean): string {
-  return isEnglishQuery
-    ? `${CHINESE_ANSWER_RULES}\n\n${ENGLISH_SECONDARY_ADDENDUM}`
-    : CHINESE_ANSWER_RULES;
+export function buildStaticAnswerRules(isEnglishQuery: boolean, task?: { directory: boolean; table: boolean }): string {
+  const rules = task ? CHINESE_ANSWER_RULES.split("\n").filter(line =>
+    (task.directory || !line.startsWith("4. 【章节目录")) &&
+    (task.table || !line.startsWith("5. 【表格行")),
+  ).join("\n") : CHINESE_ANSWER_RULES;
+  return isEnglishQuery ? `${rules}\n\n${ENGLISH_SECONDARY_ADDENDUM}` : rules;
 }
 
 export function truncateKeepingHeadAndTail(

@@ -371,6 +371,7 @@ export class EnrichmentProcessor extends WorkerHost {
       document.chunks,
       document.version,
       llmConfig,
+                  { kbId: kbId },
     );
     const result = await this.graphRagService.persistGraphElements(kbId, elements);
     if (result.entityCount > 0) {

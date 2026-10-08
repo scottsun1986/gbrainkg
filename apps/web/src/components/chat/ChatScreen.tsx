@@ -12,6 +12,7 @@ import {
   applyPoll, isTerminal, labelForRun, pollDelayFor, runningConversationIds, STAGE_LABELS,
   type RunPollResult, type RunStage, type RunState,
 } from '@/lib/stream-registry';
+import { observeAnswerVisibility } from '@/lib/render-timing';
 import { emitToast } from '@/lib/app-events';
 const AnswerMarkdown = dynamic(() => import('./AnswerMarkdown').then(module => module.AnswerMarkdown), {
   loading: () => <span role="status">正在加载回答…</span>,
@@ -211,6 +212,7 @@ export function ChatScreen(){
   /** Pollers to tear down on unmount / logout. */
   const pollersRef = useRef(new Map<string, () => void>());
   /** Runs that completed while another conversation was on screen. */
+  const renderMeasurementsRef = useRef(new Map<string, { startedAt: number; messageId?: string; firstVisibleMs?: number; recorded?: boolean }>());
   const pendingAnswersRef = useRef(new Map<string, Pick<RunPollResult, 'runId' | 'messageId' | 'status'>>());
 
   // 当前视图归属：activeConv 非空时看它；为空时看持有这个空视图的草稿流。
@@ -294,6 +296,8 @@ export function ChatScreen(){
             schedule(typeof document !== 'undefined' && document.hidden ? 8000 : pollDelayFor(state.stage));
             return;
           }
+          const measurement = renderMeasurementsRef.current.get(id);
+          if (measurement && state.status === 'completed') measurement.messageId = state.messageId;
           pendingAnswersRef.current.set(id, { runId: state.runId, messageId: state.messageId, status: state.status });
           if (viewKeyRef.current === id) applyAnswer(state);
           stop();
@@ -351,6 +355,7 @@ export function ChatScreen(){
   const startRun = useCallback((opts: { convId: string | null; text: string; kbScope: string[] }) => {
     const draftKey = opts.convId || `draft:${++runSeqRef.current}`;
     if (runsRef.current.has(draftKey)) return;
+    renderMeasurementsRef.current.set(draftKey, { startedAt: performance.now() });
     const scope = [...opts.kbScope];
     let cancelled = false;
     const stop = () => {
@@ -380,6 +385,11 @@ export function ChatScreen(){
           void fetch(`${API_BASE_URL}/api/v1/chat/runs/${run.runId}/cancel`, { method: 'POST', headers: apiHeaders() });
           return;
         }
+        const measurement = renderMeasurementsRef.current.get(draftKey);
+        if (measurement) {
+          renderMeasurementsRef.current.delete(draftKey);
+          renderMeasurementsRef.current.set(run.conversationId, measurement);
+        }
         const ownsView = viewKeyRef.current === draftKey;
         pollersRef.current.delete(draftKey);
         runsRef.current.delete(draftKey);
@@ -401,6 +411,20 @@ export function ChatScreen(){
       }
     })();
   }, [applyAnswer, pollRun, syncRuns]);
+
+  const recordVisibleAnswer = useCallback((conversationId: string, messageId: string, done: boolean, at: number) => {
+    const measurement = renderMeasurementsRef.current.get(conversationId);
+    if (!measurement || measurement.messageId !== messageId || measurement.recorded) return;
+    const elapsed = Math.max(0, at - measurement.startedAt);
+    measurement.firstVisibleMs ??= elapsed;
+    if (!done) return;
+    measurement.recorded = true;
+    void fetch(`${API_BASE_URL}/api/v1/chat/messages/${messageId}/render-timing`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...apiHeaders() },
+      body: JSON.stringify({ firstVisibleMs: measurement.firstVisibleMs, finalVisibleMs: elapsed }),
+    }).catch(() => undefined);
+    renderMeasurementsRef.current.delete(conversationId);
+  }, []);
 
   // 流式期间自动滚底（除非用户主动上滑）
   useEffect(()=>{
@@ -821,6 +845,8 @@ export function ChatScreen(){
                 onCopy={copyAnswer}
                 onResend={resend}
                 onFeedback={saveFeedback}
+                onVisible={recordVisibleAnswer}
+                measureRender={Boolean(activeConv && renderMeasurementsRef.current.get(activeConv)?.messageId === msg.id)}
               />
             ))}
 
@@ -935,6 +961,8 @@ interface MessageItemProps {
   onCopy: (text: string) => void;
   onResend: (question?: string) => void;
   onFeedback: (feedback: string, messageId?: string) => void;
+  measureRender?: boolean;
+  onVisible: (conversationId: string, messageId: string, done: boolean, at: number) => void;
 }
 
 /**
@@ -954,12 +982,18 @@ const MessageItem = memo(function MessageItem(props: MessageItemProps) {
 
 const AiMessageBody = memo(function AiMessageBody({
   msg, scopeLabel, allSel, selectedCount, activeCitation, conversationId, lastUserText,
-  stageLabel, stageKey, onCitation, onPreview, onCopy, onResend, onFeedback,
+  stageLabel, stageKey, onCitation, onPreview, onCopy, onResend, onFeedback, onVisible, measureRender,
 }: MessageItemProps) {
   const traceNodes = useMemo(() => (Array.isArray(msg.trace) ? (msg.trace as TraceNode[]) : []), [msg.trace]);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const root = bodyRef.current;
+    if (!measureRender || !root || !msg.text.trim() || !msg.id || !conversationId) return;
+    return observeAnswerVisibility(root, at => onVisible(conversationId, msg.id!, Boolean(msg.done), at));
+  }, [msg.text, msg.id, msg.done, conversationId, onVisible, measureRender]);
   return (
     <div className="msg msg-ai">
-      <div className="body">
+      <div className="body" ref={bodyRef}>
         <div className="who">
           <span className="dot"/>
           <span>百纳 · 大脑综述</span>

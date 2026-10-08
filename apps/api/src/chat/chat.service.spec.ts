@@ -83,6 +83,7 @@ const mockPrisma: any = {
 };
 
 jest.mock("@prisma/client", () => ({
+  ...jest.requireActual("@prisma/client"),
   PrismaClient: jest.fn().mockImplementation(() => mockPrisma),
 }));
 
@@ -97,6 +98,7 @@ describe("ChatService", () => {
   jest.setTimeout(15000);
   let service: ChatService;
   afterEach(() => {
+    delete process.env.RETRIEVAL_ARM_POLICY;
     delete process.env.RETRIEVAL_SIBLING_EDITION_ALIGN;
   });
 
@@ -124,6 +126,7 @@ describe("ChatService", () => {
   });
 
   beforeEach(async () => {
+    process.env.RETRIEVAL_ARM_POLICY = "chunk_first";
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ChatService,
@@ -255,6 +258,20 @@ describe("ChatService", () => {
     } finally { mockPrisma.chunk = oldChunks; }
   });
 
+  it.each([false, true])('chunks_only makes zero engine calls with DB evidence=%s', async (hasEvidence) => {
+    process.env.RETRIEVAL_ARM_POLICY = 'chunks_only';
+    jest.spyOn((service as any).modelConfigService, 'getLlmChatConfig').mockResolvedValue(null);
+    mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(['kb-1']);
+    mockCompilerService.ensureUserBrainRepo.mockResolvedValue({ gitRepoUrl: '/tmp/repo' });
+    mockPrisma.document.findMany.mockResolvedValue([{ id: 'doc-1', kbId: 'kb-1', aclMode: 'inherit', version: 1 }]);
+    jest.spyOn((service as any).retrievalArms, 'searchChunksFallback').mockResolvedValue(hasEvidence
+      ? [{ id: 'chunk-1', documentId: 'doc-1', kbId: 'kb-1', version: 1, evidence: 'Authorized source facts', title: 'Rules' }] : []);
+    const events = await lastValueFrom((await service.handleChatStream('user-1', 'source query', ['kb-1'])).pipe(toArray()));
+    expect(events.some(e => (e.data as any).type === 'error')).toBe(false);
+    expect(mockGbrainQuery).not.toHaveBeenCalled();
+    expect(events.some(e => (e.data as any).type === 'done')).toBe(true);
+  });
+
   it("should stream chat and trigger lazy compile if topic is dirty", async () => {
     // This tests compilation/evidence streaming, not a live model gateway.
     jest.spyOn((service as any).modelConfigService, 'getLlmChatConfig').mockResolvedValue(null);
@@ -296,6 +313,22 @@ describe("ChatService", () => {
     expect(events.some((e) => (e.data as any).type === "done")).toBeTruthy();
   });
 
+  it('injects a newly compiled authorized document and counts only inserted cards', async () => {
+    jest.spyOn((service as any).modelConfigService, 'getLlmChatConfig').mockResolvedValue(null);
+    mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(['kb-1']);
+    mockCompilerService.ensureUserBrainRepo.mockResolvedValue({ gitRepoUrl: '/tmp/repo' });
+    const original = { id: 'doc-1', kbId: 'kb-1', aclMode: 'inherit', version: 1, title: '规则.md' };
+    const fresh = { id: 'new-doc', kbId: 'kb-1', aclMode: 'inherit', version: 1, title: '数据合规',
+      chunks: [{ ord: 0, content: '新编译的授权原文条款。' }], kb: { name: 'KB' } };
+    mockPrisma.document.findMany.mockImplementation(async (args: any) => args.include?.chunks ? [fresh] : [original, fresh]);
+    mockPrisma.brainTopic.findMany.mockResolvedValueOnce([{ topicSlug: '数据合规', compileStatus: 'dirty' }]);
+    mockCompilerService.triggerLazyCompileAndWait.mockResolvedValue(undefined);
+    const events = await lastValueFrom((await service.handleChatStream('user-1', '测试问题', ['kb-1'])).pipe(toArray()));
+    const node = events.find(e => (e.data as any).type === 'trace' && (e.data as any).node.id === 'lazy_compile' && (e.data as any).node.status === 'success');
+    expect((node?.data as any).node.details.injected).toBe(1);
+    expect(events.filter(e => (e.data as any).type === 'citation').map(e => (e.data as any).timeline_entry.document_id)).toContain('new-doc');
+  });
+
   it('captures source dependencies before returning evidence without a model', async () => {
     const previous = process.env.CORE_AUTH_ENFORCE;
     process.env.CORE_AUTH_ENFORCE = '1';
@@ -308,6 +341,8 @@ describe("ChatService", () => {
     ]);
     mockPrisma.$queryRaw.mockImplementation(async (sql: any) => String(sql).includes('AuthorizationState')
       ? [{ revision: 1n, policyVersion: 'core-auth-v1', active: true, expiresAt: null }] : []);
+    jest.spyOn((service as any).retrievalArms, "searchChunksFallback").mockResolvedValue([{ id: "chunk-1", documentId: "doc-1", kbId: "kb-1", version: 1, evidence: "Compiled truth", title: "规则.md" }]);
+    jest.spyOn((service as any).fusionRerank, "rerankPool").mockImplementation(async (_q: any, result: any) => ({ ...result, citations: result.citations.map((c: any) => ({ ...c, calibratedProbability: 0.9, scoreSource: "rerank" })) }));
     try {
       const stream = await service.handleChatStream('user-1', '测试问题');
       const events = await lastValueFrom(stream.pipe(toArray()));
@@ -340,7 +375,7 @@ describe("ChatService", () => {
       }],
       formattedContext: 'GRAPH_ONLY_PROSE',
     });
-    mockPrisma.$queryRaw.mockResolvedValueOnce([{
+    mockPrisma.$queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([{
       id: chunkId,
       documentId: '22222222-2222-4222-8222-222222222222',
       kbId: '33333333-3333-4333-8333-333333333333',
@@ -418,11 +453,11 @@ describe("ChatService", () => {
       );
       await lastValueFrom(stream$.pipe(toArray()));
       const requestBody = JSON.parse(fetchMock.mock.calls[1][1].body);
-      expect(requestBody.messages.slice(1)).toEqual([
-        { role: "user", content: "当前问题" },
-      ]);
-      expect(requestBody.messages[0].content).toContain("上一轮问题");
-      expect(requestBody.messages[0].content).toContain("上一轮回答");
+      const data = JSON.parse(requestBody.messages[1].content);
+      expect(data.question).toBe("当前问题");
+      expect(data.conversationForDisambiguation).toContain("上一轮问题");
+      expect(data.conversationForDisambiguation).toContain("上一轮回答");
+      expect(requestBody.messages[0].content).not.toContain("上一轮问题");
       expect(requestBody.messages[0].content).toContain("【参考知识库资料】");
       expect(requestBody.messages[0].content).not.toContain("UNVERIFIED_WITHDRAWN_GRAPH_SECRET");
       expect(mockGraphRag.searchLocalGraph).not.toHaveBeenCalled();
@@ -987,7 +1022,7 @@ describe("ChatService", () => {
     }
   });
 
-  it("weknora_retrieval runs in shadow mode when WeKnora client is provided", async () => {
+  it("defers WeKnora shadow comparisons to offline evaluation", async () => {
     const mockWeKnoraClient = {
       search: jest.fn().mockResolvedValue([
         {
@@ -1045,10 +1080,8 @@ describe("ChatService", () => {
       const weknoraTrace = weknoraEvents[weknoraEvents.length - 1];
       
       expect(weknoraTrace).toBeDefined();
-      expect((weknoraTrace!.data as any).node.status).toBe("success");
-      expect((weknoraTrace!.data as any).node.summary).toContain("WeKnora 灰度对比完成");
-      expect((weknoraTrace!.data as any).node.details.hybrid).toBe(false);
-      expect((weknoraTrace!.data as any).node.details.overlapCount).toBe(1);
+      expect((weknoraTrace!.data as any).node.status).toBe("skipped");
+      expect(mockWeKnoraClient.search).not.toHaveBeenCalled();
     } finally {
       (global as any).fetch = originalFetch;
       delete process.env.DEEPSEEK_API_KEY;
@@ -1241,6 +1274,7 @@ describe("ChatService", () => {
         ]),
       },
     };
+    Object.assign(mockPrisma, { $transaction: async (fn: any) => fn(mockPrisma), $queryRaw: jest.fn().mockResolvedValue([]) });
     (service as any).retrievalArms.prisma = mockPrisma;
     (service as any).retrievalArms.searchChunksByVector = jest.fn().mockResolvedValue([]);
 

@@ -679,3 +679,84 @@ describe('buildContextualizedRerankText', () => {
   });
 });
 
+
+describe('aggregate document permission boundary', () => {
+  const guard = { scopeId: 'scope', sourceKeys: [], aclEpoch: 1, knowledgeEpoch: 1, userId: 'user' };
+  it('rejects restricted empty-ACL sources and never leaves their text in answer', async () => {
+    const filterReadableDocuments = jest.fn().mockResolvedValue(new Set());
+    const service = new CitationAssemblyService({ logger: { warn: jest.fn() } as any,
+      prisma: { document: { findMany: jest.fn().mockResolvedValue([{ id: 'secret', kbId: 'kb', aclMode: 'restricted' }]) } },
+      documentAclService: { filterReadableDocuments } as any });
+    const result = await service.filterQueryResultByCurrentPermission({ citations: [{ kbId: 'kb', raptor: true,
+      sourceDocumentIds: ['secret'], context: 'FORBIDDEN_MARKER' }] }, ['kb'], guard);
+    expect(filterReadableDocuments).toHaveBeenCalledWith('user', ['secret'], expect.objectContaining({ docs: [expect.objectContaining({ aclMode: 'restricted' })] }));
+    expect(result.citations).toEqual([]);
+    expect(result.answer).not.toContain('FORBIDDEN_MARKER');
+  });
+  it('preserves exact source manifest for a readable aggregate', async () => {
+    const service = new CitationAssemblyService({ logger: {} as any,
+      prisma: { document: { findMany: jest.fn().mockResolvedValue([{ id: 'source', kbId: 'kb', version: 2, activeVersionId: 'v2', contentHash: 'hash' }]) } },
+      documentAclService: { filterReadableDocuments: jest.fn().mockResolvedValue(new Set(['source'])) } as any });
+    const result = await service.filterQueryResultByCurrentPermission({ citations: [{ kbId: 'kb', raptor: true,
+      sourceDocumentIds: ['source'], context: 'readable' }] }, ['kb'], guard);
+    expect(result.citations[0].sourceManifest).toEqual([{ docId: 'source', version: 2, documentVersionId: 'v2', sourceHash: 'hash' }]);
+  });
+});
+
+describe('request entailment memo', () => {
+  it('reuses each statement only for the same evidence, source manifest and model', async () => {
+    const config = { modelName: 'judge-v1', baseUrl: 'http://judge' };
+    const service = new CitationAssemblyService({ logger: {} as any, modelConfigService: {
+      getFastLlmChatConfig: jest.fn().mockImplementation(async () => config),
+    } as any });
+    const execute = jest.spyOn(service as any, 'executeEntailmentBatch').mockResolvedValue(new Set([0]));
+    await runWithRequestContext({ requestId: 'memo', evidenceDependencies: [{ documentId: 'doc', versionId: 'v1', number: 1, sourceHash: 'h', effectiveTo: null }] }, async () => {
+      await service.judgeEntailment(['statement'], 'x'.repeat(6001) + 'tail support');
+      await service.judgeEntailment(['statement'], 'x'.repeat(6001) + 'tail support');
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(execute.mock.calls[0][1]).toContain('tail support');
+      await service.judgeEntailment(['statement'], 'different evidence');
+      expect(execute).toHaveBeenCalledTimes(2);
+      config.modelName = 'judge-v2';
+      await service.judgeEntailment(['statement'], 'different evidence');
+      expect(execute).toHaveBeenCalledTimes(3);
+    });
+  });
+  it('does not retain a failed judge result', async () => {
+    const service = new CitationAssemblyService({ logger: {} as any, modelConfigService: {
+      getFastLlmChatConfig: jest.fn().mockResolvedValue({ modelName: 'judge', baseUrl: 'http://judge' }),
+    } as any });
+    const execute = jest.spyOn(service as any, 'executeEntailmentBatch').mockResolvedValueOnce(null).mockResolvedValue(new Set([0]));
+    await runWithRequestContext({ requestId: 'retry' }, async () => {
+      await expect(service.judgeEntailment(['statement'], 'evidence')).resolves.toEqual(new Set([0]));
+      expect(execute).toHaveBeenCalledTimes(2);
+    });
+  });
+});
+
+describe('cross-KB aggregate context', () => {
+  it('drops a mismatched inventory before its forbidden marker reaches the model context', async () => {
+    const service = new CitationAssemblyService({ logger: {} as any,
+      prisma: { document: { findMany: jest.fn().mockResolvedValue([{ id: 'doc-b', kbId: 'kb-b' }]) } },
+      documentAclService: { filterReadableDocuments: jest.fn().mockResolvedValue(new Set(['doc-b'])) } as any });
+    const authorized = await service.filterQueryResultByCurrentPermission({ citations: [{ kbId: 'kb-a', inventory: true,
+      sourceDocumentIds: ['doc-b'], context: 'FORBIDDEN_CROSS_KB_MARKER' }] }, ['kb-a', 'kb-b'],
+      { scopeId: 'scope', sourceKeys: [], aclEpoch: 1, knowledgeEpoch: 1, userId: 'user' });
+    expect(JSON.stringify(authorized)).not.toContain('FORBIDDEN_CROSS_KB_MARKER');
+    expect(authorized.citations).toEqual([]);
+  });
+});
+
+describe('aggregate version snapshot', () => {
+  it('does not relabel a retrieved summary after a source version switch', async () => {
+    const service = new CitationAssemblyService({ logger: {} as any,
+      prisma: { document: { findMany: jest.fn().mockResolvedValue([{ id: 'doc', kbId: 'kb', version: 2,
+        activeVersionId: 'new-version', contentHash: 'new-hash' }]) } },
+      documentAclService: { filterReadableDocuments: jest.fn().mockResolvedValue(new Set(['doc'])) } as any });
+    const result = await service.filterQueryResultByCurrentPermission({ citations: [{ kbId: 'kb', raptor: true,
+      sourceDocumentIds: ['doc'], sourceManifest: [{ docId: 'doc', version: 1, documentVersionId: 'old-version', sourceHash: 'old-hash' }],
+      context: 'OBSOLETE_SUMMARY_MARKER' }] }, ['kb'], { scopeId: 'scope', sourceKeys: [], aclEpoch: 1, knowledgeEpoch: 1, userId: 'user' });
+    expect(result.citations).toEqual([]);
+    expect(result.answer).not.toContain('OBSOLETE_SUMMARY_MARKER');
+  });
+});

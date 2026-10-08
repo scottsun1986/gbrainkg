@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { RetrievalDeadline } from './retrieval-budget';
 import { getRequestContext } from '../observability/request-context';
 
@@ -24,6 +25,23 @@ export function initialQueryTier(question: string): QueryTier {
   return 'fast';
 }
 
+export function retrievalEvidenceId(evidence: any): string {
+  if (typeof evidence?.evidenceId === 'string' && evidence.evidenceId) return evidence.evidenceId;
+  const metadata = evidence?.metadata || {};
+  const document = evidence?.document || {};
+  const source = evidence?.docId || evidence?.documentId || metadata.documentId || '';
+  const version = evidence?.documentVersionId || metadata.documentVersionId || evidence?.version || evidence?.docVersion || document.version || '';
+  const chunk = evidence?.chunkId || evidence?.id || metadata.blockId || evidence?.sourceNodeId || '';
+  const span = evidence?.sourceSpan || metadata.sourceSpan || metadata.span || null;
+  return createHash('sha256').update(JSON.stringify([source, version, chunk, span,
+    chunk ? null : evidence?.content || evidence?.snippet || evidence?.text || evidence])).digest('hex');
+}
+
+type ArmRecord = {
+  started: boolean; skippedReason?: string; startedAt?: number; elapsedMs?: number; exitReason?: string;
+  candidateIds: string[]; authorized: number; reranked: number; contextTokens: number; finalCitations: number;
+};
+
 export class QueryExecution {
   readonly qualityFirst = process.env.RETRIEVAL_QUALITY_PROFILE === 'quality-first';
   readonly planVersion = this.qualityFirst ? 'adaptive-quality-first-v1' : 'adaptive-v1';
@@ -33,6 +51,7 @@ export class QueryExecution {
   rounds = 0;
   probes = 0;
   pairs = 0;
+  private readonly arms = new Map<string, ArmRecord>();
   private readonly primaryQueries = new Set<string>();
   private readonly seenProbes = new Set<string>();
   modelCalls = 0;
@@ -61,7 +80,9 @@ export class QueryExecution {
   }
   reserveModelCall(tokens: number): boolean {
     if (!Number.isFinite(tokens) || tokens < 0) return false;
-    if (this.adaptive && ((!this.retrievalComplete && this.deadline.expired()) || this.modelCalls >= this.plan.calls || this.inputTokens+tokens > this.plan.inputTokens)) { this.stopReason='model_budget'; return false; }
+    const callLimit = this.retrievalComplete ? this.plan.calls : this.plan.calls - 2;
+    const tokenLimit = this.retrievalComplete ? this.plan.inputTokens : this.plan.inputTokens - this.plan.context;
+    if (this.adaptive && ((!this.retrievalComplete && this.deadline.expired()) || this.modelCalls >= callLimit || this.inputTokens + tokens > tokenLimit)) { this.stopReason='model_budget'; return false; }
     this.modelCalls++; this.inputTokens+=tokens; return true;
   }
   recordUsage(usage: any): void {
@@ -93,7 +114,37 @@ export class QueryExecution {
     this.seenProbes.add(query);
     return true;
   }
-  report() { return { planVersion: this.planVersion, tier: this.tier, retrievalMs: this.retrievalMs,
+  startArm(label: string): void {
+    this.arms.set(label, { started: true, startedAt: Date.now(), candidateIds: [], authorized: 0, reranked: 0, contextTokens: 0, finalCitations: 0 });
+  }
+  skipArm(label: string, reason: string): void {
+    this.arms.set(label, { started: false, skippedReason: reason, candidateIds: [], authorized: 0, reranked: 0, contextTokens: 0, finalCitations: 0 });
+  }
+  finishArm(label: string, evidence: any[], reason = 'complete'): void {
+    const arm = this.arms.get(label);
+    if (!arm) return;
+    arm.elapsedMs = Date.now() - (arm.startedAt || Date.now());
+    arm.exitReason = reason;
+    arm.candidateIds = [...new Set(evidence.map(item => {
+      const id = retrievalEvidenceId(item);
+      if (item && typeof item === 'object') item.evidenceId = id;
+      return id;
+    }))];
+  }
+  recordEvidenceStage(stage: 'authorized' | 'reranked' | 'context' | 'citations', evidence: any[]): void {
+    evidence = evidence.flatMap(item => item?.evidenceRefs?.length ? item.evidenceRefs.map((ref: any) => ({ ...item, ...ref, evidenceId: ref.evidenceId, id: ref.blockId, chunkId: ref.blockId, contextChars: ref.contextChars })) : [item]);
+    const ids = new Set(evidence.map(retrievalEvidenceId));
+    for (const arm of this.arms.values()) {
+      const owned = new Set(arm.candidateIds);
+      const matches = evidence.filter(item => owned.has(retrievalEvidenceId(item)));
+      const count = [...ids].filter(id => owned.has(id)).length;
+      if (stage === 'authorized') arm.authorized = count;
+      else if (stage === 'reranked') arm.reranked = count;
+      else if (stage === 'citations') arm.finalCitations = count;
+      else arm.contextTokens = matches.reduce((tokens, item) => tokens + Math.ceil((Number.isFinite(item.contextChars) ? item.contextChars : String(item.context || item.evidence || item.content || item.snippet || item.text || '').length) / 4), 0);
+    }
+  }
+  report() { return { arms: Object.fromEntries([...this.arms].map(([label, arm]) => [label, { ...arm, uniqueCandidates: arm.candidateIds.filter(id => [...this.arms.values()].filter(other => other.candidateIds.includes(id)).length === 1).length }])), planVersion: this.planVersion, tier: this.tier, retrievalMs: this.retrievalMs,
     rounds: this.rounds, probes: this.probes, rerankPairs: this.pairs, modelCalls: this.modelCalls, actualPromptTokens: this.actualPromptTokens, actualCompletionTokens: this.actualCompletionTokens, usageReports: this.usageReports, authRevision: getRequestContext()?.authorization?.revision, versionManifest: getRequestContext()?.evidenceDependencies, estimatedInputTokens: this.inputTokens, stopReason: this.stopReason || 'evidence_complete' }; }
 }
 export function currentQueryExecution(): QueryExecution | undefined { return getRequestContext()?.execution; }

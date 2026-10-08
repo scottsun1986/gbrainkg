@@ -295,6 +295,14 @@ export class MetricsService {
     }
   }
 
+  observeChatPhase(phase: string, durationMs: number): void {
+    try { metricsRegistry.observeHistogram('chat_phase_duration_ms', Math.max(0, durationMs), { phase }); } catch { /* advisory */ }
+  }
+
+  observeChatMilestone(milestone: string, durationMs: number): void {
+    try { metricsRegistry.observeHistogram('chat_milestone_ms', Math.max(0, durationMs), { milestone }); } catch { /* advisory */ }
+  }
+
   /**
    * Per-stage chat latency, from request start to the end of one pipeline
    * phase. Time-to-first-token is a sum of phases, and without a per-phase

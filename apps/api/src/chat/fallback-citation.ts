@@ -1,0 +1,36 @@
+export type CitationScoreSource = 'rerank' | 'native' | 'synthetic';
+
+export function fallbackChunkToCitation(fb: any, idx: number): any {
+  return {
+    evidenceId: fb.evidenceId,
+    topic: fb.title || fb.documentId || '',
+    docId: fb.documentId,
+    chunkId: fb.id || fb.chunkId,
+    kbId: fb.kbId,
+    version: fb.version,
+    documentVersionId: fb.documentVersionId,
+    span: fb.span || fb.metadata?.span,
+    contentHash: fb.contentHash || fb.metadata?.contentHash,
+    sourceManifest: fb.sourceManifest,
+    ord: fb.ord,
+    pageNo: fb.pageNo,
+    articleNo: fb.articleNo,
+    evidence: fb.evidence,
+    snippet: fb.evidence,
+    context: fb.evidence,
+    score: typeof fb.score === 'number' && fb.score > 0 ? fb.score : Math.max(0.70, 0.95 - idx * 0.02),
+    scoreSource: 'synthetic' as CitationScoreSource,
+    docTitle: fb.title,
+    sectionGroup: (fb as any).sectionGroup,
+    subQueryOrigin: (fb as any).subQueryOrigin,
+    section: (fb as any).section,
+    breadcrumb: (fb as any).breadcrumb,
+    headingHierarchy: (fb as any).headingHierarchy,
+    bbox: fb.bbox,
+    previewUrl: fb.previewUrl,
+    sourceDocumentIds: fb.sourceDocumentIds,
+    raptor: (fb as any).raptor === true,
+    isSummary: (fb as any).isSummary === true,
+    sourceChunkIds: Array.isArray((fb as any).sourceChunkIds) ? (fb as any).sourceChunkIds : undefined,
+  };
+}

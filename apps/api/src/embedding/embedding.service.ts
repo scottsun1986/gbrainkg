@@ -58,6 +58,12 @@ export class EmbeddingService {
 
   constructor(@Optional() private readonly modelConfigService?: ModelConfigService) {}
 
+  onModuleInit(): void {
+    if (process.env.CORE_VERSIONING_ENABLED === '1' && (this.isHybridEnabled() || process.env.BGE_M3_MAXSIM_ENABLED === 'true')) {
+      throw new Error('CORE_VERSIONING_ENABLED does not support BGE-M3 sparse/multi-vector indexes; disable BGE_M3_HYBRID_ENABLED and BGE_M3_MAXSIM_ENABLED');
+    }
+  }
+
   private cacheKey(config: EmbeddingProviderConfig, text: string): string {
     // Model names are not globally unique. Include the route and dimensions so
     // a provider/model migration cannot reuse vectors from an incompatible

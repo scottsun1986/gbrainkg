@@ -32,8 +32,11 @@ describe('one query execution budget', () => {
     expect(execution.reservePairs(79)).toBe(true);
     expect(execution.reservePairs(2)).toBe(false);
     expect(execution.reservePairs(-1)).toBe(false);
-    for (let i=0;i<8;i++) expect(execution.reserveModelCall(1)).toBe(true);
+    for (let i=0;i<6;i++) expect(execution.reserveModelCall(1)).toBe(true);
+    expect(execution.reserveModelCall(1)).toBe(false);
     execution.finishRetrieval();
+    expect(execution.reserveModelCall(1)).toBe(true);
+    expect(execution.reserveModelCall(1)).toBe(true);
     expect(execution.reserveModelCall(1)).toBe(false);
     expect(execution.reserveModelCall(NaN)).toBe(false);
   });
@@ -79,5 +82,24 @@ describe('accuracy-first adaptive profile', () => {
     execution.finishRetrieval(); jest.advanceTimersByTime(90001);
     for (let i=0;i<24;i++) expect(execution.reserveModelCall(1)).toBe(true);
     expect(execution.reserveModelCall(1)).toBe(false);
+  });
+});
+
+describe('query arm contribution ledger', () => {
+  it('counts shared candidates separately from unique, consumed evidence', () => {
+    const execution = new QueryExecution('q');
+    const a = { id: 'a', documentId: 'doc', documentVersionId: 'v1', content: 'evidence' };
+    const b = { id: 'b', documentId: 'doc', documentVersionId: 'v1', content: 'other' };
+    execution.startArm('dense'); execution.finishArm('dense', [a, b, a]);
+    execution.startArm('lexical'); execution.finishArm('lexical', [a]);
+    execution.skipArm('graph', 'disabled');
+    execution.recordEvidenceStage('authorized', [a]);
+    execution.recordEvidenceStage('reranked', [a]);
+    execution.recordEvidenceStage('context', [a]);
+    execution.recordEvidenceStage('citations', [a]);
+    expect(execution.report().arms.dense).toMatchObject({ uniqueCandidates: 1, authorized: 1, reranked: 1, contextTokens: 2, finalCitations: 1 });
+    expect(execution.report().arms.graph).toMatchObject({ started: false, skippedReason: 'disabled' });
+    execution.recordEvidenceStage('citations', [{ ...a, evidenceId: undefined, documentVersionId: 'v2' }]);
+    expect(execution.report().arms.dense.finalCitations).toBe(0);
   });
 });

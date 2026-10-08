@@ -181,3 +181,22 @@ describe('EmbeddingService', () => {
     }
   });
 });
+
+describe('versioned hybrid configuration', () => {
+  const original = { versioning: process.env.CORE_VERSIONING_ENABLED, hybrid: process.env.BGE_M3_HYBRID_ENABLED, maxsim: process.env.BGE_M3_MAXSIM_ENABLED };
+  afterEach(() => {
+    for (const [key, value] of Object.entries({ CORE_VERSIONING_ENABLED: original.versioning, BGE_M3_HYBRID_ENABLED: original.hybrid, BGE_M3_MAXSIM_ENABLED: original.maxsim })) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  });
+  it('rejects undeclared sparse and multi-vector version support at startup', () => {
+    process.env.CORE_VERSIONING_ENABLED = '1';
+    process.env.BGE_M3_HYBRID_ENABLED = 'true';
+    expect(() => new EmbeddingService().onModuleInit()).toThrow('does not support');
+    process.env.BGE_M3_HYBRID_ENABLED = 'false';
+    process.env.BGE_M3_MAXSIM_ENABLED = 'true';
+    expect(() => new EmbeddingService().onModuleInit()).toThrow('does not support');
+    process.env.BGE_M3_MAXSIM_ENABLED = 'false';
+    expect(() => new EmbeddingService().onModuleInit()).not.toThrow();
+  });
+});

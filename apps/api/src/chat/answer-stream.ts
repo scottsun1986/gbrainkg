@@ -1,3 +1,4 @@
+import { getChatTiming } from '../observability/chat-timing';
 import type { Subscriber } from 'rxjs';
 import type { MessageEvent } from '@nestjs/common';
 import { metricsService } from '../observability/metrics.service';
@@ -62,11 +63,11 @@ export class StageReporter {
     }
   }
 
-  /** Records P50/P95-friendly latency marks. Call at first readable text and completion. */
+  /** Prepared text may still be buffered by the authorization/transport layer. */
   markFirstText(): void {
     if (this.firstTextAt !== null) return;
     this.firstTextAt = Date.now();
-    metricsService.observeChatLatency('first_text', this.firstTextAt - this.startedAt);
+    getChatTiming(this.startedAt).mark('answerPrepared');
   }
 
   markComplete(): void {

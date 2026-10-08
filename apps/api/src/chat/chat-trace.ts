@@ -1,3 +1,4 @@
+import { getChatTiming, type ChatPhase } from '../observability/chat-timing';
 import { randomUUID } from "node:crypto";
 import { MessageEvent } from "@nestjs/common";
 import { Subscriber } from "rxjs";
@@ -43,6 +44,18 @@ function safeDetails(
   return clean(value) as Record<string, unknown>;
 }
 
+const TIMED_PHASES: Record<string, ChatPhase> = {
+  permission_scope: 'authorization', permission_guard: 'authorization',
+  document_outline: 'retrieval', table_count: 'retrieval', semantic_cache: 'retrieval',
+  conversation_context: 'context', personal_memory: 'context',
+  source_plan: 'retrieval', source_freshness: 'retrieval', query_rewrite: 'retrieval',
+  gbrain_retrieval: 'retrieval', retrieval_escalation: 'retrieval', source_reconcile_retry: 'retrieval',
+  crag_rewrite_retry: 'retrieval', scope_synthesis: 'retrieval', graphrag_drift: 'retrieval',
+  rerank: 'reranking', confidence_rerank: 'reranking',
+  evidence_selection: 'context', answer_context: 'context',
+  llm_generation: 'generation', grounding_gate: 'verification', citation_validation: 'verification',
+};
+
 export class ChatTraceRecorder {
   readonly traceId = randomUUID();
   private readonly nodes = new Map<string, ChatTraceNode>();
@@ -55,6 +68,7 @@ export class ChatTraceRecorder {
     summary?: string,
     details?: Record<string, unknown>,
   ): void {
+    if (TIMED_PHASES[id]) getChatTiming().start(`trace:${id}`, TIMED_PHASES[id]);
     const node: ChatTraceNode = {
       id,
       name,
@@ -73,6 +87,7 @@ export class ChatTraceRecorder {
     summary?: string,
     details?: Record<string, unknown>,
   ): void {
+    getChatTiming().finish(`trace:${id}`);
     const previous = this.nodes.get(id);
     const finishedAt = new Date();
     const startedAt = previous?.startedAt || finishedAt.toISOString();

@@ -10,9 +10,11 @@ describe('generic structural recall and ranking', () => {
     const best = { id: 'best', documentId: 'a', kbId: 'kb', ord: 0, content: 'Complete source content', metadata: { heading_hierarchy: ['Source'] }, document: { title: 'Reference', version: 1 } };
     const weaker = { id: 'weaker', documentId: 'b', kbId: 'kb', ord: 0, content: heading, metadata: { heading_hierarchy: [heading] }, document: { title: 'Reference', version: 1 } };
     const findMany = jest.fn().mockResolvedValue([weaker, best]);
+    const prisma: any = { chunk: { findMany }, document: { findMany: jest.fn().mockResolvedValue([]) }, $queryRaw: jest.fn().mockResolvedValue([]) };
+    prisma.$transaction = (fn: any) => fn(prisma);
     const service = new RetrievalArmsService({
       logger: new Logger('structure-test'),
-      prisma: { chunk: { findMany }, document: { findMany: jest.fn().mockResolvedValue([]) } },
+      prisma,
       lexicalIndexService: { isEnabled: () => true, search: jest.fn().mockResolvedValue([best, weaker]) } as any,
     });
     const result = await service.searchChunksFallback(['kb'], '请列出所有章', 2);

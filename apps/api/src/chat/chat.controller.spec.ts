@@ -36,7 +36,7 @@ describe('Chat completion message identity', () => {
     expect(saved.content).toBe('问答处理失败：Query execution deadline exhausted');
     expect(saved.citationsSummary).toEqual([]);
     expect(saved.dependencyManifest).toEqual({ kind: 'non_evidence', version: 1, outcome: 'failure' });
-    expect(saved.processingTrace.every((node: any) => node.id === 'message_persistence')).toBe(true);
+    expect(saved.processingTrace.every((node: any) => ['message_persistence', 'pipeline_timing'].includes(node.id))).toBe(true);
     expect(mockPrisma.citation.createMany).not.toHaveBeenCalled();
     if (!stream) expect(runs.fail).toHaveBeenCalledWith('run-1', '问答处理失败：Query execution deadline exhausted');
     expect(runs.complete).not.toHaveBeenCalled();

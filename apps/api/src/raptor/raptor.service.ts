@@ -1,5 +1,5 @@
 import { runAsService } from '../db/service-principal';
-import { runOutsideRequestContext } from '../observability/request-context';
+import { getRequestContext, runOutsideRequestContext } from '../observability/request-context';
 import { requestFetch } from '../retrieval/request-signal';
 import { rethrowAuthorizationFailure as throwAuthorizationFailure } from '../permission/authorization-revision';
 import { Injectable, Logger, Optional } from '@nestjs/common';
@@ -41,6 +41,10 @@ interface RaptorSearchHit {
    * expanded back to its source evidence instead of being the sole, lossy
    * citation. */
   sourceChunkIds?: string[];
+  sourceDocumentIds?: string[];
+  version?: number;
+  documentVersionId?: string | null;
+  sourceManifest?: Array<{ docId: string; version: number; documentVersionId: string | null; sourceHash: string | null }>;
 }
 
 /**
@@ -256,7 +260,7 @@ export class RaptorService {
         where: { documentId: { in: documentIds }, level: 1 },
         take: Math.max(1, limit),
       });
-      return nodes
+      return this.withSourceDocuments(nodes
         .filter((node: any) => !this.isSpreadsheet(node.title))
         .map((node: any) => ({
           documentId: node.documentId,
@@ -269,7 +273,7 @@ export class RaptorService {
           raptor: true,
           section: 'raptor-level1',
           sourceChunkIds: Array.isArray(node.sourceChunkIds) ? node.sourceChunkIds : undefined,
-        }));
+        })));
     } catch (err) { throwAuthorizationFailure(err);
       this.logger.warn(`Document summary fetch failed: ${err instanceof Error ? err.message : String(err)}`);
       return [];
@@ -352,6 +356,52 @@ export class RaptorService {
     }
   }
 
+  private async withSourceDocuments(hits: RaptorSearchHit[]): Promise<RaptorSearchHit[]> {
+    const remaining = getRequestContext()?.execution?.deadline.remainingMs();
+    if (remaining !== undefined && remaining <= 0) return [];
+    const budget = Math.max(1, Math.min(2500, Math.ceil(remaining ?? 2500)));
+    return this.prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT set_config('statement_timeout', ${String(budget)}, true)`;
+      return this.resolveSourceDocuments(hits, tx);
+    }, { isolationLevel: 'RepeatableRead', maxWait: budget, timeout: budget + 1000 });
+  }
+
+  private async resolveSourceDocuments(hits: RaptorSearchHit[], db: any): Promise<RaptorSearchHit[]> {
+    const globalHits = hits.filter(hit => !hit.documentId);
+    const nodeIds = [...new Set(globalHits.flatMap(hit => hit.sourceChunkIds || []))];
+    const nodes = nodeIds.length ? await db.raptorNode.findMany({
+      where: { id: { in: nodeIds }, level: 1 }, select: { id: true, kbId: true, documentId: true, sourceChunkIds: true },
+    }) : [];
+    const sourceNodes = nodes.map((node: any) => ({ ...node, sourceChunkIds: Array.isArray(node.sourceChunkIds) ? node.sourceChunkIds.filter((id: unknown): id is string => typeof id === "string") : [] }));
+    const byId = new Map<string, any>(sourceNodes.map((node: any) => [node.id, node]));
+    const chunkIds = [...new Set([...sourceNodes.flatMap((node: any) => node.sourceChunkIds),
+      ...hits.filter(hit => hit.documentId).flatMap(hit => hit.sourceChunkIds || [])])];
+    const chunks = chunkIds.length ? await db.chunk.findMany({
+      where: { id: { in: chunkIds } }, select: { id: true, documentId: true },
+    }) : [];
+    const chunksById = new Map<string, any>(chunks.map((chunk: any) => [chunk.id, chunk]));
+    const docIds = [...new Set([...hits.map(hit => hit.documentId), ...nodes.map((node: any) => node.documentId)].filter((id: any): id is string => Boolean(id)))];
+    const docs = docIds.length ? await db.document.findMany({ where: { id: { in: docIds }, status: 'published' },
+      select: { id: true, version: true, activeVersionId: true, contentHash: true } }) : [];
+    const docsById = new Map<string, any>(docs.map((doc: any) => [doc.id, doc]));
+    return hits.flatMap<RaptorSearchHit>(hit => {
+      if (hit.documentId) {
+        const doc = docsById.get(hit.documentId);
+        if (!doc || !hit.sourceChunkIds?.length || hit.sourceChunkIds.some(id => chunksById.get(id)?.documentId !== hit.documentId)) return [];
+        return [{ ...hit, version: doc.version, documentVersionId: doc.activeVersionId, sourceDocumentIds: [hit.documentId] }];
+      }
+      const dependencies = (hit.sourceChunkIds || []).map(id => byId.get(id));
+      if (!dependencies.length || dependencies.some(node => !node?.documentId || !docsById.has(node.documentId) || node.kbId !== hit.kbId
+        || !node.sourceChunkIds.length || node.sourceChunkIds.some((id: string) => chunksById.get(id)?.documentId !== node.documentId))) return [];
+      return [{ ...hit, sourceDocumentIds: [...new Set<string>(dependencies.map(node => node!.documentId!))],
+        sourceManifest: [...new Set<string>(dependencies.map(node => node!.documentId!))].map(docId => {
+          const doc = docsById.get(docId);
+          return { docId, version: doc.version, documentVersionId: doc.activeVersionId, sourceHash: doc.contentHash };
+        }),
+        sourceChunkIds: [...new Set(dependencies.flatMap(node => node!.sourceChunkIds))] }];
+    });
+  }
+
   /** Keyword & macro search over summary nodes, scoped to visible KBs. */
   async search(kbIds: string[], query: string, limit = 5): Promise<RaptorSearchHit[]> {
     if (!this.isEnabled() || !kbIds.length) return [];
@@ -382,7 +432,7 @@ export class RaptorService {
         .sort((a: any, b: any) => b.hits - a.hits || b.node.level - a.node.level)
         .slice(0, limit);
 
-      return scored.map((item: any, index: number) => ({
+      return this.withSourceDocuments(scored.map((item: any, index: number) => ({
         documentId: item.node.documentId,
         kbId: item.node.kbId,
         title: item.node.title,
@@ -393,7 +443,7 @@ export class RaptorService {
         raptor: true,
         section: item.node.level === 2 ? 'raptor-level2-global' : item.node.level === 1 ? 'raptor-level1' : 'raptor-level0',
         sourceChunkIds: Array.isArray(item.node.sourceChunkIds) ? item.node.sourceChunkIds : undefined,
-      }));
+      })));
     } catch (err) { throwAuthorizationFailure(err);
       this.logger.warn(`RAPTOR search failed: ${err instanceof Error ? err.message : String(err)}`);
       return [];
@@ -439,7 +489,7 @@ export class RaptorService {
       scored.sort((a: any, b: any) => b.score - a.score || b.node.level - a.node.level);
       const topHits = scored.slice(0, limit);
 
-      return topHits.map((item: any, index: number) => ({
+      return this.withSourceDocuments(topHits.map((item: any, index: number) => ({
         documentId: item.node.documentId,
         kbId: item.node.kbId,
         title: item.node.title,
@@ -450,7 +500,7 @@ export class RaptorService {
         raptor: true,
         section: item.node.level === 2 ? 'raptor-level2-global' : 'raptor-level1',
         sourceChunkIds: Array.isArray(item.node.sourceChunkIds) ? item.node.sourceChunkIds : undefined,
-      }));
+      })));
     } catch (err) { throwAuthorizationFailure(err);
       this.logger.warn(`RAPTOR searchGlobal failed: ${err instanceof Error ? err.message : String(err)}`);
       return [];
@@ -503,7 +553,7 @@ export class RaptorService {
             level: 2,
             title,
             content: summary,
-            sourceChunkIds: docNodes.map((n: any) => n.id),
+            sourceChunkIds: validDocNodes.map((n: any) => n.id),
             metadata: {
               clusterKey: 'kb-global-evolution',
               docCount: docNodes.length,
@@ -1024,7 +1074,7 @@ export class RaptorService {
         // self-heal in the background.
         void this.backfillNodeEmbeddings(kbIds[0]).catch(error => this.logger.warn(`RAPTOR background embedding failed: ${error instanceof Error ? error.message : String(error)}`));
       }
-      return hits;
+      return this.withSourceDocuments(hits);
     } catch (err) { throwAuthorizationFailure(err);
       this.logger.debug(`RAPTOR vector search unavailable: ${err instanceof Error ? err.message : String(err)}`);
       return [];

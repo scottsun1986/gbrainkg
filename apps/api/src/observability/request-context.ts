@@ -1,7 +1,8 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import type { ChatTiming } from './chat-timing';
 import type { AuthorizationSnapshot } from '../permission/authorization-revision';
 import type { QueryExecution } from '../retrieval/query-execution';
-import type { EvidenceDependency } from '../permission/evidence-dependencies';
+import type { EvidenceManifest } from '../permission/evidence-dependencies';
 
 /**
  * Per-request correlation context. Populated by the request-id middleware and
@@ -22,7 +23,8 @@ export interface RequestContext {
   cancellation?: AbortSignal;
   servicePrincipal?: string;
   artifactInputs?: string;
-  evidenceDependencies?: EvidenceDependency[] | null;
+  evidenceDependencies?: EvidenceManifest | null;
+  chatTiming?: ChatTiming;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();

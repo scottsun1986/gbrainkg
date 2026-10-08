@@ -24,6 +24,8 @@
  *  3. Okapi BM25 is then computed in SQL with the exact corpus df (from
  *     LexicalTermStat) and exact N / avgdl (from KbLexicalStat).
  */
+import { Prisma } from '@prisma/client';
+import { boundedReadSql, readableDocumentSql } from './readable-document-scope';
 import { recordFailopen } from '../observability/failopen';
 import { lexicalLength, tokenize } from './lexical-tokenizer';
 import { indexableChunkText } from '../ingestion/chunk-text';
@@ -670,13 +672,7 @@ export async function searchLexicalBm25Detailed(
   const take = Math.max(1, Math.min(5000, Math.floor(limit)));
   const started = Date.now();
 
-  // No interactive transaction here on purpose: the production box has a small
-  // Prisma pool and a background enrichment queue, and holding a transaction
-  // per retrieval arm produced "Unable to start a transaction in the given
-  // time" under load. The query is bounded by the candidate budget, so the
-  // timeout is applied by the caller (RetrievalDeadline) instead.
-  void timeoutMs;
-  const rows = await withServiceContext(prisma, (tx) => tx.$queryRaw`
+  const rows = await boundedReadSql(prisma, Prisma.sql`
       WITH qterms AS (
         SELECT DISTINCT unnest(${uniqueTerms}::text[]) AS term
       ),
@@ -740,6 +736,7 @@ export async function searchLexicalBm25Detailed(
         WHERE q.tsq IS NOT NULL
           AND l."kbId" = ANY(${scope}::uuid[])
           AND d.status = 'published'
+          AND ${readableDocumentSql()}
           AND l."tsv" @@ q.tsq
         -- Exact BM25 must see every matching chunk. A nonzero window is an
         -- explicitly approximate, latency-oriented mode.
@@ -780,7 +777,7 @@ export async function searchLexicalBm25Detailed(
       WHERE d.status = 'published'
       ORDER BY s.score DESC
       LIMIT ${take}
-    `);
+    `, timeoutMs);
 
   const list = Array.isArray(rows) ? rows : [rows];
   const hits = list

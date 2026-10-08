@@ -1,3 +1,5 @@
+import { getRequestContext } from './observability/request-context';
+import { readableDocumentWhere } from './retrieval/readable-document-scope';
 import { Body, Controller, ForbiddenException, Get, Optional, Post, Query, Req, UseGuards, Inject } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { getPrismaClient } from './prisma';
@@ -82,17 +84,42 @@ export class KnowledgeGraphController {
     @Req() req: any,
     @Query('limit') rawLimit?: string,
     @Query('fresh') freshParam?: string,
+    @Query('page') rawPage?: string,
+    @Query('root') root?: string,
   ) {
     const userId = await this.authService.userIdFromRequest(req);
+    const context = getRequestContext();
+    if (context && context.asOf === undefined) context.asOf = Date.now();
     const visibleKbIds = await this.permissionService.getVisibleKnowledgeBases(userId);
     const limit = Math.min(Math.max(Number(rawLimit || 1000) || 1000, 1), 1000);
     const maxChunksPerDoc = Math.max(5, Number(process.env.KG_MAX_CHUNKS_PER_DOC || 40));
+    const requestedPage = Number(rawPage);
+    const page = Number.isFinite(requestedPage) ? Math.min(1000000, Math.max(0, Math.floor(requestedPage))) : 0;
+    const readableWhere = await readableDocumentWhere(this.prisma, userId);
+    let neighborhood: any = {};
+    if (root) {
+      if (root.startsWith('kb:')) neighborhood = { kbId: root.slice(3) };
+      else if (root.startsWith('concept:')) neighborhood = { chunks: { some: { content: { contains: root.slice(8), mode: 'insensitive' } } } };
+      else if (root.startsWith('doc:')) {
+        const origin = await this.prisma.document.findMany({
+          where: { id: root.slice(4), kbId: { in: visibleKbIds }, status: 'published', ...readableWhere },
+          take: 1, select: { id: true, title: true, chunks: { take: maxChunksPerDoc, orderBy: { ord: 'asc' }, select: { content: true, metadata: true } } },
+        });
+        if (!origin.length) throw new ForbiddenException('Document is unavailable');
+        const terms = extractTerms(origin[0].title, origin[0].chunks).slice(0, 10);
+        neighborhood = { OR: [{ id: origin[0].id }, { chunks: { some: { OR: terms.map(term => ({ content: { contains: term, mode: 'insensitive' } })) } } }] };
+      } else throw new ForbiddenException('Unknown graph node');
+    }
+    const where = { AND: [{ kbId: { in: visibleKbIds }, status: 'published', ...readableWhere }, neighborhood] };
+    const inventory = await this.prisma.document.aggregate({ where, _count: true, _max: { updatedAt: true } });
+    const knowledgeRevision = JSON.stringify(inventory);
+    const projection = { where, page, root, total: inventory._count };
     const forceFresh = ["true", "1"].includes(String(freshParam || ""));
 
     // Cache is scoped to the caller's visible-KB set so one user's stale
     // snapshot can never leak another scope's nodes.
     const authority = await readAuthorizationSnapshot(userId);
-    const cacheKey = `${userId}|${authority.revision}|${authority.expiresAt}|${limit}|${maxChunksPerDoc}|${[...visibleKbIds].sort().join(',')}`;
+    const cacheKey = `${userId}|${authority.revision}|${authority.expiresAt}|${knowledgeRevision}|${page}|${root || ''}|${limit}|${maxChunksPerDoc}|${[...visibleKbIds].sort().join(',')}`;
     const cacheTtlMs = Math.max(0, Number(process.env.KG_CACHE_TTL_MS || 300_000));
     // LRU eviction, not a wholesale clear. The cache key includes the caller's
     // visible-KB set, so a fleet of users with different scopes fills it fast;
@@ -105,11 +132,15 @@ export class KnowledgeGraphController {
     if (cached) {
       const ids = cached.payload.nodes.filter((node: GraphNode) => node.type === 'document').map((node: GraphNode) => node.documentId!);
       const readable = await this.documentAclService.filterReadableDocuments(userId, ids, { visibleKbIds });
-      if (readable.size !== ids.length) {
+      const versions = await this.prisma.document.findMany({ where: { id: { in: ids }, ...where }, select: { id: true, version: true, activeVersionId: true, contentHash: true, updatedAt: true } });
+      const fingerprint = this.documentProjectionVersion(versions);
+      if (readable.size !== ids.length || fingerprint !== cached.fingerprint) {
         this.graphCache.delete(cacheKey);
         cached = undefined;
       }
     }
+
+    if (cached) await assertAuthorizationSnapshot(userId, authority);
 
     if (cached && cached.expiresAt > Date.now() && !forceFresh) {
       return { ...cached.payload, cached: true };
@@ -118,7 +149,7 @@ export class KnowledgeGraphController {
     if (cached && !forceFresh) {
       // Stale-while-revalidate: serve the last snapshot of this exact scope
       // instantly and refresh in the background (single-flight per scope).
-      this.scheduleRebuild(cacheKey, userId, visibleKbIds, limit, maxChunksPerDoc);
+      this.scheduleRebuild(cacheKey, userId, visibleKbIds, limit, maxChunksPerDoc, projection);
       // Served from the snapshot, so `cached` is true — freshness is carried by
       // `stale`, not by denying the hit. Reporting `cached: false` here made a
       // 0.01 s snapshot response look like a full rebuild, which is what failed
@@ -142,7 +173,11 @@ export class KnowledgeGraphController {
       }
     }
 
-    return this.buildGraph(cacheKey, cacheTtlMs, userId, visibleKbIds, limit, maxChunksPerDoc);
+    return this.buildGraph(cacheKey, cacheTtlMs, userId, visibleKbIds, limit, maxChunksPerDoc, projection);
+  }
+
+  private documentProjectionVersion(documents: any[]): string {
+    return createHash('sha256').update(JSON.stringify(documents.map(doc => [doc.id, doc.version, doc.activeVersionId, doc.contentHash, doc.updatedAt]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))))).digest('hex');
   }
 
   /** Drop the least recently used snapshot once the cache is over capacity. */
@@ -175,9 +210,10 @@ export class KnowledgeGraphController {
     visibleKbIds: string[],
     limit: number,
     maxChunksPerDoc: number,
+    projection?: { where: any; page: number; root?: string; total: number },
   ) {
     if (this.rebuilding.has(cacheKey)) return;
-    const task = this.buildGraph(cacheKey, Math.max(0, Number(process.env.KG_CACHE_TTL_MS || 300_000)), userId, visibleKbIds, limit, maxChunksPerDoc)
+    const task = this.buildGraph(cacheKey, Math.max(0, Number(process.env.KG_CACHE_TTL_MS || 300_000)), userId, visibleKbIds, limit, maxChunksPerDoc, projection)
       .then(() => undefined)
       .catch(() => undefined)
       .finally(() => { this.rebuilding.delete(cacheKey); });
@@ -191,12 +227,15 @@ export class KnowledgeGraphController {
     visibleKbIds: string[],
     limit: number,
     maxChunksPerDoc: number,
+    projection?: { where: any; page: number; root?: string; total: number },
   ) {
     const authority = await readAuthorizationSnapshot(userId);
     const buildStartedAt = Date.now();
+    const readableWhere = await readableDocumentWhere(this.prisma, userId);
     const candidates = await this.prisma.document.findMany({
-      where: { kbId: { in: visibleKbIds }, status: 'published' },
-      orderBy: { updatedAt: 'desc' },
+      where: projection?.where || { kbId: { in: visibleKbIds }, status: 'published', ...readableWhere },
+      orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+      skip: (projection?.page || 0) * limit,
       take: limit,
       select: {
         id: true,
@@ -204,11 +243,20 @@ export class KnowledgeGraphController {
         kbId: true,
         updatedAt: true,
         aclMode: true,
+        version: true, activeVersionId: true, contentHash: true,
         kb: { select: { id: true, name: true, type: true } },
         chunks: { orderBy: { ord: 'asc' }, take: maxChunksPerDoc, select: { id: true, content: true, metadata: true } },
       },
     });
 
+    if (projection?.root?.startsWith('doc:') && !candidates.some(doc => `doc:${doc.id}` === projection.root)) {
+      const origin = await this.prisma.document.findMany({
+        where: { AND: [projection.where, { id: projection.root.slice(4) }] }, take: 1,
+        select: { id: true, title: true, kbId: true, updatedAt: true, aclMode: true, version: true, activeVersionId: true, contentHash: true,
+          kb: { select: { id: true, name: true, type: true } }, chunks: { orderBy: { ord: 'asc' }, take: maxChunksPerDoc, select: { id: true, content: true, metadata: true } } },
+      });
+      candidates.push(...origin);
+    }
     const readable = await this.documentAclService.filterReadableDocuments(userId, candidates.map(doc => doc.id), { docs: candidates, visibleKbIds });
     const documents = candidates.filter(doc => readable.has(doc.id));
 
@@ -321,6 +369,8 @@ export class KnowledgeGraphController {
     const related = new Map<string, Set<string>>();
     for (const [term, docIds] of conceptDocuments) {
       const ids = [...docIds];
+      // The shared topic node already links common terms; avoid quadratic cliques.
+      if (ids.length > 20) continue;
       for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
         const key = [ids[i], ids[j]].sort().join('|');
         if (!related.has(key)) related.set(key, new Set());
@@ -350,6 +400,7 @@ export class KnowledgeGraphController {
         target: edge.target,
         type: edge.type,
         weight: edge.weight,
+        ...(projection?.root ? { evidence: edge.evidence } : {}),
       })),
       stats: {
         knowledgeBases: new Set(documents.map((item) => item.kbId)).size,
@@ -363,6 +414,8 @@ export class KnowledgeGraphController {
         graphMode: 'gbrain-links-plus-discovery',
         buildMs: Date.now() - buildStartedAt,
       },
+      projectionVersion: this.documentProjectionVersion(documents),
+      pagination: { page: projection?.page || 0, limit, total: projection?.total ?? documents.length, hasMore: projection ? (projection.page + 1) * limit < projection.total : false },
       scope: { userId, visibleKnowledgeBases: visibleKbIds.length, onlyPublished: true },
     };
     await assertAuthorizationSnapshot(userId, authority);
@@ -373,7 +426,7 @@ export class KnowledgeGraphController {
       this.graphCache.set(cacheKey, {
         expiresAt: Date.now() + cacheTtlMs,
         storedAt: Date.now(),
-        fingerprint: createHash('sha256').update(`${nodes.size}|${edges.size}`).digest('hex'),
+        fingerprint: this.documentProjectionVersion(documents),
         payload,
       });
       this.evictOldestGraphSnapshot();
@@ -432,6 +485,7 @@ export class KnowledgeGraphController {
           doc.chunks,
           1,
           llmConfig,
+          { kbId: doc.kbId },
         );
         const res = await this.graphRagService.persistGraphElements(doc.kbId, elements);
         totalEntities += res.entityCount;

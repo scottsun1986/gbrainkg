@@ -5,6 +5,13 @@ describe('answer prompt ownership', () => {
   const chineseRules = buildStaticAnswerRules(false);
   const englishRules = buildStaticAnswerRules(true);
 
+  it('loads directory and table rules only for the selected task', () => {
+    const ordinary = buildStaticAnswerRules(false, { directory: false, table: false });
+    expect(ordinary).not.toContain('【章节目录全景列举】');
+    expect(ordinary).not.toContain('【表格行记录与关键锚点事实并存处理】');
+    expect(buildStaticAnswerRules(false, { directory: true, table: true })).toContain('【章节目录全景列举】');
+  });
+
   it('keeps merged tail evidence and original numbering', () => {
     const text = 'head\n' + 'x'.repeat(7000) + '\nend-link';
     const context = buildSourceContext([{ docTitle: 'A', context: text, mergedChunkCount: 2 }, { docTitle: 'B', context: 'second' }], '', true, logger);
@@ -19,7 +26,7 @@ describe('answer prompt ownership', () => {
     // English inherits the Chinese authority instead of maintaining a parallel rule set.
     expect(englishRules.startsWith(chineseRules)).toBe(true);
     expect(englishRules).toContain('The Chinese rules above are authoritative');
-    expect(englishRules).toContain('answer entirely in English');
+    expect(englishRules).toContain('otherwise use the question’s language');
     expect(chineseRules).not.toContain('[English response — secondary instructions]');
   });
 
@@ -34,7 +41,7 @@ describe('answer prompt ownership', () => {
 
   it('retains grounding, citation and value rules', () => {
     expect(chineseRules).toContain('决定性取值必须逐字照抄');
-    expect(englishRules).toContain('character-for-character');
+    expect(englishRules).toContain('application-provided typed calculations');
     expect(chineseRules).toContain('保留每个来源明示的适用范围，包括人群或群体');
     expect(chineseRules).toContain('将证据支持的较窄主体保留为事实陈述的语法主语，包括首句和清单标题');
     expect(chineseRules).toContain('须在陈述中明确限定为有证据支持的子群体，不能沿用问题中的宽泛主体');

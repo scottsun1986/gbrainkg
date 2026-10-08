@@ -8,6 +8,7 @@ const prismaMock = {
     deleteMany: jest.fn(),
   },
   message: { findFirst: jest.fn() },
+  $executeRaw: jest.fn().mockResolvedValue(1),
 };
 
 jest.mock('../prisma', () => ({ getPrismaClient: () => prismaMock }));
@@ -192,4 +193,32 @@ describe('ChatRunService', () => {
     service.onModuleDestroy();
   });
 
+});
+
+
+describe('owner-scoped browser timing ACK', () => {
+  const messageId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  beforeEach(() => jest.clearAllMocks());
+  it('rejects another owner before writing any trace', async () => {
+    prismaMock.message.findFirst.mockResolvedValue(null);
+    await expect(new ChatRunService().recordClientTiming('user', messageId, { firstVisibleMs: 50, finalVisibleMs: 100 })).rejects.toThrow('Message not found');
+    expect(prismaMock.message.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: messageId, role: 'assistant', conversation: { userId: 'user' } } }));
+    expect(prismaMock.$executeRaw).not.toHaveBeenCalled();
+  });
+  it('records client-clock measurements only after current source authorization', async () => {
+    prismaMock.message.findFirst.mockResolvedValue({ id: messageId, dependencyManifest: ['source'] });
+    (validateEvidenceDependencies as jest.Mock).mockResolvedValue(true);
+    await expect(new ChatRunService().recordClientTiming('user', messageId, { firstVisibleMs: 50, finalVisibleMs: 100 })).resolves.toEqual({ recorded: true });
+    const args = prismaMock.$executeRaw.mock.calls[0];
+    expect(args[0].join(' ')).toContain('c."userId"=');
+    expect(args.some((arg: any) => typeof arg === 'string' && arg.includes('client-performance'))).toBe(true);
+  });
+  it('denies revoked sources and invalid/negative client clocks', async () => {
+    const service = new ChatRunService();
+    await expect(service.recordClientTiming('user', messageId, { firstVisibleMs: -1, finalVisibleMs: 10 })).rejects.toThrow('Invalid client render timing');
+    prismaMock.message.findFirst.mockResolvedValue({ id: messageId, dependencyManifest: ['source'] });
+    (validateEvidenceDependencies as jest.Mock).mockResolvedValue(false);
+    await expect(service.recordClientTiming('user', messageId, { firstVisibleMs: 1, finalVisibleMs: 10 })).rejects.toThrow('Message not found');
+    expect(prismaMock.$executeRaw).not.toHaveBeenCalled();
+  });
 });

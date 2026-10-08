@@ -1,4 +1,6 @@
-import { Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { metricsService } from '../observability/metrics.service';
+import type { ChatTimingSnapshot } from '../observability/chat-timing';
+import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { runAsService } from '../db/service-principal';
 import { getPrismaClient } from '../prisma';
 import { authorizationEnforced } from '../permission/authorization-revision';
@@ -32,6 +34,7 @@ export interface ChatRunView {
   citations?: unknown;
   trace?: unknown;
   latencyMs?: number;
+  timing?: ChatTimingSnapshot & { runReadyMs?: number; pollServedMs?: number };
   errorMessage?: string;
 }
 
@@ -228,9 +231,57 @@ export class ChatRunService implements OnModuleInit, OnModuleDestroy {
         view.citations = message.citationsSummary ?? [];
         view.trace = message.processingTrace ?? [];
         view.latencyMs = message.latencyMs ?? undefined;
+        const stored = Array.isArray(message.processingTrace)
+          ? message.processingTrace.find((node: any) => node?.id === 'pipeline_timing') as any : undefined;
+        if (stored?.details?.schemaVersion === 1) {
+          view.timing = { ...stored.details,
+            runReadyMs: run.completedAt ? Math.max(0, run.completedAt.getTime() - run.startedAt.getTime()) : undefined,
+            pollServedMs: Math.max(0, Date.now() - run.startedAt.getTime()) };
+        }
       }
     }
     return view;
+  }
+
+  async recordServerTiming(userId: string, messageId: string, snapshot: ChatTimingSnapshot): Promise<void> {
+    const node = { id: 'pipeline_timing', name: '响应阶段计量', status: 'success', startedAt: snapshot.startedAt,
+      finishedAt: new Date().toISOString(), durationMs: snapshot.elapsedMs,
+      details: { ...snapshot, clock: 'server', visibility: 'transport/run readiness; browser measured separately' } };
+    await this.replaceTimingNode(userId, messageId, node);
+  }
+
+  async recordClientTiming(userId: string, messageId: string, body: { firstVisibleMs: number; finalVisibleMs: number }) {
+    if (!/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(messageId)) throw new BadRequestException('Invalid message ID.');
+    const first = body?.firstVisibleMs; const final = body?.finalVisibleMs;
+    if (![first, final].every(value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 86400000)
+      || final < first) throw new BadRequestException('Invalid client render timing.');
+    const message = await this.prisma.message.findFirst({ where: { id: messageId, role: 'assistant', conversation: { userId } },
+      select: { id: true, dependencyManifest: true } });
+    if (!message || (authorizationEnforced() && !await validateEvidenceDependencies(userId, message.dependencyManifest))) {
+      throw new NotFoundException('Message not found.');
+    }
+    const now = new Date().toISOString();
+    await this.replaceTimingNode(userId, messageId, { id: 'client_render_timing', name: '浏览器可见渲染观测', status: 'success',
+      startedAt: now, finishedAt: now, durationMs: Math.round(final),
+      details: { schemaVersion: 1, clock: 'client-performance', method: 'visible-double-raf',
+        firstVisibleMs: first, finalVisibleMs: final, receivedAt: now,
+        limitation: 'Visible document and two animation frames are a rendering opportunity, not proof of physical display.' } });
+    metricsService.observeChatMilestone('clientFirstVisible', first);
+    metricsService.observeChatMilestone('clientFinalVisible', final);
+    return { recorded: true };
+  }
+
+  private async replaceTimingNode(userId: string, messageId: string, node: Record<string, unknown>): Promise<void> {
+    // Atomic JSON replacement preserves unrelated server/client trace writes.
+    await this.prisma.$executeRaw`
+      UPDATE "Message" m SET "processingTrace" = COALESCE((
+        SELECT jsonb_agg(entry) FROM jsonb_array_elements(
+          CASE WHEN jsonb_typeof(m."processingTrace")='array' THEN m."processingTrace" ELSE '[]'::jsonb END
+        ) entry WHERE entry->>'id' IS DISTINCT FROM ${String(node.id)}
+      ), '[]'::jsonb) || ${JSON.stringify([node])}::jsonb
+      WHERE m.id=${messageId}::uuid AND m.role='assistant'
+        AND EXISTS(SELECT 1 FROM "Conversation" c WHERE c.id=m."conversationId" AND c."userId"=${userId}::uuid)
+    `;
   }
 
   /**

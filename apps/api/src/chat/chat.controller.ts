@@ -1,3 +1,4 @@
+import { getChatTiming, timingTraceNode } from '../observability/chat-timing';
 import {
   BadRequestException,
   Controller,
@@ -99,6 +100,8 @@ export class ChatController {
     @Req() req: any,
     @Res() response: Response,
   ): Promise<void> {
+    const timing = getChatTiming();
+    timing.start('request_authorization', 'authorization');
     const strictOutput = process.env.KNOWLEDGE_STRICT_OUTPUT === '1';
     if (strictOutput && !authorizationEnforced()) throw new BadRequestException('Strict output requires authorization enforcement');
     const userId = await this.authService.userIdFromRequest(req);
@@ -120,6 +123,7 @@ export class ChatController {
     // Requested scope must be a subset of the caller's visible knowledge
     // bases; otherwise reject with 403 before any stream is opened.
     await this.chatService.assertRequestedScopeAuthorized(userId, kb_scope);
+    timing.finish('request_authorization');
     let conversation = body.conversation_id
       ? await this.prisma.conversation.findFirst({
           where: { id: body.conversation_id, userId },
@@ -170,6 +174,7 @@ export class ChatController {
       );
     }
 
+    timing.start('queue', 'queue');
     let authorizationSnapshot: AuthorizationSnapshot | undefined;
     const stream$: Observable<MessageEvent> =
       await this.chatService.handleChatStream(
@@ -210,7 +215,10 @@ export class ChatController {
             return;
           }
           if (!runId) buffered.push(event);
-        } else response.write(event);
+        } else {
+          response.write(event);
+          if ((data.type === 'delta' || data.type === 'replace') && String(data.content || '').trim()) timing.mark('transportFirstText');
+        }
       }
     };
     const upsertPersistenceTrace = (status: string, summary: string) => {
@@ -244,11 +252,19 @@ export class ChatController {
         }
         // Status-only responses have no source authorization manifest. Keep
         // retrieved excerpts out of their later diagnostic endpoint as well.
-        const persistenceTrace = () => dependencyManifest?.kind === 'non_evidence'
-          ? [...traceNodes.values()].filter(node => node.id === 'message_persistence')
-          : [...traceNodes.values()];
+        const persistenceTrace = () => {
+          traceNodes.set('pipeline_timing', timingTraceNode(timing));
+          return dependencyManifest?.kind === 'non_evidence'
+            ? [...traceNodes.values()].filter(node => ['message_persistence', 'pipeline_timing'].includes(node.id))
+            : [...traceNodes.values()];
+        };
+        timing.start('persistence', 'persistence');
         upsertPersistenceTrace("running", "正在保存回答、引用和处理链路");
         let messageId: string | undefined;
+        if (!runId) response.once?.('finish', () => {
+          timing.mark('transportComplete');
+          if (messageId) void this.chatRunService.recordServerTiming?.(userId, messageId, timing.snapshot()).catch(() => undefined);
+        });
         try {
           const created = await this.prisma.message.create({
             data: {
@@ -274,6 +290,7 @@ export class ChatController {
           if (citationRows.length > 0) {
             await this.prisma.citation.createMany({ data: citationRows });
           }
+          timing.finish('persistence');
           upsertPersistenceTrace("success", "回答、引用和处理链路已保存");
           await this.prisma.message.update({
             where: { id: created.id },
@@ -282,7 +299,11 @@ export class ChatController {
           // A poll only learns the answer exists once the row does, so the run
           // is closed here rather than on `complete`: closing earlier would let
           // a client fetch a message that is not written yet.
-          if (runId && messageId && !errorContent) await this.chatRunService.complete(runId, messageId);
+          if (runId && messageId && !errorContent) {
+            await this.chatRunService.complete(runId, messageId);
+            timing.mark('runReady');
+            await this.chatRunService.recordServerTiming?.(userId, messageId, timing.snapshot());
+          }
           if (runId && errorContent) await this.chatRunService.fail(runId, errorContent);
         } catch (error: any) {
           console.error("Failed to persist assistant message:", error);
@@ -292,6 +313,7 @@ export class ChatController {
           );
           if (runId) await this.chatRunService.fail(runId, `保存失败：${String(error?.message || error).slice(0, 300)}`);
         } finally {
+          timing.finish('persistence');
           if (runId && errorContent && !messageId) await this.chatRunService.fail(runId, errorContent);
           writeEvent({
             type: "done",
@@ -299,6 +321,7 @@ export class ChatController {
             total_tokens: totalTokens,
             latency_ms: Date.now() - requestStartedAt,
             trace_id: traceId,
+            pipeline_timing: timing.snapshot(),
           });
           if (runId) {
             // The POST already returned; the client learns the outcome by
@@ -314,7 +337,8 @@ export class ChatController {
                   const onError = (error: Error) => { cleanup(); reject(error); };
                   const timer = setTimeout(() => { cleanup(); response.destroy(); reject(new Error('Strict transport drain timed out')); }, 5000);
                   response.once('error', onError);
-                  response.end(buffered.join(''), () => { cleanup(); resolve(); });
+                  if (answer.trim()) timing.mark('transportFirstText');
+                  response.end(buffered.join(''), () => { timing.mark('transportComplete'); cleanup(); resolve(); });
                 });
               }, dependencyManifest);
             } catch (error: any) {
@@ -417,6 +441,13 @@ export class ChatController {
     // run whose tab was closed outright from burning the full deadline.
     if (run.status === 'running') this.chatRunService.touch(runId);
     return run;
+  }
+
+  @Post('messages/:messageId/render-timing')
+  async recordRenderTiming(@Req() req: any, @Param('messageId') messageId: string,
+    @Body() body: { firstVisibleMs: number; finalVisibleMs: number }) {
+    const userId = await this.authService.userIdFromRequest(req);
+    return this.chatRunService.recordClientTiming(userId, messageId, body);
   }
 
   /** Best-effort cancel. Only the instance that started the run can abort it. */

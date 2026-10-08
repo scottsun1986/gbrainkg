@@ -481,6 +481,7 @@ export class SystemReprocessService {
                   docChunks,
                   doc.version,
                   llmConfig,
+                  { kbId: doc.kbId },
                 );
                 const saved = await this.graphRagService.persistGraphElements(doc.kbId, elements);
                 this.status.stats.extractedEntities += saved.entityCount;

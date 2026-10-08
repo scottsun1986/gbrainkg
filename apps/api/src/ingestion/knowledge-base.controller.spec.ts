@@ -17,8 +17,9 @@ describe('personal knowledge base creation', () => {
   });
 
   it('allows creating a personal knowledge base without a numeric count limit', async () => {
+    const permission = { invalidatePermissionCaches: jest.fn() };
     const controller = new KnowledgeBaseController(
-      {} as any,
+      permission as any,
       { userIdFromRequest: jest.fn().mockResolvedValue('user-1') } as any,
       { queueAccessReconciliation: jest.fn().mockResolvedValue(undefined) } as any,
     );
@@ -28,6 +29,43 @@ describe('personal knowledge base creation', () => {
     expect(mockPrisma.knowledgeBase.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ name: 'extra KB', ownerUserId: 'user-1' }),
     }));
+  });
+
+  it('invalidates the owner visibility cache so the new KB is immediately usable', async () => {
+    const permission = { invalidatePermissionCaches: jest.fn() };
+    const controller = new KnowledgeBaseController(
+      permission as any,
+      { userIdFromRequest: jest.fn().mockResolvedValue('user-1') } as any,
+      { queueAccessReconciliation: jest.fn().mockResolvedValue(undefined) } as any,
+    );
+    await controller.createPersonalKnowledgeBase({} as any, { name: 'immediately usable' });
+    // Creation must drop the cached visible-KB set for the owner, otherwise an
+    // immediate documents/list call returned 403 for up to PERMISSION_CACHE_TTL_MS.
+    expect(permission.invalidatePermissionCaches).toHaveBeenCalledWith('user-1');
+  });
+});
+
+describe('personal knowledge base deletion', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockPrisma.knowledgeBase.findUnique = jest.fn().mockResolvedValue({
+      id: 'kb-1', type: 'personal', ownerUserId: 'user-1', status: 'active',
+    });
+    mockPrisma.knowledgeBase.update = jest.fn().mockResolvedValue({ id: 'kb-1', status: 'archived' });
+  });
+
+  it('invalidates the owner visibility cache after archiving', async () => {
+    const permission = { invalidatePermissionCaches: jest.fn() };
+    const controller = new KnowledgeBaseController(
+      permission as any,
+      { userIdFromRequest: jest.fn().mockResolvedValue('user-1') } as any,
+      { queueAccessReconciliation: jest.fn().mockResolvedValue(undefined) } as any,
+    );
+    await controller.deletePersonalKnowledgeBase({} as any, 'kb-1');
+    expect(mockPrisma.knowledgeBase.update).toHaveBeenCalledWith({
+      where: { id: 'kb-1' }, data: { status: 'archived' },
+    });
+    expect(permission.invalidatePermissionCaches).toHaveBeenCalledWith('user-1');
   });
 });
 
@@ -76,6 +114,33 @@ describe('document list ACL boundary', () => {
       const result = await controller.listDocuments('kb-1', {});
       expect(mockPrisma.document.count).toHaveBeenCalledWith({ where: { AND: [{ kbId: 'kb-1' }, { id: { in: ['allowed'] } }] } });
       expect(result.items[0].rawFileOid).toBeUndefined();
+    } finally { acl.mockRestore(); }
+  });
+});
+
+describe('preview file current authorization', () => {
+  const kbId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const docId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  beforeAll(() => { process.env.PREVIEW_TOKEN_SECRET = 'preview-test-secret-at-least-32-characters'; });
+  afterAll(() => { delete process.env.PREVIEW_TOKEN_SECRET; });
+  it('denies a disabled user with an otherwise valid file token', async () => {
+    const { signPreviewPayload } = await import('../auth/document-preview-token');
+    mockPrisma.user.findUnique = jest.fn().mockResolvedValue({ status: 'disabled' });
+    const permission = { getVisibleKnowledgeBases: jest.fn().mockResolvedValue([kbId]) };
+    const controller = new KnowledgeBaseController(permission as any, {} as any, {} as any);
+    const token = signPreviewPayload({ userId: 'user', kbId, docId, version: 1, exp: Math.floor(Date.now() / 1000) + 60 });
+    await expect(controller.getPreviewFile(kbId, docId, token, {} as any)).rejects.toThrow('Preview user is inactive');
+    expect(permission.getVisibleKnowledgeBases).not.toHaveBeenCalled();
+  });
+  it('denies a revoked document ACL before opening the source file', async () => {
+    const { signPreviewPayload } = await import('../auth/document-preview-token');
+    const { DocumentAclService } = await import('../permission/document-acl.service');
+    mockPrisma.user.findUnique = jest.fn().mockResolvedValue({ status: 'active' });
+    const acl = jest.spyOn(DocumentAclService.prototype, 'isDocumentReadable').mockResolvedValue(false);
+    const controller = new KnowledgeBaseController({ getVisibleKnowledgeBases: jest.fn().mockResolvedValue([kbId]) } as any, {} as any, {} as any);
+    try {
+      const token = signPreviewPayload({ userId: 'user', kbId, docId, version: 1, exp: Math.floor(Date.now() / 1000) + 60 });
+      await expect(controller.getPreviewFile(kbId, docId, token, {} as any)).rejects.toThrow('Preview access is no longer authorized');
     } finally { acl.mockRestore(); }
   });
 });

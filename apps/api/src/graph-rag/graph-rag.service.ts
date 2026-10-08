@@ -1,3 +1,4 @@
+import { boundedRead, readableDocumentWhere } from '../retrieval/readable-document-scope';
 import { embeddingFingerprint, reusableEmbeddingIdentity } from '../embedding/model-fingerprint';
 import { getRequestContext } from '../observability/request-context';
 import { authorizationEnforced } from '../permission/authorization-revision';
@@ -8,7 +9,7 @@ import { modelArtifactKey, readModelArtifact, saveModelArtifact } from '../embed
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { resolveGraphLlmExtraction, graphDocumentChunkLimit } from './extraction-budget';
+import { resolveGraphLlmExtraction, graphDocumentChunkLimit, allocateGraphExtractionChunks, GraphMissFeedback } from './extraction-budget';
 export { resolveGraphLlmExtraction } from './extraction-budget';
 
 /** P2-3：按查询形态路由图谱参与度（语料无关，仅语言形态，无业务词表）。 */
@@ -120,6 +121,21 @@ function cleanLabel(value: string): string {
 export class GraphRagService {
   private readonly logger = new Logger(GraphRagService.name);
   private prisma = getPrismaClient();
+  private readonly extractionFeedback = new GraphMissFeedback();
+
+  private async feedbackScope(kbId: string, db: any): Promise<string | undefined> {
+    if (typeof db.document?.aggregate !== 'function') return undefined;
+    const version = await db.document.aggregate({ where: { kbId },
+      _count: { id: true }, _sum: { version: true }, _max: { updatedAt: true } });
+    return `${kbId}:${JSON.stringify(version)}`;
+  }
+
+  private async recordGraphMiss(kbIds: string[], terms: string[], db: any): Promise<void> {
+    for (const kbId of kbIds) {
+      const scope = await this.feedbackScope(kbId, db);
+      if (scope) this.extractionFeedback.record([scope], terms);
+    }
+  }
 
   constructor(
     @Optional() private readonly embeddingService?: EmbeddingService,
@@ -148,11 +164,12 @@ export class GraphRagService {
       const config=await this.modelConfigService?.getDefault('llm');
       const llm=config ? { baseUrl:config.provider.baseUrl,apiKey:config.provider.apiKey || '',modelName:config.modelName } : null;
       const revision=process.env.GRAPH_LLM_DEPLOYMENT_REVISION;
-      const identity=['graph-shards-v1',llm?.baseUrl,llm?.modelName,revision,
+      const feedbackScope=await this.feedbackScope(kbId,this.prisma);
+      const identity=['graph-shards-v2-adaptive',feedbackScope ? this.extractionFeedback.identity(feedbackScope) : [],llm?.baseUrl,llm?.modelName,revision,
         resolveGraphLlmExtraction(), graphDocumentChunkLimit(),
         Object.entries(process.env).filter(([key])=>(key.startsWith('GRAPHRAG_') || key.startsWith('AUTO_GRAPH_') || key.startsWith('GRAPH_LLM_')) && !/(KEY|TOKEN|SECRET|PASSWORD)/.test(key)).sort(([a],[b])=>a.localeCompare(b))];
       const result=await reconcileIncrementalGraph(this.prisma,kbId,identity,!llm || !!revision,
-        doc=>this.extractGraphElementsHybrid(doc.title,doc.id,doc.chunks,doc.version,llm));
+        doc=>this.extractGraphElementsHybrid(doc.title,doc.id,doc.chunks,doc.version,llm,{ kbId }));
       this.logger.log(`Incremental graph ${kbId}: extracted=${result.extracted}, changed=${result.changed}`);
       return;
     }
@@ -160,7 +177,7 @@ export class GraphRagService {
     const config = await this.modelConfigService?.getDefault('llm');
     const llm = config ? { baseUrl:config.provider.baseUrl,apiKey:config.provider.apiKey || '',modelName:config.modelName } : null;
     const inputs = [];
-    for (const doc of docs) inputs.push(await this.extractGraphElementsHybrid(doc.title,doc.id,doc.chunks,doc.version,llm));
+    for (const doc of docs) inputs.push(await this.extractGraphElementsHybrid(doc.title,doc.id,doc.chunks,doc.version,llm,{ kbId }));
     // Prepare all inputs before removing stale navigation. Facts continue through the core projection.
     await this.prisma.$transaction(async tx => {
       await tx.graphCommunity.deleteMany({ where:{ kbId } });
@@ -595,7 +612,7 @@ ${chunkContent.slice(0, 4000)}
     chunks: Array<{ id?: string; content: string; metadata?: any }>,
     documentVersion: number | undefined,
     llmConfig: { baseUrl: string; apiKey: string; modelName: string } | null,
-    options: { llmSampleRate?: number; maxLlmChunks?: number } = {},
+    options: { llmSampleRate?: number; maxLlmChunks?: number; kbId?: string } = {},
   ): Promise<{ entities: ExtractedEntity[]; relations: ExtractedRelation[] }> {
     // Step 1: Always run fast regex extraction
     const regexResult = this.extractGraphElements(title, docId, chunks, documentVersion);
@@ -621,17 +638,24 @@ ${chunkContent.slice(0, 4000)}
     }) : chunks;
     if (fullExtraction && extractionChunks.length > maxLlmChunks) throw new Error('Full graph extraction exceeds the explicit segment safety budget');
     
-    // Prioritize chunks with high entity density (more regex matches) or tables
-    const scoredChunks = extractionChunks.map((chunk, idx) => {
-      let score = 0;
-      if (chunk.content.includes('|') && chunk.content.includes('---')) score += 2; // tables
-      if (/[《「"]/.test(chunk.content)) score += 1; // policy references
-      if (/第[\d一二三四五六七八九十]+[章节条]/.test(chunk.content)) score += 1; // clause structure
-      if (chunk.content.length > 500) score += 1; // substantial content
-      return { chunk, idx, score };
-    })
-    .sort((a, b) => b.score - a.score)
-    .slice(0, Math.min(Math.ceil(extractionChunks.length * sampleRate), maxLlmChunks));
+    const feedbackScope = !fullExtraction && options.kbId ? await this.feedbackScope(options.kbId, this.prisma) : undefined;
+    const priorities = fullExtraction ? [] : extractionChunks.map(chunk => {
+      const extracted = this.extractGraphElements(title, docId, [chunk], documentVersion);
+      const names = new Set(extracted.entities.filter(entity => entity.type !== 'document').map(entity => entity.name));
+      const connected = new Set(extracted.relations.filter(relation =>
+        relation.relationType !== 'contains' && relation.relationType !== 'mentions')
+        .flatMap(relation => [relation.sourceName, relation.targetName]));
+      const unresolved = names.size > 1 ? [...names].filter(name => !connected.has(name)).length : 0;
+      const types = new Map<string, Set<string>>();
+      for (const entity of extracted.entities) {
+        const existing = types.get(entity.name) || new Set<string>();
+        existing.add(entity.type); types.set(entity.name, existing);
+      }
+      const conflicts = [...types.values()].filter(values => values.size > 1).length;
+      return unresolved + conflicts * 2 + this.extractionFeedback.score(feedbackScope, chunk.content);
+    });
+    const scoredChunks = allocateGraphExtractionChunks(extractionChunks, sampleRate, maxLlmChunks, priorities);
+    this.logger.debug(`Graph extraction budget: selected=${scoredChunks.length}/${extractionChunks.length}, prioritySegments=${priorities.filter(score => score > 0).length}, cap=${maxLlmChunks}`);
 
     // Step 3: Run LLM extraction on selected chunks (with concurrency limit)
     const allLlmEntities: ExtractedEntity[] = [];
@@ -1760,6 +1784,28 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
    * neighbourhood for indirect connections — the doc comment previously claimed
    * 2-hop while the implementation only ever emitted 1-hop edges.
    */
+  private async readableGraphIds(kbIds: string[], kind: 'GraphEntity' | 'GraphRelation', db = this.prisma): Promise<string[] | undefined> {
+    const userId = getRequestContext()?.userId;
+    if (!userId && !authorizationEnforced()) return undefined;
+    if (!userId) return [];
+    const model = kind === 'GraphEntity' ? (db as any).graphEntity : (db as any).graphRelation;
+    const candidates = await model.findMany({ where: { kbId: { in: kbIds } }, select: { id: true, kbId: true } });
+    if (authorizationEnforced()) return [...await filterReadableArtifacts(userId, candidates, kind, db)];
+    const docs = await (db as any).document.findMany({
+      where: { kbId: { in: kbIds }, status: 'published', ...await readableDocumentWhere(db, userId) }, select: { id: true },
+    });
+    const ids = docs.map((doc: any) => doc.id);
+    const rows = await model.findMany({
+      where: { kbId: { in: kbIds } },
+      select: kind === 'GraphEntity' ? { id: true, properties: true } : { id: true, provenance: true },
+    });
+    const readable = new Set(ids);
+    return rows.filter((row: any) => kind === 'GraphEntity'
+      ? (row.properties?.docIds || []).some((id: string) => readable.has(id))
+      : (Array.isArray(row.provenance) ? row.provenance : []).some((entry: any) => readable.has(entry.documentId)))
+      .map((row: any) => row.id);
+  }
+
   async searchLocalGraph(
     kbIds: string[],
     query: string,
@@ -1788,11 +1834,16 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
       orConditions.push({ type: 'document' });
     }
 
+    const readableEntityIds = await this.readableGraphIds(kbIds, 'GraphEntity');
+    const readableRelationIds = await this.readableGraphIds(kbIds, 'GraphRelation');
+    const entityScope = readableEntityIds === undefined ? {} : { id: { in: readableEntityIds } };
+    const relationScope = readableRelationIds === undefined ? {} : { id: { in: readableRelationIds } };
     // Search matching entities across visible KBs
     const entities = await (this.prisma as any).graphEntity.findMany({
       where: {
         kbId: { in: kbIds },
         OR: orConditions,
+        ...entityScope,
       },
       take: isDocCatalogQuery ? Math.max(limit, 25) : limit,
       // Type first (documents before concepts on a catalogue question), then the
@@ -1802,6 +1853,7 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
       orderBy: [{ type: 'asc' }, { updatedAt: 'desc' }, { id: 'asc' }],
       include: {
         outgoingRelations: {
+          where: relationScope,
           // weight desc keeps the truncation deterministic and keeps the
           // highest-confidence edges instead of an arbitrary storage order.
           orderBy: [{ weight: 'desc' }, { id: 'asc' }],
@@ -1809,6 +1861,7 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
           include: { target: true },
         },
         incomingRelations: {
+          where: relationScope,
           orderBy: [{ weight: 'desc' }, { id: 'asc' }],
           take: 5,
           include: { source: true },
@@ -1839,6 +1892,7 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
           twoHopRelations = (await (this.prisma as any).graphRelation.findMany({
             where: {
               kbId: { in: kbIds },
+              ...relationScope,
               OR: [
                 { sourceId: { in: frontier }, targetId: { notIn: directIds.size ? Array.from(directIds) : [] } },
                 { targetId: { in: frontier }, sourceId: { notIn: directIds.size ? Array.from(directIds) : [] } },
@@ -1989,6 +2043,16 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
     query: string,
     limit = 20,
   ): Promise<Array<{ chunkId: string; documentId: string | null; score: number; hops: number }>> {
+    if (!getRequestContext()?.userId && !authorizationEnforced()) return this.searchRelatedChunkCandidates(kbIds, query, limit, this.prisma);
+    return boundedRead(this.prisma, tx => this.searchRelatedChunkCandidates(kbIds, query, limit, tx));
+  }
+
+  private async searchRelatedChunkCandidates(
+    kbIds: string[],
+    query: string,
+    limit: number,
+    db: any,
+  ): Promise<Array<{ chunkId: string; documentId: string | null; score: number; hops: number }>> {
     if (!kbIds.length || !query?.trim()) return [];
     const terms = this.extractQueryTerms(query);
     if (!terms.length) return [];
@@ -2000,14 +2064,18 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
     }
 
     try {
-      const matched: any[] = (await (this.prisma as any).graphEntity.findMany({
-        where: { kbId: { in: kbIds }, OR: orConditions },
-        select: { id: true, name: true, outgoingRelations: { select: { targetId: true } }, incomingRelations: { select: { sourceId: true } } },
+      const readableEntityIds = await this.readableGraphIds(kbIds, 'GraphEntity', db);
+      const readableRelationIds = await this.readableGraphIds(kbIds, 'GraphRelation', db);
+      const entityScope = readableEntityIds === undefined ? {} : { id: { in: readableEntityIds } };
+      const relationScope = readableRelationIds === undefined ? {} : { id: { in: readableRelationIds } };
+      const matched: any[] = (await (db as any).graphEntity.findMany({
+        where: { kbId: { in: kbIds }, OR: orConditions, ...entityScope },
+        select: { id: true, name: true, outgoingRelations: { where: relationScope, select: { targetId: true } }, incomingRelations: { where: relationScope, select: { sourceId: true } } },
         take: Math.max(5, Number(process.env.GRAPHRAG_ARM_SEED_ENTITIES || 12)),
         // Seeds decide which edges the arm walks, so the cut must be stable.
         orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
       })) || [];
-      if (!matched.length) return [];
+      if (!matched.length) { await this.recordGraphMiss(kbIds, terms, db); return []; }
 
       const directIds = new Set(matched.map((e: any) => String(e.id)));
       const neighbourIds = new Set<string>();
@@ -2030,9 +2098,10 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
       // weight twice. Track the relations already scored.
       const seenRelationIds = new Set<string>();
       for (const group of groups) {
-        const relations: any[] = (await (this.prisma as any).graphRelation.findMany({
+        const relations: any[] = (await (db as any).graphRelation.findMany({
           where: {
             kbId: { in: kbIds },
+            ...relationScope,
             OR: [{ sourceId: { in: group.ids } }, { targetId: { in: group.ids } }],
           },
           select: { id: true, weight: true, provenance: true },
@@ -2065,6 +2134,15 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
         }
       }
 
+      if (getRequestContext()?.userId || authorizationEnforced()) {
+        const chunks = await (db as any).chunk.findMany({
+          where: { id: { in: [...scores.keys()] }, document: { status: 'published', ...await readableDocumentWhere(db) } },
+          select: { id: true },
+        });
+        const readableChunks = new Set(chunks.map((chunk: any) => chunk.id));
+        for (const id of scores.keys()) if (!readableChunks.has(id)) scores.delete(id);
+      }
+      if (!scores.size) await this.recordGraphMiss(kbIds, terms, db);
       return Array.from(scores.entries())
         .map(([chunkId, value]) => ({ chunkId, ...value }))
         .sort((a, b) => {

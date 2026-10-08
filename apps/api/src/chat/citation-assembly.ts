@@ -1,3 +1,5 @@
+import { getChatTiming } from '../observability/chat-timing';
+import { createHash } from 'node:crypto';
 import { hydrateOriginalSnapshots } from '../ingestion/original-block-snapshot';
 import { rethrowAuthorizationFailure } from '../permission/authorization-revision';
 import { requestFetch } from '../retrieval/request-signal';
@@ -32,6 +34,9 @@ import {
  * is a poisoned entry replayed for the whole TTL; operators can disable it when
  * the fast model is unavailable and lexical grounding is the only bar.
  */
+const requestEntailment = new WeakMap<object, Map<string, Promise<boolean | null>>>();
+const ENTAILMENT_POLICY = 'source-entailment-v1';
+
 function cacheEntailmentGateEnabled(): boolean {
   const raw = String(process.env.CACHE_ENTAILMENT_GATE ?? '').trim().toLowerCase();
   if (raw === '0' || raw === 'false' || raw === 'off') return false;
@@ -223,7 +228,7 @@ export class CitationAssemblyService {
           select: { slug: true, sourceKeys: true, derivedFrom: true },
         })
       : [];
-    const validDerived = new Set<string>();
+    const validDerived = new Map<string, any[]>();
     for (const page of derivedPages) {
       const pageSources = Array.isArray(page.sourceKeys) ? [...page.sourceKeys].sort() : [];
       if (pageSources.length !== sourceKeys.length || pageSources.some((key: string, index: number) => key !== sourceKeys[index])) continue;
@@ -234,9 +239,9 @@ export class CitationAssemblyService {
       if (!userId) continue;
       const sourceDocs = await this.prisma.document.findMany({
         where: { id: { in: docIds }, kbId: { in: visibleKbIds }, status: "published" },
-        select: { id: true, kbId: true, aclMode: true, version: true, activeVersionId: true, contentHash: true },
+        select: { id: true, kbId: true, aclMode: true, version: true, activeVersionId: true, contentHash: true, effectiveFrom: true, effectiveTo: true, lifecycleStatus: true },
       });
-      if (sourceDocs.length !== new Set(docIds).size) continue;
+      if (sourceDocs.length !== new Set(docIds).size || sourceDocs.some((doc: any) => !documentCurrentlyEffective(doc, now))) continue;
       type DerivedSource = { id: string; kbId: string; version: number; activeVersionId: string | null; contentHash: string | null };
       const sourcesById = new Map<string, DerivedSource>(sourceDocs.map((doc: DerivedSource) => [doc.id, doc]));
       const sourceManifest = Array.isArray(page.derivedFrom) ? page.derivedFrom : [];
@@ -250,29 +255,33 @@ export class CitationAssemblyService {
         docs: sourceDocs,
         visibleKbIds,
       });
-      if (readableSources.size === new Set(docIds).size) validDerived.add(page.slug);
+      if (readableSources.size === new Set(docIds).size) validDerived.set(page.slug, sourceManifest);
     }
-    const raptorKbIds: string[] = [...new Set<string>(citations.filter((citation: any) => (citation.raptor || citation.inventory) && !citation.docId)
-      .map((citation: any) => citation.kbId).filter((id: any): id is string => typeof id === 'string' && visibleKbIds.includes(id)))];
-    const allowedRaptorKbIds = new Set<string>();
-    if (userId && raptorKbIds.length) {
-      try {
-        const restricted = await this.prisma.documentAcl.findMany({
-          where: { document: { kbId: { in: raptorKbIds }, status: 'published' } },
-          select: { documentId: true, document: { select: { kbId: true } } },
-        });
-        const restrictedIds: string[] = [...new Set<string>(restricted.map((entry: any) => String(entry.documentId)))];
-        const readable = await this.documentAclService.filterReadableDocuments(userId, restrictedIds, {
-          visibleKbIds,
-          docs: restricted.map((entry: any) => ({ id: entry.documentId, kbId: entry.document.kbId })),
-        });
-        for (const kbId of raptorKbIds) {
-          if (restricted.every((entry: any) => entry.document.kbId !== kbId || readable.has(entry.documentId))) {
-            allowedRaptorKbIds.add(kbId);
-          }
-        }
-      } catch (err) { rethrowAuthorizationFailure(err);
-        this.logger.warn(`RAPTOR ACL check failed, dropping global summaries: ${err instanceof Error ? err.message : String(err)}`);
+    const aggregates = citations.filter((c: any) => !c.docId && (c.raptor || c.inventory));
+    const aggregateIds = [...new Set<string>(aggregates.flatMap((c: any) => Array.isArray(c.sourceDocumentIds) ? c.sourceDocumentIds : []))];
+    const aggregateDocs = aggregateIds.length ? await this.prisma.document.findMany({
+      where: { id: { in: aggregateIds }, kbId: { in: visibleKbIds }, status: 'published' },
+      select: { id: true, kbId: true, aclMode: true, version: true, activeVersionId: true, contentHash: true,
+        effectiveFrom: true, effectiveTo: true, lifecycleStatus: true },
+    }) : [];
+    const effectiveAggregates = aggregateDocs.filter((doc: any) => documentCurrentlyEffective(doc, now));
+    const readableAggregateIds = userId ? await this.documentAclService.filterReadableDocuments(userId,
+      effectiveAggregates.map((doc: any) => doc.id), { docs: effectiveAggregates, visibleKbIds }) : new Set<string>();
+    const aggregateById = new Map<string, any>(effectiveAggregates.map((doc: any) => [doc.id, doc]));
+    const validAggregates = new Set<any>();
+    for (const citation of aggregates) {
+      if (!userId || !visibleKbIds.includes(citation.kbId) || !Array.isArray(citation.sourceDocumentIds)
+        || citation.sourceDocumentIds.some((id: any) => typeof id !== 'string' || !id)) continue;
+      if (!citation.sourceDocumentIds.length && !citation.inventory) continue;
+      if (citation.inventoryScope && (!Array.isArray(citation.inventoryScope) || citation.inventoryScope.some((id: any) => !visibleKbIds.includes(id)))) continue;
+      if (Array.isArray(citation.sourceManifest) && citation.sourceManifest.some((ref: any) => {
+        const doc = aggregateById.get(ref.docId || ref.documentId);
+        return !doc || (ref.version != null && ref.version !== doc.version)
+          || (ref.documentVersionId != null && ref.documentVersionId !== doc.activeVersionId)
+          || (ref.sourceHash != null && ref.sourceHash !== doc.contentHash);
+      })) continue;
+      if (citation.sourceDocumentIds.every((id: string) => readableAggregateIds.has(id) && aggregateById.get(id)?.kbId === citation.kbId)) {
+        validAggregates.add(citation);
       }
     }
     const immutableRefs = citations.filter((c: any) => allowed.get(c.docId)?.activeVersionId && (c.chunkId || Number.isInteger(c.ord)));
@@ -284,14 +293,11 @@ export class CitationAssemblyService {
     const filtered = citations
       .map((citation: any) => {
         if (!citation.docId) {
-          // KB-wide summaries have no document binding. They are usable only
-          // when every ACL-restricted published document in that KB is readable.
-          if (citation.inventory && citation.kbId && allowedRaptorKbIds.has(citation.kbId)) {
-            return citation;
-          }
-          // RAPTOR Level-2 summaries are KB-global and require the same guard.
-          if (citation.raptor && citation.kbId && allowedRaptorKbIds.has(citation.kbId)) {
-            return citation;
+          if (validAggregates.has(citation)) {
+            return { ...citation, sourceManifest: citation.sourceDocumentIds.map((id: string) => {
+              const source = aggregateById.get(id);
+              return { docId: id, version: source.version, documentVersionId: source.activeVersionId, sourceHash: source.contentHash };
+            }) };
           }
           if (
             citation.isCompiledDerived &&
@@ -299,9 +305,12 @@ export class CitationAssemblyService {
             citation.aclEpoch === derivedGuard.aclEpoch &&
             citation.slug && validDerived.has(citation.slug)
           ) {
-            return citation;
+            const sourceManifest = validDerived.get(citation.slug)!;
+            return { ...citation, sourceManifest, sourceDocumentIds: [...new Set(sourceManifest.map((source: any) => source.docId))] };
           }
-          return citation.slug && validDerived.has(citation.slug) ? citation : null;
+          if (!citation.slug || !validDerived.has(citation.slug)) return null;
+          const sourceManifest = validDerived.get(citation.slug)!;
+          return { ...citation, sourceManifest, sourceDocumentIds: [...new Set(sourceManifest.map((source: any) => source.docId))] };
         }
         const doc = allowed.get(citation.docId);
         // Do not relabel old evidence as the current document version.
@@ -1272,6 +1281,36 @@ export class CitationAssemblyService {
           (await this.modelConfigService?.getLlmChatConfig?.('llmwiki-entailment'))
         : null;
       if (!llmRequest) return supported;
+      await assertRequestAuthorization();
+      const context = getRequestContext();
+      if (!context) return this.executeEntailmentBatch(statements, evidence, llmRequest);
+      let memo = requestEntailment.get(context);
+      if (!memo) { memo = new Map(); requestEntailment.set(context, memo); }
+      const identity = JSON.stringify({ evidence, dependencies: context.evidenceDependencies,
+        authorization: context.authorization, userId: context.userId, policy: ENTAILMENT_POLICY,
+        model: llmRequest.modelName, endpoint: llmRequest.baseUrl });
+      const keys = statements.map(statement => createHash('sha256').update(identity).update(statement).digest('hex'));
+      const missing = keys.map((key, index) => ({ key, index })).filter(item => !memo!.has(item.key));
+      if (missing.length) {
+        const pending = this.executeEntailmentBatch(missing.map(item => statements[item.index]), evidence, llmRequest);
+        for (const [local, item] of missing.entries()) {
+          const value = pending.then(result => result === null ? null : result.has(local));
+          memo.set(item.key, value);
+          void value.then(result => { if (result === null && memo!.get(item.key) === value) memo!.delete(item.key); },
+            () => { if (memo!.get(item.key) === value) memo!.delete(item.key); });
+        }
+      }
+      const values = await Promise.all(keys.map(key => memo!.get(key)!));
+      if (values.some(value => value === null)) return null;
+      return new Set(values.flatMap((value, index) => value ? [index] : []));
+    } catch (err) { rethrowAuthorizationFailure(err);
+      return null;
+    }
+  }
+
+  private async executeEntailmentBatch(statements: string[], evidence: string, llmRequest: any): Promise<Set<number> | null> {
+    const supported = new Set<number>();
+    try {
       const baseUrl = llmRequest.baseUrl;
       const model = llmRequest.modelName;
       const userContent = `【证据】\n${evidence}\n\n【陈述】\n${statements
@@ -1554,8 +1593,7 @@ export class CitationAssemblyService {
     ) {
       const evidenceText = finalCitations
         .map((item: any) => String(item.citation.context || item.citation.snippet || ""))
-        .join('\n\n')
-        .slice(0, 6000);
+        .join('\n\n');
       const entailed = await this.judgeEntailment(ungroundedStatements, evidenceText);
       groundedStatements += entailed.size;
       // 蕴含判定放行的语句在绑定表中标注为 supported（判定通道与词面通道分开）。
@@ -1601,6 +1639,7 @@ export class CitationAssemblyService {
       },
     );
 
+    getRequestContext()?.execution?.recordEvidenceStage("citations", finalCitations.map(item => item.citation));
     finalCitations.forEach(({ citation: cit, originalIndex }: any) => {
       subscriber.next({
         data: {
@@ -1633,7 +1672,7 @@ export class CitationAssemblyService {
       data: { type: "done", total_tokens: totalTokens, latency_ms: 0,
         answer_kind: answerKind,
         dependency_manifest: getRequestContext()?.evidenceDependencies,
-        execution: getRequestContext()?.execution?.report() },
+        execution: getRequestContext()?.execution?.report(), pipeline_timing: getChatTiming().snapshot() },
     });
     // Never cache refusals: weak evidence must not poison the cache, or every
     // paraphrase of the question replays the refusal (observed in production).
@@ -1788,7 +1827,7 @@ export function mergeCitationsByDocument(citations: any[]): any[] {
     const existingIndex = indexByKey.get(key);
     if (existingIndex === undefined) {
       indexByKey.set(key, out.length);
-      out.push({ ...c, evidenceRefs: c.chunkId ? [{ blockId: c.chunkId, span: c.span, contentHash: c.contentHash, versionId: c.documentVersionId }] : [], mergedChunkCount: 1 });
+      out.push({ ...c, evidenceRefs: c.chunkId ? [{ blockId: c.chunkId, span: c.span, contentHash: c.contentHash, versionId: c.documentVersionId, evidenceId: c.evidenceId, contextChars: String(c.context || c.evidence || c.snippet || "").length }] : [], mergedChunkCount: 1 });
       continue;
     }
     const merged = out[existingIndex];
@@ -1799,7 +1838,7 @@ export function mergeCitationsByDocument(citations: any[]): any[] {
       merged.context = prev ? `${prev}${anchor}${next}` : next;
       merged.snippet = String(merged.context).slice(0, 500);
     }
-    if (c.chunkId && !merged.evidenceRefs.some((r: any) => r.blockId === c.chunkId)) merged.evidenceRefs.push({ blockId: c.chunkId, span: c.span, contentHash: c.contentHash, versionId: c.documentVersionId });
+    if (c.chunkId && !merged.evidenceRefs.some((r: any) => r.blockId === c.chunkId)) merged.evidenceRefs.push({ blockId: c.chunkId, span: c.span, contentHash: c.contentHash, versionId: c.documentVersionId, evidenceId: c.evidenceId, contextChars: String(c.context || c.evidence || c.snippet || "").length });
     merged.mergedChunkCount = (Number(merged.mergedChunkCount) || 1) + 1;
     merged.score = Math.max(Number(merged.score || 0), Number(c.score || 0));
     if (!merged.section && c.section) merged.section = c.section;
