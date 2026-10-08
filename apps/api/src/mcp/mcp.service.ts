@@ -1,3 +1,8 @@
+import { getKnowledgeToolDefinitions, validateKnowledgeToolArguments } from './knowledge-tool-schema';
+import { MCP_PROTOCOL_VERSIONS, trustedMcpInstanceUrl } from './mcp-protocol';
+import { ExternalChatEventReducer } from '../chat/external-chat-events';
+import { KnowledgeOperationsService, KnowledgeResource } from '../ingestion/knowledge-operations.service';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { captureEvidenceDependencies } from '../permission/evidence-dependencies';
 import { SUPPORTED_UPLOAD_EXTENSIONS } from '../ingestion/parser-capabilities';
 import { uploadRoot } from '../storage/upload-paths';
@@ -10,6 +15,7 @@ import { PermissionService } from '../permission/permission.service';
 import { IngestionService } from '../ingestion/ingestion.service';
 import { DocumentAclService } from '../permission/document-acl.service';
 import { getPrismaClient } from '../prisma';
+import { Prisma } from '@prisma/client';
 import { extname, join } from 'node:path';
 import * as fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
@@ -28,6 +34,7 @@ export interface McpToolDefinition {
 
 @Injectable()
 export class McpService {
+  private readonly resources = new WeakMap<object, KnowledgeResource>();
   private readonly logger = new Logger(McpService.name);
   private readonly prisma = getPrismaClient();
   private readonly uploadRoot =
@@ -38,6 +45,7 @@ export class McpService {
     private readonly permissionService: PermissionService,
     @Optional() private readonly ingestionService?: IngestionService,
     @Optional() private readonly documentAclService?: DocumentAclService,
+    @Optional() private readonly operations?: KnowledgeOperationsService,
   ) {}
 
   /**
@@ -45,97 +53,23 @@ export class McpService {
    * 注意：上传能力只保留 POST /mcp/upload 原始文件直传端点（multipart），
    * 不再提供 Base64 文本形式的 upload_document 工具。
    */
-  getTools(): McpToolDefinition[] {
-    return [
-      {
-        name: 'chat_knowledge',
-        description:
-          '基于 GBrain 企业知识库进行智能问答与深度证据链推理（RAG），支持多跳推理、全证据链事实裁决与上下文多轮对话。若用户未明确限定特定知识库，请勿指定 kb_ids，系统将默认在当前凭证有权限访问的全部知识库中联合检索。',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            asOf: { type:'string', description:'带时区的 ISO-8601 历史有效时间；仍使用当前权限' },
-            prompt: {
-              type: 'string',
-              description: '提问内容或需要知识库解答的具体问题',
-            },
-            conversation_id: {
-              type: 'string',
-              description: '会话 ID（可选，传入可延续历史上下文）',
-            },
-            kb_ids: {
-              type: 'array',
-              items: { type: 'string' },
-              description: '限定检索的知识库 ID 列表（可选，若未明确指定或为空，系统默认在当前凭证可见的全部知识库中检索）',
-            },
-          },
-          required: ['prompt'],
-        },
-      },
-      {
-        name: 'aggregate_knowledge_table',
-        description: '读取指定已发布文档版本的完整表格清单，或按 tableId 对完整行集合精确计算 count/sum/min/max/avg；禁止以检索片段代替完整表格。',
-        inputSchema: { type: 'object', properties: { documentId: { type: 'string' }, versionId: { type: 'string' }, tableId: { type: 'string' }, operation: { type: 'string', enum: ['count','sum','min','max','avg'] }, column: { type: 'integer', minimum: 0 } }, required: ['documentId','versionId'] },
-      },
-      {
-        name: 'list_knowledge_bases',
-        description:
-          '获取当前凭证用户有权限访问的知识库列表（包括个人知识库、组织知识库与行业知识库）以及各库的文档统计信息。',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            type: {
-              type: 'string',
-              enum: ['personal', 'org', 'industry', 'all'],
-              description: '知识库类型筛选（可选，默认 all）',
-            },
-          },
-        },
-      },
-      {
-        name: 'get_document_status',
-        description:
-          '查询指定文档的入库解析进度、状态、分块数量及质检指标。',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            doc_id: {
-              type: 'string',
-              description: '待查询的文档唯一 ID (UUID)',
-            },
-          },
-          required: ['doc_id'],
-        },
-      },
-      {
-        name: 'get_user_info',
-        description:
-          '查询当前 MCP 鉴权凭证 (AppId / AppSecret) 绑定的用户身份信息、所属组织及角色权限。',
-        inputSchema: {
-          type: 'object',
-          properties: {},
-        },
-      },
-      {
-        name: 'get_file_upload_guide',
-        description:
-          '获取向 GBrain 知识库上传本地文件的方法与规范指引。GBrain 不支持将文档转为 Base64 文本上传，必须通过独立二进制直传接口 POST /mcp/upload 提交。上传接口所需的 X-App-Id 与 X-App-Secret 与当前客户端连接此 MCP 服务时配置的凭证（AppId/AppKey/AppSecret）完全一致。AI 模型获取此指引后，应由 AI 自行根据用户的实际文件路径与目标知识库组装完整的上传命令或发起请求，无需用户自行拼装参数。',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            kb_id: {
-              type: 'string',
-              description:
-                '目标知识库唯一 ID (UUID)（可选，若用户未指定则返回所有可用知识库供选择）',
-            },
-            title: {
-              type: 'string',
-              description: '文档显示标题（可选，默认使用原始文件名）',
-            },
-          },
-        },
-      },
-    ];
+  getTools(): McpToolDefinition[] { return getKnowledgeToolDefinitions(); }
+
+  getResultResource(result: object): KnowledgeResource | undefined { return this.resources.get(result); }
+  async readResource(userId: string, resource: KnowledgeResource, db: any): Promise<any> {
+    const operations = this.operations || new KnowledgeOperationsService(this.permissionService);
+    const value = await operations.readResource(userId, resource, db);
+    return resource.kind === 'upload_guide' ? this.uploadGuide(value, resource.args) : value;
+  }
+
+  private uploadGuide(inventory: any, args: any) {
+    const auth = args.auth || {}; const selected = inventory.knowledge_bases.find((kb: any) => kb.id === args.kb_id);
+    return { upload_endpoint: `${auth.instanceUrl || trustedMcpInstanceUrl()}/mcp/upload`, upload_method: 'POST multipart/form-data',
+      auth: auth.method === 'app_credentials' ? { method: auth.method, app_id: auth.appId, headers: ['X-App-Id', 'X-App-Secret'] }
+        : { method: 'bearer', headers: ['Authorization: Bearer <current token>'] },
+      target_kb: selected || null, available_knowledge_bases: inventory.knowledge_bases,
+      form_fields: { file: 'Original binary file; no Base64', kb_id: args.kb_id || 'Knowledge base UUID', title: args.title },
+      guide: 'Upload the original file to this instance using the current authentication method. Base64 and server paths are unsupported.' };
   }
 
   /**
@@ -146,7 +80,10 @@ export class McpService {
     request: any,
     onProgress?: (event: any) => void,
   ): Promise<any> {
-    if (!request || typeof request !== 'object') {
+    if (!request || typeof request !== 'object' || Array.isArray(request)
+      || request.jsonrpc !== '2.0' || typeof request.method !== 'string'
+      || (request.id !== undefined && typeof request.id !== 'string' && !(typeof request.id === 'number' && Number.isFinite(request.id)))
+      || (request.params !== undefined && (!request.params || typeof request.params !== 'object' || Array.isArray(request.params)))) {
       return {
         jsonrpc: '2.0',
         id: null,
@@ -169,11 +106,10 @@ export class McpService {
             jsonrpc: '2.0',
             id,
             result: {
-              protocolVersion: '2024-11-05',
+              protocolVersion: (MCP_PROTOCOL_VERSIONS as readonly string[]).includes(params?.protocolVersion) ? params.protocolVersion : '2025-11-25',
               capabilities: {
                 tools: { listChanged: false },
-                resources: { listChanged: false },
-                prompts: { listChanged: false },
+
               },
               serverInfo: {
                 name: 'gbrainkg-mcp',
@@ -202,22 +138,15 @@ export class McpService {
         }
 
         case 'tools/call': {
-          const toolName = params?.name;
-          const toolArgs = params?.arguments || {};
-          const toolResult = await this.executeTool(user, toolName, toolArgs, onProgress);
-          return {
-            jsonrpc: '2.0',
-            id,
-            result: {
-              content: [
-                {
-                  type: 'text',
-                  text: typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2),
-                },
-              ],
-              isError: false,
-            },
-          };
+          if (typeof params?.name !== 'string') return { jsonrpc: '2.0', id, error: { code: -32602, message: 'Tool name required' } };
+          const toolArgs = params.arguments ?? {};
+          try { validateKnowledgeToolArguments(params.name, toolArgs); }
+          catch { return { jsonrpc: '2.0', id, error: { code: -32602, message: 'Invalid tool arguments' } }; }
+          const toolResult = await this.executeTool(user, params.name, toolArgs, onProgress);
+          const response = { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(toolResult) }], isError: false } };
+          const resource = toolResult && typeof toolResult === 'object' ? this.resources.get(toolResult) : undefined;
+          if (resource) this.resources.set(response, resource);
+          return response;
         }
 
         case 'resources/list': {
@@ -256,7 +185,7 @@ export class McpService {
           content: [
             {
               type: 'text',
-              text: `Tool execution failed: ${err?.message || 'Internal Server Error'}`,
+              text: [400, 403, 404].includes(err?.getStatus?.()) ? String(err.message) : 'Tool execution failed; retry or contact an administrator',
             },
           ],
           isError: true,
@@ -274,7 +203,7 @@ export class McpService {
     input: { kbId: string; filename: string; fileBuffer: Buffer; title?: string },
   ) {
     const kbId = String(input.kbId || '').trim();
-    if (!kbId) throw new Error('kb_id 参数为必填项（目标知识库 ID）');
+    validateKnowledgeToolArguments('get_file_upload_guide', { kb_id: kbId, ...(input.title === undefined ? {} : { title: input.title }) });
     const filename = String(input.filename || '').trim();
     if (!filename) throw new Error('filename 参数为必填项（文件名及扩展名）');
     const fileBuffer = input.fileBuffer;
@@ -283,6 +212,7 @@ export class McpService {
     }
     const title = String(input.title || '').trim() || filename;
 
+    if (!await this.permissionService.canManageKnowledgeBase(userId, kbId)) throw new ForbiddenException('Knowledge base unavailable');
     const kb = await this.prisma.knowledgeBase.findUnique({
       where: { id: kbId },
       select: { id: true, name: true, type: true, ownerUserId: true, status: true },
@@ -293,7 +223,7 @@ export class McpService {
 
     const canManage = await this.permissionService.canManageKnowledgeBase(userId, kbId);
     if (!canManage) {
-      throw new Error(`当前凭证对应的用户无权向知识库 "${kb.name}" (${kbId}) 上传或维护文档`);
+      throw new ForbiddenException('Knowledge base unavailable');
     }
 
     const safeExt = extname(filename).toLowerCase();
@@ -409,6 +339,8 @@ export class McpService {
       throw new Error('未获取到有效的用户上下文');
     }
 
+    validateKnowledgeToolArguments(name, args);
+    if (getRequestContext()) { getRequestContext()!.asOf = parseAsOf(args.asOf); getRequestContext()!.asOfExplicit = args.asOf != null; }
     switch (name) {
       // upload_document（Base64/文本上传）已按产品决策移除：
       // 上传能力统一走 POST /mcp/upload 原始文件直传端点。
@@ -430,8 +362,9 @@ export class McpService {
           'chat_knowledge',
           {
             prompt,
-            kb_ids: args?.kb_ids,
-            conversation_id: args?.conversation_id,
+            ...(args?.kb_ids !== undefined ? { kb_ids: args.kb_ids } : {}),
+            ...(args?.conversation_id ? { conversation_id: args.conversation_id } : {}),
+            ...(args?.asOf ? { asOf: args.asOf } : {}),
           },
           onProgress,
         );
@@ -448,6 +381,7 @@ export class McpService {
             : [];
         const visibleKbs = await this.permissionService.getVisibleKnowledgeBases(userId);
 
+        if (rawKbIds.some((id: string) => !visibleKbs.includes(id))) throw new ForbiddenException('Requested knowledge base unavailable');
         let conversationId = args?.conversation_id;
         let effectiveKbIds: string[];
 
@@ -469,6 +403,7 @@ export class McpService {
           effectiveKbIds = rawKbIds.length > 0
             ? rawKbIds.filter((id: string) => visibleKbs.includes(id))
             : visibleKbs;
+          if (!effectiveKbIds.length) throw new ForbiddenException('No visible knowledge bases');
           const newConv = await this.prisma.conversation.create({
             data: {
               userId,
@@ -479,6 +414,7 @@ export class McpService {
           conversationId = newConv.id;
         }
 
+        if (!effectiveKbIds.length) throw new ForbiddenException('No knowledge bases remain in the selected scope');
         await this.prisma.message.create({
           data: {
             conversationId,
@@ -496,248 +432,58 @@ export class McpService {
         );
 
         return new Promise((resolve, reject) => {
-          let answer = '';
-          const citations: any[] = [];
-          // Persisted citationsSummary must use the same envelope shape as the
-          // REST path (`{ type, index, topic_slug, timeline_entry }`); storing
-          // bare timeline entries made the web mapper read `cite.timeline_entry`
-          // as undefined and render every MCP citation as an un-openable entry.
-          const citationEnvelopes: any[] = [];
-          let trace: any = null;
-          let dependencyManifest: any = null;
-
+          const state = new ExternalChatEventReducer();
           stream$.subscribe({
-            next: (event: any) => {
-              const item = event?.data || event;
-              if (item?.type === 'done') dependencyManifest = item.dependency_manifest || null;
-              if (item?.type === 'delta' || item?.type === 'token') {
-                const chunk = item.content || item.token || '';
-                answer += chunk;
-                if (onProgress) {
-                  onProgress({
-                    type: 'token',
-                    delta: chunk,
-                    conversation_id: conversationId,
-                  });
-                }
-              } else if (item?.type === 'citation') {
-                citations.push(item.timeline_entry);
-                citationEnvelopes.push({
-                  type: 'citation',
-                  index: item.index,
-                  topic_slug: item.topic_slug ?? item.timeline_entry?.doc_title,
-                  timeline_entry: item.timeline_entry,
-                });
-                if (onProgress) {
-                  onProgress({
-                    type: 'citation',
-                    citation: item.timeline_entry,
-                  });
-                }
-              } else if (item?.type === 'citations') {
-                if (Array.isArray(item.citations)) {
-                  citations.push(...item.citations);
-                }
-              } else if (item?.type === 'trace') {
-                trace = item.node || null;
-                if (onProgress) {
-                  onProgress({
-                    type: 'trace',
-                    trace,
-                  });
-                }
-              }
+            next: event => {
+              const frame = state.consume(event);
+              if (!frame || !onProgress) return;
+              if (frame.type === 'delta') onProgress({ type: 'token', delta: frame.content, conversation_id: conversationId });
+              else onProgress(frame);
             },
-            error: (err: any) => reject(err || new Error('Chat generation error')),
+            error: error => { state.fail(); reject(error); },
             complete: async () => {
               try {
-                const finalContent = answer || '本次问答未生成可保存的回答。';
-                await this.prisma.message.create({
-                  data: {
-                    conversationId,
-                    role: 'assistant',
-                    content: finalContent,
-                    citationsSummary: citationEnvelopes,
-                    dependencyManifest: dependencyManifest || undefined,
-                    processingTrace: trace ? [trace] : undefined,
-                    latencyMs: Date.now() - startedAt,
-                  },
-                });
-              } catch (persistErr: any) {
-                this.logger.error(
-                  `Failed to persist assistant message in MCP chat_knowledge: ${persistErr?.message || persistErr}`,
-                );
-              }
-              resolve({
-                conversation_id: conversationId,
-                answer,
-                dependency_manifest: dependencyManifest,
-                citations,
-                processing_trace: trace,
-              });
+                state.assertSuccessful();
+                await this.prisma.message.create({ data: { conversationId, role: 'assistant', content: state.answer,
+                  citationsSummary: state.citationEnvelopes, dependencyManifest: state.dependencyManifest as Prisma.InputJsonValue | undefined,
+                  processingTrace: [...state.traceNodes.values()], latencyMs: Date.now() - startedAt } });
+                resolve({ conversation_id: conversationId, answer: state.answer, citations: state.citations,
+                  dependency_manifest: state.dependencyManifest, processing_trace: [...state.traceNodes.values()] });
+              } catch (error) { reject(error); }
             },
           });
         });
       }
 
-      case 'list_knowledge_bases': {
-        const visibleIds = await this.permissionService.getVisibleKnowledgeBases(userId);
-        const whereClause: any = { id: { in: visibleIds }, status: 'active' };
-        if (args?.type && ['personal', 'org', 'industry'].includes(args.type)) {
-          whereClause.type = args.type;
-        }
-
-        const kbs = await this.prisma.knowledgeBase.findMany({
-          where: whereClause,
-          include: { _count: { select: { documents: true } } },
-          orderBy: { createdAt: 'desc' },
-        });
-
-        return {
-          total: kbs.length,
-          knowledge_bases: kbs.map((kb) => ({
-            id: kb.id,
-            name: kb.name,
-            type: kb.type,
-            description: kb.description,
-            document_count: kb._count.documents,
-            created_at: kb.createdAt,
-            updated_at: kb.updatedAt,
-          })),
-        };
+      case 'list_knowledge_bases': case 'get_document_status': case 'get_user_info': case 'get_file_upload_guide':
+      case 'list_documents': case 'read_document': case 'list_document_versions': case 'list_conversations': case 'get_conversation': {
+        const kinds: Record<string, KnowledgeResource['kind']> = { list_knowledge_bases: 'knowledge_bases', get_document_status: 'document_status',
+          get_user_info: 'user_info', get_file_upload_guide: 'upload_guide', list_documents: 'documents', read_document: 'document',
+          list_document_versions: 'versions', list_conversations: 'conversations', get_conversation: 'conversation' };
+        const resource: KnowledgeResource = { kind: kinds[name], args: { ...args, ...(name === 'get_file_upload_guide' ? { auth: user.mcpAuth } : {}) } };
+        const payload = await this.readResource(userId, resource, this.prisma);
+        this.resources.set(payload, resource);
+        return payload;
       }
-
-      case 'get_document_status': {
-        const docId = String(args?.doc_id || '').trim();
-        if (!docId) throw new Error('doc_id 参数为必填项');
-
-        const visibleIds = await this.permissionService.getVisibleKnowledgeBases(userId);
-        const document = await this.prisma.document.findFirst({
-          where: { id: docId, kbId: { in: visibleIds } },
-          include: {
-            kb: { select: { id: true, name: true, type: true } },
-            _count: { select: { chunks: true } },
-          },
-        });
-
-        if (!document) {
-          throw new Error('未找到该文档或无权限查看');
-        }
-        const aclService = this.documentAclService;
-        if (aclService) {
-          const readable = await aclService.isDocumentReadable(userId, docId).catch(() => false);
-          if (!readable) throw new Error('无权限查看该文档');
-        }
-
-        return {
-          id: document.id,
-          title: document.title,
-          status: document.status,
-          source_type: document.sourceType,
-          parser_engine: document.parserEngine,
-          index_readiness: document.indexReadiness,
-          chunk_count: document._count.chunks,
-          quality_score: document.qualityScore,
-          quality_status: document.qualityStatus,
-          knowledge_base: {
-            id: document.kb.id,
-            name: document.kb.name,
-            type: document.kb.type,
-          },
-          created_at: document.createdAt,
-          updated_at: document.updatedAt,
-        };
+      case 'retrieve': {
+        const result = await this.chatService.searchKnowledgeForAgent(userId, args.query, args.kb_ids, args.top_k ?? 10);
+        const payload = { ...result, dependency_manifest: result.dependencyManifest };
+        if (!result.results?.length) this.resources.set(payload, { kind: 'retrieval_empty', args: { query: args.query,
+          kb_ids: result.kbScope || (Array.isArray(args.kb_ids) ? args.kb_ids : await this.permissionService.getVisibleKnowledgeBases(userId)) } });
+        return payload;
       }
-
-      case 'get_user_info': {
-        return {
-          id: user.id,
-          username: user.username,
-          displayName: user.displayName,
-          email: user.email,
-          roles: user.roles?.map((r: any) => r.role?.name || r.roleName) || [],
-          orgs: user.orgs?.map((o: any) => o.orgNode?.name || o.orgNodeId) || [],
-        };
-      }
-
-      case 'get_file_upload_guide': {
-        const targetKbId = String(args?.kb_id || '').trim();
-        const customTitle = String(args?.title || '').trim();
-
-        const visibleIds = await this.permissionService.getVisibleKnowledgeBases(userId);
-        const kbs = await this.prisma.knowledgeBase.findMany({
-          where: { id: { in: visibleIds }, status: 'active' },
-          select: { id: true, name: true, type: true, description: true },
-          orderBy: { createdAt: 'desc' },
-        });
-
-        let selectedKb = targetKbId ? kbs.find((k) => k.id === targetKbId) : undefined;
-        if (!selectedKb && kbs.length === 1) {
-          selectedKb = kbs[0];
-        }
-
-        const cred = await this.prisma.userCredential.findFirst({
-          where: { userId, status: 'active' },
-          select: { appId: true },
-          orderBy: { createdAt: 'desc' },
-        });
-        const effectiveAppId = cred?.appId || (user as any)?.appId || 'YOUR_APP_ID';
-
-        const baseUrl = (process.env.NEXT_PUBLIC_MCP_URL?.trim() || 'https://knowledge.5gsailor.com:20080').replace(/\/+$/, '');
-        const uploadEndpoint = `${baseUrl}/mcp/upload`;
-
-        const kbListText = kbs.length > 0
-          ? kbs.map((k) => `  • 【${k.name}】 ID: \`${k.id}\` (${k.type})`).join('\n')
-          : '  （当前暂无可访问知识库，请先在知识库页面创建知识库）';
-
-        const guideText = [
-          `# 📄 GBrain 知识库文件直接上传指南 (免 Base64 / 原生二进制上传)`,
-          ``,
-          `### ⚠️ 核心上传原则`,
-          `1. **严禁使用 Base64 编码上传**：大文件转为 Base64 会极大消耗模型上下文且可能因截断损坏，系统不支持且已彻底关闭 Base64 文本上传。所有文档必须通过独立二进制直传端点进行上传（支持 PDF, DOCX, PPTX, XLSX, TXT, MD 等，最大 200MB）。`,
-          `2. **鉴权凭证一致**：上传所需的 \`X-App-Id\` 和 \`X-App-Secret\` 与您在当前 MCP 客户端（如 Cursor / Claude Desktop / Cline 等）配置连接此 MCP 服务时所使用的凭证（AppId 和 AppKey）**完全一致**，无需单独申请新凭证。`,
-          ``,
-          `### 📡 上传接口与格式规范`,
-          `- **请求端点**: \`POST ${uploadEndpoint}\``,
-          `- **Content-Type**: \`multipart/form-data\``,
-          `- **请求头 (Headers)**:`,
-          `  - \`X-App-Id\`: \`${effectiveAppId}\``,
-          `  - \`X-App-Secret\`: 与当前 MCP 客户端中配置的 AppSecret / AppKey 一致`,
-          `- **表单字段 (Multipart Fields)**:`,
-          `  - \`file\`: 待上传的本地文件原始二进制（必填，必须携带真实扩展名如 .pdf, .docx, .pptx 等）`,
-          `  - \`kb_id\`: 目标知识库 ID（必填）`,
-          `  - \`title\`: 文档显示标题（可选）`,
-          ``,
-          `### 🤖 给 AI 助手的指示（相关信息由 AI 自行组装）`,
-          `- **无需用户手动拼装参数**：请由 AI 自动结合用户在对话中提及的本地文件路径与目标知识库，自行组装完整的上传命令（如 curl 或 Python 脚本）或发起 HTTP 请求。`,
-          `- **凭据填充**：鉴权 AppId 与 AppKey/AppSecret 即为当前客户端配置 MCP 服务时使用的同一套凭据。`,
-          `- **入库状态跟踪**：上传成功后接口将返回 \`document_id\`，AI 应随即调用 \`get_document_status(doc_id)\` 帮助用户跟踪后台分块解析与质检进度。`,
-          ``,
-          selectedKb
-            ? `> **当前目标知识库**：【${selectedKb.name}】(\`${selectedKb.id}\`)`
-            : `> **当前可用知识库列表**：\n${kbListText}`,
-        ].join('\n');
-
-        return {
-          upload_method: 'POST multipart/form-data (仅支持二进制原始文件直传，严禁使用 Base64)',
-          upload_endpoint: uploadEndpoint,
-          auth: {
-            header_app_id: 'X-App-Id',
-            app_id: effectiveAppId,
-            header_app_secret: 'X-App-Secret',
-            note: '上传接口鉴权 Header (X-App-Id 与 X-App-Secret) 与当前 MCP 客户端配置完全一致',
-          },
-          target_kb: selectedKb ? { id: selectedKb.id, name: selectedKb.name } : null,
-          available_knowledge_bases: kbs.map((k) => ({ id: k.id, name: k.name, type: k.type })),
-          form_fields: {
-            file: '本地文件原始二进制（必填，须包含真实文件扩展名）',
-            kb_id: selectedKb ? selectedKb.id : '目标知识库 UUID（必填）',
-            title: customTitle || '文档显示标题（可选）',
-          },
-          ai_assembly_instructions:
-            '由 AI 自动根据用户的本地文件路径和目标知识库，组装上传请求或 curl 终端指令。AppId 与 AppSecret 与当前 MCP 配置一致。禁止转换 Base64。',
-          guide: guideText,
-        };
+      case 'ingest_document_text': case 'retry_document': case 'delete_document': {
+        if (!this.operations?.lifecycle) throw new Error('Document lifecycle unavailable');
+        const lifecycle = this.operations.lifecycle;
+        const result = name === 'ingest_document_text' ? await lifecycle.addTextDocument(userId, args.kb_id, {
+          title: args.title, content: args.content, duplicateMode: args.duplicateMode })
+          : name === 'retry_document' ? await lifecycle.retryDocument(userId, args.kb_id, args.doc_id)
+          : await lifecycle.deleteDocument(userId, args.kb_id, args.doc_id);
+        const docId = 'documentId' in result ? result.documentId : 'document' in result ? result.document.id : result.documents?.[0]?.id;
+        const resource: KnowledgeResource = { kind: 'mutation_receipt', args: { kb_id: args.kb_id, doc_id: docId, action: name } };
+        const payload = await this.readResource(userId, resource, this.prisma);
+        this.resources.set(payload, resource);
+        return payload;
       }
 
       default: {

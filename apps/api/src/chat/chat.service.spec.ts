@@ -7,6 +7,7 @@ import {
   deterministicChunkCap,
   hasPolarityConflict,
   isStrongNameEntity,
+  publicSearchResult,
   smartTruncateChunkText,
   statementSupportedBy,
   truncateChunkToTokenBudget,
@@ -983,6 +984,15 @@ describe("ChatService", () => {
     expect(result.results.length).toBeGreaterThan(0);
     expect(result.results[0].documentId).toBe("doc-1");
     expect(result.results[0].previewUrl).toContain("/api/v1/kbs/kb-1/documents/doc-1/preview-config");
+  });
+
+  it("projects search hits without leaking internal source manifests or inventory scope", () => {
+    const projected = publicSearchResult({ documentId: "doc-1", title: "T", evidence: "e",
+      sourceManifest: [{ docId: "doc-1", version: 2 }], sourceDocumentIds: ["doc-1"],
+      evidenceRefs: [{ versionId: "v2" }], inventory: true, inventoryScope: ["kb-1"] });
+    expect(projected).toEqual({ documentId: "doc-1", title: "T", evidence: "e" });
+    expect(projected).not.toHaveProperty("sourceManifest");
+    expect(projected).not.toHaveProperty("inventoryScope");
   });
 
   it("runs final ACL verification after retrieval deadline exhaustion and stops further probes", async () => {

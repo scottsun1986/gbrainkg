@@ -1,3 +1,4 @@
+import { validateMcpOrigin } from './mcp/mcp-protocol';
 import { compiledApiIdentity } from './release-identity';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
@@ -76,6 +77,11 @@ async function bootstrap() {
       crossOriginResourcePolicy: { policy: 'cross-origin' },
     }),
   );
+  app.use('/mcp', (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    try { validateMcpOrigin(req); next(); }
+    catch { res.status(403).json({ statusCode: 403, message: 'MCP Origin is not allowed' }); }
+  });
+
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ limit: '10mb', extended: true }));
   // 列表/管理后台 JSON 响应普遍在数百 KB 到 MB 级，gzip 可压缩 70%+，

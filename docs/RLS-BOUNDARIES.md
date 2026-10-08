@@ -94,3 +94,18 @@ PostgreSQL 官方行安全语义文档仍可作为历史迁移的参考：
 - `POST /api/v1/chat/messages/:messageId/render-timing` 使用普通登录身份，验证 UUID/有限非负客户端相对耗时；只读本人会话 assistant Message，来源依赖仍有效才写两个数字时点。非 owner/撤权拒绝，客户端钟明确区分服务器钟。
 - `ChatRunService.replaceTimingNode` 原子 JSON 替换仅固定 timing 节点，UPDATE 同时带 Message assistant 与 Conversation.userId 谓词，保留并发的其他 trace 节点；不扩大资源范围。
 - 服务端 queue/auth/retrieval/rerank/context/generation/verification/persistence 来自实际 span；provider first text、prepared、transport emit/complete 与 run ready 分开记录。浏览器在可见文档、回答元素相交、Markdown 已挂载后观察两次 rAF 渲染机会；不承诺物理屏幕已显示。
+
+### 2026-10-08 MCP 请求与输出边界
+
+- `mcp-authentication.ts`：每次 HTTP 请求验证 active 用户/凭证并按当前 AppId 或 Bearer 用户限流；上传 guard 先于 multipart 内存解析。旧 SSE sessionId 仅用于路由，POST 重新认证并核对用户及凭证绑定（密钥摘要），撤销/轮换不能沿用旧会话身份。请求缓存只复用同一次 guard/controller 的认证，不跨请求。
+- `mcp.controller.ts`：所有知识工具统一要求显式返回 manifest；资源结果在 `withStrictResourceOutput` 授权锁内调用共享应用读取服务重新裁剪并组装，协议元数据在同锁下复验主体。Legacy SSE、direct JSON 与 stream 使用同一结果分类与出口。
+- `mcp-protocol.ts` / `main.ts`：无 Origin 的服务端调用可用，浏览器 Origin 仅接受配置白名单且主动 403（包括 CORS 前预检）；protocol header 仅支持声明版本。实例地址来自可信部署配置，不读取客户端 Host/Forwarded；规范仅公布实际请求头/Bearer 凭证模式。
+
+### 2026-10-08 OpenAPI/MCP 核心知识应用服务
+
+- `knowledge-operations.service.ts`：OpenAPI/MCP 共用当前身份读取，清单先收敛 fresh visible KB，再以同一文档 ACL/有效期谓词分页和计数。KB 嵌套计数只包含可读 published 文档；parsing 状态是受控资源元数据，不伪装成 published 证据。
+- 文档读取先鉴权，版本路径只读当前 activeVersion 的不可变 BlockArtifact rawContent 投影及 manifest/hash，按 Unicode 字符范围分页，读取后复验活动发布；旧版本元数据可列，正文端点拒绝非活动版本。非版本路径限制上传根目录及读取预算，并绑定 version/contentHash、读取后复验；响应不含 mdPath/rawFileOid/objectKey。
+- 会话清单、游标和消息读均显式 owner 范围；游标不可借其他用户数据排序。每条助手历史以当前身份在同一客户端复验 dependencyManifest，撤权/版本变化隐藏内容与引用；manifest不作为公共历史字段输出。
+- `document-lifecycle.service.ts`：抽取现有 ingestion text/retry/delete 实现；入口传真实 userId，manager 权限与 KB/doc 归属不由 OpenAPI/MCP 自行复制。删除仍调用原词法统计、compiler、graph、RAPTOR 与存储清理链。
+- `strict-output-permit.ts`：资源出口在授权共享事务锁中复验 active 主体及原 snapshot，再执行调用方受限 fresh reader并保持到 drain；证据出口继续复验显式 manifest。读结果不刷新 snapshot。自身写提交后的确认单独取可信新 snapshot，再复验当前管理权限，输出仅 ID/accepted；二进制归档逐个确认文档，不回传旧 title/kb_name。
+- `open-api.module.ts` 导出同一 OpenApiRateLimitService，MCP 复用该实例；不同 HTTP入口不另开配额桶。`chat.service.ts` 独立检索携带实际选择来源的版本依赖，零命中用实时范围型资源确认且不声明完整库存。

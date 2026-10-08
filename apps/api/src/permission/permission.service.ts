@@ -400,7 +400,12 @@ export class PermissionService implements OnModuleInit {
    * organization boundary. Personal and industry libraries retain their
    * owner/resource-admin semantics.
    */
-  async canManageKnowledgeBase(userId: string, kbId: string): Promise<boolean> {
+  async canManageKnowledgeBase(userId: string, kbId: string, client?: any): Promise<boolean> {
+    if (client && client !== this.prisma) {
+      const scoped = new PermissionService();
+      scoped.prisma = client;
+      return scoped.canManageKnowledgeBase(userId, kbId);
+    }
     if (await this.isSystemAdmin(userId)) return true;
     const kb = await this.prisma.knowledgeBase.findUnique({
       where: { id: kbId },

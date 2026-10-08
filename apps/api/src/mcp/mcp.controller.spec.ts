@@ -59,7 +59,11 @@ describe('McpController', () => {
     );
   });
 
-  it('should return mcp spec with Streamable HTTP and port 20080 for production domain', () => {
+  afterEach(() => controller.onModuleDestroy());
+
+  it('returns the configured instance URL and only supported credential locations', () => {
+    const previousOrigin = process.env.WEB_ORIGIN;
+    process.env.WEB_ORIGIN = 'https://instance.example:20480';
     const mockReq = {
       get: jest.fn().mockImplementation((header: string) => {
         if (header === 'host') return 'knowledge.5gsailor.com';
@@ -70,16 +74,18 @@ describe('McpController', () => {
 
     const spec = controller.getMcpSpec(mockReq);
     expect(spec.name).toBe('gbrainkg-mcp');
-    // 强制生产域名包含 20080 端口
-    expect(spec.endpoints.streamable_http).toBe('https://knowledge.5gsailor.com:20080/mcp');
-    expect(spec.endpoints.sse).toBe('https://knowledge.5gsailor.com:20080/mcp/sse');
-    expect(spec.endpoints.upload_file).toBe('https://knowledge.5gsailor.com:20080/mcp/upload');
+    expect(spec.endpoints.streamable_http).toBe('https://instance.example:20480/mcp');
+    expect(spec.endpoints.sse).toBe('https://instance.example:20480/mcp/sse');
+    expect(spec.endpoints.upload_file).toBe('https://instance.example:20480/mcp/upload');
     expect(spec.transports).toContain('streamable-http');
     expect(spec.clientConfigurations.streamable_http).toBeDefined();
     expect(spec.clientConfigurations.cursor_and_windsurf_sse).toBeDefined();
     expect(spec.clientConfigurations.claude_desktop).toBeDefined();
     expect(spec.clientConfigurations.dify_and_orchestrators).toBeDefined();
     expect(spec.tools).toBeDefined();
+    expect(spec.auth).not.toHaveProperty('query');
+    expect(spec.auth.bearer).toContain('Authorization');
+    if (previousOrigin === undefined) delete process.env.WEB_ORIGIN; else process.env.WEB_ORIGIN = previousOrigin;
   });
 
   describe('POST /mcp/upload 文件直传', () => {
@@ -227,7 +233,7 @@ describe('McpController', () => {
       jsonrpc: '2.0',
       id: 2,
       method: 'tools/call',
-      params: { name: 'chat_knowledge', arguments: { query: '测试问题', kb_ids: ['kb-1'] } },
+      params: { name: 'chat_knowledge', arguments: { prompt: '测试问题', kb_ids: ['11111111-1111-4111-8111-111111111111'] }, _meta: { progressToken: 'request-progress' } },
     });
 
     expect(mockRes.setHeader).toHaveBeenCalledWith('Content-Type', 'text/event-stream; charset=utf-8');
@@ -236,4 +242,64 @@ describe('McpController', () => {
     const hasProgress = writes.some((w) => w.includes('notifications/progress'));
     expect(hasProgress).toBe(true);
   });
+  it('revalidates credentials and applies rate limits for every legacy session message', async () => {
+    const makeRequest = (secret = 'sec_valid') => ({ headers: { 'x-app-id': 'app_valid', 'x-app-secret': secret }, query: {}, on: jest.fn() } as any);
+    const stream = { setHeader: jest.fn(), flushHeaders: jest.fn(), write: jest.fn(), end: jest.fn(), writableEnded: false } as any;
+    await controller.connectSse(makeRequest(), stream);
+    const endpoint = stream.write.mock.calls[0][0] as string;
+    const sessionId = /sessionId=([^\n]+)/.exec(endpoint)![1];
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn(), send: jest.fn() } as any;
+    await controller.postMessage(makeRequest(), res, sessionId, { jsonrpc: '2.0', id: 1, method: 'ping' });
+    expect(mockUserCredentialService.verifyCredential).toHaveBeenCalledTimes(2);
+    expect(mockRateLimitService.check).toHaveBeenCalledTimes(2);
+    mockUserCredentialService.verifyCredential.mockResolvedValueOnce(null);
+    await expect(controller.postMessage(makeRequest(), res, sessionId, { jsonrpc: '2.0', id: 2, method: 'ping' })).rejects.toThrow(UnauthorizedException);
+    expect(mockMcpService.handleJsonRpc).toHaveBeenCalledTimes(1);
+    mockUserCredentialService.verifyCredential.mockResolvedValueOnce({ user: { id: 'user-1' }, credential: { id: 'cred-1', appId: 'app_valid' } });
+    await expect(controller.postMessage(makeRequest('rotated-secret'), res, sessionId, { jsonrpc: '2.0', id: 3, method: 'ping' })).rejects.toThrow(UnauthorizedException);
+    expect(mockMcpService.handleJsonRpc).toHaveBeenCalledTimes(1);
+  });
+  it('returns 405 for modern GET and rejects an invalid protocol before dispatch', async () => {
+    const res = { status: jest.fn().mockReturnThis(), send: jest.fn(), setHeader: jest.fn() } as any;
+    controller.rejectModernGet({ headers: {} } as any, res);
+    expect(res.status).toHaveBeenCalledWith(405);
+    expect(res.setHeader).toHaveBeenCalledWith('Allow', 'POST');
+    await expect(controller.handleDirectRpc({ headers: { 'mcp-protocol-version': 'invalid' } } as any, res, {})).rejects.toThrow(BadRequestException);
+    expect(mockMcpService.handleJsonRpc).not.toHaveBeenCalled();
+  });
+
+  it('does not send custom delta notifications merely because Accept includes SSE', async () => {
+    const req: any = { headers: { 'x-app-id': 'app_valid', 'x-app-secret': 'sec_valid', accept: 'application/json, text/event-stream' }, query: {} };
+    const res: any = { setHeader: jest.fn(), flushHeaders: jest.fn(), write: jest.fn(), end: jest.fn(), writableEnded: false };
+    await controller.handleStreamEndpoint(req, res, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'retrieve', arguments: { query: 'q' } } });
+    expect(mockMcpService.handleJsonRpc.mock.calls[0][2]).toBeUndefined();
+    expect(JSON.stringify(res.write.mock.calls)).not.toContain('notifications/message');
+  });
+  it('emits standard progress only for the supplied token with increasing numeric progress', async () => {
+    mockMcpService.handleJsonRpc.mockImplementation(async (_user: any, _body: any, progress: any) => {
+      progress({ type: 'token', delta: 'draft' });
+      progress({ type: 'progress', message: 'retrieval' }); progress({ type: 'progress', message: 'verification' });
+      return { jsonrpc: '2.0', id: 1, result: { content: [] } };
+    });
+    const req: any = { headers: { 'x-app-id': 'app_valid', 'x-app-secret': 'sec_valid' }, query: {} };
+    const res: any = { setHeader: jest.fn(), flushHeaders: jest.fn(), write: jest.fn(), end: jest.fn(), writableEnded: false };
+    await controller.handleStreamEndpoint(req, res, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'chat_knowledge', _meta: { progressToken: 'token' } } });
+    const messages = res.write.mock.calls.map((row: any[]) => JSON.parse(row[0].split('data: ')[1]));
+    expect(messages.slice(0, 2)).toEqual([
+      { jsonrpc: '2.0', method: 'notifications/progress', params: { progressToken: 'token', progress: 1, message: 'retrieval' } },
+      { jsonrpc: '2.0', method: 'notifications/progress', params: { progressToken: 'token', progress: 2, message: 'verification' } },
+    ]);
+    expect(JSON.stringify(messages)).not.toContain('draft');
+  });
+  it('namespaces explicitly opted-in custom frames and keeps authoritative replacement', async () => {
+    mockMcpService.handleJsonRpc.mockImplementation(async (_user: any, _body: any, progress: any) => {
+      progress({ type: 'replace', content: 'final' }); return { jsonrpc: '2.0', id: 1, result: { content: [] } };
+    });
+    const req: any = { headers: { 'x-app-id': 'app_valid', 'x-app-secret': 'sec_valid' }, query: {} };
+    const res: any = { setHeader: jest.fn(), flushHeaders: jest.fn(), write: jest.fn(), end: jest.fn(), writableEnded: false };
+    await controller.handleStreamEndpoint(req, res, { jsonrpc: '2.0', id: 1, method: 'tools/call', stream: true });
+    expect(res.write.mock.calls[0][0]).toContain('notifications/gbrain/chat');
+    expect(res.write.mock.calls[0][0]).toContain('final');
+  });
+
 });

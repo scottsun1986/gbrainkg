@@ -5,7 +5,6 @@ import {
   ForbiddenException,
   Get,
   HttpCode,
-  HttpException,
   NotFoundException,
   Post,
   Query,
@@ -14,32 +13,35 @@ import {
   UploadedFile,
   UnauthorizedException,
   UseInterceptors,
+  UseGuards,
+  Optional,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Request, Response } from 'express';
+import { McpAuthenticationService, McpOriginGuard, McpUploadGuard } from './mcp-authentication';
+import { MCP_CURRENT_PROTOCOL, MCP_PROTOCOL_VERSIONS, trustedMcpInstanceUrl, validateMcpProtocol } from './mcp-protocol';
 import { randomUUID } from 'node:crypto';
 import { OnModuleDestroy } from '@nestjs/common';
 import { McpService } from './mcp.service';
 import { UserCredentialService } from '../auth/user-credential.service';
 import { OpenApiRateLimitService } from '../open-api/open-api-rate-limit.service';
 import { AuthService } from '../auth/auth.service';
-import { setRequestContextUser, getRequestContext } from '../observability/request-context';
-import { getPrismaClient } from '../prisma';
-import { withAuthorizedRequest, assertAuthorizationSnapshot, authorizationEnforced, AuthorizationSnapshot } from '../permission/authorization-revision';
-import { withStrictOutputPermit } from '../permission/strict-output-permit';
-import { runAsAuth } from '../db/tenant-context.service';
+import { getRequestContext } from '../observability/request-context';
+import { withAuthorizedRequest, assertAuthorizationSnapshot, readAuthorizationSnapshot, authorizationEnforced, AuthorizationSnapshot } from '../permission/authorization-revision';
+import { withStrictOutputPermit, withStrictResourceOutput } from '../permission/strict-output-permit';
 
 interface McpSession {
   id: string;
   res: Response;
   user: any;
   credential: any;
+  binding: string;
   createdAt: number;
 }
 
+@UseGuards(McpOriginGuard)
 @Controller('mcp')
 export class McpController implements OnModuleDestroy {
-  private readonly prisma = getPrismaClient();
   private readonly sessions = new Map<string, McpSession>();
   private readonly cleanupTimer: NodeJS.Timeout;
 
@@ -57,12 +59,40 @@ export class McpController implements OnModuleDestroy {
 
   private async emitAuthorized(userId: string, snapshot: AuthorizationSnapshot, emit: () => Promise<void>, manifest?: unknown, knowledge = true) {
     if (process.env.KNOWLEDGE_STRICT_OUTPUT === '1') {
-      if (knowledge) return withStrictOutputPermit(userId,snapshot,emit,manifest ?? getRequestContext()?.evidenceDependencies);
-      await assertAuthorizationSnapshot(userId,snapshot);
-      return emit();
+      if (knowledge) return withStrictOutputPermit(userId,snapshot,emit,manifest ?? null);
+      return withStrictResourceOutput(userId,snapshot,async () => null,async () => emit());
     }
     await assertAuthorizationSnapshot(userId,snapshot);
     return emit();
+  }
+
+  private resultManifest(result: any): unknown {
+    const structured = result?.result?.structuredContent;
+    if (structured?.dependency_manifest !== undefined) return structured.dependency_manifest;
+    for (const item of result?.result?.content || []) {
+      if (item.type !== 'text' && item.type !== undefined) continue;
+      try { const value = JSON.parse(item.text); if (value?.dependency_manifest !== undefined) return value.dependency_manifest; } catch {}
+    }
+    return undefined;
+  }
+
+  private async emitRpcResult(user: any, snapshot: AuthorizationSnapshot, body: any, result: any, emit: (value: any) => Promise<void>) {
+    const strict = process.env.KNOWLEDGE_STRICT_OUTPUT === '1';
+    const checkedEmit = async (value: any) => {
+      if (Buffer.byteLength(JSON.stringify(value)) > 8 * 1024 * 1024) throw new BadRequestException('MCP output buffer capacity exceeded');
+      return emit(value);
+    };
+    const resource = this.mcpService.getResultResource?.(result);
+    if (resource && (strict || resource.kind === 'mutation_receipt')) {
+      const outputSnapshot = resource.kind === 'mutation_receipt' ? await readAuthorizationSnapshot(user.id) : snapshot;
+      if (!strict && outputSnapshot.revision === 'disabled') return checkedEmit(result);
+      return withStrictResourceOutput(user.id, outputSnapshot,
+        tx => this.mcpService.readResource(user.id, resource, tx),
+        async current => checkedEmit({ ...result, result: { ...result.result, content: [{ type: 'text', text: JSON.stringify(current) }], ...(result.result?.structuredContent ? { structuredContent: current } : {}) } }));
+    }
+    const knowledge = body?.method === 'tools/call';
+    const manifest = result?.error || result?.result?.isError ? { kind: 'non_evidence', version: 1, outcome: 'failure' } : this.resultManifest(result);
+    return this.emitAuthorized(user.id, snapshot, () => checkedEmit(result), manifest, knowledge);
   }
 
   /** Hold a strict permit until the transport accepts its complete buffer. */
@@ -88,6 +118,7 @@ export class McpController implements OnModuleDestroy {
     private readonly userCredentialService: UserCredentialService,
     private readonly rateLimitService: OpenApiRateLimitService,
     private readonly authService: AuthService,
+    @Optional() private readonly authentication: McpAuthenticationService = new McpAuthenticationService(userCredentialService, rateLimitService, authService),
   ) {
     // Periodic session cleanup for stale disconnected sessions
     this.cleanupTimer = setInterval(() => {
@@ -115,96 +146,9 @@ export class McpController implements OnModuleDestroy {
   }
 
   /**
-   * 鉴权辅助方法：支持 X-App-Id/X-App-Secret 请求头、Query 参数以及内部 Bearer Token
+   * 请求头凭证与 Bearer 登录认证共用前置上传 guard。
    */
-  private async authenticate(req: Request): Promise<{ user: any; credential?: any }> {
-    const headers = req.headers || {};
-    const query: any = req.query || {};
-
-    const appId =
-      headers['x-app-id'] ||
-      headers['app-id'] ||
-      headers['x-appid'];
-
-    const appSecret =
-      headers['x-app-secret'] ||
-      headers['app-secret'] ||
-      headers['x-appsecret'];
-
-    if (appId && appSecret) {
-      const verified = await this.userCredentialService.verifyCredential(
-        String(appId).trim(),
-        String(appSecret).trim(),
-      );
-      if (!verified) {
-        throw new UnauthorizedException({
-          code: 401,
-          message: 'MCP 鉴权失败：X-App-Id 或 X-App-Secret 不正确或已被禁用',
-        });
-      }
-
-      // 凭证鉴权不经过 AuthService.userIdFromRequest，必须显式把用户写入请求
-      // 上下文，供应用层授权与审计关联请求用户。
-      setRequestContextUser(verified.user.id);
-
-      const rate = this.rateLimitService.check(String(appId).trim());
-      if (!rate.allowed) {
-        throw new HttpException(
-          {
-            code: 429,
-            message: `请求过于频繁：该 AppId 每分钟最多 ${this.rateLimitService.limitPerMinute} 次请求，请在 ${rate.retryAfterSec} 秒后重试`,
-          },
-          429,
-        );
-      }
-
-      return { user: verified.user, credential: verified.credential };
-    }
-
-    // Fallback: Bearer JWT
-    const authHeader = String(headers.authorization || '');
-    if (authHeader.startsWith('Bearer ')) {
-      try {
-        const userId = await this.authService.userIdFromRequest(req);
-        const rate = this.rateLimitService.check(userId);
-        if (!rate.allowed) {
-          throw new HttpException(
-            {
-              code: 429,
-              message: `请求过于频繁：每分钟最多 ${this.rateLimitService.limitPerMinute} 次请求，请在 ${rate.retryAfterSec} 秒后重试`,
-            },
-            429,
-          );
-        }
-        const user = await runAsAuth((tx) => tx.user.findUnique({
-          where: { id: userId, status: 'active' },
-          include: {
-            roles: { include: { role: true } },
-            orgs: { include: { orgNode: true } },
-          },
-        }));
-        if (user) {
-          return {
-            user: {
-              id: user.id,
-              username: user.username,
-              displayName: user.displayName,
-              email: user.email,
-              roles: user.roles,
-              orgs: user.orgs,
-            },
-          };
-        }
-      } catch (error) {
-        if (error instanceof HttpException && error.getStatus() === 429) throw error;
-      }
-    }
-
-    throw new UnauthorizedException({
-      code: 401,
-      message: 'MCP 鉴权失败：缺少有效的 X-App-Id 和 X-App-Secret 凭证',
-    });
-  }
+  private authenticate(req: Request) { return this.authentication.authenticate(req); }
 
   /**
    * 1. 标准 MCP SSE 连接端点 (Server-Sent Events)
@@ -212,7 +156,7 @@ export class McpController implements OnModuleDestroy {
    */
   @Get('sse')
   async connectSse(@Req() req: Request, @Res() res: Response) {
-    const { user, credential } = await this.authenticate(req);
+    const { user, credential, binding } = await this.authenticate(req);
     const sessionId = randomUUID();
 
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -227,6 +171,7 @@ export class McpController implements OnModuleDestroy {
       res,
       user,
       credential,
+      binding,
       createdAt: Date.now(),
     };
     this.sessions.set(sessionId, session);
@@ -242,6 +187,7 @@ export class McpController implements OnModuleDestroy {
         clearInterval(keepAliveTimer);
       }
     }, 15000);
+    keepAliveTimer.unref?.();
 
     req.on('close', () => {
       clearInterval(keepAliveTimer);
@@ -262,30 +208,28 @@ export class McpController implements OnModuleDestroy {
     @Body() body: any,
   ) {
     const sessionId = querySessionId || req.headers['x-mcp-session-id'] as string;
-    let user: any;
+    if (sessionId && typeof sessionId !== 'string') throw new BadRequestException('Invalid MCP session header');
+    validateMcpProtocol(req);
+    const identity = await this.authenticate(req);
+    const user = identity.user;
     let session: McpSession | undefined;
-
-    if (sessionId && this.sessions.has(sessionId)) {
-      session = this.sessions.get(sessionId)!;
-      user = session.user;
-    } else {
-      // 若无活跃会话，尝试直接凭证鉴权
-      const auth = await this.authenticate(req);
-      user = auth.user;
+    if (sessionId) {
+      session = this.sessions.get(sessionId);
+      if (!session || session.user.id !== user.id || session.binding !== identity.binding) throw new UnauthorizedException('MCP session does not match the current credential');
     }
 
     return this.withRpcRequest(user.id,res, async snapshot => {
       const result = await this.mcpService.handleJsonRpc(user, body);
       if (result === null) return res.status(202).send();
       if (Buffer.byteLength(JSON.stringify(result)) > 8 * 1024 * 1024) throw new BadRequestException('MCP output buffer capacity exceeded');
-      await this.emitAuthorized(user.id,snapshot,async () => {
+      await this.emitRpcResult(user,snapshot,body,result,async current => {
         if (session && !session.res.writableEnded) {
-          const event = `event: message\ndata: ${JSON.stringify(result)}\n\n`;
+          const event = `event: message\ndata: ${JSON.stringify(current)}\n\n`;
           if (process.env.KNOWLEDGE_STRICT_OUTPUT === '1') await this.drain(session.res,() => session!.res.write(event));
           else session.res.write(event);
         }
-        if (process.env.KNOWLEDGE_STRICT_OUTPUT === '1') await this.drain(res,() => res.status(200).json(result));
-        else res.status(200).json(result);
+        if (process.env.KNOWLEDGE_STRICT_OUTPUT === '1') await this.drain(res,() => res.status(200).json(current));
+        else res.status(200).json(current);
       });
     });
   }
@@ -297,6 +241,13 @@ export class McpController implements OnModuleDestroy {
    * - 工具调用（如 chat_knowledge）可流式推送中间 token/进度，最后推送完整 JSON-RPC 结果；
    * - 普通 JSON 请求直接返回标准 JSON-RPC 2.0 响应。
    */
+  @Get()
+  rejectModernGet(@Req() req: Request, @Res() res: Response) {
+    validateMcpProtocol(req);
+    res.setHeader('Allow', 'POST');
+    return res.status(405).send();
+  }
+
   @Post()
   @HttpCode(200)
   async handleDirectRpc(
@@ -323,15 +274,11 @@ export class McpController implements OnModuleDestroy {
     body: any,
     forceStream = false,
   ) {
+    validateMcpProtocol(req);
     const { user } = await this.authenticate(req);
     if (process.env.KNOWLEDGE_STRICT_OUTPUT === '1' && !authorizationEnforced()) throw new BadRequestException('Strict output requires authorization enforcement');
     return this.withRpcRequest(user.id,res,async snapshot => {
     const strict = process.env.KNOWLEDGE_STRICT_OUTPUT === '1';
-    const knowledge = body?.method === 'tools/call' && ['chat_knowledge', 'search_knowledge', 'aggregate_knowledge_table'].includes(body?.params?.name);
-    const resultManifest = (result: any): unknown => {
-      try { return JSON.parse(result?.result?.content?.[0]?.text || '{}').dependency_manifest; }
-      catch { return undefined; }
-    };
     const acceptHeader = String(req.headers['accept'] || '').toLowerCase();
     const isStreamRequested =
       forceStream ||
@@ -348,46 +295,32 @@ export class McpController implements OnModuleDestroy {
 
       const reqId = body?.id ?? null;
 
+      const progressToken = body?.params?._meta?.progressToken;
+      const progressEnabled = typeof progressToken === 'string' || (typeof progressToken === 'number' && Number.isFinite(progressToken));
+      const customStream = body?.stream === true;
+      let progress = 0;
       try {
-        const result = await this.mcpService.handleJsonRpc(user, body, strict ? undefined : (progressEvent: any) => {
+        const onProgress = strict || (!progressEnabled && !customStream) ? undefined : (frame: any) => {
           if (res.writableEnded) return;
-          if (progressEvent?.type === 'token') {
-            const payload = {
-              jsonrpc: '2.0',
-              method: 'notifications/message',
-              params: {
-                delta: progressEvent.delta,
-                conversation_id: progressEvent.conversation_id,
-              },
-            };
+          if (frame?.type === 'progress' && progressEnabled) {
+            const payload = { jsonrpc: '2.0', method: 'notifications/progress',
+              params: { progressToken, progress: ++progress, ...(frame.message ? { message: frame.message } : {}) } };
             res.write(`event: message\ndata: ${JSON.stringify(payload)}\n\n`);
-          } else if (progressEvent?.type === 'progress') {
-            const payload = {
-              jsonrpc: '2.0',
-              method: 'notifications/progress',
-              params: {
-                phase: progressEvent.phase,
-                message: progressEvent.message,
-              },
-            };
-            res.write(`event: progress\ndata: ${JSON.stringify(payload)}\n\n`);
-          } else if (progressEvent?.type === 'citation') {
-            const payload = {
-              jsonrpc: '2.0',
-              method: 'notifications/citation',
-              params: progressEvent.citation,
-            };
-            res.write(`event: citation\ndata: ${JSON.stringify(payload)}\n\n`);
+          } else if (customStream) {
+            const payload = { jsonrpc: '2.0', method: 'notifications/gbrain/chat', params: frame };
+            res.write(`event: message\ndata: ${JSON.stringify(payload)}\n\n`);
           }
-        });
+        };
+        const result = await this.mcpService.handleJsonRpc(user, body, onProgress);
 
         if (result !== null && !res.writableEnded) {
           const event = `event: message\ndata: ${JSON.stringify(result)}\n\n`;
           if (Buffer.byteLength(event) > 8 * 1024 * 1024) throw new BadRequestException('MCP output buffer capacity exceeded');
-          await this.emitAuthorized(user.id,snapshot,async () => {
-            if (strict) await this.drain(res,() => { res.write(event);res.end(); });
-            else res.write(event);
-          }, resultManifest(result), knowledge);
+          await this.emitRpcResult(user,snapshot,body,result,async current => {
+            const frame = `event: message\ndata: ${JSON.stringify(current)}\n\n`;
+            if (strict) await this.drain(res,() => { res.write(frame);res.end(); });
+            else res.write(frame);
+          });
         }
       } catch (err: any) {
         if (!res.writableEnded) {
@@ -410,10 +343,10 @@ export class McpController implements OnModuleDestroy {
     const result = await this.mcpService.handleJsonRpc(user, body);
     if (result === null) return res.status(202).send();
     if (Buffer.byteLength(JSON.stringify(result)) > 8 * 1024 * 1024) throw new BadRequestException('MCP output buffer capacity exceeded');
-    await this.emitAuthorized(user.id,snapshot,async () => {
-      if (strict) await this.drain(res,() => res.status(200).json(result));
-      else res.status(200).json(result);
-    }, resultManifest(result), knowledge);
+    await this.emitRpcResult(user,snapshot,body,result,async current => {
+      if (strict) await this.drain(res,() => res.status(200).json(current));
+      else res.status(200).json(current);
+    });
     });
   }
 
@@ -425,6 +358,7 @@ export class McpController implements OnModuleDestroy {
    * 表单字段: file(必填, 文件), kb_id(必填), title(可选)
    */
   @Post('upload')
+  @UseGuards(McpUploadGuard)
   @UseInterceptors(
     FileInterceptor('file', {
       limits: { fileSize: 200 * 1024 * 1024 },
@@ -436,8 +370,10 @@ export class McpController implements OnModuleDestroy {
     @Body('kb_id') kbIdBody: string,
     @Body('title') title: string,
     @UploadedFile() file: any,
+    @Res() res?: Response,
   ) {
     const { user } = await this.authenticate(req);
+    if (process.env.KNOWLEDGE_STRICT_OUTPUT === '1' && !authorizationEnforced()) throw new ForbiddenException('Strict output requires authorization enforcement');
     if (!file?.buffer?.length) {
       throw new BadRequestException(
         '缺少文件：请以 multipart/form-data 提交，文件字段名为 file',
@@ -461,8 +397,20 @@ export class McpController implements OnModuleDestroy {
         fileBuffer: file.buffer,
         title: title ? String(title) : undefined,
       });
+      if (process.env.KNOWLEDGE_STRICT_OUTPUT === '1') {
+        if (!authorizationEnforced()) throw new ForbiddenException('Strict output requires authorization enforcement');
+        if (!res) throw new BadRequestException('Missing upload response transport');
+        const snapshot = await readAuthorizationSnapshot(user.id);
+        const docIds = 'documents' in result && result.documents ? result.documents.map((doc: any) => doc.document_id) : [result.document_id];
+        await withStrictResourceOutput(user.id, snapshot,
+          tx => this.mcpService.readResource(user.id, { kind: 'mutation_receipt', args: { kb_id: kbId, doc_ids: docIds, action: 'upload' } }, tx),
+          current => this.drain(res, () => res.status(200).json(current)));
+        return;
+      }
+      if (res) { res.status(200).json(result); return; }
       return result;
     } catch (err: any) {
+      if (err?.getStatus) throw err;
       const message = String(err?.message || '上传失败');
       if (message.includes('无权')) throw new ForbiddenException(message);
       if (message.includes('不存在')) throw new NotFoundException(message);
@@ -475,23 +423,14 @@ export class McpController implements OnModuleDestroy {
    */
   @Get('spec')
   getMcpSpec(@Req() req: Request) {
-    const xForwardedHost = req.get('x-forwarded-host');
-    const xForwardedProto = req.get('x-forwarded-proto');
-    let host = xForwardedHost || req.get('host') || 'knowledge.5gsailor.com:20080';
-    let protocol = xForwardedProto || req.protocol || 'https';
-
-    // 强制生产域名携带对外服务的 20080 端口
-    if (host.includes('knowledge.5gsailor.com') && !host.includes(':')) {
-      host = 'knowledge.5gsailor.com:20080';
-      protocol = 'https';
-    }
-    const baseUrl = `${protocol}://${host}`;
+    const baseUrl = trustedMcpInstanceUrl();
 
     return {
       name: 'gbrainkg-mcp',
       description: 'GBrain 知识库 Model Context Protocol (MCP) 服务 (支持 Streamable HTTP 与 SSE)',
       version: '1.1.0',
-      protocolVersion: '2024-11-05',
+      protocolVersion: MCP_CURRENT_PROTOCOL,
+      supportedProtocolVersions: MCP_PROTOCOL_VERSIONS,
       transports: ['streamable-http', 'sse', 'direct-rpc'],
       endpoints: {
         streamable_http: `${baseUrl}/mcp`,
@@ -515,12 +454,10 @@ export class McpController implements OnModuleDestroy {
           id: 'X-App-Id',
           secret: 'X-App-Secret',
         },
-        query: {
-          id: 'app_id',
-          secret: 'app_secret',
-        },
+        bearer: 'Authorization: Bearer <user token>',
       },
       tools: this.mcpService.getTools(),
+      streamExtension: { optIn: 'JSON request stream=true', method: 'notifications/gbrain/chat', description: 'Custom answer frames; standard clients receive only requested progress and the final result.' },
       clientConfigurations: {
         streamable_http: {
           description: '适用于 Cursor / Windsurf 的 Streamable HTTP 标准配置（推荐）',

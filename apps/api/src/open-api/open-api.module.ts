@@ -18,6 +18,6 @@ import { IngestionModule } from '../ingestion/ingestion.module';
   ],
   controllers: [OpenApiController],
   providers: [OpenApiRateLimitService, OpenApiGuard],
-  exports: [OpenApiGuard],
+  exports: [OpenApiGuard, OpenApiRateLimitService],
 })
 export class OpenApiModule {}

@@ -335,6 +335,19 @@ export function deterministicChunkCap(
 }
 
 /**
+ * User-facing projection of a search hit. Retrieval attaches source manifests and
+ * inventory scope so `captureEvidenceDependencies` can verify the evidence under
+ * the strict output permit; those fields are internal dependency plumbing and
+ * must not reach REST/MCP callers ("internal source manifests are never emitted").
+ */
+export function publicSearchResult(result: any): any {
+  if (!result || typeof result !== 'object') return result;
+  const { sourceManifest: _manifest, sourceDocumentIds: _sourceIds, evidenceRefs: _refs,
+    inventory: _inventory, inventoryScope: _scope, ...rest } = result;
+  return rest;
+}
+
+/**
  * Identity key for a retrieval candidate, used to merge arms without dropping
  * distinct evidence. Prefer the chunk id — a single page can hold many relevant
  * chunks, and keying on (document, page) silently collapsed them into one, so a
@@ -1284,6 +1297,8 @@ export class ChatService {
     success: boolean;
     query: string;
     execution?: ReturnType<QueryExecution["report"]>;
+    dependencyManifest?: Awaited<ReturnType<typeof captureEvidenceDependencies>>;
+    kbScope?: string[];
     total: number;
     results: Array<{
       documentId: string | null;
@@ -1325,18 +1340,24 @@ export class ChatService {
           id: true,
           title: true,
           version: true,
+          activeVersionId: true,
+          contentHash: true,
           kbId: true,
           kb: { select: { id: true, name: true } },
         },
         orderBy: [{ kb: { name: "asc" } }, { title: "asc" }],
       });
       const readableDocs = await this.filterSearchResultsForUser(userId, scope, accessibleDocs.map((doc) => ({ ...doc, documentId: doc.id })));
+      const results = readableDocs.slice(0, limit).map(d => ({ documentId: d.id, documentVersionId: d.activeVersionId, version: d.version }));
+      const dependencyManifest = authorizationEnforced() && results.length ? await captureEvidenceDependencies(results) : undefined;
+      if (authorizationEnforced() && results.length && !dependencyManifest) throw new ForbiddenException('Search sources changed; retry');
       return {
+        dependencyManifest, kbScope: scope,
         success: true,
         query,
         total: readableDocs.length,
         results: readableDocs.slice(0, limit).map((d) => ({
-          documentId: d.id,
+          documentId: d.id, documentVersionId: d.activeVersionId, contentHash: d.contentHash,
           kbId: d.kbId,
           title: d.title,
           version: d.version,
@@ -1717,6 +1738,7 @@ export class ChatService {
         documentId: docId,
         chunkId: c.chunkId || c.id || undefined,
         documentVersionId: c.documentVersionId, span: c.span, contentHash: c.contentHash,
+        sourceManifest: c.sourceManifest, sourceDocumentIds: c.sourceDocumentIds, evidenceRefs: c.evidenceRefs, inventory: c.inventory, inventoryScope: c.inventoryScope,
         kbId: c.kbId || null,
         title: String(c.docTitle || c.topic || "未知文档"),
         version: typeof c.version === "number" ? c.version : undefined,
@@ -1749,6 +1771,9 @@ export class ChatService {
     }
 
     const authorizedResults = await withAuthorizationVerification(() => this.filterSearchResultsForUser(userId, scope, results));
+    const selected = authorizedResults.slice(0, limit);
+    const dependencyManifest = authorizationEnforced() && selected.length ? await captureEvidenceDependencies(selected) : undefined;
+    if (authorizationEnforced() && selected.length && !dependencyManifest) throw new ForbiddenException('Search sources changed; retry');
     const precedence = this.resolveTemporalPrecedence(authorizedResults);
     getRequestContext()?.execution?.finishRetrieval();
 
@@ -1757,7 +1782,12 @@ export class ChatService {
       query,
       execution: getRequestContext()?.execution?.report(),
       total: authorizedResults.length,
-      results: authorizedResults.slice(0, limit),
+      // Source manifests/inventory are the internal dependency plumbing the
+      // strict permit verifies above; they must not travel to REST/MCP callers
+      // (the published contract is "internal source manifests are never
+      // emitted"). Project the user-facing provenance only.
+      results: selected.map(publicSearchResult),
+      dependencyManifest, kbScope: scope,
       ...(precedence.temporalNotice ? { temporalNotice: precedence.temporalNotice } : {}),
     };
   }
