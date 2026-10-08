@@ -45,6 +45,15 @@
 - 生产环境 inst1：`deploy-prod.sh --target=inst1 --skip-gate` 发布成功；快照 `/data/llmwiki/.releases/20261008114144`；新指纹 `886f5339…`；服务 active、公网 200；`dist/mcp/mcp.service.js` 含修复逻辑。
 - 回滚：`bash scripts/rollback-release.sh 20261008114144 --target=inst1`。
 
+## 4c. 追加修复：MCP 断连导致回答丢失（2026-10-08 21:20）
+
+- 现象：生产用户 `szq` 用 MCP 发起多个问题，Web 会话显示「该回答未完成，请重新提问。」。
+- 根因：MCP `chat_knowledge` 为同步请求，慢回答（日志实测 30–150s，成功的一次 153s）超过客户端 ~30s 超时；客户端断开触发 `withRpcRequest` 的传输取消，知识运行被中止、助手回答未落库，会话只剩用户消息。证据：`Knowledge request cancelled` ← `ServerResponse.disconnected`。该取消逻辑基线即存在，非审查改动引入；高延迟为独立问题。
+- 修复：对齐 Web 聊天路径——客户端断开时**不取消知识运行**，继续生成并落库，仅跳过对已关闭 socket 的写出（各 emit 加 `destroyed/writableEnded` 保护）。提交 `9c2d538`；新增回归用例；API 全量单测 176 套 / 1550 项通过。
+- 演示环境：重启后新指纹 `e3a80673…`，断连取消已移除、守卫在位，Web/MCP 正常。
+- 生产环境 inst1：`deploy-prod.sh --target=inst1 --skip-gate` 发布成功；快照 `/data/llmwiki/.releases/20261008131930`；新指纹 `e3a80673…`；服务 active、公网 200；`dist/mcp/mcp.controller.js` 含守卫、无旧取消字符串。
+- 回滚：`bash scripts/rollback-release.sh 20261008131930 --target=inst1`。
+
 ## 5. 既有状态（非本次引入）
 
 - GBrain 编排器 `v0.53.0 PARTIAL`（shared-skills 内容根待运维处理）与 `gbrain 0.60.84.0 -> 0.60.108.0` 升级提示，均为发布前既有状态，本版未改变。
