@@ -380,6 +380,23 @@ describe('McpService', () => {
       expect(result.status).toBe('parsing');
     });
 
+    it('keeps the original file extension when a title without one is supplied', async () => {
+      const svc = new McpService(mockChatService, mockPermissionService, { enqueue: jest.fn() } as any);
+      const result = await svc.saveUploadAndEnqueue('user-123', {
+        kbId: '11111111-1111-4111-8111-111111111111', filename: 'report.pdf',
+        fileBuffer: Buffer.from('%PDF-1.4 fake'), title: '季度报告',
+      });
+      expect(result.title).toBe('季度报告.pdf');
+    });
+
+    it('falls back to the original filename when no title is supplied', async () => {
+      const svc = new McpService(mockChatService, mockPermissionService, { enqueue: jest.fn() } as any);
+      const result = await svc.saveUploadAndEnqueue('user-123', {
+        kbId: '11111111-1111-4111-8111-111111111111', filename: '员工手册.docx', fileBuffer: Buffer.from('docx'),
+      });
+      expect(result.title).toBe('员工手册.docx');
+    });
+
     it('should reject when user lacks permission on the kb', async () => {
       mockPermissionService.canManageKnowledgeBase = jest.fn().mockResolvedValue(false);
       const svc = new McpService(mockChatService, mockPermissionService);

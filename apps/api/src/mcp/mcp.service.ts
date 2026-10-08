@@ -210,7 +210,15 @@ export class McpService {
     if (!fileBuffer || !fileBuffer.length) {
       throw new Error(`文件 ${filename} 的内容为空，请检查上传数据`);
     }
-    const title = String(input.title || '').trim() || filename;
+    const safeExt = extname(filename).toLowerCase();
+    // The original file extension is the authoritative document format. An
+    // optional caller-supplied title (e.g. "员工手册") must not drop it: the web
+    // viewer derives the file type from the title and otherwise falls back to the
+    // parsed markdown path (content.md), rendering an uploaded PDF as .md.
+    const providedTitle = String(input.title || '').trim();
+    const title = providedTitle
+      ? (extname(providedTitle) ? providedTitle : `${providedTitle}${safeExt}`)
+      : filename;
 
     if (!await this.permissionService.canManageKnowledgeBase(userId, kbId)) throw new ForbiddenException('Knowledge base unavailable');
     const kb = await this.prisma.knowledgeBase.findUnique({
@@ -226,7 +234,6 @@ export class McpService {
       throw new ForbiddenException('Knowledge base unavailable');
     }
 
-    const safeExt = extname(filename).toLowerCase();
     if (!safeExt) {
       throw new Error(`文件名必须包含有效扩展名（如 .pdf, .docx, .md, .txt）`);
     }
