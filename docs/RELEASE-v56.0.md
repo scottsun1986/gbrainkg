@@ -43,11 +43,12 @@
 - F01 回收依赖下一次同步被触发（自愈），未新增独立巡检调度。
 - 带凭据的 live gate 未运行的层保持“未测”语义。
 
-## 部署
+## 部署（2026-10-09 完成）
 
 | 环境 | 状态 | 验证 |
 | --- | --- | --- |
-| 演示 `150.158.137.151:50003` | 待部署 | 部署后填写 |
-| 生产 `meetings2` inst1 / `knowledge.5gsailor.com:20080` | 待部署 | 部署后填写 |
+| 演示 `150.158.137.151:50003` | 已部署并验证 | rsync + `~/demo-build.sh`（构建 EXIT 0，84 条迁移 up to date）+ 重启 api/web/parser 全 active；Web 50003 → 200；API ready、指纹 `b46bda63…` 与本机候选构建一致；Parser 0.5.0，PyMuPDF 可用 |
+| 生产 `meetings2` inst1 / `knowledge.5gsailor.com:20080` | 已部署并验证 | `bash scripts/deploy-prod.sh --target=inst1` EXIT 0；发布前快照 `/data/llmwiki/.releases/20261009153310`；门禁复用已通过的 quality-first 指纹；84 条迁移应用（含 2 条新增）；api/web/parser 全 active；API 指纹 `b46bda63…` 与本机候选构建一致；公网 HTTPS → 200；GBrain 引擎状态 OK |
 
-回滚：`bash scripts/deploy-prod.sh --rollback previous --target=inst1`。
+回滚：`bash scripts/deploy-prod.sh --rollback previous --target=inst1`（快照 `20261009153310` 的前一状态）。
+说明：GBrain 引擎自带的 `0.53.0 shared-skills` host-work 待办为既有状态，与本次发布无关；部署健康检查判定引擎 OK。
