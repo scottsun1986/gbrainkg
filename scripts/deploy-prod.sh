@@ -502,16 +502,13 @@ rollback_single_instance() {
     cd '$PROD_REPO'
     CI=true pnpm install --frozen-lockfile > /tmp/gbrain-release-pnpm-install.log 2>&1 || { tail -30 /tmp/gbrain-release-pnpm-install.log; exit 1; }
     tail -2 /tmp/gbrain-release-pnpm-install.log
-    # The shared MaxSim subprocess uses numpy; stage its pinned runtime peer
-    # before restarting the parser. Existing parser dependencies stay intact.
-    shared_python=/home/ubuntu/gbrainkg/.venv/bin/python
-    if [[ -x \"\$shared_python\" ]]; then
-      if ! \"\$shared_python\" -c 'import numpy; assert numpy.__version__ == \"2.4.6\"'; then
-        \"\$shared_python\" -m pip install 'numpy==2.4.6'
-      fi
-    else
-      echo 'ERROR: shared parser virtualenv missing'; exit 1
-    fi
+    # Incrementally sync pinned peers in the existing single shared Parser venv.
+    # Its helper also checks the system Impress filter before any pip mutation.
+    # Stream the current operator helper so historical rollback snapshots and
+    # releases of inst2+ do not depend on a helper present in the shared tree.
+    bash -s <<'SHARED_PARSER_DEPS'
+$(cat "$LOCAL_ROOT/scripts/sync-shared-parser-deps.sh")
+SHARED_PARSER_DEPS
     cd '$PROD_REPO/packages/database'
     set -a
     source '$ENV_FILE'
@@ -650,16 +647,13 @@ deploy_single_instance() {
     # 漂移到更新的传递依赖版本。若此处失败，请先在本地提交更新后的 pnpm-lock.yaml。
     CI=true pnpm install --frozen-lockfile > /tmp/gbrain-release-pnpm-install.log 2>&1 || { tail -30 /tmp/gbrain-release-pnpm-install.log; exit 1; }
     tail -2 /tmp/gbrain-release-pnpm-install.log
-    # The shared MaxSim subprocess uses numpy; stage its pinned runtime peer
-    # before restarting the parser. Existing parser dependencies stay intact.
-    shared_python=/home/ubuntu/gbrainkg/.venv/bin/python
-    if [[ -x \"\$shared_python\" ]]; then
-      if ! \"\$shared_python\" -c 'import numpy; assert numpy.__version__ == \"2.4.6\"'; then
-        \"\$shared_python\" -m pip install 'numpy==2.4.6'
-      fi
-    else
-      echo 'ERROR: shared parser virtualenv missing'; exit 1
-    fi
+    # Incrementally sync pinned peers in the existing single shared Parser venv.
+    # Its helper also checks the system Impress filter before any pip mutation.
+    # Stream the current operator helper so historical rollback snapshots and
+    # releases of inst2+ do not depend on a helper present in the shared tree.
+    bash -s <<'SHARED_PARSER_DEPS'
+$(cat "$LOCAL_ROOT/scripts/sync-shared-parser-deps.sh")
+SHARED_PARSER_DEPS
     cd '$PROD_REPO/packages/database'
     set -a
     source '$ENV_FILE'
