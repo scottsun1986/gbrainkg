@@ -36,7 +36,7 @@ const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrainkg-judge-'));
 try {
   const evaluation = path.join(temp, 'tests/evaluation');
   fs.mkdirSync(evaluation, { recursive: true });
-  for (const file of ['quality-gate.ts', 'quality-gate-judge.ts', 'quality-gate-auth.ts', 'quality-gate-validity.ts', 'llm-client.ts', 'run-meta.ts', 'gate-thresholds.ts', 'gate-thresholds.json']) {
+  for (const file of ['quality-gate.ts', 'quality-gate-judge.ts', 'quality-gate-auth.ts', 'quality-gate-validity.ts', 'llm-client.ts', 'run-meta.ts', 'gate-thresholds.ts', 'gate-thresholds.json', 'ci-gate.sh', 'gate-thresholds.sh']) {
     fs.copyFileSync(path.join(__dirname, file), path.join(evaluation, file));
   }
   fs.writeFileSync(path.join(evaluation, 'golden-dataset.json'), JSON.stringify([{
@@ -130,11 +130,18 @@ global.fetch = async (url, init) => {
 
     fs.unlinkSync(path.join(evaluation, 'results', reports[0]));
   }
+  // Run the real coordinator in the disposable project, with its external
+  // benchmark entrypoint replaced. Running it from the checkout would reach
+  // the real SOTA API benchmark even though ANN and npx are already mocked.
+  const international = path.join(evaluation, 'intl-benchmark');
+  fs.mkdirSync(international);
+  fs.writeFileSync(path.join(international, 'sota-gate.sh'),
+    '#!/bin/sh\n[ "$1" = full ] || exit 2\necho "mock live gate: sota-gate.sh full"\nexit 1\n');
   const bin = path.join(temp, 'bin');
   fs.mkdirSync(bin);
   const realPython = spawnSync('python3', ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' }).stdout.trim();
   fs.writeFileSync(path.join(bin, 'npx'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-  // Only the ANN live gate is simulated as failing; the shared threshold loader
+  // ANN and SOTA are simulated as failing; the shared threshold loader
   // also shells out to python3 and must keep working.
   fs.writeFileSync(
     path.join(bin, 'python3'),
@@ -142,12 +149,13 @@ global.fetch = async (url, init) => {
     { mode: 0o755 },
   );
   for (const strict of ['0', '1']) {
-    const shell = spawnSync('bash', [path.join(__dirname, 'ci-gate.sh')], {
+    const shell = spawnSync('bash', [path.join(evaluation, 'ci-gate.sh')], {
       env: { ...env, GATE_STRICT: strict, PATH: `${bin}:${process.env.PATH}`, CHECK_INTL: '1', ANN_EVAL_DATABASE_URL: 'fixture' },
       encoding: 'utf8', timeout: 10_000,
     });
     assert.equal(shell.status, 1, shell.stdout + shell.stderr);
     assert.match(shell.stdout, /2 enabled live gate\(s\) failed/);
+    assert.match(shell.stdout, /mock live gate: sota-gate\.sh full/);
     assert.match(shell.stdout, /ann_recall_eval\.py/);
   }
 } finally {
