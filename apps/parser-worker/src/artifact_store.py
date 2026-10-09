@@ -1,5 +1,6 @@
 """Transient, instance-scoped streamed artifacts; API owns durable ACL/storage."""
 from __future__ import annotations
+from typing import TYPE_CHECKING
 
 import fcntl
 import json
@@ -10,9 +11,9 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-try:
-    from src.env_config import env_int
-except ImportError:
+if TYPE_CHECKING or __package__:
+    from .env_config import env_int
+else:
     from env_config import env_int
 
 ROOT = Path(os.environ.get('PARSER_STREAM_ARTIFACT_ROOT', '/tmp/llmwiki/parser-streams'))

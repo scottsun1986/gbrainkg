@@ -1,11 +1,17 @@
 """Cancellable native format inspection; images spill to disk, not result JSON."""
+from typing import TYPE_CHECKING, Any
 import json
 import hashlib
 import resource
 import sys
 from pathlib import Path
-from env_config import env_int
-import temp_budget
+if TYPE_CHECKING or __package__:
+    from .env_config import env_int
+    from . import temp_budget
+else:
+    from env_config import env_int
+    import temp_budget
+
 
 
 def serialize(value, directory, counter):
@@ -39,16 +45,20 @@ if __name__ == '__main__':
     resource.setrlimit(resource.RLIMIT_AS, (memory, memory))
     resource.setrlimit(resource.RLIMIT_CPU, (240, 245))
     resource.setrlimit(resource.RLIMIT_FSIZE, (200 * 1024 * 1024, 200 * 1024 * 1024))
-    import main
+    if TYPE_CHECKING or __package__:
+        from . import main
+    else:
+        import main
     operation, source, output, raw_args = sys.argv[1:]
     path, directory, args = Path(source), Path(output), json.loads(raw_args)
     # Subset helpers must use the caller's explicit temporary workspace, even
     # when the parent configured it in process rather than through the env.
     main.UPLOAD_ROOT = directory.parent
+    result: dict[str, Any]
     if operation == 'plaintext':
         result = {'markdown': main.extract_plaintext(path.name, path.read_bytes())}
     elif operation == 'docx':
-        contract = {}
+        contract: dict[str, Any] = {}
         markdown, images = main.extract_docx(path, contract, args.get('unit_ids'))
         result = {'markdown': markdown, 'images': images, 'contract': contract}
     elif operation == 'pptx':

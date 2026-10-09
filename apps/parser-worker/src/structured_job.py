@@ -1,14 +1,22 @@
 """Isolated native spreadsheet job; timeout/cancellation kills its process group."""
+from typing import TYPE_CHECKING
 import json
 import os
 import resource
 import sys
 from pathlib import Path
 
-from env_config import env_int
-import temp_budget
-import structured_excel
-from structured_excel import extract
+if TYPE_CHECKING or __package__:
+    from .env_config import env_int
+    from . import temp_budget
+    from . import structured_excel
+    from .structured_excel import extract
+else:
+    from env_config import env_int
+    import temp_budget
+    import structured_excel
+    from structured_excel import extract
+
 
 if __name__ == '__main__':
     limit = env_int('PARSER_NATIVE_MEMORY_BYTES', 1536 * 1024 * 1024)

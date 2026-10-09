@@ -1,12 +1,13 @@
 """Credential-free, bounded cache for page/image artifacts in the shared worker."""
+from typing import TYPE_CHECKING
 import hashlib
 import json
 import os
 import time
 import uuid
-try:
-    from src.env_config import env_int
-except ImportError:
+if TYPE_CHECKING or __package__:
+    from .env_config import env_int
+else:
     from env_config import env_int
 from pathlib import Path
 from contextvars import ContextVar

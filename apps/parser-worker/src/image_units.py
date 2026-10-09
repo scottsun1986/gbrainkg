@@ -1,11 +1,12 @@
 """Bounded image frames and overlapping long-screenshot tiles (no downloads)."""
 from __future__ import annotations
+from typing import TYPE_CHECKING
 import io
 from pathlib import Path
 
-try:
-    from src.env_config import env_int
-except ImportError:
+if TYPE_CHECKING or __package__:
+    from .env_config import env_int
+else:
     from env_config import env_int
 
 MAX_PIXELS = env_int('PARSER_IMAGE_MAX_PIXELS', 80_000_000)

@@ -5,16 +5,17 @@ when traversal reaches the source table end. Partial failed attempts preserve
 finished batches and discard their current uncommitted batch.
 """
 from __future__ import annotations
+from typing import TYPE_CHECKING
 import hashlib
 import json
 from typing import Any
 from pathlib import Path
 from contextvars import ContextVar
 
-try:
-    from src import artifact_store, artifact_cache
-    from src.env_config import env_int
-except ImportError:
+if TYPE_CHECKING or __package__:
+    from . import artifact_store, artifact_cache
+    from .env_config import env_int
+else:
     import artifact_store
     import artifact_cache
     from env_config import env_int

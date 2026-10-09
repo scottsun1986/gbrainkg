@@ -4,6 +4,7 @@ Rows keep original coordinates. Merge inheritance is presentation only, never a
 second fact. Formula evaluation/macros/external refresh are deliberately absent.
 """
 from __future__ import annotations
+from typing import TYPE_CHECKING
 
 import datetime
 import hashlib
@@ -16,10 +17,10 @@ from itertools import zip_longest
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-try:
-    from src import artifact_store, artifact_cache, table_batches
-    from src.env_config import env_int
-except ImportError:
+if TYPE_CHECKING or __package__:
+    from . import artifact_store, artifact_cache, table_batches
+    from .env_config import env_int
+else:
     import artifact_store
     import artifact_cache
     import table_batches

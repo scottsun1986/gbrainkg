@@ -1,5 +1,6 @@
 """Observable source coverage, actual text counts and image provenance."""
 from __future__ import annotations
+from typing import TYPE_CHECKING
 import base64
 import hashlib
 import mimetypes
@@ -7,9 +8,9 @@ import re
 from typing import Any
 from contextvars import ContextVar
 
-try:
-    from src import artifact_store
-except ImportError:
+if TYPE_CHECKING or __package__:
+    from . import artifact_store
+else:
     import artifact_store
 
 

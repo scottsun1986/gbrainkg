@@ -65,10 +65,11 @@ select = [
 
 [tool.mypy]
 python_version = "3.10"
-# src/ is a flat source root (main.py, quality.py, extractors/), not a package.
-# Invoke from src/ so modules resolve as `main` / `extractors.*` (matching
-# PYTHONPATH=src):   cd src && mypy --explicit-package-bases main.py quality.py extractors
-mypy_path = "src"
+# The service entrypoint is src.main:app; src/ is a namespace package.
+# Check from the worker root so relative imports resolve as src.* throughout:
+#   cd apps/parser-worker && mypy --explicit-package-bases --namespace-packages src
+# Cover every runtime module, including the native subprocess entrypoints.
+mypy_path = "."
 explicit_package_bases = true
 namespace_packages = true
 # Baseline: surface real type errors, do not require annotations everywhere.

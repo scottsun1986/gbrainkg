@@ -4,13 +4,14 @@ Uses an OpenAI-compatible vision API to generate text descriptions of visual con
 that traditional OCR cannot understand (charts, flowcharts, architecture diagrams, etc.).
 """
 from __future__ import annotations
+from typing import TYPE_CHECKING
 
 import base64
 import asyncio
 import math
-try:
-    from src.env_config import env_int, env_float
-except ImportError:
+if TYPE_CHECKING or (__package__ and "." in __package__):
+    from ..env_config import env_int, env_float
+else:
     from env_config import env_int, env_float
 import logging
 import os

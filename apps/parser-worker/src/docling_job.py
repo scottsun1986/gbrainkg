@@ -1,10 +1,14 @@
 """One killable Docling job. Only the shared Parser starts this helper."""
+from typing import TYPE_CHECKING
 import sys
 
 def main():
     import resource
     from pathlib import Path
-    from env_config import env_int
+    if TYPE_CHECKING or __package__:
+        from .env_config import env_int
+    else:
+        from env_config import env_int
     limit = env_int("PARSER_MAX_RETAINED_BYTES", 200 * 1024 * 1024)
     resource.setrlimit(resource.RLIMIT_FSIZE, (limit, limit))
     import torch

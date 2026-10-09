@@ -1,10 +1,15 @@
 """Bounded cold Office conversion with private noninteractive security profile."""
+from typing import TYPE_CHECKING
 import os
 import resource
 import subprocess
 import sys
 from pathlib import Path
-from env_config import env_int
+if TYPE_CHECKING or __package__:
+    from .env_config import env_int
+else:
+    from env_config import env_int
+
 
 if __name__ == '__main__':
     source, directory, bin_path = sys.argv[1:]

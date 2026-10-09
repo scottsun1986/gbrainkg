@@ -1,4 +1,5 @@
 from __future__ import annotations
+from typing import TYPE_CHECKING
 
 import asyncio
 import base64
@@ -17,11 +18,11 @@ import subprocess
 import signal
 import resource
 import sys
-try:
-    from src.controlled_jobs import FairLimiter, run_process
-    from src import artifact_cache, artifact_store, source_contract, structured_excel, image_units, temp_budget
-    from src.env_config import env_int, env_float
-except (ImportError, ModuleNotFoundError):
+if TYPE_CHECKING or __package__:
+    from .controlled_jobs import FairLimiter, run_process
+    from . import artifact_cache, artifact_store, source_contract, structured_excel, image_units, temp_budget
+    from .env_config import env_int, env_float
+else:
     from controlled_jobs import FairLimiter, run_process
     import artifact_cache
     import artifact_store
@@ -161,15 +162,15 @@ _docling_semaphore = asyncio.Semaphore(DOCLING_MAX_CONCURRENCY)
 _parse_limiter = FairLimiter(min(env_int("PARSER_CONCURRENCY", 8), max(1, env_int("PARSER_SHARED_MEMORY_BYTES", 4 * 1024 * 1024 * 1024) // env_int("PARSER_NATIVE_MEMORY_BYTES", 1536 * 1024 * 1024))), env_int("PARSER_QUEUE_LIMIT", 64), env_int("PARSER_PER_INSTANCE_CONCURRENCY", 4))
 
 
-try:
-    from src.quality import _pdf_native_quality, classify_pdf, assess_content_quality
-    from src.extractors.vlm_extractor import (
+if TYPE_CHECKING or __package__:
+    from .quality import _pdf_native_quality, classify_pdf, assess_content_quality
+    from .extractors.vlm_extractor import (
         is_vlm_available,
         enrich_markdown_with_vlm,
         describe_pdf_page_with_vlm,
         describe_image_with_vlm,
     )
-except (ImportError, ModuleNotFoundError):
+else:
     from quality import _pdf_native_quality, classify_pdf, assess_content_quality
     from extractors.vlm_extractor import (
         is_vlm_available,

@@ -1,8 +1,12 @@
 """Shared actual-byte accounting for uploads and native temporary outputs."""
+from typing import TYPE_CHECKING
 import fcntl
 import shutil
 from pathlib import Path
-from env_config import env_int
+if TYPE_CHECKING or __package__:
+    from .env_config import env_int
+else:
+    from env_config import env_int
 
 
 def write(handle, content, root: Path):

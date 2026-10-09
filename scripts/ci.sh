@@ -71,7 +71,7 @@ else
   echo "[CI] Skipping parser-worker ruff: not installed (pip install -r apps/parser-worker/requirements.lock.txt)."
 fi
 if python3 -c "import mypy" >/dev/null 2>&1 || command -v mypy >/dev/null 2>&1; then
-  run "Parser worker mypy" bash -c 'cd apps/parser-worker/src && if command -v mypy >/dev/null 2>&1; then mypy --explicit-package-bases --namespace-packages main.py quality.py extractors; else python3 -m mypy --explicit-package-bases --namespace-packages main.py quality.py extractors; fi'
+  run "Parser worker mypy" bash -c 'cd apps/parser-worker && if command -v mypy >/dev/null 2>&1; then mypy --explicit-package-bases --namespace-packages src; else python3 -m mypy --explicit-package-bases --namespace-packages src; fi'
 else
   echo ""
   echo "[CI] Skipping parser-worker mypy: not installed (pip install -r apps/parser-worker/requirements.lock.txt)."

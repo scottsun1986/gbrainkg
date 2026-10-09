@@ -55,10 +55,10 @@ jobs:
           python -m pip install "ruff==0.14.5"
           ruff check src tests
       - name: Mypy baseline (parser-worker)
-        working-directory: apps/parser-worker/src
+        working-directory: apps/parser-worker
         run: |
           python -m pip install "mypy==1.18.2"
-          mypy --explicit-package-bases --namespace-packages main.py quality.py extractors
+          mypy --explicit-package-bases --namespace-packages src
 
   adapter:
     name: GBrain adapter contract tests
