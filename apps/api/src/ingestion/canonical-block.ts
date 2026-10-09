@@ -21,6 +21,7 @@ export interface CanonicalBlockV1 {
     section?: string;
     breadcrumb?: string;
     article?: number;
+    source?: { unitId?: string; sheet?: string; table?: string; range?: string; rowStart?: number; rowEnd?: number; slide?: number; shape?: string; assetIds?: string[]; qaId?: string };
   };
   structure: {
     kind: CanonicalBlockKind;
@@ -70,6 +71,7 @@ export function buildCanonicalBlock(input: {
     document: { ...input.document },
     position: {
       ord: input.chunk.ord,
+      ...(metadata.source_position || metadata.qa_id ? { source: { ...metadata.source_position, ...(metadata.qa_id ? { qaId: String(metadata.qa_id) } : {}) } } : {}),
       charStart: input.chunk.charStart,
       charEnd: input.chunk.charEnd,
       ...(Number.isFinite(Number(metadata.page_no)) ? { page: Number(metadata.page_no) } : {}),

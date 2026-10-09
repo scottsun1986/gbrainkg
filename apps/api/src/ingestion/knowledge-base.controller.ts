@@ -454,6 +454,8 @@ export class KnowledgeBaseController {
           version: true,
           uploadedById: true,
           parserEngine: true,
+          parserMetadata: true,
+          activeVersionId: true,
           qualityStatus: true,
           qualityScore: true,
           qualityIssues: true,

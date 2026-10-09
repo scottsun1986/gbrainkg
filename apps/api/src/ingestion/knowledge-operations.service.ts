@@ -31,7 +31,8 @@ export class KnowledgeOperationsService {
     }
     if (kind === 'conversations' || kind === 'conversation') return this.readConversation(userId, resource, db);
     const visible = await this.permission.getVisibleKnowledgeBases(userId, db);
-    const readable = await readableDocumentWhere(db, userId);
+    if (kind === 'documents' && !visible.includes(args.kb_id)) throw new NotFoundException('Knowledge base unavailable');
+    const readable = await readableDocumentWhere(db, userId, visible);
     if (kind === 'knowledge_bases' || kind === 'upload_guide') {
       const limit = args.limit ?? 50; const offset = args.offset ?? 0;
       const where = { id: { in: visible }, status: 'active', ...(args.type && args.type !== 'all' ? { type: args.type } : {}) };

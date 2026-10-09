@@ -319,6 +319,23 @@ export class DocumentAclService {
         }
       }
     }
+    // Derived QA carries no independent authority. Check its live source
+    // revision and current source ACL, including after permission revocation.
+    if (readable.size && p?.document?.findMany) {
+      const qaDocs = await p.document.findMany({ where: { id: { in: [...readable] }, sourceType: 'qa' }, select: { id: true, kbId: true, sourceType: true, parserMetadata: true } });
+      for (const qa of qaDocs || []) {
+        if (qa.sourceType !== 'qa') continue;
+        const source = qa.parserMetadata?.qa;
+        if (!source?.sourceDocumentId) continue;
+        const original = await p.document.findFirst({ where: { id: source.sourceDocumentId, kbId: qa.kbId,
+          sourceType: { not: 'qa' }, status: 'published', activeVersionId: source.sourceVersionId,
+          kb: { status: 'active' }, AND: [
+            { OR: [{ effectiveFrom: null }, { effectiveFrom: { lte: new Date() } }] },
+            { OR: [{ effectiveTo: null }, { effectiveTo: { gt: new Date() } }] },
+          ] }, select: { id: true, kbId: true, aclMode: true } });
+        if (!original || !(await this.filterReadableDocuments(userId, [original.id], { prisma: p, docs: [original] })).has(original.id)) readable.delete(qa.id);
+      }
+    }
     return readable;
   }
 

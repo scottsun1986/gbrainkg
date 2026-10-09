@@ -9,7 +9,7 @@ const schema = (properties: Record<string, any>, required: string[] = []) => ({ 
 const definitions = [
   ['chat_knowledge', '在当前权限及指定知识库范围问答；未指定范围时使用全部可见库。', schema({ prompt: text(), conversation_id: uuid, kb_ids: scope, asOf: { type: 'string', format: 'date-time' } }, ['prompt']), false],
   ['retrieve', '独立只读检索，返回出处、文档/版本与证据，不生成回答。', schema({ query: text(), kb_ids: scope, top_k: { type: 'integer', minimum: 1, maximum: 50 }, asOf: { type: 'string', format: 'date-time' } }, ['query']), true],
-  ['aggregate_knowledge_table', '读取当前发布版本的完整表格清单或精确聚合。', schema({ documentId: uuid, versionId: uuid, tableId: text(200), operation: { type: 'string', enum: ['count', 'sum', 'min', 'max', 'avg'] }, column: { type: 'integer', minimum: 0, maximum: 100000 } }, ['documentId', 'versionId']), true],
+  ['aggregate_knowledge_table', '读取当前发布版本的完整表格清单或精确聚合。', schema({ documentId: uuid, versionId: uuid, tableId: text(200), operation: { type: 'string', enum: ['count', 'sum', 'min', 'max', 'avg'] }, column: { type: 'integer', minimum: 0, maximum: 100000 }, filters: { type: 'array', maxItems: 20, items: schema({ column: { type: 'integer', minimum: 0 }, operator: { type: 'string', enum: ['eq','ne','gt','gte','lt','lte','contains'] }, value: { type: ['string','number','boolean'] } }, ['column','operator','value']) }, includeSummary: { type: 'boolean' } }, ['documentId', 'versionId']), true],
   ['list_knowledge_bases', '分页列出可见知识库及可读发布文档数量。', schema({ ...paging, type: { type: 'string', enum: ['personal', 'org', 'industry', 'all'] } }), true],
   ['get_document_status', '读取可访问文档的解析、质量与版本定位。', schema({ doc_id: uuid }, ['doc_id']), true],
   ['get_user_info', '读取当前认证用户身份。', schema({}), true],

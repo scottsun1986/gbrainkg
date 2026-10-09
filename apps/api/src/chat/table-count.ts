@@ -79,7 +79,7 @@ function compareDecimal(left: string, right: string): number {
   return x < y ? -1 : x > y ? 1 : 0;
 }
 /** The model selects typed predicates; it never counts rows or writes the answer. */
-export function executeCount(tables: RawTable[], raw: unknown, question: string) {
+export function executeCount(tables: RawTable[], raw: unknown, question: string, allowUnseenEquality = false) {
   const plan = normalizeCountPlan(raw, tables);
   if (!Number.isInteger(plan?.table) || !tables[plan.table] || !Array.isArray(plan.filters)
       || !plan.filters.length || plan.filters.length > 8) throw new Error('Incomplete count plan');
@@ -89,7 +89,7 @@ export function executeCount(tables: RawTable[], raw: unknown, question: string)
     if (!Number.isInteger(filter.column) || filter.column < 0 || filter.column >= table.headers.length
         || !ops.has(filter.operator) || typeof filter.value !== 'string' || !filter.value.trim()) throw new Error('Invalid predicate');
     if (filter.operator === 'eq') {
-      if (!table.rows.some(r => r.cells[filter.column] === filter.value)) throw new Error('Text filter must use an actual cell value');
+      if (!table.rows.some(r => r.cells[filter.column] === filter.value) && !(allowUnseenEquality && question.includes(filter.value))) throw new Error('Text filter must use an actual cell value or a literal value from the question');
     } else {
       if (!/^[+-]?\d+(?:\.\d+)?$/.test(filter.value) || !Number.isFinite(Number(filter.value))) throw new Error('Invalid numeric threshold');
       const threshold = filter.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

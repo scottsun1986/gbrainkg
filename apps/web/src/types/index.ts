@@ -241,7 +241,7 @@ export interface DocMeta {
   chunkCount?: number;
   parserEngine?: string;
   parserClassification?: string;
-  parserMetadata?: { embedded_image_count?: number; ocr_image_count?: number; ocr_words_result_num?: number; ocr_average_confidence?: number; ocr_provider?: string };
+  parserMetadata?: import('../components/preview/IngestionCoverage').ParserMetadata;
   qualityStatus?: string;
   qualityScore?: number;
   qualityIssues?: string[];

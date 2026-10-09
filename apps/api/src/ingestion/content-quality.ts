@@ -1,7 +1,7 @@
 /** Application-owned publication gate, independent of conversion engine success. */
 import { detectLanguage, scanPii, simhash64, tokenizeForSimhash } from './content-dedupe';
 
-export const QUALITY_RULE_VERSION = 'content-v2';
+export const QUALITY_RULE_VERSION = 'content-v3';
 
 /** SimHash over fewer tokens is high-variance: unrelated short documents can
  *  collide within the Hamming<=3 near-duplicate threshold by chance. Documents
@@ -41,6 +41,17 @@ function parseChineseNumber(str: string): number {
   return result;
 }
 export type QualityStatus = 'passed' | 'needs_review' | 'rejected';
+export interface QualityAssessment {
+  quality_status: QualityStatus;
+  quality_score: number;
+  quality_issues: string[];
+  quality_rule_version: string;
+  quality_metrics: {
+    characters: number; meaningful_characters: number; projected_characters: number;
+    native_text_chars: number; generated_text_chars: unknown; coverage: unknown;
+    replacement_ratio: number; control_ratio: number; image_placeholders: number;
+  };
+}
 
 /**
  * Publication gate. Per operator decision (option D), the ONLY hard stop is
@@ -48,11 +59,13 @@ export type QualityStatus = 'passed' | 'needs_review' | 'rejected';
  * numbering, table shape, page coverage, and residual image placeholders are
  * recorded as metrics/issues for observability but never block publication.
  */
-export function assessContentQuality(markdown: string, suffix: string, facts: Record<string, unknown> = {}) {
+export function assessContentQuality(markdown: string, suffix: string, facts: Record<string, unknown> = {}): QualityAssessment {
   const chars = Array.from(markdown);
   const count = chars.length || 1;
   const visible = markdown.replace(/<!--[\s\S]*?-->/g, '').replace(/!\[[^\]]*\]\([^)]*\)/g, '');
-  const meaningful = (visible.match(/[\p{L}\p{N}]/gu) || []).length;
+  const projectedMeaningful = (visible.match(/[\p{L}\p{N}]/gu) || []).length;
+  const nativeCount = facts.native_text_chars;
+  const meaningful = typeof nativeCount === "number" && Number.isFinite(nativeCount) ? Math.max(0, nativeCount) : projectedMeaningful;
   const replacementRatio = (markdown.match(/\ufffd/g) || []).length / count;
   const controlRatio = (markdown.match(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g) || []).length / count;
   const placeholders = (markdown.match(/<!--\s*(?:image|picture|figure)(?:[^\n>]*)\s*-->/gi) || []).length;
@@ -60,6 +73,11 @@ export function assessContentQuality(markdown: string, suffix: string, facts: Re
   // Informational notes only — these no longer gate publication.
   const issues: string[] = [];
   if (!meaningful) issues.push('没有提取到可检索文字');
+  const coverage = facts.coverage as any;
+  if (coverage?.failed > 0 || coverage?.skipped > 0) issues.push(`存在未覆盖来源单元：失败 ${coverage.failed || 0}、跳过 ${coverage.skipped || 0}`);
+  if (replacementRatio > 0) issues.push('存在编码替换字符');
+  if (placeholders) issues.push('仍有未识别图片占位符');
+  if (facts.ocr_error) issues.push('OCR 存在失败，请查看覆盖信息');
 
   let score = 1 - Math.min(replacementRatio * 4, 0.45) - Math.min(controlRatio * 2, 0.2);
   if (facts.ocr_average_confidence !== undefined && facts.ocr_average_confidence !== null) {
@@ -81,7 +99,8 @@ export function assessContentQuality(markdown: string, suffix: string, facts: Re
     quality_issues: [...new Set(issues)].slice(0, 20),
     quality_rule_version: QUALITY_RULE_VERSION,
     quality_metrics: {
-      characters: chars.length, meaningful_characters: meaningful,
+      characters: chars.length, meaningful_characters: meaningful, projected_characters: projectedMeaningful,
+      native_text_chars: meaningful, generated_text_chars: facts.generated_text_chars || 0, coverage: coverage || null,
       replacement_ratio: replacementRatio, control_ratio: controlRatio,
       image_placeholders: placeholders,
     },

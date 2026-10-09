@@ -1792,7 +1792,7 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
     const candidates = await model.findMany({ where: { kbId: { in: kbIds } }, select: { id: true, kbId: true } });
     if (authorizationEnforced()) return [...await filterReadableArtifacts(userId, candidates, kind, db)];
     const docs = await (db as any).document.findMany({
-      where: { kbId: { in: kbIds }, status: 'published', ...await readableDocumentWhere(db, userId) }, select: { id: true },
+      where: { kbId: { in: kbIds }, status: 'published', ...await readableDocumentWhere(db, userId, kbIds) }, select: { id: true },
     });
     const ids = docs.map((doc: any) => doc.id);
     const rows = await model.findMany({
@@ -2136,7 +2136,7 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
 
       if (getRequestContext()?.userId || authorizationEnforced()) {
         const chunks = await (db as any).chunk.findMany({
-          where: { id: { in: [...scores.keys()] }, document: { status: 'published', ...await readableDocumentWhere(db) } },
+          where: { id: { in: [...scores.keys()] }, document: { status: 'published', ...await readableDocumentWhere(db, undefined, kbIds) } },
           select: { id: true },
         });
         const readableChunks = new Set(chunks.map((chunk: any) => chunk.id));

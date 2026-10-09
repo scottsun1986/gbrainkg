@@ -1,4 +1,4 @@
-import { splitMarkdownIntoChunks } from './markdown-chunker';
+import { splitMarkdownIntoChunks, getTableColumnCount, parseTableRowsToKeyValues, setChunkSplitOptions, resetChunkSplitOptions } from './markdown-chunker';
 
 describe('splitMarkdownIntoChunks', () => {
   it('keeps short sections searchable with section metadata', () => {
@@ -214,3 +214,85 @@ describe('splitMarkdownIntoChunks', () => {
   });
 });
 
+
+
+describe('Markdown structural source fidelity', () => {
+  afterEach(() => resetChunkSplitOptions());
+
+  it('does not treat code headings, page markers or table examples as real structure', () => {
+    const source = '# Real section\n\n```md\n# Example only\n<!-- page 99 -->\n| A | B |\n| --- | --- |\n| 0 | false |\n```\n\n## Next section\ntext';
+    const chunks = splitMarkdownIntoChunks(source);
+    expect(chunks.map(chunk => chunk.metadata.section)).toEqual(['# Real section', '## Next section']);
+    expect(chunks.every(chunk => chunk.metadata.page_no === undefined)).toBe(true);
+    expect(chunks.every(chunk => !chunk.metadata.has_table)).toBe(true);
+    expect(chunks[0].content).toContain('# Example only');
+  });
+
+  it('preserves code indentation, trailing spaces and literal grounding comments', () => {
+    const source = '# Code\n\n```python\n    value = 0  \n<!-- bbox:1,2,3,4 -->\n```\n';
+    const chunk = splitMarkdownIntoChunks(source)[0];
+    expect(chunk.content).toContain('    value = 0  \n');
+    expect(chunk.content).toContain('<!-- bbox:1,2,3,4 -->');
+    expect(chunk.metadata.bbox).toBeUndefined();
+  });
+
+  it('protects short fenced code, tables, lists and display formulas at window boundaries', () => {
+    setChunkSplitOptions({ maxChars: 300, overlapChars: 60 });
+    const protectedBlocks = ['```ts\nconst value = "a|b";\n# literal heading\n```', '| A | B |\n| --- | --- |\n| 0 | false |', '- first list item\n  nested context\n- second list item', '$$\nf(x) = x + 1\n# not a heading\n$$', '\\[\nf(x) = 0\n\\]'];
+    for (const block of protectedBlocks) {
+      const prefix = '# Heading\n\n' + 'before '.repeat(35) + '\n\n';
+      const source = prefix + block + '\n\n' + 'after '.repeat(90);
+      const begin = prefix.length, end = begin + block.length;
+      const chunks = splitMarkdownIntoChunks(source);
+      expect(chunks.some(chunk => chunk.charStart <= begin && chunk.charEnd >= end)).toBe(true);
+      expect(chunks.every(chunk => !(chunk.charStart > begin && chunk.charStart < end))).toBe(true);
+      expect(chunks.every(chunk => !(chunk.charEnd > begin && chunk.charEnd < end))).toBe(true);
+      expect(chunks.every(chunk => chunk.metadata.section === '# Heading')).toBe(true);
+    }
+  });
+
+  it('splits oversized code only on source lines and retains parent and fragment offsets', () => {
+    setChunkSplitOptions({ maxChars: 260, overlapChars: 45 });
+    const prefix = '# Code\n\n';
+    const code = '~~~~md\n' + Array.from({ length: 60 }, (_, index) => `# literal ${index}\n| A | B |\n| --- | --- |\n| ${index} | 0 |`).join('\n') + '\n~~~~';
+    const source = prefix + code;
+    const chunks = splitMarkdownIntoChunks(source);
+    expect(chunks.length).toBeGreaterThan(2);
+    expect(chunks.every(chunk => chunk.metadata.section === '# Code')).toBe(true);
+    expect(chunks.every(chunk => !chunk.metadata.has_table)).toBe(true);
+    expect(chunks.some(chunk => chunk.metadata.synthetic_code_fences === true)).toBe(true);
+    for (const chunk of chunks) {
+      expect(chunk.charEnd).toBeGreaterThan(chunk.charStart);
+      if (chunk.charStart > prefix.length) expect(source[chunk.charStart - 1]).toBe('\n');
+      if (chunk.charEnd < source.length) expect(source[chunk.charEnd - 1]).toBe('\n');
+      const blocks = chunk.metadata.source_blocks as Array<{ kind: string; char_start: number; char_end: number; fragment_start: number; fragment_end: number }>;
+      const codeSource = blocks.find(block => block.kind === 'code');
+      expect(codeSource).toMatchObject({ char_start: prefix.length, char_end: source.length });
+      expect(codeSource!.fragment_start).toBe(Math.max(prefix.length, chunk.charStart));
+      expect(codeSource!.fragment_end).toBe(chunk.charEnd);
+    }
+  });
+
+  it('keeps escaped pipes and inline code in the correct semantic table column', () => {
+    const table = '| Name\\|alias | Value | Example |\n| --- | --- | --- |\n| a\\|b | 0 | `x|y` |\n| c | false | ``a`|b`` |';
+    expect(getTableColumnCount(table)).toBe(3);
+    const info = parseTableRowsToKeyValues(table);
+    expect(info.headers).toEqual(['Name|alias', 'Value', 'Example']);
+    expect(info.rowsKv).toEqual(['Name|alias: a|b | Value: 0 | Example: `x|y`', 'Name|alias: c | Value: false | Example: ``a`|b``']);
+    expect(splitMarkdownIntoChunks(table)[0].metadata.table_headers).toEqual(info.headers);
+  });
+
+  it('keeps single-column tables supported', () => {
+    expect(getTableColumnCount('| Value |')).toBe(1);
+    expect(parseTableRowsToKeyValues('| Value |\n| --- |\n| 0 |\n| false |').rowsKv).toEqual(['Value: 0', 'Value: false']);
+  });
+
+  it('supports Markdown tables without outer pipes and preserves CRLF source offsets', () => {
+    const source = '# Source\r\n\r\nName | Value\r\n--- | ---\r\na\\|b | 0\r\n';
+    const chunk = splitMarkdownIntoChunks(source)[0];
+    expect(chunk.charStart).toBe(0);
+    expect(chunk.charEnd).toBe(source.length);
+    expect(chunk.metadata.table_headers).toEqual(['Name', 'Value']);
+    expect(chunk.content).toContain('Name: a|b | Value: 0');
+  });
+});

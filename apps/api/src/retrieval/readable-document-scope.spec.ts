@@ -3,6 +3,7 @@ import { runWithRequestContext } from '../observability/request-context';
 
 describe('readable document scope', () => {
   const db = {
+    document: { findMany: jest.fn().mockResolvedValue([]) },
     userRole: { findMany: jest.fn().mockResolvedValue([{ roleId: 'role' }]) },
     userOrg: { findMany: jest.fn().mockResolvedValue([{ orgNodeId: 'org' }]) },
   };
@@ -14,6 +15,22 @@ describe('readable document scope', () => {
     expect(options[3].aclEntries.some.OR).toContainEqual({ subjectType: 'role', subjectId: { in: ['role'] } });
     expect(options[3].aclEntries.some.OR).toContainEqual({ subjectType: 'org', subjectId: { in: ['org'] } });
     expect(options.slice(0, 2)).toEqual([{ kb: { ownerUserId: 'reader' } }, { kb: { admins: { some: { userId: 'reader' } } } }]);
+  });
+  it('rejects stale, revoked and cross-KB derived sources before pagination using the same client', async () => {
+    const candidates = [
+      {id:'good',kbId:'kb',parserMetadata:{qa:{sourceDocumentId:'live',sourceVersionId:'v1'}}},
+      {id:'stale',kbId:'kb',parserMetadata:{qa:{sourceDocumentId:'live',sourceVersionId:'old'}}},
+      {id:'revoked',kbId:'kb',parserMetadata:{qa:{sourceDocumentId:'hidden',sourceVersionId:'v1'}}},
+      {id:'cross',kbId:'other',parserMetadata:{qa:{sourceDocumentId:'live',sourceVersionId:'v1'}}},
+      {id:'manual',kbId:'kb',parserMetadata:{qa:{question:'Independent'}}},
+    ];
+    const findMany=jest.fn().mockResolvedValueOnce(candidates).mockResolvedValueOnce([{id:'live',kbId:'kb',activeVersionId:'v1'}]);
+    const client={...db,document:{findMany}};
+    const predicate=await readableDocumentWhere(client,'reader',['kb']);
+    expect(predicate.AND[2]).toEqual({id:{notIn:['stale','revoked','cross']}});
+    expect(findMany.mock.calls[0][0].where.AND[0]).toEqual({sourceType:'qa',kbId:{in:['kb']}});
+    expect(findMany.mock.calls[1][0].where.AND[1]).toEqual(predicate.AND[0]);
+    expect(findMany.mock.calls[1][0].where.AND[2]).toEqual(predicate.AND[1]);
   });
   it('compiles equivalent raw SQL without embedding user input into SQL text', () => {
     const sql = runWithRequestContext({ requestId: 'test', userId: "reader' OR true", asOf: 1000 }, readableDocumentSql);

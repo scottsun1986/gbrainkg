@@ -55,7 +55,8 @@ function normalizeUploadFilename(value: unknown): string {
 }
 
 import { SUPPORTED_UPLOAD_EXTENSIONS, isArchiveFilename } from './parser-capabilities';
-import { extractArchiveDocuments } from './archive-extractor';
+import { associateMarkdownResources } from './markdown-resources';
+import { extractArchiveDocuments, ArchiveManifestItem } from './archive-extractor';
 
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -167,10 +168,19 @@ export class IngestionController {
 
     const isArchive = isArchiveFilename(filename);
     if (isArchive) {
-      const extractedFiles = await extractArchiveDocuments(file.buffer, filename);
+      const manifest: ArchiveManifestItem[] = [];
+      const extractedFiles = await extractArchiveDocuments(file.buffer, filename, { manifest });
+      const { dependencies, usedAssets } = associateMarkdownResources(extractedFiles);
+      const batchId = randomUUID();
+      const batchStore = (this.prisma as any).importBatch;
+      await batchStore.create({ data: { id: batchId, kbId, uploadedById: userId, archiveName: filename, items: manifest } });
       const createdDocuments = [];
       let reusedCount = 0;
       for (const item of extractedFiles) {
+        const entry = manifest.find(entry => entry.path === item.relativePath)!;
+        entry.hash = createHash('sha256').update(item.buffer).digest('hex');
+        if (usedAssets.has(item.relativePath)) { entry.status = 'asset'; entry.reason = 'Markdown 相对资源，随所属文档保存'; continue; }
+        try {
         const childFilename = normalizeUploadFilename(item.filename);
         const contentHash = createHash('sha256').update(item.buffer).digest('hex');
         const childDocId = randomUUID();
@@ -184,6 +194,12 @@ export class IngestionController {
           objectKey = stored.objectKey;
           storageProvider = stored.provider;
         } catch { /* fail-open to local raw path */ }
+        const packageAssets = [];
+        for (const asset of dependencies.get(item.relativePath) || []) {
+          const path = `${childDocId}/package.${asset.id}`;
+          await writeFile(join(this.uploadRoot, path), asset.buffer);
+          packageAssets.push({ id: asset.id, sha256: asset.id, mime: asset.mime, filename: asset.filename, relativePath: asset.relativePath, path });
+        }
         const uploaded = await this.persistUpload({
             id: childDocId,
             kbId,
@@ -195,14 +211,16 @@ export class IngestionController {
             objectKey,
             storageProvider,
             uploadedById: userId,
+            parserMetadata: { archive: { batchId, path: item.relativePath }, package_assets: packageAssets },
             status: "parsing",
         }, duplicateMode);
         const document = uploaded.document;
+        entry.documentId = document.id;
         if (uploaded.reused) {
           await rm(join(this.uploadRoot, childDocId), { recursive: true, force: true });
           if (objectKey) await this.objectStorage.delete(objectKey, storageProvider === "minio" ? "minio" : "local");
           createdDocuments.push(document);
-          reusedCount += 1;
+          reusedCount += 1; entry.status = 'reused';
           continue;
         }
         await this.ingestionService.enqueue(
@@ -212,8 +230,11 @@ export class IngestionController {
           item.size <= 1_000_000 ? 1 : 10,
         );
         createdDocuments.push(document);
+        } catch (error) { entry.status = 'failed'; entry.reason = error instanceof Error ? error.message : String(error); }
+        finally { await batchStore.update({ where: { id: batchId }, data: { items: manifest } }); }
       }
 
+      await batchStore.update({ where:{id:batchId},data:{items:manifest} });
       // 压缩包本身则删除：解压完成后压缩包在内存及临时流中被丢弃，从未落库或持久化，确保压缩包本身被物理删除。
       return {
         documents: createdDocuments,
@@ -221,7 +242,7 @@ export class IngestionController {
         reusedCount,
         status: "accepted",
         isArchive: true,
-        archiveName: filename,
+        archiveName: filename, batchId, manifest,
       };
     }
 

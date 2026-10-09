@@ -7,6 +7,8 @@ import { evidenceConfidenceScores, decideEvidenceSufficiency } from './evidence-
 export { evidenceConfidenceScores, decideEvidenceSufficiency, EvidenceSufficiency } from './evidence-sufficiency';
 import { scanDeterministicChunks } from './deterministic-scan';
 import { TableEvidenceService } from '../retrieval/table-evidence.service';
+import { resolveQaApplicability } from '../retrieval/qa-applicability';
+import { readableDocumentWhere } from '../retrieval/readable-document-scope';
 import { countDocumentNeedle, countDocumentTitleTerms, countDocumentTitleMatches, countSchema, executeCount, normalizeCountPlan, cachedCountPlan, rememberCountPlan } from './table-count';
 import { evidenceIdentity, distinctRankedPassages } from './evidence-identity';
 import { StreamDeadline } from './stream-deadline';
@@ -599,7 +601,22 @@ export class ChatService {
       userId?: string;
     },
   ): Promise<any> {
-    const checked = await this.citationAssembly.filterQueryResultByCurrentPermission(result, visibleKbIds, derivedGuard);
+    let checked = await this.citationAssembly.filterQueryResultByCurrentPermission(result, visibleKbIds, derivedGuard);
+    const query=getRequestContext()?.knowledgeQuery;
+    if (query && derivedGuard.userId && checked.citations?.length && this.prisma.document?.findMany) {
+      const ids=checked.citations.map((c:any)=>c.docId||c.documentId).filter(Boolean);
+      const hits=await this.prisma.document.findMany({where:{id:{in:ids},sourceType:'qa'},select:{id:true,kbId:true,title:true,parserMetadata:true}}).then(docs=>docs.filter(doc=>(doc.parserMetadata as any)?.qa));
+      if (hits.length) {
+        // Read every live variant for the hit question before choosing an
+        // answer. A single high-ranked variant cannot hide a conflicting one.
+        const scope=await readableDocumentWhere(this.prisma,derivedGuard.userId,visibleKbIds);
+        const variants=await this.prisma.document.findMany({where:{AND:[{kbId:{in:visibleKbIds},sourceType:'qa',status:'published',title:{in:hits.map(hit=>hit.title)}},scope]},select:{id:true,kbId:true,parserMetadata:true}});
+        const candidates=variants.filter(doc=>(doc.parserMetadata as any)?.qa).map(doc=>({id:doc.id,kbId:doc.kbId,qa:(doc.parserMetadata as any).qa}));
+        const resolution=resolveQaApplicability(candidates,query);
+        const qaIds=new Set(hits.map(hit=>hit.id));
+        checked={...checked,qaAmbiguities:resolution.ambiguities,citations:checked.citations.filter((citation:any)=>!qaIds.has(citation.docId||citation.documentId)||resolution.allowed.has(citation.docId||citation.documentId))};
+      }
+    }
     getRequestContext()?.execution?.recordEvidenceStage("authorized", checked.citations);
     return { ...checked, evidenceContext: { ...derivedGuard, visibleKbIds } };
   }
@@ -1281,6 +1298,7 @@ export class ChatService {
   async searchKnowledgeForAgent(userId: string, query: string, requestedKbScope?: string[] | string, limit = 10) {
     return withAuthorizedRequest(userId, async snapshot => {
       getRequestContext()!.execution = createQueryExecution(query);
+      getRequestContext()!.knowledgeQuery=query;
       const result = await this.searchKnowledgeForAgentInternal(userId, query, requestedKbScope, limit);
       getRequestContext()?.execution?.finishRetrieval();
       await assertAuthorizationSnapshot(userId, snapshot);
@@ -1300,6 +1318,7 @@ export class ChatService {
     dependencyManifest?: Awaited<ReturnType<typeof captureEvidenceDependencies>>;
     kbScope?: string[];
     total: number;
+    qaAmbiguities?:Array<{question:string;scopes:string[];languages:string[]}>;
     results: Array<{
       documentId: string | null;
       kbId: string | null;
@@ -1770,7 +1789,9 @@ export class ChatService {
       }
     }
 
-    const authorizedResults = await withAuthorizationVerification(() => this.filterSearchResultsForUser(userId, scope, results));
+    const applicable=await withAuthorizationVerification(() => this.filterQueryResultByCurrentPermission({citations:results.map(result=>({...result,docId:result.documentId}))},scope,{scopeId:userScope.scopeId,sourceKeys:scope.map(id=>sourceKeyForKnowledgeBase(id)),aclEpoch:userScope.aclEpoch,knowledgeEpoch:userScope.knowledgeEpoch,userId}));
+    const applicableIds=new Set(applicable.citations.map((citation:any)=>citation.docId||citation.documentId));
+    const authorizedResults = await withAuthorizationVerification(() => this.filterSearchResultsForUser(userId, scope, results.filter(result=>applicableIds.has(result.documentId))));
     const selected = authorizedResults.slice(0, limit);
     const dependencyManifest = authorizationEnforced() && selected.length ? await captureEvidenceDependencies(selected) : undefined;
     if (authorizationEnforced() && selected.length && !dependencyManifest) throw new ForbiddenException('Search sources changed; retry');
@@ -1786,7 +1807,7 @@ export class ChatService {
       // strict permit verifies above; they must not travel to REST/MCP callers
       // (the published contract is "internal source manifests are never
       // emitted"). Project the user-facing provenance only.
-      results: selected.map(publicSearchResult),
+      results: selected.map(publicSearchResult), qaAmbiguities:applicable.qaAmbiguities || [],
       dependencyManifest, kbScope: scope,
       ...(precedence.temporalNotice ? { temporalNotice: precedence.temporalNotice } : {}),
     };
@@ -2012,6 +2033,7 @@ export class ChatService {
     runId?: string,
   ) {
     const retrievalStartedAt = Date.now();
+    if(getRequestContext())getRequestContext()!.knowledgeQuery=question;
     // 阶段进度事件（前端实时状态行）+ TTFT 指标。strict 输出契约下仅用于指标。
     const stageReporter = new StageReporter({
       subscriber,
@@ -2166,7 +2188,20 @@ export class ChatService {
             const text = String(payload.choices?.[0]?.message?.content || '').replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, '').trim();
             plan = JSON.parse(text);
             }
-            const result = executeCount(tables, plan, question);
+            let result = executeCount(tables, plan, question, Boolean(source.structuredTables));
+            if (source.structuredTables) {
+              const normalized = normalizeCountPlan(plan, tables); const table = source.structuredTables[normalized.table];
+              const { cellAt } = await import('../retrieval/structured-table-aggregation');
+              const filters = normalized.filters.map(filter => {
+                const example = (table.rows || []).filter(row => !row.is_header).map(row => cellAt(row, filter.column, table)).find(cell => cell?.value !== null && cell?.value !== undefined);
+                const value = typeof example?.value === 'number' ? Number(filter.value) : typeof example?.value === 'boolean' ? (filter.value === 'true' ? true : filter.value === 'false' ? false : (() => { throw new Error('Invalid boolean filter'); })()) : filter.value;
+                if (typeof value === 'number' && !Number.isFinite(value)) throw new Error('Invalid numeric filter');
+                return { ...filter, value };
+              });
+              const complete = await new TableEvidenceService().execute(userId, { documentId:doc.id, versionId:source.versionId, tableId:table.id, operation:'count', filters });
+              result = { ...result, count:Number((complete as any).value), matched:[] };
+              details = { ...details, factRows:(complete as any).rowsRead, typedSource:true };
+            }
             rememberCountPlan(planKey, normalizeCountPlan(plan, tables));
             answer = `按《${doc.title}》完整表格中的“${result.conditions}”统计，符合条件的记录有 **${result.count} 条**。[1]`;
             if (result.matched.length && result.matched.length <= 10) {
@@ -3048,6 +3083,12 @@ export class ChatService {
         userId,
       },
     );
+    if(queryResult.qaAmbiguities?.length && !queryResult.citations?.length) {
+      const answer='找到存在适用范围或语言差异的标准问答，请先明确：'+queryResult.qaAmbiguities.map(item=>`${item.question}（范围：${item.scopes.join(' / ')}；语言：${item.languages.join(' / ')}）`).join('；')+'。';
+      getRequestContext()?.execution?.finishRetrieval();await assertRequestAuthorization();
+      subscriber.next({data:{type:'delta',content:answer,delta:answer}});stageReporter.markFirstText();
+      await this.emitCitationsAndComplete(userId,[],subscriber,0,answer,trace,question);return;
+    }
     const aclCandidateCount = Array.isArray(queryResult.citations) ? queryResult.citations.length : 0;
     trace.finish(
       "permission_guard",

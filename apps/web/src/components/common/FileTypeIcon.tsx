@@ -34,7 +34,7 @@ function resolveFileType(ext: string): string {
   if (['txt', 'log', 'text'].includes(e)) return 'txt';
   if (['zip', 'tar', 'gz', 'tgz', 'rar', '7z'].includes(e)) return 'zip';
   if (['htm', 'html'].includes(e)) return 'html';
-  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'heic'].includes(e)) return 'img';
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'tif', 'tiff', 'heic'].includes(e)) return 'img';
   return 'file';
 }
 

@@ -127,6 +127,8 @@ model KnowledgeBase {
   @@index([orgNodeId])
   @@index([type, status])
   @@index([status, name])
+  importBatches ImportBatch[]
+
 }
 
 model KbAdmin {
@@ -154,6 +156,18 @@ model IndustryGrant {
 }
 
 // 文档与分块
+/// Lightweight import manifest; archive bytes are deliberately not retained.
+model ImportBatch {
+  id String @id @default(uuid()) @db.Uuid
+  kbId String @db.Uuid
+  uploadedById String @db.Uuid
+  archiveName String
+  items Json
+  createdAt DateTime @default(now())
+  kb KnowledgeBase @relation(fields: [kbId], references: [id], onDelete: Cascade)
+  @@index([kbId, createdAt])
+}
+
 model Document {
   id           String   @id @default(uuid()) @db.Uuid
   kbId         String   @db.Uuid

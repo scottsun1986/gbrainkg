@@ -1,6 +1,8 @@
 "use client";
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { assertOfficeArchiveBudget, boundedSheetRange, readPreviewBlob } from '@/lib/preview-limits';
+import { IngestionCoverage } from './IngestionCoverage';
+import { appStore } from '@/lib/app-store';
 import { Icon } from '@/components/common/Icon';
 import { PptDeckViewer } from '@/components/preview/PptDeckViewer';
 import { renderMarkdown, renderPlainText } from '@/lib/markdown';
@@ -993,6 +995,8 @@ export function UniversalDocumentViewer({ preview, onClose }: UniversalDocumentV
 
                     <div style={{ color: 'var(--ink-3)' }}>入库质量门禁</div>
                     <div>{docData?.document?.qualityStatus || 'unknown'}{typeof docData?.document?.qualityScore === 'number' ? ` · ${(docData.document.qualityScore * 100).toFixed(1)} 分` : ''}{Array.isArray(docData?.document?.qualityIssues) && docData.document.qualityIssues.length ? ` · ${docData.document.qualityIssues.join('；')}` : ''}</div>
+
+                    <div style={{ gridColumn: '1 / -1' }}><IngestionCoverage key={`${docId}-${docData?.document?.updatedAt || ''}`} version={docData?.document?.version} versionId={typeof docData?.document?.activeVersionId === 'string' ? docData.document.activeVersionId : undefined} metadata={docData?.document?.parserMetadata} kbId={String(kbId || '')} docId={String(docId || '')} canWrite={appStore.KNOWLEDGE_BASES.some(kb => kb.id === kbId && kb.canWrite)} /></div>
 
                     <div style={{ color: 'var(--ink-3)' }}>内嵌图片 OCR</div>
                     <div>

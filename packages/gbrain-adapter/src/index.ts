@@ -36,6 +36,8 @@ export interface BrainEvidence {
 }
 
 export interface BrainQueryResult {
+  /** Application authority check can withhold conflicting scoped QA facts. */
+  qaAmbiguities?: Array<{ question: string; scopes: string[]; languages: string[] }>;
   topics: string[];
   answer: string;
   citations: Array<{

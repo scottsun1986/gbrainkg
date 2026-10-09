@@ -6,7 +6,7 @@ const mockAggregate = jest.fn().mockResolvedValue({ _count: 0, _max: { updatedAt
 const mockGetLinks = jest.fn();
 const mockReadable = jest.fn(async (_user: string, ids: string[]) => new Set(ids));
 jest.mock('./permission/authorization-revision', () => ({ readAuthorizationSnapshot: jest.fn().mockResolvedValue({ revision: 'test', expiresAt: Infinity }), assertAuthorizationSnapshot: jest.fn().mockResolvedValue(undefined) }));
-jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => ({ document: { findMany: mockFindMany, aggregate: mockAggregate } })) }));
+jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => ({ document: { findMany: (args: any) => args.where?.AND?.some((part: any) => part.sourceType === 'qa') ? Promise.resolve([]) : mockFindMany(args), aggregate: mockAggregate } })) }));
 jest.mock('@llmwiki/gbrain-adapter', () => ({ BrainRepoAdapter: jest.fn(() => ({ getLinks: mockGetLinks })) }));
 
 describe('graph rebuild authorization', () => {

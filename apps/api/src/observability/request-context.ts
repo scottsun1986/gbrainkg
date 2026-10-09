@@ -25,6 +25,7 @@ export interface RequestContext {
   artifactInputs?: string;
   evidenceDependencies?: EvidenceManifest | null;
   chatTiming?: ChatTiming;
+  knowledgeQuery?: string;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();

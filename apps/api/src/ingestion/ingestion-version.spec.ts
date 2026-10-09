@@ -1,6 +1,7 @@
 import { IngestionService } from './ingestion.service';
 
 const mockPrisma = {
+  documentVersion: { findFirst: jest.fn().mockResolvedValue(null) },
   document: { findUnique: jest.fn(), findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]), update: jest.fn(), updateMany: jest.fn() },
   chunk: { deleteMany: jest.fn(), createMany: jest.fn() },
   $transaction: jest.fn(),
@@ -15,7 +16,14 @@ const tx = {
 };
 const mockReadFile = jest.fn();
 jest.mock('../prisma', () => ({ getPrismaClient: () => mockPrisma }));
+jest.mock('node:fs', () => ({
+  ...jest.requireActual('node:fs'),
+  createReadStream: jest.fn(() => jest.requireActual('node:stream').Readable.from([Buffer.from('%PDF-1.4 fixture')])),
+  openAsBlob: jest.fn(async () => new Blob([Buffer.from('%PDF-1.4 fixture')])),
+}));
 jest.mock('node:fs/promises', () => ({
+  mkdir: jest.fn().mockResolvedValue(undefined),
+  rm: jest.fn().mockResolvedValue(undefined),
   readFile: (...args: unknown[]) => mockReadFile(...args),
   writeFile: jest.fn(),
   rename: jest.fn().mockResolvedValue(undefined),

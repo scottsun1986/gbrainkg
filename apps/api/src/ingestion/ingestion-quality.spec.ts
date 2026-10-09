@@ -1,6 +1,7 @@
 import { IngestionService } from './ingestion.service';
 
 const mockPrisma = {
+  documentVersion: { findFirst: jest.fn().mockResolvedValue(null) },
   document: { findUnique: jest.fn(), findFirst: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
   chunk: { deleteMany: jest.fn(), createMany: jest.fn() },
   enrichmentStage: { deleteMany: jest.fn() },
@@ -49,7 +50,14 @@ const mockWriteFile = jest.fn();
 const mockRename = jest.fn();
 const mockUnlink = jest.fn();
 jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => mockPrisma) }));
+jest.mock('node:fs', () => ({
+  ...jest.requireActual('node:fs'),
+  createReadStream: jest.fn(() => jest.requireActual('node:stream').Readable.from([Buffer.from('fixture')])),
+  openAsBlob: jest.fn(async () => new Blob([Buffer.from('fixture')])),
+}));
 jest.mock('node:fs/promises', () => ({
+  mkdir: jest.fn().mockResolvedValue(undefined),
+  rm: jest.fn().mockResolvedValue(undefined),
   readFile: (...args: unknown[]) => mockReadFile(...args),
   writeFile: (...args: unknown[]) => mockWriteFile(...args),
   rename: (...args: unknown[]) => mockRename(...args),
@@ -58,6 +66,8 @@ jest.mock('node:fs/promises', () => ({
 jest.mock('@firecrawl/anydoc', () => ({ toMarkdown: (...args: unknown[]) => mockToMarkdown(...args) }));
 
 describe('ingestion publication boundary', () => {
+  const originalFetch = global.fetch;
+  afterEach(() => { global.fetch = originalFetch; });
   const compiler = { onKnowledgePublished: jest.fn().mockResolvedValue(1) };
   const models = { getOcrConfig: jest.fn() };
   beforeEach(() => {
@@ -65,6 +75,7 @@ describe('ingestion publication boundary', () => {
     process.env.OCR_DEPLOYMENT_REVISION = 'test-ocr';
     process.env.VLM_DEPLOYMENT_REVISION = 'test-vlm';
     jest.clearAllMocks();
+    global.fetch = jest.fn(async () => ({ ok: true, json: async () => ({ status: 'completed', markdown: await mockToMarkdown(), engine: 'pypdf-native', classification: 'pdf' }) })) as unknown as typeof fetch;
     mockPrisma.document.findFirst.mockReset().mockResolvedValue(null);
     mockPrisma.$queryRaw.mockReset().mockResolvedValue([]);
     mockPrisma.document.updateMany.mockResolvedValue({ count: 1 });
@@ -76,8 +87,8 @@ describe('ingestion publication boundary', () => {
 
   it('does not re-run AnyDoc after a persistent content-hash cache hit', async () => {
     mockPrisma.document.findUnique.mockResolvedValue({
-      id: 'doc-1', kbId: 'kb-1', title: 'duplicate.pdf', status: 'uploaded',
-      rawFileOid: '/duplicate.pdf', version: 1,
+      id: 'doc-1', kbId: 'kb-1', title: 'duplicate.doc', status: 'uploaded',
+      rawFileOid: '/duplicate.doc', version: 1,
     });
     mockPrisma.$queryRaw.mockResolvedValue([
       {
@@ -102,7 +113,7 @@ describe('ingestion publication boundary', () => {
 
   it.each(['encrypted', 'resourceLimit'])('does not bypass AnyDoc %s safety rejection', async code => {
     mockPrisma.document.findUnique.mockResolvedValue({
-      id: 'doc-1', kbId: 'kb-1', title: 'fixture.pdf', status: 'uploaded', rawFileOid: '/fixture.pdf',
+      id: 'doc-1', kbId: 'kb-1', title: 'fixture.doc', status: 'uploaded', rawFileOid: '/fixture.doc',
     });
     mockReadFile.mockResolvedValue(Buffer.from('fixture'));
     mockToMarkdown.mockRejectedValue(Object.assign(new Error('sensitive detail'), { code }));
@@ -113,6 +124,16 @@ describe('ingestion publication boundary', () => {
     expect(mockWriteFile).not.toHaveBeenCalled();
     expect(mockRename).not.toHaveBeenCalled();
     expect(compiler.onKnowledgePublished).not.toHaveBeenCalled();
+  });
+
+  it('preserves the original safety error and retained artifacts if cleanup ownership lookup fails', async () => {
+    mockPrisma.document.findUnique.mockResolvedValue({id:'doc-1',kbId:'kb-1',title:'fixture.doc',status:'uploaded',rawFileOid:'/fixture.doc',version:1});
+    mockReadFile.mockResolvedValue(Buffer.from('fixture'));
+    mockToMarkdown.mockRejectedValue(Object.assign(new Error('encrypted input'),{code:'encrypted'}));
+    mockPrisma.documentVersion.findFirst.mockRejectedValueOnce(new Error('database unavailable'));
+    const service=new IngestionService({} as any,compiler as any,models as any);
+    await expect(service.processDocument('doc-1')).rejects.toThrow(/^ANYDOC_/);
+    expect(jest.requireMock('node:fs/promises').rm).not.toHaveBeenCalled();
   });
 
   it.each(['txt', 'pdf'])('publishes corrupt %s fast-path output (encoding no longer gates)', async extension => {
@@ -131,7 +152,7 @@ describe('ingestion publication boundary', () => {
     expect(mockPrisma.document.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         qualityStatus: 'passed',
-        parserMetadata: expect.objectContaining({ quality_rule_version: 'content-v2' }),
+        parserMetadata: expect.objectContaining({ quality_rule_version: 'content-v3' }),
       }),
     }));
   });

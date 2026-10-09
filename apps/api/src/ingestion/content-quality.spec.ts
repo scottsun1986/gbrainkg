@@ -17,7 +17,7 @@ describe('publication quality gate (empty-only hard stop)', () => {
     });
     expect(result.quality_status).toBe('passed');
     expect(result.quality_score).toBeLessThan(1);
-    expect(result.quality_rule_version).toBe('content-v2');
+    expect(result.quality_rule_version).toBe('content-v3');
   });
 
   it('passes control characters instead of holding for review', () => {

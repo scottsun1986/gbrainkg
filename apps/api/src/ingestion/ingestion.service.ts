@@ -1,3 +1,7 @@
+import { mergeSourceUnitRetry, normalizeSourceOffsets } from './source-unit-retry';
+import { decodeDocumentText } from './text-decoder';
+import { attachSourceLocations, persistSourceArtifacts, enrichMarkdownPackage } from './source-artifacts';
+import { qaMarkdown } from './qa-import';
 import { resolveUploadPath } from '../storage/upload-paths';
 import { enqueueDocumentParse } from './ingestion-queue';
 import { uploadRoot } from '../storage/upload-paths';
@@ -6,8 +10,9 @@ import { Injectable, Logger, OnModuleInit, Optional, Inject } from "@nestjs/comm
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
 import { getPrismaClient } from "../prisma";
-import { readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { createReadStream, openAsBlob } from 'node:fs';
 import { extname, join } from "node:path";
 import { BrainCompilerService } from "../brain-compiler/brain-compiler.service";
 import { ModelConfigService } from "../model-config.service";
@@ -227,6 +232,9 @@ export class IngestionService implements OnModuleInit {
         title: true,
         rawFileOid: true,
         sourceType: true,
+        parserMetadata: true,
+        mdPath: true,
+        contentHash: true,
         status: true,
         version: true,
         ...(immutableVersionsEnabled() ? { ingestVersion: true, activeVersionId: true, pendingRawFileOid: true, pendingTitle: true } : {}),
@@ -247,8 +255,13 @@ export class IngestionService implements OnModuleInit {
     if (!document.rawFileOid)
       throw new Error("Original upload is no longer available.");
     const targetVersion = expectedVersion ?? document.version;
-    const content = await readFile(resolveUploadPath(document.rawFileOid));
-    const contentHash = createHash("sha256").update(content).digest("hex");
+    const inputPath = resolveUploadPath(document.rawFileOid);
+    const inputExtension = extname(inputPath).toLowerCase();
+    const inMemoryInput = document.sourceType === 'qa' || ['.md','.txt','.doc'].includes(inputExtension);
+    const content = inMemoryInput ? await readFile(inputPath) : Buffer.alloc(0);
+    const inputHash=createHash('sha256');
+    if(inMemoryInput)inputHash.update(content);else for await(const bytes of createReadStream(inputPath))inputHash.update(bytes);
+    const contentHash=inputHash.digest('hex');
     const parsingClaim = await this.prisma.document.updateMany({
       where: { id: documentId, ...(immutableVersionsEnabled() ? { ingestVersion: targetVersion } : { version: targetVersion }) },
       data: { ...(immutableVersionsEnabled() && document.activeVersionId ? { ingestVersion: targetVersion } : { status: 'parsing' }) },
@@ -266,11 +279,11 @@ export class IngestionService implements OnModuleInit {
       instance: instanceIdentity(), format: ext, native: process.env.NATIVE_PARSER_REVISION || 'anydoc-v1',
       worker: this.parserUrl, revision: process.env.PARSER_DEPLOYMENT_REVISION || 'unversioned',
       ocr: [pinnedOcrConfig?.provider, pinnedOcrConfig?.baseUrl, process.env.OCR_DEPLOYMENT_REVISION || 'unversioned'],
-      vlm: process.env.VLM_DEPLOYMENT_REVISION || 'unversioned', rules: 'canonical-quality-v1',
+      vlm: process.env.VLM_DEPLOYMENT_REVISION || 'unversioned', rules: 'structured-quality-v3',
     })).digest('hex');
-    const parseCacheKey = `${parserFingerprint}:${contentHash}`;
+    const parseCacheKey = `${document.kbId}:${documentId}:${parserFingerprint}:${contentHash}`;
 
-    const cacheReusable = Boolean(process.env.PARSER_DEPLOYMENT_REVISION &&
+    const cacheReusable = !(document.parserMetadata as any)?.package_assets?.length && document.sourceType !== 'qa' && ['.md', '.txt', '.doc'].includes(ext) && Boolean(process.env.PARSER_DEPLOYMENT_REVISION &&
       (!pinnedOcrConfig || process.env.OCR_DEPLOYMENT_REVISION) && process.env.VLM_DEPLOYMENT_REVISION);
     let cachedParse = cacheReusable ? IngestionService.parseCache.get(parseCacheKey) : undefined;
     if (cachedParse && cachedParse.parsed) {
@@ -296,6 +309,10 @@ export class IngestionService implements OnModuleInit {
           SELECT "mdPath", "parserEngine", "parserClassification", "parserMetadata"
           FROM "Document"
           WHERE "id" <> ${documentId}::uuid
+            AND "kbId" = ${document.kbId}::uuid
+            AND "sourceType" <> 'qa'
+            AND NOT ("parserMetadata" ? 'package_assets')
+            AND NOT ("parserMetadata" ? 'assets')
             AND "status" = 'published'
             AND "parserMetadata" @> ${JSON.stringify({ contentHash, parserFingerprint })}::jsonb
           LIMIT 1
@@ -311,8 +328,7 @@ export class IngestionService implements OnModuleInit {
               status: "completed",
             };
             conversionMetadata = {
-              ...((matchingDoc.parserMetadata as any) || {}),
-              dedupSource: matchingDoc.mdPath,
+              cacheHit: true, parserFingerprint, contentHash,
             };
             if (cacheReusable) IngestionService.parseCache.set(parseCacheKey, {
               parsed: { ...parsed },
@@ -330,17 +346,25 @@ export class IngestionService implements OnModuleInit {
     // content-hash cache produced a result. Previously the AnyDoc branch ran
     // even after a cache hit and re-parsed every duplicate PDF/Office upload,
     // defeating both cache layers and multiplying ingestion cost.
-    if (!parsed && [".txt", ".md"].includes(ext)) {
-      const rawText = content.toString("utf8");
+    if (!parsed && document.sourceType === "qa") {
+      const qa = JSON.parse(content.toString("utf8"));
+      parsed = { markdown: qaMarkdown(qa), qa, engine: "qa-native", classification: "qa", status: "completed", native_text_chars: qa.question.length + qa.answer.length };
+    } else if (!parsed && [".txt", ".md"].includes(ext)) {
+      const decoded = decodeDocumentText(content);
+      const rawText = decoded.text;
+      conversionMetadata.encoding = decoded.encoding;
+      conversionMetadata.encoding_warnings = decoded.warnings;
       if (rawText.trim()) {
         parsed = {
           markdown: rawText,
           engine: "plaintext-fastpath",
           classification: ext.slice(1),
+          native_text_chars: (rawText.replace(/!\[[^\]]*\]\([^)]*\)/g, "").replace(/<!--[\s\S]*?-->/g, "").match(/[\p{L}\p{N}]/gu) || []).length,
+          generated_text_chars: 0,
           status: "completed",
         };
       }
-    } else if (!parsed && ANYDOC_UPLOAD_EXTENSIONS.has(ext)) {
+    } else if (!parsed && ext === ".doc" && ANYDOC_UPLOAD_EXTENSIONS.has(ext)) {
       try {
         // @ts-ignore
         const anydoc: any = await import("@firecrawl/anydoc" as any).catch(() => null);
@@ -380,10 +404,11 @@ export class IngestionService implements OnModuleInit {
     if (!parsed) {
       const form = new FormData();
       form.append("instance_id", instanceIdentity());
-      const fileBytes = content.buffer.slice(
-        content.byteOffset,
-        content.byteOffset + content.byteLength,
-      ) as ArrayBuffer;
+      const retryMetadata = document.parserMetadata as any;
+      if (retryMetadata?.retry_units?.length) {
+        if (retryMetadata.retry_base?.contentHash !== contentHash) throw new Error('Retry input was superseded');
+        form.append('unit_ids', JSON.stringify(retryMetadata.retry_units)); form.append('cache_source_hash', contentHash);
+      }
       const rawExt = extname(document.rawFileOid || "").toLowerCase();
       const titleExt = extname(document.title || "").toLowerCase();
       const effectiveExt =
@@ -396,7 +421,7 @@ export class IngestionService implements OnModuleInit {
       const parseFilename = `${baseTitle}${effectiveExt}`;
       form.append(
         "file",
-        new Blob([fileBytes]),
+        await openAsBlob(inputPath),
         parseFilename,
       );
       const ocrConfig = pinnedOcrConfig;
@@ -502,7 +527,16 @@ export class IngestionService implements OnModuleInit {
     }
 
     // Inspect original output before control-character normalization can hide damage.
+    normalizeSourceOffsets(parsed);
+    const retryMetadata = document.parserMetadata as any;
+    if (retryMetadata?.retry_units?.length && !['.md', '.txt'].includes(ext)) {
+      const oldMarkdown = await readFile(resolveUploadPath(retryMetadata.retry_base.mdPath), 'utf8');
+      parsed = mergeSourceUnitRetry(oldMarkdown, retryMetadata, parsed, retryMetadata.retry_units);
+    }
+    if ([".md", ".txt"].includes(ext)) await enrichMarkdownPackage(parsed, document.parserMetadata, documentId, targetVersion, this.parserUrl, pinnedOcrConfig);
+    await persistSourceArtifacts(parsed, documentId, targetVersion, this.parserUrl);
     const quality = assessContentQuality(String(parsed.markdown || ""), ext, parsed);
+    if (parsed.qa && parsed.qa.reviewStatus !== "approved") { quality.quality_status = "needs_review"; quality.quality_issues.push("QA 等待维护者审核"); }
     // content-v2.1: language detection + PII scan + SimHash for near-dup gate.
     // PII is recorded as metadata only and never blocks publication.
     const extended = assessExtendedQuality(String(parsed.markdown || ""));
@@ -515,8 +549,7 @@ export class IngestionService implements OnModuleInit {
     };
     const markdown = String(parsed.markdown || "")
       .replace(/\0/g, "")
-      .replace(/\u0000/g, "")
-      .trim();
+      .replace(/\u0000/g, "");
     if (!markdown) throw new Error("Parser returned empty Markdown.");
     if (parsed && parsed.markdown && !cachedParse) {
       if (cacheReusable) IngestionService.parseCache.set(parseCacheKey, {
@@ -555,7 +588,7 @@ export class IngestionService implements OnModuleInit {
     } catch (dupErr) {
       this.logger.debug(`near-dup check skipped: ${dupErr instanceof Error ? dupErr.message : String(dupErr)}`);
     }
-    const chunks = splitMarkdownIntoChunks(markdown);
+    const chunks = parsed.qa ? [{ ord: 0, content: markdown, tokenCount: Math.ceil(markdown.length / 3), charStart: 0, charEnd: markdown.length, metadata: { section: parsed.qa.question, chunkStrategy: "qa-atomic", overlapChars: 0, qa_id: parsed.qa.id, qa: parsed.qa } }] : attachSourceLocations(splitMarkdownIntoChunks(markdown), parsed);
     if (!chunks.length)
       throw new Error("Parser returned no indexable content.");
 
@@ -601,7 +634,10 @@ export class IngestionService implements OnModuleInit {
     // Persist parser facts, but never persist request credentials or the full
     // parser response. This lets operators explain a failed/uncertain import
     // and lets the UI distinguish "parsed" from "safe to publish".
-    const parserMetadata: Record<string, unknown> = { ...conversionMetadata, contentHash, parserFingerprint };
+    const priorMetadata = document.parserMetadata as any;
+    const parserMetadata: Record<string, unknown> = { ...conversionMetadata, contentHash, parserFingerprint,
+      ...(priorMetadata?.archive ? { archive: priorMetadata.archive } : {}),
+      ...(priorMetadata?.package_assets ? { package_assets: priorMetadata.package_assets } : {}) };
     for (const key of [
       "page_count",
       "text_pages",
@@ -624,7 +660,7 @@ export class IngestionService implements OnModuleInit {
       "quality_metrics",
       "quality_rule_version",
       "docling_error",
-      "ocr_error",
+      "ocr_error", "structured_tables", "source_units", "assets", "coverage", "native_text_chars", "generated_text_chars", "warnings", "qa", "resource_metrics",
     ]) {
       if (parsed[key] !== undefined && parsed[key] !== null) {
         parserMetadata[key] = parsed[key];
@@ -655,7 +691,7 @@ export class IngestionService implements OnModuleInit {
         documentId, kbId: document.kbId, number: targetVersion, sourceHash: contentHash,
         title: document.title, mdPath: relativeContentPath, parser: parserFingerprint,
         publicationData: { parserEngine: parsed.engine || null, parserClassification: parsed.classification || null,
-          parserMetadata, qualityStatus, qualityScore, qualityIssues, contentHash, rawFileOid: document.rawFileOid },
+          parserMetadata, qualityStatus, qualityScore, qualityIssues, contentHash, rawFileOid: document.rawFileOid, ...(parsed.qa ? { effectiveFrom: parsed.qa.effectiveFrom ? new Date(parsed.qa.effectiveFrom).toISOString() : null, effectiveTo: parsed.qa.effectiveTo ? new Date(parsed.qa.effectiveTo).toISOString() : null } : {}) },
         blocks: enrichedChunks.map(chunk => ({ ...chunk, rawContent: markdown.slice(chunk.charStart, chunk.charEnd), metadata: { ...(chunk.metadata || {}),
           canonical_block: buildCanonicalBlock({ document: { id: documentId, kbId: document.kbId, title: document.title,
             version: targetVersion, sourceType: document.sourceType }, chunk: { ...chunk,content:markdown.slice(chunk.charStart,chunk.charEnd) } }) } })),
@@ -689,6 +725,7 @@ export class IngestionService implements OnModuleInit {
               qualityStatus,
               qualityScore,
               qualityIssues: qualityIssues as any,
+              ...(parsed.qa && qualityStatus === "passed" ? { effectiveFrom: parsed.qa.effectiveFrom ? new Date(parsed.qa.effectiveFrom) : null, effectiveTo: parsed.qa.effectiveTo ? new Date(parsed.qa.effectiveTo) : null } : {}),
             },
           });
           if (claim.count !== 1) {
@@ -814,6 +851,18 @@ export class IngestionService implements OnModuleInit {
       qualityIssues,
     };
     } catch (err) {
+      // Clean only unreferenced work. Retained published versions keep their
+      // own immutable fact/asset directory until document deletion.
+      try {
+        const retained = await this.prisma.documentVersion.findFirst({ where:{ documentId, number:targetVersion },select:{id:true} });
+        const current = await this.prisma.document.findUnique({where:{id:documentId},select:{parserMetadata:true}});
+        const artifactDir = `${documentId}/artifacts.v${targetVersion}`;
+        if (!retained && !JSON.stringify(current?.parserMetadata || {}).includes(artifactDir)) await rm(join(this.uploadRoot,artifactDir),{recursive:true,force:true});
+      } catch {
+        // A failed ownership lookup is not evidence that a published artifact
+        // is unreferenced. Preserve bytes and the original ingestion error.
+        this.logger.warn(`Deferred artifact cleanup for ${documentId} v${targetVersion}; ownership could not be confirmed`);
+      }
       throw err;
     }
   }

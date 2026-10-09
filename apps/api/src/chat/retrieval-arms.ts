@@ -1305,7 +1305,7 @@ export class RetrievalArmsService {
       return [];
     }
 
-    const readableWhere = await readableDocumentWhere(this.prisma);
+    const readableWhere = await readableDocumentWhere(this.prisma, undefined, scope);
     const sharedExecution = getRequestContext()?.execution;
     if (sharedExecution?.adaptive && !sharedExecution.reserveProbeFor(query)) return [];
     const subQueryCacheKey = extraQueries.length === 0 && !variant

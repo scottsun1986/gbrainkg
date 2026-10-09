@@ -64,6 +64,7 @@ describe('McpService', () => {
         }),
       },
       document: {
+        findMany: jest.fn().mockResolvedValue([]),
         create: jest.fn().mockImplementation(({ data }: any) => Promise.resolve({ id: data.id, title: data.title, version: data.version, status: data.status })),
       },
       conversation: {

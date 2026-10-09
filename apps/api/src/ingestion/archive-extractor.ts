@@ -16,7 +16,10 @@ export interface ExtractedArchiveFile {
   relativePath: string;
 }
 
+export interface ArchiveManifestItem { path: string; status: 'accepted'|'skipped'|'failed'|'asset'|'reused'; reason?: string; hash?: string; documentId?: string }
+
 export interface ExtractArchiveOptions {
+  manifest?: ArchiveManifestItem[];
   maxFiles?: number;
   maxTotalBytes?: number;
   maxSingleFileBytes?: number;
@@ -168,6 +171,8 @@ async function extractZipEntries(
   }
 
   const entries = zip.getEntries();
+  if (entries.length > 5000) throw new BadRequestException('压缩包目录项超过安全限制 (5000)');
+  const paths = new Set<string>();
   const rawItems: { relativePath: string; buffer: Buffer }[] = [];
   let totalBytes = 0;
 
@@ -175,7 +180,12 @@ async function extractZipEntries(
     if (entry.isDirectory) continue;
 
     const safePath = sanitizeArchiveEntryPath(entry.entryName);
-    if (!safePath) continue;
+    if (!safePath) { options.manifest?.push({ path: entry.entryName, status: 'skipped', reason: isArchiveFilename(entry.entryName) ? '嵌套压缩包未展开' : '不支持格式、隐藏项或不安全路径' }); continue; }
+    const normalizedKey = safePath.normalize('NFC');
+    if (paths.has(normalizedKey)) { options.manifest?.push({ path: entry.entryName, status: 'skipped', reason: 'Unicode 规范化后路径重复' }); continue; }
+    paths.add(normalizedKey);
+    const unixMode = (Number(entry.header.attr) >>> 16) & 0o170000;
+    if (unixMode === 0o120000) { options.manifest?.push({ path: entry.entryName, status: 'skipped', reason: '不接受符号链接' }); continue; }
 
     if (rawItems.length >= maxFiles) {
       throw new BadRequestException(`压缩包内文件数量超出安全限制 (${maxFiles} 个)`);
@@ -206,10 +216,11 @@ async function extractZipEntries(
       data = entry.getData();
     } catch (err: any) {
       // Password protected or corrupt entry
+      options.manifest?.push({ path: safePath, status: 'failed', reason: '加密或损坏条目，需重新上传解密原件' });
       continue;
     }
 
-    if (!data || data.length === 0) continue;
+    if (!data || data.length === 0) { options.manifest?.push({ path: safePath, status: 'skipped', reason: '空文件' }); continue; }
 
     if (data.length > maxSingleFileBytes) {
       throw new BadRequestException(
@@ -220,7 +231,7 @@ async function extractZipEntries(
     // Fast-fail empty or pure-whitespace text documents
     if (TEXT_LIKE_EXTENSIONS.has(ext)) {
       const text = data.toString('utf8').trim();
-      if (!text) continue;
+      if (!text) { options.manifest?.push({ path: safePath, status: 'skipped', reason: '纯空白文本' }); continue; }
     }
 
     totalBytes += data.length;
@@ -231,6 +242,7 @@ async function extractZipEntries(
     }
 
     rawItems.push({ relativePath: safePath, buffer: data });
+    options.manifest?.push({ path: safePath, status: 'accepted' });
   }
 
   return rawItems;
@@ -251,22 +263,29 @@ async function extractTarEntries(
     (buffer.length >= 2 && buffer[0] === 0x1f && buffer[1] === 0x8b);
 
   const rawItems: { relativePath: string; buffer: Buffer }[] = [];
-  let totalBytes = 0;
+  let totalBytes = 0; let entryCount = 0;
+  const paths = new Set<string>();
 
   const parseStream = new tar.Parser();
 
   parseStream.on('entry', (entry: any) => {
+    if (++entryCount > 5000) { parseStream.emit('error', new BadRequestException('压缩包目录项超过安全限制 (5000)')); entry.resume(); return; }
     if (entry.type !== 'File') {
+      if (entry.type !== 'Directory') options.manifest?.push({ path: entry.path, status: 'skipped', reason: '不接受链接或特殊条目' });
       entry.resume();
       return;
     }
 
     const safePath = sanitizeArchiveEntryPath(entry.path);
     if (!safePath) {
+      options.manifest?.push({ path: entry.path, status: 'skipped', reason: isArchiveFilename(entry.path) ? '嵌套压缩包未展开' : '不支持格式、隐藏项或不安全路径' });
       entry.resume();
       return;
     }
 
+    const normalizedKey = safePath.normalize('NFC');
+    if (paths.has(normalizedKey)) { options.manifest?.push({ path: safePath, status: 'skipped', reason: 'Unicode 规范化后路径重复' }); entry.resume(); return; }
+    paths.add(normalizedKey);
     const chunks: Buffer[] = [];
     let entrySize = 0;
     let entryAborted = false;
@@ -289,12 +308,12 @@ async function extractTarEntries(
     entry.on('end', () => {
       if (entryAborted) return;
       const data = Buffer.concat(chunks);
-      if (data.length === 0) return;
+      if (data.length === 0) { options.manifest?.push({ path: safePath, status: 'skipped', reason: '空文件' }); return; }
 
       const ext = extname(safePath).toLowerCase();
       if (TEXT_LIKE_EXTENSIONS.has(ext)) {
         const text = data.toString('utf8').trim();
-        if (!text) return;
+        if (!text) { options.manifest?.push({ path: safePath, status: 'skipped', reason: '纯空白文本' }); return; }
       }
 
       totalBytes += data.length;
@@ -317,20 +336,23 @@ async function extractTarEntries(
       }
 
       rawItems.push({ relativePath: safePath, buffer: data });
+    options.manifest?.push({ path: safePath, status: 'accepted' });
     });
   });
 
   const readable = Readable.from(buffer);
 
   await new Promise<void>((resolve, reject) => {
-    readable.on('error', reject);
-    parseStream.on('error', reject);
+    let decompressor: ReturnType<typeof createGunzip> | undefined;let failed=false;
+    const fail=(error:any)=>{if(failed)return;failed=true;readable.destroy();(parseStream as any).destroy?.();decompressor?.destroy();reject(error);};
+    readable.on('error', fail);
+    parseStream.on('error', fail);
     parseStream.on('finish', resolve);
 
     if (isGzip) {
-      const gunzip = createGunzip();
+      const gunzip = createGunzip();decompressor=gunzip;
       gunzip.on('error', (err) => {
-        reject(new BadRequestException(`GZIP 解压缩失败：${err.message || '文件损坏'}`));
+        fail(new BadRequestException(`GZIP 解压缩失败：${err.message || '文件损坏'}`));
       });
       readable.pipe(gunzip).pipe(parseStream);
     } else {
@@ -365,7 +387,7 @@ export async function extractArchiveDocuments(
     throw new BadRequestException(`不支持的压缩包格式: ${archiveFilename}`);
   }
 
-  if (rawItems.length === 0) {
+  if (rawItems.length === 0 && !options.manifest) {
     throw new BadRequestException(
       '压缩包内未包含有效且受支持的文档（支持格式：PDF、Word、PPT、Excel、Markdown、TXT、CSV、HTML 等）。',
     );

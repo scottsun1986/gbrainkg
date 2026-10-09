@@ -107,7 +107,7 @@ class ExecuteContractTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("智慧城市架构规划方案", result['markdown'])
                 self.assertIn("## 第 1 页", result['markdown'])
 
-    async def test_execution_full_image_pptx_needs_review(self):
+    async def test_execution_full_image_pptx_without_extractor_has_no_real_content(self):
         import io
         from pptx import Presentation
         from pptx.util import Inches
@@ -139,9 +139,9 @@ class ExecuteContractTests(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(response.status_code, 200)
                 result = response.json()
-                self.assertEqual(result['status'], 'completed')
-                # Full-image PPTX without OCR text is no longer held for review.
-                self.assertEqual(result['quality_status'], 'passed')
+                self.assertEqual(result['status'], 'failed')
+                self.assertEqual(result['content_text_chars'], 0)
+                self.assertGreater(result['coverage']['skipped'], 0)
                 self.assertIn("## 第 1 页", result['markdown'])
 
     def test_extract_excel_merged_cells_forward_fill(self):
@@ -510,6 +510,9 @@ class ExecuteContractTests(unittest.IsolatedAsyncioTestCase):
             # Only the large figure is OCR-eligible.
             self.assertEqual(baidu.await_count, 1)
             self.assertEqual(result.get("ocr_image_count"), 1)
+            self.assertEqual(result.get("embedded_image_count"), 2)
+            self.assertEqual(result.get("ocr_words_result_num"), 1)
+            self.assertEqual(result.get("ocr_average_confidence"), 0.91)
 
     async def test_ocr_embedded_images_endpoint_enriches_docx(self):
         import io

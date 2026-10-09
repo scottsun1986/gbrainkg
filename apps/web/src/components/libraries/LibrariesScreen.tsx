@@ -6,6 +6,11 @@ import { Modal } from '@/components/common/Modal';
 import { ConfirmModal } from '@/components/common/ConfirmModal';
 import { TypeBadge, TYPE_BADGE } from '@/components/common/TypeBadge';
 import { OnlinePreviewModal } from '@/components/preview/UniversalDocumentViewer';
+import { QaPanel } from './QaPanel';
+import { ImportBatchPanel } from './ImportBatchPanel';
+import { IngestionCapabilities, type IngestionCapabilitiesData } from './IngestionCapabilities';
+import type { ImportBatch } from '@/lib/ingestion-ui';
+import type { ParserMetadata } from '../preview/IngestionCoverage';
 import { DocumentAclPanel } from './DocumentAclPanel';
 import { API_BASE_URL, apiHeaders } from '@/lib/api';
 import { appStore } from '@/lib/app-store';
@@ -19,7 +24,7 @@ import type {
 interface DocumentListItem {
   id: string; title: string; status: string; mdPath?: string; sizeBytes?: number;
   uploadedBy?: { displayName?: string; username?: string }; updatedAt: string; createdAt: string;
-  qualityStatus?: string; qualityScore?: number; qualityIssues?: string[]; parserEngine?: string;
+  qualityStatus?: string; qualityScore?: number; qualityIssues?: string[]; parserEngine?: string; parserMetadata?: ParserMetadata;
 }
 
 interface DocRow {
@@ -34,6 +39,7 @@ interface DocRow {
   content?: string;
   qualityIssues?: string[];
   parserEngine?: string;
+  parserMetadata?: ParserMetadata;
   [key: string]: unknown;
 }
 
@@ -50,6 +56,8 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
   const [libRefreshTick, setLibRefreshTick] = useState(0);
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
   const [tab, setTab] = useState('docs');
+  const [ingestionCapabilities, setIngestionCapabilities] = useState<IngestionCapabilitiesData | null>(null);
+  const [importBatches, setImportBatches] = useState<Array<ImportBatch & { kbId: string }>>([]);
   const [docs, setDocs] = useState<DocRow[]>([]);
   // 上传钉住：新上传的文档必须始终留在列表中。当当前过滤条件/页码不含该
   // 文档时，以钉住行渲染在列表顶部，并通过 ids 精确查询实时跟踪其状态，
@@ -147,6 +155,7 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
           qualityScore: doc.qualityScore,
           qualityIssues: Array.isArray(doc.qualityIssues) ? doc.qualityIssues : [],
           parserEngine: doc.parserEngine,
+          parserMetadata: doc.parserMetadata,
         };
       }));
       setDocsTotal(Number(result.total) || 0);
@@ -206,7 +215,7 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
 
   const uploadDocument = async (file: File) => {
     if (!file || !current?.id) return;
-    if (file.size > 200 * 1024 * 1024) {
+    if (file.size > (ingestionCapabilities?.limits.uploadBytes ?? 200 * 1024 * 1024)) {
       window.dispatchEvent(new CustomEvent('app-toast', { detail: `文件「${file.name}」超出 200MB 大小限制` }));
       return;
     }
@@ -243,6 +252,9 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || '上传失败');
 
+      if (result.batchId) {
+        setImportBatches(value => [{ id: result.batchId, archiveName: file.name, items: result.manifest || [], kbId: current.id }, ...value.filter(batch => batch.id !== result.batchId)]);
+      }
       const isArchive = result.isArchive || (result.documents && result.documents.length > 1);
       if (isArchive) {
         // 压缩包已在后端自动解压，压缩包本身已物理删除；移除压缩包占位行并提示提取的文档数量
@@ -265,7 +277,7 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
         const count = result.documents?.length || result.total || 0;
         window.dispatchEvent(
           new CustomEvent('app-toast', {
-            detail: `「${tempName}」解压成功，提取 ${count} 篇文档并进入解析`,
+            detail: `「${tempName}」已受理 ${count} 篇文档；请在导入批次中查看全部条目、跳过和失败原因`,
           }),
         );
       } else {
@@ -495,6 +507,8 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
         </div>
         <div className="detail-tabs">
           <div className={`detail-tab ${tab==='docs'?'active':''}`} onClick={()=>setTab('docs')}>文档（{statTotal}）</div>
+          {current.canWrite && <div className={`detail-tab ${tab==='qa'?'active':''}`} onClick={()=>setTab('qa')}>标准问答</div>}
+          {current.canWrite && <div className={`detail-tab ${tab==='imports'?'active':''}`} onClick={()=>setTab('imports')}>导入批次</div>}
           <div className={`detail-tab ${tab==='health'?'active':''}`} onClick={()=>setTab('health')}>健康度</div>
           <div className={`detail-tab ${tab==='settings'?'active':''}`} onClick={()=>setTab('settings')}>设置</div>
         </div>
@@ -528,7 +542,7 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
                   }
                   event.target.value='';
                 }}
-                accept=".md,.txt,.csv,.html,.htm,.doc,.docx,.pdf,.xls,.xlsx,.pptx,.png,.jpg,.jpeg,.zip,.tar,.tar.gz,.tgz"
+                accept={ingestionCapabilities?.extensions.join(',') || '.md,.txt,.csv,.html,.htm,.doc,.docx,.pdf,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.webp,.tif,.tiff,.bmp,.zip,.tar,.tar.gz,.tgz'}
               />
               <div className="compact-dropzone-icon">
                 <Icon name="upload" size={18}/>
@@ -541,7 +555,7 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
                   </span>
                 </div>
                 <div className="compact-dropzone-sub">
-                  支持多选批量上传及 ZIP/TAR 压缩包（自动解压并逐一解析，压缩包自动删除）· 单文件最大 200MB
+                  支持多选及 ZIP/TAR 批量导入，逐项结果在导入批次中查看；标准问答请使用专用字段映射。
                 </div>
               </div>
               <button type="button" className="compact-dropzone-btn" onClick={(e)=>{ e.stopPropagation(); fileInputRef.current?.click(); }}>
@@ -559,6 +573,8 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
               </div>
             </div>
           )}
+
+          <IngestionCapabilities onLoaded={setIngestionCapabilities} />
 
           <div className="kpi-row">
             <div
@@ -712,6 +728,8 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
                       )}
                     </div>
                     <div className="sub" title={d.path}>{d.path}</div>
+                    {d.parserMetadata?.coverage && <div className="sub">内容覆盖 {d.parserMetadata.coverage.processed}/{d.parserMetadata.coverage.total} · 失败 {d.parserMetadata.coverage.failed} · 跳过 {d.parserMetadata.coverage.skipped}</div>}
+                    {!!d.qualityIssues?.length && <div className="sub" title={d.qualityIssues.join('；')}>质量提示：{d.qualityIssues.join('；')}</div>}
                   </div>
                   <div>
                     <span className={`status ${d.status}`} title={d.qualityIssues?.length ? d.qualityIssues.join('；') : (d.parserEngine ? `解析引擎：${d.parserEngine}` : '')}>
@@ -800,6 +818,8 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
             </div>
           )}
           </>}
+          {tab==='qa' && current.canWrite && <QaPanel key={current.id} kbId={current.id} canWrite={Boolean(current.canWrite)} onChanged={()=>void loadDocuments(current.id)} />}
+          {tab==='imports' && current.canWrite && <ImportBatchPanel active={active} key={current.id} batches={importBatches.filter(batch=>batch.kbId===current.id)} canWrite={Boolean(current.canWrite)} onChanged={()=>void loadDocuments(current.id)} onPreview={(docId,title)=>setOnlinePreview({kbId:current.id,docId,title,initialTab:'meta'})} />}
           {tab==='health' && <div style={{padding:24}}><h3>知识库健康度</h3><p style={{color:'var(--ink-3)'}}>健康度根据当前数据库中的文档状态与解析质量门禁计算。</p><div className="kpi-row"><div className="kpi"><div className="lbl">已发布率</div><div className="val">{statTotal ? Math.round(statPublished/statTotal*100) : 0}%</div></div><div className="kpi"><div className="lbl">待复核</div><div className="val">{statNeedsReview}</div></div><div className="kpi"><div className="lbl">失败文档</div><div className="val">{statFailed}</div></div><div className="kpi"><div className="lbl">待处理</div><div className="val">{statProcessing}</div></div></div></div>}
           {tab==='settings' && <div style={{padding:24}}><h3>知识库设置</h3><div className="field"><label>名称</label><input value={current.name} readOnly/></div><div className="field"><label>类型</label><input value={current.type} readOnly/></div><div className="field"><label>可见性</label><input value={current.visibility} readOnly/></div><p className="field-hint">知识库的权限和管理员请在管理后台维护。</p></div>}
         </div>

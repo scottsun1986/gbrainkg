@@ -41,6 +41,12 @@ class HtmlExtractionTests(unittest.TestCase):
         self.assertIn("# 总则", text)
         self.assertIn("## 适用范围", text)
 
+    def test_list_and_code_boundaries_preserve_original_spacing(self):
+        text = main.extract_plaintext('source.html', b'<ul><li>first</li><li>second</li></ul><pre>if x:\n    print(0)</pre>')
+        self.assertIn('- first', text)
+        self.assertIn('- second', text)
+        self.assertIn('```\nif x:\n    print(0)\n```', text)
+
     def test_malformed_markup_falls_back_to_tag_stripping(self):
         html = "<html><body><p>未闭合段落<b>加粗</body></html>"
         text = main.extract_plaintext("broken.html", html.encode("utf-8"))

@@ -12,6 +12,7 @@ const mockPrisma: any = {
     update: jest.fn(),
     delete: jest.fn(),
   },
+  importBatch: { create: jest.fn().mockResolvedValue({}), update: jest.fn().mockResolvedValue({}) },
   $executeRaw: jest.fn().mockResolvedValue(0),
 
   $transaction: jest.fn(async (fn: any) => fn(mockPrisma)),
@@ -164,7 +165,7 @@ describe('IngestionController', () => {
       expect(mockIngestionService.enqueue).toHaveBeenCalledTimes(2);
     });
 
-    it('rejects an archive that contains no supported files', async () => {
+    it('records each skipped entry in an archive that contains no supported files', async () => {
       const zip = new AdmZip();
       zip.addFile('main.py', Buffer.from('print("hi")'));
       zip.addFile('package.json', Buffer.from('{}'));
@@ -176,9 +177,13 @@ describe('IngestionController', () => {
         size: zipBuffer.length,
       };
 
-      await expect(
-        controller.uploadDocument('kb-1', file, {} as any),
-      ).rejects.toThrow(/未包含有效且受支持的文档/);
+      const result = await controller.uploadDocument('kb-1', file, {} as any);
+      expect(result.documents).toEqual([]);
+      expect(result.manifest).toHaveLength(2);
+      if (!result.manifest) throw new Error('Archive upload must return its per-entry manifest');
+      expect(result.manifest.every(item => item.status === 'skipped' && item.reason)).toBe(true);
+      expect(mockPrisma.importBatch.create).toHaveBeenCalled();
+      expect(mockIngestionService.enqueue).not.toHaveBeenCalled();
     });
   });
 

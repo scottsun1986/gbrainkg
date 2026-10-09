@@ -4,6 +4,7 @@ import asyncio
 import base64
 import html
 import ipaddress
+import json
 import hashlib
 import shutil
 import socket
@@ -18,11 +19,16 @@ import resource
 import sys
 try:
     from src.controlled_jobs import FairLimiter, run_process
-    from src import artifact_cache
+    from src import artifact_cache, artifact_store, source_contract, structured_excel, image_units, temp_budget
     from src.env_config import env_int, env_float
 except (ImportError, ModuleNotFoundError):
     from controlled_jobs import FairLimiter, run_process
     import artifact_cache
+    import artifact_store
+    import source_contract
+    import structured_excel
+    import image_units
+    import temp_budget
     from env_config import env_int, env_float
 import tempfile
 import time
@@ -33,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
@@ -47,7 +54,7 @@ for k in ["ALL_PROXY", "all_proxy"]:
 
 UPLOAD_ROOT = Path(os.environ.get("UPLOAD_ROOT", "/tmp/llmwiki/parser"))
 MAX_FILE_BYTES = 200 * 1024 * 1024
-SUPPORTED_EXTENSIONS = {".md", ".txt", ".csv", ".html", ".htm", ".doc", ".docx", ".pdf", ".xls", ".xlsx", ".pptx", ".png", ".jpg", ".jpeg"}
+SUPPORTED_EXTENSIONS = {".md", ".txt", ".csv", ".html", ".htm", ".doc", ".docx", ".pdf", ".xls", ".xlsx", ".pptx", ".ppt", ".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp"}
 ANTIWORD_BIN = os.environ.get("ANTIWORD_BIN", "antiword")
 DOCLING_TIMEOUT_SECONDS = env_float("DOCLING_TIMEOUT_SECONDS", 240)
 PDF_PARSE_MODE = os.environ.get("PDF_PARSE_MODE", "hybrid").lower()
@@ -101,7 +108,7 @@ def safe_unlink(path: Path) -> None:
 
 def safe_error(error: BaseException) -> str:
     # Never expose provider response bodies or URLs carrying OAuth credentials.
-    if isinstance(error, RuntimeError) and str(error) == "Image extraction requires configured OCR, VLM, or local Docling":
+    if isinstance(error, (RuntimeError, ValueError)) and (str(error) == "Image extraction requires configured OCR, VLM, or local Docling" or str(error).startswith(("Image exceeds ", "Workbook exceeds ", "Worksheet exceeds ", "Office package exceeds ", "Structured table exceeds ", "Shared parser temporary ", "Parser temporary disk ", "Legacy PPT conversion requires ", "Parser returned only scaffolding"))):
         return str(error)
     return f"Parser operation failed ({type(error).__name__})"
 
@@ -151,7 +158,7 @@ _baidu_access_tokens: dict[tuple[str, str], tuple[str, float]] = {}
 # semaphores, memory-safe on an 8-core host; tune down first if RAM binds.
 DOCLING_MAX_CONCURRENCY = max(1, env_int("DOCLING_MAX_CONCURRENCY", 4))
 _docling_semaphore = asyncio.Semaphore(DOCLING_MAX_CONCURRENCY)
-_parse_limiter = FairLimiter(env_int("PARSER_CONCURRENCY", 8), env_int("PARSER_QUEUE_LIMIT", 64), env_int("PARSER_PER_INSTANCE_CONCURRENCY", 4))
+_parse_limiter = FairLimiter(min(env_int("PARSER_CONCURRENCY", 8), max(1, env_int("PARSER_SHARED_MEMORY_BYTES", 4 * 1024 * 1024 * 1024) // env_int("PARSER_NATIVE_MEMORY_BYTES", 1536 * 1024 * 1024))), env_int("PARSER_QUEUE_LIMIT", 64), env_int("PARSER_PER_INSTANCE_CONCURRENCY", 4))
 
 
 try:
@@ -172,12 +179,39 @@ except (ImportError, ModuleNotFoundError):
     )
 
 
+def retained_result_bytes(task: dict[str, Any]) -> int:
+    if "_retained_bytes" in task:
+        return int(task["_retained_bytes"])
+    public = {key: value for key, value in task.items() if not key.startswith("_")}
+    return sum(len(chunk.encode("utf-8")) for chunk in json.JSONEncoder(ensure_ascii=False).iterencode(public))
+
+
+def account_retained_result(task_id: str):
+    current = tasks.get(task_id)
+    if not current or current.get("status") not in ("completed", "failed"):
+        return
+    current["_retained_bytes"] = retained_result_bytes(current)
+    finished = [(info.get("created_at", 0), identifier, retained_result_bytes(info))
+        for identifier, info in tasks.items() if info.get("status") in ("completed", "failed")]
+    total = sum(size for _, _, size in finished)
+    for _, identifier, size in sorted(finished):
+        if total <= MAX_RETAINED_BYTES:
+            break
+        if identifier != task_id:
+            tasks.pop(identifier, None)
+            total -= size
+
+
+def public_task_result(task: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in task.items() if not key.startswith("_")}
+
+
 async def periodic_cleanup():
     while True:
         await asyncio.sleep(300)
         current_time = time.time()
         total_bytes = sum(
-            len(t.get("markdown", "").encode("utf-8"))
+            retained_result_bytes(t)
             for t in tasks.values()
             if t.get("status") in ("completed", "failed")
         )
@@ -187,8 +221,7 @@ async def periodic_cleanup():
             age = current_time - t_info.get("created_at", current_time)
             if status in ("completed", "failed"):
                 if age > 1800 or total_bytes > MAX_RETAINED_BYTES:
-                    md = t_info.get("markdown", "")
-                    total_bytes -= len(md.encode("utf-8")) if md else 0
+                    total_bytes -= retained_result_bytes(t_info)
                     del tasks[tid]
                 continue
             # Stale in-flight task: mark it failed instead of deleting it, so
@@ -233,7 +266,7 @@ async def lifespan(app: FastAPI):
     yield
     cleanup_task.cancel()
 
-app = FastAPI(title="LLMWiki Parser Worker", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="LLMWiki Parser Worker", version="0.5.0", lifespan=lifespan)
 
 allowed_origins = os.environ.get('CORS_ORIGINS', 'http://localhost:3000,http://localhost:3001').split(',')
 app.add_middleware(
@@ -296,6 +329,12 @@ def health_check():
         # PyMuPDF is only needed to render PDF pages for the (API-based) VLM
         # enrichment; without it that path silently returns an empty string.
         "pymupdf_installed": PYMUPDF_INSTALLED,
+        "pdf_regions_available": PYMUPDF_INSTALLED,
+        "image_frames_available": _module_available("PIL"),
+        "legacy_ppt_available": bool(shutil.which(os.environ.get("SOFFICE_BIN", "soffice"))),
+        "structured_tables_available": True,
+        "source_units_contract": "source-units-typed-tables-v3",
+        "parse_concurrency": _parse_limiter.capacity,
         "page_vlm_enrichment_available": PYMUPDF_INSTALLED and is_vlm_available(),
         "task_stale_timeout_seconds": PARSER_TASK_STALE_SECONDS,
         # AnyDoc is intentionally owned by the API's official Node binding;
@@ -335,7 +374,7 @@ def decode_text_bytes(content: bytes, filename: str) -> str:
     characters. Try strict decodings in order and only fall back to a
     lossy decode when all of them fail.
     """
-    for encoding in ("utf-8-sig", "gbk", "gb18030"):
+    for encoding in (("utf-16", "utf-8-sig", "gb18030", "gbk") if content.startswith((b"\xff\xfe", b"\xfe\xff")) else ("utf-8-sig", "gb18030", "gbk")):
         try:
             text = content.decode(encoding)
         except (UnicodeDecodeError, LookupError):
@@ -372,6 +411,7 @@ class _HtmlTextExtractor(HTMLParser):
         super().__init__(convert_charrefs=True)
         self._parts: list[str] = []
         self._skip_depth = 0
+        self._pre_depth = 0
 
     @property
     def _skipping(self) -> bool:
@@ -384,7 +424,12 @@ class _HtmlTextExtractor(HTMLParser):
             return
         if self._skipping:
             return
-        if tag in self._CELL:
+        if tag == "pre":
+            self._pre_depth += 1
+            self._parts.append("\n\n```\n")
+        elif tag == "li":
+            self._parts.append("\n- ")
+        elif tag in self._CELL:
             self._parts.append(" | ")
         elif tag == "br":
             self._parts.append("\n")
@@ -400,11 +445,17 @@ class _HtmlTextExtractor(HTMLParser):
             return
         if self._skipping:
             return
-        if tag in self._BLOCK or tag in self._HEADING:
+        if tag == "pre":
+            self._pre_depth = max(0, self._pre_depth - 1)
+            self._parts.append("\n```\n\n")
+        elif tag in self._BLOCK or tag in self._HEADING:
             self._parts.append("\n\n")
 
     def handle_data(self, data: str) -> None:  # type: ignore[override]
         if self._skipping:
+            return
+        if self._pre_depth:
+            self._parts.append(data)
             return
         text = " ".join(data.split())
         if text:
@@ -413,7 +464,15 @@ class _HtmlTextExtractor(HTMLParser):
     def get_text(self) -> str:
         raw = "".join(self._parts)
         lines: list[str] = []
+        fenced = False
         for line in raw.split("\n"):
+            if line.strip() == "```":
+                fenced = not fenced
+                lines.append("```")
+                continue
+            if fenced:
+                lines.append(line.rstrip())
+                continue
             stripped = re.sub(r"[ \t]{2,}", " ", line).strip()
             if stripped:
                 lines.append(stripped)
@@ -514,7 +573,7 @@ def extract_legacy_word(path: Path) -> str:
         raise RuntimeError("Legacy .doc conversion returned empty text")
     return text
 
-def extract_docx(path: Path) -> tuple[str, list[dict[str, Any]]]:
+def extract_docx(path: Path, contract: dict[str, Any] | None = None, unit_ids: list[str] | None = None) -> tuple[str, list[dict[str, Any]]]:
     """Extract .docx to Markdown while preserving paragraph/table order.
 
     Embedded images become position placeholders (``<!-- image: docx-media-N -->``)
@@ -536,20 +595,37 @@ def extract_docx(path: Path) -> tuple[str, list[dict[str, Any]]]:
         image_counter = 0
 
         def iter_blocks(parent: DocxDocument):
-            for child in parent.element.body.iterchildren():
+            def accepted_children(element):
+                for child in element.iterchildren():
+                    if child.tag == qn("w:ins") or child.tag == qn("w:sdt") or child.tag == qn("w:sdtContent"):
+                        yield from accepted_children(child)
+                    elif child.tag != qn("w:del"):
+                        yield child
+            for child in accepted_children(parent.element.body):
                 if isinstance(child, CT_P):
                     yield Paragraph(child, parent)
                 elif isinstance(child, CT_Tbl):
                     yield Table(child, parent)
 
-        def collect_images(element: Any) -> None:
+        current_anchor = "body"
+        current_part = doc.part
+        if contract is not None:
+            contract.update(source_units=[], native_text_chars=0, generated_text_chars=0, extraction_policy={"revisions": "accepted-view", "comments": "excluded", "headers_footers": "deduplicated", "linked_images": "not_fetched"})
+
+        def collect_images(element: Any, emit: bool = True) -> None:
             nonlocal image_counter
-            for blip in element.xpath(".//a:blip"):
+            for image_index, blip in enumerate(element.xpath(".//a:blip"), 1):
                 embed = blip.get(qn("r:embed"))
                 if not embed:
+                    if blip.get(qn("r:link")) and contract is not None:
+                        contract["source_units"].append({"id": f"{current_anchor}:linked-image:{image_index}", "kind": "image", "anchor": current_anchor, "status": "failed" if emit else "skipped", "native_text_chars": 0, "generated_text_chars": 0, "error": "external_image_not_fetched", "markdown": ""})
+                    continue
+                image_counter += 1
+                key = f"docx-media-{image_counter}"
+                if not emit and (not unit_ids or key not in unit_ids):
                     continue
                 try:
-                    part = doc.part.related_parts[embed]
+                    part = current_part.related_parts[embed]
                     blob = bytes(part.blob or b"")
                     if not blob:
                         continue
@@ -563,14 +639,20 @@ def extract_docx(path: Path) -> tuple[str, list[dict[str, Any]]]:
                 except Exception as image_error:
                     logger.warning("Unable to extract DOCX image from %s: %s", path.name, image_error)
                     continue
-                image_counter += 1
-                key = f"docx-media-{image_counter}"
-                image_parts.append({"key": key, "ext": ext, "blob": blob})
+                image_parts.append({"key": key, "ext": ext, "blob": blob, "anchor": current_anchor})
                 lines.append(f"<!-- image: {key} -->")
 
-        for block in iter_blocks(doc):
+        for block_index, block in enumerate(iter_blocks(doc), 1):
+            current_anchor = f"docx:block:{block_index}"
+            selected = not unit_ids or current_anchor in unit_ids
+            if not selected:
+                if contract is not None:
+                    contract["source_units"].append({"id": current_anchor, "kind": "paragraph" if isinstance(block, Paragraph) else "table", "status": "skipped", "native_text_chars": 0, "generated_text_chars": 0})
+                collect_images(block._p if isinstance(block, Paragraph) else block._tbl, emit=False)
+                continue
+            before = len(lines)
             if isinstance(block, Paragraph):
-                txt = block.text.strip()
+                txt = "".join(node.text or "" for node in block._p.iter(qn("w:t")) if not any(ancestor.tag == qn("w:del") for ancestor in node.iterancestors())).strip()
                 if txt:
                     style_name = (block.style.name if block.style else "").lower()
                     heading_match = re.search(r"(?:heading|标题)\s*([1-6])", style_name)
@@ -613,20 +695,72 @@ def extract_docx(path: Path) -> tuple[str, list[dict[str, Any]]]:
             else:
                 rows = []
                 for row in block.rows:
-                    cells = [cell.text.strip().replace("\r\n", "<br>").replace("\n", "<br>").replace("|", "\\|") for cell in row.cells]
+                    cells = [" ".join(node.text or "" for node in cell._tc.iter(qn("w:t")) if not any(ancestor.tag == qn("w:del") for ancestor in node.iterancestors())).strip().replace("\r\n", "<br>").replace("\n", "<br>").replace("|", "\\|") for cell in row.cells]
                     if any(cells):
                         rows.append(cells)
                 if rows:
                     width = max(len(row) for row in rows)
                     normalized = [row + [""] * (width - len(row)) for row in rows]
-                    # Forward-fill left-most parent column when empty due to merged cells
-                    for r_idx in range(1, len(normalized)):
-                        if width > 1 and not normalized[r_idx][0] and normalized[r_idx - 1][0]:
-                            normalized[r_idx][0] = normalized[r_idx - 1][0]
                     t_lines = ["| " + " | ".join(normalized[0]) + " |", "| " + " | ".join(["---"] * width) + " |"]
                     t_lines.extend("| " + " | ".join(row) + " |" for row in normalized[1:])
                     lines.append("\n".join(t_lines))
                 collect_images(block._tbl)
+            if contract is not None:
+                raw = "\n".join(lines[before:])
+                count = source_contract.text_chars(re.sub(r"<!--.*?-->", "", raw, flags=re.S))
+                contract["source_units"].append({"id": current_anchor, "kind": "paragraph" if isinstance(block, Paragraph) else "table", "anchor": current_anchor, "status": "processed" if count else "skipped", "native_text_chars": count, "generated_text_chars": 0, "source_kind": "native", "markdown": re.sub(r"<!--.*?-->", "", raw, flags=re.S).strip()})
+                contract["native_text_chars"] += count
+            if contract is not None:
+                for number, obj in enumerate(block._p.xpath(".//w:object") if isinstance(block, Paragraph) else block._tbl.xpath(".//w:object"), 1):
+                    contract["source_units"].append({"id": f"{current_anchor}:object:{number}", "kind": "embedded_object", "anchor": current_anchor, "status": "failed", "native_text_chars": 0, "generated_text_chars": 0, "error": "embedded_object_not_extracted", "markdown": ""})
+            lines.insert(before, f"<!-- source-unit:{current_anchor} -->")
+        # Header/footer parts may be shared across sections; extract each once.
+        seen_parts = set()
+        for section in doc.sections:
+            for label in ("header", "footer", "first_page_header", "first_page_footer", "even_page_header", "even_page_footer"):
+                part_container = getattr(section, label)
+                if not part_container._has_definition:
+                    continue
+                current_part = part_container.part
+                part_name = str(current_part.partname)
+                if part_name in seen_parts:
+                    continue
+                seen_parts.add(part_name)
+                current_anchor = f"docx:{label}:{len(seen_parts)}"
+                if unit_ids and current_anchor not in unit_ids:
+                    if contract is not None:
+                        contract["source_units"].append({"id": current_anchor, "kind": label, "status": "skipped", "native_text_chars": 0, "generated_text_chars": 0})
+                    collect_images(part_container._element, emit=False)
+                    continue
+                text = "\n".join(p.text for p in part_container.paragraphs if p.text.strip())
+                if text:
+                    lines.extend([f"<!-- source-unit:{current_anchor} -->", text])
+                collect_images(part_container._element)
+                if contract is not None:
+                    count = source_contract.text_chars(text)
+                    contract["source_units"].append({"id": current_anchor, "kind": label, "status": "processed" if count else "skipped", "native_text_chars": count, "generated_text_chars": 0, "source_kind": "native", "markdown": text})
+                    contract["native_text_chars"] += count
+        # Footnotes/endnotes/textboxes are separate XML containers, not Paragraph.text.
+        import zipfile
+        from xml.etree import ElementTree as ET
+        with zipfile.ZipFile(path) as package:
+            for item in ("word/footnotes.xml", "word/endnotes.xml"):
+                if item not in package.namelist():
+                    continue
+                xml = ET.fromstring(package.read(item))
+                for note in xml:
+                    if int(note.attrib.get(qn("w:id"), "0")) <= 0:
+                        continue
+                    identifier = f"docx:{Path(item).stem}:{note.attrib.get(qn('w:id'))}"
+                    if unit_ids and identifier not in unit_ids:
+                        continue
+                    text = " ".join(t.text or "" for t in note.iter(qn("w:t")))
+                    if text.strip():
+                        lines.extend([f"<!-- source-unit:{identifier} -->", text])
+                        if contract is not None:
+                            count = source_contract.text_chars(text)
+                            contract["source_units"].append({"id": identifier, "kind": Path(item).stem, "status": "processed", "native_text_chars": count, "generated_text_chars": 0, "source_kind": "native", "markdown": text})
+                            contract["native_text_chars"] += count
         return "\n\n".join(lines).strip(), image_parts
     except Exception as e:
         logger.warning(f"python-docx extraction failed for {path}: {e}")
@@ -769,117 +903,21 @@ def extract_pdf_native(path: Path) -> str:
     return str(inspect_pdf_native(path).get("markdown", ""))
 
 def extract_excel(path: Path) -> str:
-    """Extract .xlsx / .xls sheets to Markdown tables with merged-cell forward fill."""
+    """Compatibility projection; ingestion uses the full structured contract."""
+    return structured_excel.extract(path, artifact_cache.instance_identity.get())["markdown"]
+
+
+async def extract_excel_controlled(path: Path, task: dict[str, Any]) -> dict[str, Any]:
+    output = path.with_suffix(path.suffix + ".result.json")
     try:
-        import openpyxl
-        wb = openpyxl.load_workbook(str(path), data_only=True)
-        sheets_md = []
-        for sheetname in wb.sheetnames:
-            sheet = wb[sheetname]
-            if sheet.max_row * sheet.max_column > 1_000_000:
-                wb.close()
-                raise ValueError("Excel sheet exceeds cell budget")
-            # Forward-fill merged cells across the entire merged range so that
-            # downstream retrieval and chunking preserve multi-row/multi-column category context.
-            # Guard each range separately: the previous sheet-wide try logged at
-            # debug and aborted every remaining range, so one malformed range
-            # silently dropped the rest of the sheet's merged-cell context.
-            for merge_range in list(sheet.merged_cells.ranges):
-                try:
-                    min_col, min_row, max_col, max_row = merge_range.bounds
-                    top_left_val = sheet.cell(row=min_row, column=min_col).value
-                    sheet.unmerge_cells(range_string=str(merge_range))
-                    for r in range(min_row, max_row + 1):
-                        for c in range(min_col, max_col + 1):
-                            sheet.cell(row=r, column=c, value=top_left_val)
-                except Exception as merge_err:
-                    logger.warning(f"Excel merged-cell forward fill skipped for {sheetname} {merge_range}: {merge_err}")
-
-            rows = list(sheet.iter_rows(values_only=True))
-            if not rows:
-                continue
-            # Remove trailing empty rows
-            while rows and all(c is None or str(c).strip() == "" for c in rows[-1]):
-                rows.pop()
-            if not rows:
-                continue
-
-            width = max((len(r) for r in rows), default=0)
-            if width == 0:
-                continue
-
-            raw_header = [
-                str(cell if cell is not None else "").replace("|", "\\|").replace("\r\n", " ").replace("\n", " ").strip()
-                for cell in rows[0]
-            ]
-            header = raw_header + [""] * (width - len(raw_header))
-
-            table_lines = [f"### 工作表：{sheetname}\n"]
-            table_lines.append("| " + " | ".join(header) + " |")
-            table_lines.append("| " + " | ".join(["---"] * width) + " |")
-            for row in rows[1:]:
-                if all(c is None or str(c).strip() == "" for c in row):
-                    continue
-                raw_cells = [
-                    str(c if c is not None else "").replace("|", "\\|").replace("\r\n", " ").replace("\n", " ").strip()
-                    for c in row
-                ]
-                cells = raw_cells + [""] * (width - len(raw_cells))
-                table_lines.append("| " + " | ".join(cells) + " |")
-            sheets_md.append("\n".join(table_lines))
-        return "\n\n".join(sheets_md)
-    except ValueError:
-        raise
-    except Exception as openpyxl_error:
-        # openpyxl intentionally does not read the legacy BIFF .xls format.
-        # Keep the lightweight xlrd route optional so production can support
-        # .xls without installing the heavyweight layout engine.
-        logger.info(f"openpyxl extraction unavailable for {path}: {openpyxl_error}")
-        try:
-            import xlrd
-
-            try:
-                workbook = xlrd.open_workbook(str(path), formatting_info=True)
-            except Exception:
-                workbook = xlrd.open_workbook(str(path), on_demand=True)
-
-            sheets_md = []
-            for sheet in workbook.sheets():
-                if sheet.nrows * sheet.ncols > 1_000_000:
-                    raise ValueError("Excel sheet exceeds cell budget")
-                if sheet.nrows == 0:
-                    continue
-                grid = [
-                    [
-                        str(sheet.cell_value(r, c) or "").replace("|", "\\|").replace("\r\n", " ").replace("\n", " ").strip()
-                        for c in range(sheet.ncols)
-                    ]
-                    for r in range(sheet.nrows)
-                ]
-                if hasattr(sheet, "merged_cells"):
-                    for (rlo, rhi, clo, chi) in sheet.merged_cells:
-                        val = grid[rlo][clo] if rlo < len(grid) and clo < len(grid[rlo]) else ""
-                        for r in range(rlo, min(rhi, len(grid))):
-                            for c in range(clo, min(chi, len(grid[r]))):
-                                grid[r][c] = val
-
-                while grid and not any(grid[-1]):
-                    grid.pop()
-                if not grid:
-                    continue
-                width = max(len(row) for row in grid)
-                rows = [row + [""] * (width - len(row)) for row in grid]
-                lines = [f"### 工作表：{sheet.name}\n"]
-                lines.append("| " + " | ".join(rows[0]) + " |")
-                lines.append("| " + " | ".join(["---"] * width) + " |")
-                lines.extend("| " + " | ".join(row) + " |" for row in rows[1:])
-                sheets_md.append("\n".join(lines))
-            return "\n\n".join(sheets_md)
-        except ValueError:
-            raise
-        except Exception as xlrd_error:
-            logger.warning(f"Legacy Excel extraction failed for {path}: {xlrd_error}")
-            return ""
+        await run_process([sys.executable, str(Path(__file__).with_name("structured_job.py")),
+            str(path), str(output), str(task.get("instanceId", "legacy")),
+            json.dumps(task.get("unit_ids") or []), str(task.get("small_table_rows", 200))], 245)
+        if output.stat().st_size > 32 * 1024 * 1024:
+            raise RuntimeError("Structured parser result exceeds output budget")
+        return json.loads(await asyncio.to_thread(output.read_text, encoding="utf-8"))
+    finally:
+        safe_unlink(output)
 
 
 def _pptx_table_markdown(table: Any) -> str:
@@ -900,7 +938,7 @@ def _pptx_table_markdown(table: Any) -> str:
     return "\n".join(lines)
 
 
-def extract_pptx_native(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
+def extract_pptx_native(path: Path, contract: dict[str, Any] | None = None, unit_ids: list[str] | None = None) -> tuple[list[str], list[dict[str, Any]]]:
     """Extract slide text/tables and retain embedded images for OCR.
 
     This is the production fallback when local Docling is intentionally
@@ -912,8 +950,16 @@ def extract_pptx_native(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
     presentation = Presentation(str(path))
     slide_blocks: list[str] = []
     image_parts: list[dict[str, Any]] = []
+    if contract is not None:
+        contract.update(source_units=[], native_text_chars=0, generated_text_chars=0)
 
     def _collect_from_shape(shape: Any, slide_num: int, shape_id: Any, parts_acc: list[str]):
+        before = len(parts_acc)
+        identifier = f"slide:{slide_num}:shape:{shape_id}"
+        if unit_ids and f"slide:{slide_num}" not in unit_ids and identifier not in unit_ids and f"slide-{slide_num}-picture-{shape_id}" not in unit_ids and not any(u.startswith(identifier + "_") for u in unit_ids):
+            if contract is not None:
+                contract["source_units"].append({"id": identifier, "kind": "shape", "slide": slide_num, "shape": str(shape_id), "status": "skipped", "native_text_chars": 0, "generated_text_chars": 0})
+            return
         if getattr(shape, "has_text_frame", False):
             text = "\n".join(
                 paragraph.text.strip()
@@ -962,14 +1008,31 @@ def extract_pptx_native(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
                     "shape": shape_id,
                     "ext": str(image.ext or "png"),
                     "blob": image.blob,
+                    "key": f"slide-{slide_num}-picture-{shape_id}",
+                    "anchor": identifier,
+                    "bbox": [int(shape.left), int(shape.top), int(shape.width), int(shape.height)],
+                    "coordinate_space": "group-local-emu" if "_" in str(shape_id) else "slide-emu", "bbox_format": "xywh",
                 })
+                parts_acc.append(f"<!-- image: slide-{slide_num}-picture-{shape_id} -->")
             except Exception as image_error:
                 logger.warning("Unable to extract PPTX image on slide %s: %s", slide_num, image_error)
         elif getattr(shape, "shape_type", None) == 6 and hasattr(shape, "shapes"):  # MSO_SHAPE_TYPE.GROUP
             for sub_idx, sub_shape in enumerate(shape.shapes, start=1):
                 _collect_from_shape(sub_shape, slide_num, f"{shape_id}_{sub_idx}", parts_acc)
 
+        if contract is not None and getattr(shape, "shape_type", None) != 6:
+            text = "\n".join(parts_acc[before:])
+            count = source_contract.text_chars(text)
+            uncovered = not count and getattr(shape, "shape_type", None) != 13
+            contract["source_units"].append({"id": identifier, "kind": "chart" if getattr(shape, "has_chart", False) else "table" if getattr(shape, "has_table", False) else "shape", "slide": slide_num, "shape": str(shape_id), "bbox": [int(shape.left), int(shape.top), int(shape.width), int(shape.height)], "status": "processed" if count else "failed" if uncovered else "skipped", "error": "object_not_extracted" if uncovered else "", "native_text_chars": count, "generated_text_chars": 0, "source_kind": "native", "markdown": re.sub(r"<!--.*?-->", "", text, flags=re.S).strip()})
+            contract["native_text_chars"] += count
+
     for slide_number, slide in enumerate(presentation.slides, start=1):
+        if unit_ids and f"slide:{slide_number}" not in unit_ids and not any(u.startswith(f"slide:{slide_number}:") or u.startswith(f"slide-{slide_number}-picture-") for u in unit_ids):
+            slide_blocks.append("")
+            if contract is not None:
+                contract["source_units"].append({"id": f"slide:{slide_number}", "kind": "slide", "slide": slide_number, "status": "skipped", "native_text_chars": 0, "generated_text_chars": 0})
+            continue
         parts: list[str] = []
         # Spatial 2D sorting: PPTX XML stores shapes in arbitrary z-order/insertion order.
         # Banding by ~4pt (50,000 EMUs) sorts shapes in natural human reading order:
@@ -983,9 +1046,13 @@ def extract_pptx_native(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
         )
         for shape_number, shape in sorted_shapes:
             _collect_from_shape(shape, slide_number, shape_number, parts)
-        if getattr(slide, "has_notes_slide", False) and getattr(slide.notes_slide, "notes_text_frame", None):
+        if (not unit_ids or f"slide:{slide_number}" in unit_ids or f"slide:{slide_number}:notes" in unit_ids) and getattr(slide, "has_notes_slide", False) and getattr(slide.notes_slide, "notes_text_frame", None):
             note_text = slide.notes_slide.notes_text_frame.text.strip()
             if note_text:
+                if contract is not None:
+                    count = source_contract.text_chars(note_text)
+                    contract["source_units"].append({"id": f"slide:{slide_number}:notes", "kind": "notes", "slide": slide_number, "status": "processed", "native_text_chars": count, "generated_text_chars": 0, "source_kind": "native", "markdown": f"> **演讲备注**：{note_text}"})
+                    contract["native_text_chars"] += count
                 parts.append(f"> **演讲备注**：{note_text}")
         slide_blocks.append("\n\n".join(parts).strip())
     return slide_blocks, image_parts
@@ -1277,96 +1344,88 @@ def is_image_ocr_worthy(blob: bytes) -> bool:
     try:
         with Image.open(_io.BytesIO(blob)) as img:
             width, height = img.size
-        return min(width, height) >= OCR_IMAGE_MIN_SIDE
+        return width * height <= image_units.MAX_PIXELS and min(width, height) >= OCR_IMAGE_MIN_SIDE
     except Exception:
         return False
 
 
 async def ocr_image_parts_into_markdown(
-    markdown: str,
-    image_parts: list[dict[str, Any]],
-    ocr_config: dict[str, str],
+    markdown: str, image_parts: list[dict[str, Any]], ocr_config: dict[str, str],
 ) -> tuple[str, dict[str, Any]]:
-    """Replace ``<!-- image: key -->`` placeholders with OCR text from the API.
-
-    Failures degrade to an annotated placeholder so the document stays
-    indexable and reviewable; they never abort the whole parse.
-    """
-    metadata: dict[str, Any] = {"embedded_image_count": len(image_parts)}
-    if not image_parts:
-        return markdown, metadata
-
+    """Recognise each content hash once, retaining every occurrence/anchor."""
+    metadata: dict[str, Any] = {"embedded_image_count": len(image_parts),
+        "ocr_image_count": 0, "source_units": [], "assets": [],
+        "native_text_chars": 0, "generated_text_chars": 0}
     provider = str(ocr_config.get("provider") or OCR_PROVIDER).lower()
-    ocr_count = 0
-    words_total = 0
-    confidences: list[float] = []
-    replacements: dict[str, str] = {}
-    present = set(re.findall(r"<!-- image: [^\n>]+ -->", markdown))
-
-    for position, image in enumerate(image_parts, start=1):
+    reusable: dict[str, tuple[str, str, dict[str, Any]]] = {}
+    confidences = []
+    for position, image in enumerate(image_parts, 1):
         key = str(image.get("key") or f"image-{position}")
         placeholder = f"<!-- image: {key} -->"
-        if placeholder not in present:
+        if placeholder not in markdown:
             continue
-        blob = bytes(image.get("blob") or b"")
+        blob = bytes(image.get("blob") or b"") if "blob_path" not in image else await asyncio.to_thread(Path(image["blob_path"]).read_bytes)
+        digest = hashlib.sha256(blob).hexdigest()
+        status, text, error = "failed", "", "no_extractor"
+        generated = False
         if not blob:
-            replacements[placeholder] = f"<!-- image: {key} -->\n*(图片内容为空)*"
-            continue
-        if not is_image_ocr_worthy(blob):
-            replacements[placeholder] = f"<!-- image: {key} -->\n*(装饰性小图，跳过 OCR)*"
-            continue
-        if provider != "baidu":
-            replacements[placeholder] = f"<!-- image: {key} -->\n*(图片存在，当前未配置 OCR 接口)*"
-            continue
-
-        ext = str(image.get("ext") or "png").lower().lstrip(".")
-        temp = tempfile.NamedTemporaryFile(
-            prefix=f"embedded-image-{position}-",
-            suffix=f".{ext}",
-            dir=str(UPLOAD_ROOT),
-            delete=False,
-        )
-        image_path = Path(temp.name)
-        try:
-            with temp:
-                temp.write(blob)
+            error = "empty_image"
+        elif not image.get("standalone") and not is_image_ocr_worthy(blob):
+            status, error = "skipped", "decorative_size"
+        elif digest in reusable:
+            status, text, cached_meta = reusable[digest]
+            error, generated = cached_meta.get("error", ""), cached_meta.get("generated", False)
+            metadata["image_hash_reuses"] = metadata.get("image_hash_reuses", 0) + 1
+        elif provider == "baidu" or is_vlm_available():
+            ext = str(image.get("ext") or "png").lower().lstrip(".")
+            if not re.fullmatch(r"[a-z0-9]{1,8}", ext):
+                ext = "png"
+            with tempfile.NamedTemporaryFile(prefix="image-unit-", suffix="." + ext,
+                                            dir=str(UPLOAD_ROOT), delete=False) as handle:
+                temp_budget.write(handle, blob, UPLOAD_ROOT)
+                image_path = Path(handle.name)
             try:
-                image_md, image_metadata = await convert_image_with_baidu_ocr(image_path, ocr_config)
-                if image_md.strip():
-                    ocr_count += 1
-                    words_total += int(image_metadata.get("ocr_words_result_num") or 0)
-                    conf = image_metadata.get("ocr_average_confidence")
-                    if conf is not None:
-                        try:
-                            confidences.append(float(conf))
-                        except (TypeError, ValueError):
-                            pass
-                    replacements[placeholder] = f"### 图片文字\n\n{image_md.strip()}"
+                if provider == "baidu":
+                    text, ocr_meta = await convert_image_with_baidu_ocr(image_path, ocr_config)
+                    if ocr_meta.get("ocr_average_confidence") is not None:
+                        confidences.append(float(ocr_meta["ocr_average_confidence"]))
+                    metadata["ocr_words_result_num"] = metadata.get("ocr_words_result_num", 0) + int(ocr_meta.get("ocr_words_result_num", 0))
                 else:
-                    replacements[placeholder] = f"<!-- image: {key} -->\n*(图片未识别到有效文字)*"
-            except Exception as ocr_err:
-                logger.warning("Embedded image OCR failed for %s: %s", key, safe_error(ocr_err))
-                replacements[placeholder] = f"<!-- image: {key} -->\n*(图片 OCR 识别失败: {safe_error(ocr_err)})*"
-        finally:
-            safe_unlink(image_path)
-
-    if ocr_count:
+                    text = await describe_image_with_vlm(image_path, context_hint=str(image.get("anchor") or key))
+                    generated = True
+                if text.strip():
+                    status, error = "processed", ""
+                    metadata["ocr_image_count" if not generated else "vlm_image_count"] = metadata.get("ocr_image_count" if not generated else "vlm_image_count", 0) + 1
+                else:
+                    error = "no_text"
+            except Exception as exc:
+                error = safe_error(exc)
+                logger.warning("Image unit %s failed: %s", key, error)
+            finally:
+                safe_unlink(image_path)
+            reusable[digest] = status, text, {"error": error, "generated": generated}
+        image.update(blob=blob, key=key, status=status, text=text, error=error, source_kind="visual" if generated else "ocr" if text else "native")
+        asset = source_contract.asset(image, artifact_cache.instance_identity.get())
+        metadata["assets"].append(asset)
+        image.pop("blob", None)
+        count = source_contract.text_chars(text)
+        metadata["generated_text_chars" if generated else "native_text_chars"] += count
+        location = {k: asset[k] for k in ("page", "slide", "shape", "anchor", "bbox", "coordinate_space", "bbox_format") if k in asset}
+        metadata["source_units"].append({"id": key, "kind": "image", "status": status,
+            "native_text_chars": 0 if generated else count, "generated_text_chars": count if generated else 0,
+            "asset_ids": [asset["id"]], "error": error, "source_kind": image["source_kind"], "markdown": text.strip(), **location})
+        if text:
+            prefix = "> **[视觉说明 - 模型派生]**\n\n" if generated else "### 图片文字\n\n"
+            replacement = placeholder + "\n\n" + prefix + text.strip()
+        else:
+            note = "装饰性小图，跳过 OCR" if error == "decorative_size" else "图片未提取到正文，待重试"
+            replacement = placeholder + "\n*(" + note + ")*"
+        markdown = markdown.replace(placeholder, replacement, 1)
+    if confidences:
+        metadata["ocr_average_confidence"] = round(sum(confidences) / len(confidences), 4)
+    if provider == "baidu":
         metadata["ocr_provider"] = provider
-        metadata["ocr_image_count"] = ocr_count
-        metadata["ocr_words_result_num"] = words_total
-        if confidences:
-            metadata["ocr_average_confidence"] = round(sum(confidences) / len(confidences), 4)
-    else:
-        metadata["ocr_image_count"] = 0
-    used: set[str] = set()
-    def replace_image(match):
-        placeholder = match.group(0)
-        if placeholder in used:
-            return placeholder
-        used.add(placeholder)
-        return replacements.get(placeholder, placeholder)
-    result = re.sub(r"<!-- image: [^\n>]+ -->", replace_image, markdown)
-    return result, metadata
+    return markdown, metadata
 
 
 def extract_embedded_image_parts(path: Path) -> list[dict[str, Any]]:
@@ -1394,7 +1453,16 @@ async def ocr_embedded_images_fragments(
     Used by the API after AnyDoc text extraction: AnyDoc preserves document
     structure but does not OCR pictures inside Office/PDF files.
     """
-    image_parts = extract_embedded_image_parts(path)
+    suffix = path.suffix.lower()
+    if suffix == ".docx":
+        image_parts = (await native_extract("docx", path))["images"]
+    elif suffix == ".pptx":
+        image_parts = (await native_extract("pptx", path))["images"]
+    elif suffix == ".pdf":
+        info = await native_extract("pdf_native", path)
+        image_parts, _, _ = await native_extract("pdf_regions", path, selected=list(range(info["page_count"])))
+    else:
+        image_parts = []
     if not image_parts:
         return "", {"embedded_image_count": 0}
     for position, image in enumerate(image_parts, start=1):
@@ -1511,127 +1579,26 @@ async def convert_with_cloud_ocr(
 
 
 async def convert_pptx_without_docling(
-    path: Path, ocr_config: dict[str, str], doc_title: str | None = None
+    path: Path, ocr_config: dict[str, str], doc_title: str | None = None,
+    unit_ids: list[str] | None = None,
 ) -> tuple[str, str, dict[str, Any]]:
-    """Build a slide-preserving Markdown representation without Docling.
-
-    Native PPTX text and tables remain lossless; embedded images are sent
-    through the configured OCR provider or VLM if available. If no OCR or VLM
-    route is available, preserve structured slide sections and informative image
-    placeholders so the document remains indexable and reviewable rather than
-    failing closed.
-    """
-    slide_blocks, image_parts = await asyncio.to_thread(extract_pptx_native, path)
-    provider = str(ocr_config.get("provider") or OCR_PROVIDER).lower()
-    image_by_slide: dict[int, list[str]] = {}
-    metadata: dict[str, Any] = {
-        "slide_count": len(slide_blocks),
-        "embedded_image_count": len(image_parts),
-    }
-    ocr_extracted_count = 0
-    ocr_confidences: list[float] = []
-    vlm_extracted_count = 0
-
-    stem = Path(doc_title).stem if doc_title else path.stem
-    if image_parts:
-        if provider == "baidu":
-            for position, image in enumerate(image_parts, start=1):
-                temp = tempfile.NamedTemporaryFile(
-                    prefix=f"pptx-image-{position}-", suffix=f".{image['ext']}", dir=str(UPLOAD_ROOT), delete=False
-                )
-                image_path = Path(temp.name)
-                try:
-                    with temp:
-                        temp.write(image["blob"])
-                    try:
-                        image_md, image_metadata = await convert_image_with_baidu_ocr(image_path, ocr_config)
-                        if image_md.strip():
-                            ocr_extracted_count += 1
-                            image_by_slide.setdefault(int(image["slide"]), []).append(
-                                f"### 图片区域 {image['shape']}\n\n{image_md.strip()}"
-                            )
-                            for key, value in image_metadata.items():
-                                if key == "ocr_average_confidence" and value is not None:
-                                    ocr_confidences.append(float(value))
-                                    metadata[key] = round(sum(ocr_confidences) / len(ocr_confidences), 4)
-                                elif key.startswith("ocr_"):
-                                    metadata[key] = metadata.get(key, 0) + value if isinstance(value, (int, float)) else value
-                        else:
-                            image_by_slide.setdefault(int(image["slide"]), []).append(
-                                f"<!-- image: slide-{image['slide']}-picture-{image['shape']} -->\n*(图片区域 {image['shape']} 未识别到有效文字)*"
-                            )
-                    except Exception as ocr_err:
-                        logger.warning("Baidu OCR failed for slide %s image %s: %s", image["slide"], image["shape"], safe_error(ocr_err))
-                        image_by_slide.setdefault(int(image["slide"]), []).append(
-                            f"<!-- image: slide-{image['slide']}-picture-{image['shape']} -->\n*(图片区域 {image['shape']} OCR 识别失败: {safe_error(ocr_err)})*"
-                        )
-                finally:
-                    safe_unlink(image_path)
-        elif is_vlm_available():
-            for position, image in enumerate(image_parts, start=1):
-                temp = tempfile.NamedTemporaryFile(
-                    prefix=f"pptx-vlm-{position}-", suffix=f".{image['ext']}", dir=str(UPLOAD_ROOT), delete=False
-                )
-                image_path = Path(temp.name)
-                try:
-                    with temp:
-                        temp.write(image["blob"])
-                    try:
-                        vlm_desc = await describe_image_with_vlm(
-                            image_path,
-                            context_hint=f"{stem} 幻灯片第 {image['slide']} 页",
-                        )
-                        if vlm_desc.strip():
-                            vlm_extracted_count += 1
-                            image_by_slide.setdefault(int(image["slide"]), []).append(
-                                f"### 视觉内容解析 (区域 {image['shape']})\n\n{vlm_desc.strip()}"
-                            )
-                        else:
-                            image_by_slide.setdefault(int(image["slide"]), []).append(
-                                f"<!-- image: slide-{image['slide']}-picture-{image['shape']} -->\n*(幻灯片图片区域 {image['shape']} 视觉解析为空)*"
-                            )
-                    except Exception as vlm_err:
-                        logger.warning("VLM analysis failed for slide %s image %s: %s", image["slide"], image["shape"], safe_error(vlm_err))
-                        image_by_slide.setdefault(int(image["slide"]), []).append(
-                            f"<!-- image: slide-{image['slide']}-picture-{image['shape']} -->\n*(幻灯片包含图片内容)*"
-                        )
-                finally:
-                    safe_unlink(image_path)
-        else:
-            for image in image_parts:
-                image_by_slide.setdefault(int(image["slide"]), []).append(
-                    f"<!-- image: slide-{image['slide']}-picture-{image['shape']} -->\n*(幻灯片包含图片内容，当前未配置 OCR 或视觉大模型提取)*"
-                )
-
-    has_native_text = any(block.strip() for block in slide_blocks)
-    sections = [f"# {stem}"]
-    for slide_number, block in enumerate(slide_blocks, start=1):
-        content = [block] if block else []
-        content.extend(image_by_slide.get(slide_number, []))
-        if content:
-            sections.append(f"## 第 {slide_number} 页\n\n" + "\n\n".join(content))
-        else:
-            sections.append(f"## 第 {slide_number} 页\n\n*(幻灯片无文字或图片内容)*")
-
-    if not slide_blocks:
-        sections.append("## 第 1 页\n\n*(空演示文稿)*")
-
-    markdown = "\n\n---\n\n".join(sections)
-
-    if not has_native_text and not ocr_extracted_count and not vlm_extracted_count:
-        metadata["quality_issues"] = ["幻灯片均为图片且未配置 OCR/视觉大模型，已保留页面骨架供复核"]
-        metadata["quality_status"] = "needs_review"
-
-    if ocr_extracted_count > 0:
-        engine = "python-pptx-native+ocr"
-    elif vlm_extracted_count > 0:
-        engine = "python-pptx-native+vlm"
-    elif image_parts:
-        engine = "python-pptx-native"
-    else:
-        engine = "python-pptx-native"
-
-    return markdown, engine, metadata
+    parsed = await native_extract("pptx", path, unit_ids=unit_ids)
+    contract, blocks, images = parsed["contract"], parsed["blocks"], parsed["images"]
+    title = Path(doc_title).stem if doc_title else path.stem
+    sections = [f"# {title}"]
+    for number, block in enumerate(blocks, 1):
+        if unit_ids and not block:
+            continue
+        sections.append(f"## 第 {number} 页\n\n{block}")
+    markdown, image_meta = await ocr_image_parts_into_markdown("\n\n".join(sections), images, ocr_config)
+    contract["native_text_chars"] += image_meta.pop("native_text_chars", 0)
+    contract["generated_text_chars"] += image_meta.pop("generated_text_chars", 0)
+    contract["source_units"].extend(image_meta.pop("source_units", []))
+    contract.update(image_meta, slide_count=len(blocks))
+    source_contract.summarize(contract)
+    engine = "python-pptx-native+ocr" if contract.get("ocr_image_count") else "python-pptx-native+vlm" if contract.get("vlm_image_count") else "python-pptx-native"
+    contract["extraction_policy"] = {"hidden_slides": "included", "notes": "included", "unparsed_objects": "reported"}
+    return markdown, engine, contract
 
 
 async def convert_pdf_with_fallback(
@@ -1731,20 +1698,226 @@ async def convert_pdf_with_fallback(
     )
 
 
+async def convert_legacy_ppt(path: Path, config: dict[str, str], task: dict[str, Any]):
+    if path.stat().st_size > LEGACY_WORD_MAX_BYTES:
+        raise ValueError("Legacy presentation exceeds conversion budget")
+    with path.open("rb") as handle:
+        if handle.read(8) != bytes.fromhex("D0CF11E0A1B11AE1"):
+            raise ValueError("Legacy presentation is not an OLE2 package")
+    binary = shutil.which(os.environ.get("SOFFICE_BIN", "soffice"))
+    if not binary:
+        raise RuntimeError("Legacy PPT conversion requires the local soffice executable")
+    with tempfile.TemporaryDirectory(prefix="legacy-ppt-", dir=str(UPLOAD_ROOT)) as work:
+        await run_process([sys.executable, str(Path(__file__).with_name("office_job.py")),
+            str(path), work, binary], 120)
+        converted = Path(work) / (path.stem + ".pptx")
+        structured_excel.check_package(converted)
+        markdown, engine, metadata = await convert_pptx_without_docling(converted, config,
+            str(task.get("filename", "")), task.get("unit_ids"))
+        metadata.update(conversion="isolated-soffice", conversion_policy={"macros": "disabled", "external_links": "not_refreshed"})
+        return markdown, engine, metadata
+
+
+def inspect_pdf_regions(path: Path, selected: set[int] | None = None):
+    """Raster occurrences plus native text region bounds in original page units."""
+    images: list[dict[str, Any]] = []
+    regions: list[dict[str, Any]] = []
+    try:
+        import fitz
+    except ImportError:
+        images = extract_pdf_page_images(path)
+        if selected is not None:
+            images = [i for i in images if i["page_index"] in selected]
+        for image in images:
+            image["anchor"] = f'page:{image["page_index"] + 1}'
+        return images, regions, "page-only"
+    with fitz.open(path) as document:
+        if len(document) > env_int("PARSER_PDF_MAX_PAGES", 2000):
+            raise ValueError("PDF exceeds page budget")
+        for index, page in enumerate(document):
+            if selected is not None and index not in selected:
+                continue
+            for number, block in enumerate(page.get_text("blocks"), 1):
+                if len(block) < 7 or block[6] != 0:
+                    continue
+                text = str(block[4]).strip()
+                if text:
+                    regions.append({"id": f"page:{index + 1}:region:{number}", "kind": "text_region", "page": index + 1,
+                        "bbox": [block[0], block[1], block[2] - block[0], block[3] - block[1]], "coordinate_space": "pdf-point", "bbox_format": "xywh", "status": "processed", "native_text_chars": source_contract.text_chars(text),
+                        "generated_text_chars": 0, "source_kind": "native", "markdown": text})
+            for number, image_info in enumerate(page.get_images(full=True), 1):
+                xref = image_info[0]
+                width, height = image_info[2:4]
+                if width * height > image_units.MAX_PIXELS:
+                    regions.append({"id": f"p{index + 1}-img{number}", "kind": "image", "page": index + 1,
+                        "status": "failed", "native_text_chars": 0, "generated_text_chars": 0, "error": "pixel_budget"})
+                    continue
+                extracted = document.extract_image(xref)
+                boxes = page.get_image_rects(xref)
+                for occurrence, box in enumerate(boxes or [None], 1):
+                    image = {"key": f"p{index + 1}-img{number}-{occurrence}", "page_index": index,
+                        "ext": extracted["ext"], "blob": extracted["image"], "anchor": f"page:{index + 1}"}
+                    if box is not None:
+                        image["bbox"] = [box.x0, box.y0, box.width, box.height]
+                        image.update(coordinate_space="pdf-point", bbox_format="xywh")
+                    images.append(image)
+            # Vector diagrams have no raster resource. Keep a bounded rendered
+            # source and mark it separately so OCR/VLM interpretation is visible.
+            if len(page.get_drawings()) > 5:
+                scale = min(2.0, (image_units.WORKING_PIXELS / max(1, page.rect.width * page.rect.height)) ** .5)
+                pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+                images.append({"key": f"page:{index + 1}:vector-layout", "page_index": index,
+                    "ext": "png", "blob": pixmap.tobytes("png"), "anchor": f"page:{index + 1}",
+                    "bbox": [page.rect.x0, page.rect.y0, page.rect.width, page.rect.height], "coordinate_space": "pdf-point", "bbox_format": "xywh", "vector_layout": True})
+    return images, regions, "regions"
+
+
+async def convert_pdf_structured(path: Path, info: dict[str, Any], config: dict[str, str], requested=None):
+    texts = info.get("page_texts", [])
+    if len(texts) > env_int("PARSER_PDF_MAX_PAGES", 2000):
+        raise ValueError("PDF exceeds page budget")
+    requested = set(requested or [])
+    selected = {i for i in range(len(texts)) if not requested or f"page:{i + 1}" in requested
+        or any(u.startswith(f"page:{i + 1}:") or u.startswith(f"p{i + 1}-img") for u in requested)}
+    images, regions, precision = await native_extract("pdf_regions", path, selected=list(selected))
+    units, sections, assets = [], [], []
+    native_total = generated_total = 0
+    image_metadata: dict[str, Any] = {"embedded_image_count": 0, "ocr_image_count": 0}
+    image_confidence_total = 0.0
+    image_confidence_count = 0
+    native_pages = set(info.get("native_page_indexes", []))
+    for index, native in enumerate(texts):
+        identifier = f"page:{index + 1}"
+        if index not in selected:
+            units.append({"id": identifier, "kind": "page", "page": index + 1, "status": "skipped",
+                "native_text_chars": 0, "generated_text_chars": 0, "error": "not_selected"})
+            continue
+        body, engine, error = native, "native", ""
+        complex_layout = bool(info.get("has_complex_layout")) and PDF_PARSE_MODE in {"auto", "thorough", "deep"} and LOCAL_DOCLING_ENABLED and DOCLING_INSTALLED
+        if index not in native_pages or complex_layout:
+            subset = Path((await native_extract("pdf_subset", path, pages=[index]))["path"])
+            try:
+                if complex_layout:
+                    body = await convert_with_docling(subset)
+                    engine = "docling"
+                elif str(config.get("provider") or OCR_PROVIDER).lower() == "baidu":
+                    body, _ = await convert_with_cloud_ocr(subset, config)
+                    engine = "ocr"
+                elif LOCAL_DOCLING_ENABLED and DOCLING_INSTALLED:
+                    body = await convert_with_docling(subset)
+                    engine = "docling"
+            except Exception as exc:
+                error = safe_error(exc)
+                body = native
+            finally:
+                safe_unlink(subset)
+        count = source_contract.text_chars(source_contract.body_text(body))
+        page_unit = {"id": identifier, "kind": "page", "page": index + 1,
+            "status": "processed" if count else "failed", "native_text_chars": count,
+            "generated_text_chars": 0, "source_kind": engine, "markdown": source_contract.body_text(body), "error": error}
+        units.append(page_unit)
+        native_total += count
+        page_images = [image for image in images if image["page_index"] == index]
+        if requested and identifier not in requested:
+            page_images = [image for image in page_images if image["key"] in requested]
+        image_metadata["embedded_image_count"] += len(page_images)
+        if index not in native_pages and engine in {"ocr", "docling"} and count:
+            # Cloud/layout already saw these page pictures: retain the asset
+            # without billing each scanned-page raster a second time.
+            for image in page_images:
+                image.update(status="processed", source_kind=engine)
+                saved = source_contract.asset(image, artifact_cache.instance_identity.get())
+                assets.append(saved)
+                units.append({"id": image["key"], "kind": "image", "page": index + 1,
+                    "anchor": identifier, "status": "processed", "asset_ids": [saved["id"]],
+                    "native_text_chars": 0, "generated_text_chars": 0, "source_kind": engine,
+                    "markdown": "", "reference_only": True, "error": "covered_by_page_parser", **({"bbox": image["bbox"]} if "bbox" in image else {})})
+        else:
+            skeleton = "\n\n".join(f'<!-- image: {image["key"]} -->' for image in page_images)
+            extra, meta = await ocr_image_parts_into_markdown(skeleton, page_images, config)
+            body = body + "\n\n" + extra if extra else body
+            units.extend(meta["source_units"])
+            assets.extend(meta["assets"])
+            native_total += meta["native_text_chars"]
+            generated_total += meta["generated_text_chars"]
+            for key in ("ocr_image_count", "vlm_image_count", "image_hash_reuses", "ocr_words_result_num"):
+                if key in meta:
+                    image_metadata[key] = image_metadata.get(key, 0) + meta[key]
+            if "ocr_provider" in meta:
+                image_metadata["ocr_provider"] = meta["ocr_provider"]
+            if meta.get("ocr_average_confidence") is not None:
+                count = int(meta.get("ocr_image_count", 0))
+                image_confidence_total += float(meta["ocr_average_confidence"]) * count
+                image_confidence_count += count
+        if body.strip():
+            sections.append(f"## 第 {index + 1} 页\n\n{body.strip()}")
+    # Native region bounds are evidence references. The page owns the text and
+    # statistics, preventing duplicate counts/projections during unit retries.
+    for region in regions:
+        region["reference_only"] = True
+        region["markdown"] = ""
+    units.extend(regions)
+    metadata = {"source_units": units, "assets": assets, "native_text_chars": native_total,
+        "generated_text_chars": generated_total, "source_precision": precision,
+        "ocr_original_pages": [i + 1 for i in selected if i not in native_pages],
+        "ocr_cost_pages": sum(i not in native_pages for i in selected), **image_metadata}
+    if image_confidence_count:
+        metadata["ocr_average_confidence"] = round(image_confidence_total / image_confidence_count, 4)
+    source_contract.summarize(metadata)
+    return "\n\n".join(sections), "pdf-structured", metadata
+
+
+async def native_extract(operation: str, path: Path, **arguments):
+    directory = Path(tempfile.mkdtemp(prefix=path.stem + "-native-", dir=str(UPLOAD_ROOT)))
+    try:
+        await run_process([sys.executable, str(Path(__file__).with_name("native_job.py")),
+            operation, str(path), str(directory), json.dumps(arguments)], 245)
+        result_path = directory / "result.json"
+        if result_path.stat().st_size > 32 * 1024 * 1024:
+            raise ValueError("Native parser result exceeds output budget")
+        result = json.loads(await asyncio.to_thread(result_path.read_text, encoding="utf-8"))
+        def restore(item):
+            if isinstance(item, dict):
+                if "blob_path" in item:
+                    name = item["blob_path"]
+                    if not isinstance(name, str) or not re.fullmatch(r"blob-\d+\.bin", name):
+                        raise ValueError("Invalid native blob reference")
+                    item["blob_path"] = str(directory / name)
+                return {key: restore(value) for key, value in item.items()}
+            if isinstance(item, list):
+                return [restore(value) for value in item]
+            return item
+        return restore(result)
+    except BaseException:
+        shutil.rmtree(directory, ignore_errors=True)
+        raise
+
+
+def cleanup_native(path: Path):
+    for directory in UPLOAD_ROOT.glob(path.stem + "-native-*"):
+        shutil.rmtree(directory, ignore_errors=True)
+
+
 async def process_file(task_id: str, path: Path, parser_type: str, ocr_config: dict[str, str]) -> None:
     identity = str(tasks.get(task_id, {}).get("instanceId", "legacy"))
     identity_token = artifact_cache.instance_identity.set(identity)
+    inline_token = source_contract.inline_asset_bytes.set(0)
+    assets_token = source_contract.asset_artifacts.set({})
     try:
         async with _parse_limiter.slot(identity):
-            await _process_file(task_id, path, parser_type, ocr_config)
+            await asyncio.wait_for(_process_file(task_id, path, parser_type, ocr_config), timeout=PARSER_TASK_STALE_SECONDS)
     except (Exception, asyncio.CancelledError) as error:
         if task_id in tasks:
             tasks[task_id].update(status="failed", error=safe_error(error), finished_at=time.time())
+            account_retained_result(task_id)
         safe_unlink(path)
+        cleanup_native(path)
         if isinstance(error, asyncio.CancelledError):
             raise
     finally:
         artifact_cache.instance_identity.reset(identity_token)
+        source_contract.inline_asset_bytes.reset(inline_token)
+        source_contract.asset_artifacts.reset(assets_token)
 
 
 async def _process_file(
@@ -1755,26 +1928,40 @@ async def _process_file(
 ) -> None:
     task = tasks[task_id]
     task["status"] = "processing"
+    task["parser_contract"] = "source-units-typed-tables-v3"
     try:
         suffix = path.suffix.lower()
+        await asyncio.to_thread(structured_excel.check_package, path)
+        unit_ids = task.get("unit_ids") or []
 
         # AnyDoc is integrated once through the API's official Node package.
         # This execution service handles OCR and native/complex-layout fallback.
         if suffix in {".md", ".txt", ".csv", ".html", ".htm"}:
-            content = await asyncio.to_thread(path.read_bytes)
-            task["markdown"] = await asyncio.to_thread(extract_plaintext, path.name, content)
+            parsed = await native_extract("plaintext", path)
+            task["markdown"] = parsed["markdown"]
             task["engine"] = "plaintext"
+            task["native_text_chars"] = source_contract.text_chars(task["markdown"])
+            task["generated_text_chars"] = 0
+            task["source_units"] = [{"id": "text:body", "kind": "text", "status": "processed" if task["native_text_chars"] else "failed", "native_text_chars": task["native_text_chars"], "generated_text_chars": 0, "source_kind": "native", "markdown": task["markdown"]}]
         elif suffix == ".doc":
             task["conversion"] = "antiword"
             task["markdown"] = await asyncio.to_thread(extract_legacy_word, path)
             task["engine"] = "antiword"
+            task.update(native_text_chars=source_contract.text_chars(task["markdown"]), generated_text_chars=0, source_units=[source_contract.unit("doc:body", "text", task["markdown"], markdown=task["markdown"])], extraction_policy={"layout": "text_only", "images": "not_covered"})
         elif suffix == ".docx":
-            md, docx_images = await asyncio.to_thread(extract_docx, path)
+            parsed = await native_extract("docx", path, unit_ids=unit_ids)
+            contract, md, docx_images = parsed["contract"], parsed["markdown"], parsed["images"]
+            if unit_ids and any(u.startswith("docx-media-") for u in unit_ids):
+                docx_images = [image for image in docx_images if image["key"] in unit_ids or image.get("anchor") in unit_ids]
+            task.update(contract)
             if md or docx_images:
                 if docx_images:
                     md, ocr_metadata = await ocr_image_parts_into_markdown(
                         md, docx_images, ocr_config
                     )
+                    task["native_text_chars"] += ocr_metadata.pop("native_text_chars", 0)
+                    task["generated_text_chars"] += ocr_metadata.pop("generated_text_chars", 0)
+                    task["source_units"].extend(ocr_metadata.pop("source_units", []))
                     task.update(ocr_metadata)
                 if md.strip():
                     task["markdown"] = md
@@ -1796,20 +1983,16 @@ async def _process_file(
                 task["markdown"] = md
                 task["engine"] = "docling"
         elif suffix in {".xlsx", ".xls"}:
-            md = await asyncio.to_thread(extract_excel, path)
-            if md:
-                task["markdown"] = md
-                task["engine"] = "openpyxl" if suffix == ".xlsx" else "xlrd"
-            else:
-                if not LOCAL_DOCLING_ENABLED:
-                    raise RuntimeError("Excel native extraction returned no cells and local Docling is disabled")
-                md = await asyncio.wait_for(convert_with_docling(path), timeout=DOCLING_TIMEOUT_SECONDS)
-                task["markdown"] = md
-                task["engine"] = "docling"
+            result = await extract_excel_controlled(path, task)
+            task.update(result)
+            task["engine"] = "openpyxl-stream" if suffix == ".xlsx" else "xlrd-typed"
+        elif suffix == ".ppt":
+            md, engine, metadata = await convert_legacy_ppt(path, ocr_config, task)
+            task.update(markdown=md, engine=engine, **metadata)
         elif suffix == ".pptx":
             try:
                 md, engine, parser_metadata = await convert_pptx_without_docling(
-                    path, ocr_config, doc_title=task.get("filename")
+                    path, ocr_config, doc_title=task.get("filename"), unit_ids=unit_ids
                 )
                 if md and md.strip():
                     task["markdown"] = md
@@ -1832,7 +2015,7 @@ async def _process_file(
                 else:
                     raise
         elif suffix == ".pdf":
-            pdf_info = await asyncio.to_thread(inspect_pdf_native, path)
+            pdf_info = await native_extract("pdf_native", path)
             native_md = str(pdf_info.get("markdown", ""))
             for key in (
                 "classification",
@@ -1843,65 +2026,48 @@ async def _process_file(
                 "native_quality",
             ):
                 task[key] = pdf_info.get(key)
-            md, engine, parser_metadata = await convert_pdf_with_fallback(
-                path,
-                str(pdf_info.get("classification") or "unknown"),
-                native_md,
-                ocr_config,
-                [str(text) for text in pdf_info.get("page_texts", [])],
-                [int(index) for index in pdf_info.get("native_page_indexes", [])],
-                bool(pdf_info.get("has_complex_layout", False)),
-            )
-            task["markdown"] = md
-            task["engine"] = engine
-            task.update(parser_metadata)
-            if parser_metadata.get("ocr_cost_pages"):
-                task["text_pages"] = min(int(task.get("page_count") or 0), int(task.get("text_pages") or 0) + int(parser_metadata["ocr_cost_pages"]))
-            elif str(engine).startswith("ocr-") and not parser_metadata.get("ocr_error"):
-                task["text_pages"] = int(task.get("page_count") or 0)
+            md, engine, parser_metadata = await convert_pdf_structured(path, pdf_info, ocr_config, unit_ids)
+            task.update(markdown=md, engine=engine, **parser_metadata)
         else:
-            # Standalone images use local Docling in the test profile and the
-            # cloud OCR route in production. No image is silently accepted
-            # without text extraction.
-            if LOCAL_DOCLING_ENABLED:
-                try:
-                    md = await asyncio.wait_for(convert_with_docling(path), timeout=DOCLING_TIMEOUT_SECONDS)
-                    if re.search(r"<!--\s*(?:image|picture|figure)\s*-->", md, flags=re.IGNORECASE):
-                        raise RuntimeError("Docling returned an image placeholder; OCR is required for complete image ingestion")
-                    task["markdown"] = md
-                    task["engine"] = "docling-local"
-                except Exception as docling_error:
-                    logger.warning("Local Docling image conversion failed for %s: %s", path.name, safe_error(docling_error))
-                    task["docling_error"] = safe_error(docling_error)
-                    provider = str(ocr_config.get("provider") or OCR_PROVIDER).lower()
-                    if provider == "baidu":
-                        md, ocr_metadata = await convert_image_with_baidu_ocr(path, ocr_config)
-                        task["markdown"] = f"# {path.stem}\n\n{md}"
-                        task["engine"] = "ocr-baidu-image"
-                        task.update(ocr_metadata)
-                    elif is_vlm_available():
-                        vlm_desc = await describe_image_with_vlm(path, context_hint=path.stem)
-                        task["markdown"] = f"# {path.stem}\n\n{vlm_desc}"
-                        task["engine"] = "vlm-image"
-                    else:
-                        raise RuntimeError(
-                            "Image extraction requires configured OCR, VLM, or local Docling"
-                        )
+            provider = str(ocr_config.get("provider") or OCR_PROVIDER).lower()
+            if provider != "baidu" and not is_vlm_available() and not (LOCAL_DOCLING_ENABLED and DOCLING_INSTALLED):
+                raise RuntimeError("Image extraction requires configured OCR, VLM, or local Docling")
+            parts, skipped = await native_extract("image", path, unit_ids=unit_ids)
+            if provider == "baidu" or is_vlm_available():
+                skeleton = "\n\n".join(f'<!-- image: {part["key"]} -->' for part in parts)
+                md, metadata = await ocr_image_parts_into_markdown(skeleton, parts, ocr_config)
+                # Overlapping tiles keep provenance but index repeated OCR lines
+                # once per frame. Distinct frames retain their own occurrences.
+                previous_by_frame: dict[int, list[str]] = {}
+                for source in metadata["source_units"]:
+                    page = int(source.get("page", 1))
+                    lines = source.get("markdown", "").splitlines()
+                    previous = previous_by_frame.get(page, [])
+                    maximum = min(len(previous), len(lines), max(1, len(lines) // 6))
+                    repeated = 0
+                    for count in range(1, maximum + 1):
+                        if previous[-count:] == lines[:count]:
+                            repeated = count
+                    source["markdown"] = "\n".join(lines[repeated:])
+                    previous_by_frame[page] = lines
+                    source["overlap_lines_removed"] = repeated
+                md = "\n\n".join(source.get("markdown", "") for source in metadata["source_units"])
+                metadata["source_units"].extend(skipped)
+                task.update(markdown=md, engine="ocr-baidu-image" if provider == "baidu" else "vlm-image", **metadata)
             else:
-                provider = str(ocr_config.get("provider") or OCR_PROVIDER).lower()
-                if provider == "baidu":
-                    md, ocr_metadata = await convert_image_with_baidu_ocr(path, ocr_config)
-                    task["markdown"] = f"# {path.stem}\n\n{md}"
-                    task["engine"] = "ocr-baidu-image"
-                    task.update(ocr_metadata)
-                elif is_vlm_available():
-                    vlm_desc = await describe_image_with_vlm(path, context_hint=path.stem)
-                    task["markdown"] = f"# {path.stem}\n\n{vlm_desc}"
-                    task["engine"] = "vlm-image"
-                else:
-                    raise RuntimeError(
-                        "Image extraction requires configured OCR, VLM, or local Docling"
-                    )
+                sections, units = [], skipped
+                for part in parts:
+                    with tempfile.NamedTemporaryFile(suffix=".png", dir=str(UPLOAD_ROOT), delete=False) as handle:
+                        temp_budget.write(handle, Path(part["blob_path"]).read_bytes() if "blob_path" in part else part["blob"], UPLOAD_ROOT)
+                        frame_path = Path(handle.name)
+                    try:
+                        text = await convert_with_docling(frame_path)
+                        text = source_contract.body_text(text)
+                        units.append(source_contract.unit(part["key"], "image", text, markdown=text, page=part["page"], bbox=part["bbox"]))
+                        sections.append(text)
+                    finally:
+                        safe_unlink(frame_path)
+                task.update(markdown="\n\n".join(sections), source_units=units, engine="docling-image", native_text_chars=sum(u["native_text_chars"] for u in units), generated_text_chars=0)
 
         if not task.get("markdown", "").strip():
             raise RuntimeError("Extracted Markdown is empty")
@@ -1910,8 +2076,8 @@ async def _process_file(
             str(task.get("filename", "upload.md")),
         )
 
-        # VLM enrichment: describe charts, diagrams, and visual elements
-        if is_vlm_available() and task.get("markdown", ""):
+        # Structured image handlers already own OCR/VLM and source accounting.
+        if is_vlm_available() and not task.get("source_units") and task.get("markdown", ""):
             try:
                 enriched_md, vlm_meta = await enrich_markdown_with_vlm(
                     task["markdown"],
@@ -1930,6 +2096,14 @@ async def _process_file(
                 logger.warning("VLM enrichment failed for task %s: %s", task_id, safe_error(vlm_err))
                 task["vlm_error"] = safe_error(vlm_err)
 
+        if "native_text_chars" not in task:
+            count = source_contract.text_chars(source_contract.body_text(task["markdown"]))
+            task.update(native_text_chars=count, generated_text_chars=0,
+                source_units=[source_contract.unit("document:body", "document", source_contract.body_text(task["markdown"]), markdown=task["markdown"])])
+        source_contract.summarize(task)
+        source_contract.attach_offsets(task)
+        if task["content_text_chars"] == 0:
+            raise RuntimeError("Parser returned only scaffolding, without extracted document content")
         task.update(await asyncio.to_thread(assess_content_quality, task["markdown"], suffix, task))
         # Unification with the API publication gate: a quality rejection is a
         # "hold for review" signal, never a hard parser failure. Only a truly
@@ -1947,11 +2121,14 @@ async def _process_file(
         )
     except Exception as exc:
         task["status"] = "failed"
+        source_contract.summarize(task)
         task["error"] = safe_error(exc)
         logger.error("Error processing task %s: %s", task_id, safe_error(exc))
     finally:
         try:
+            account_retained_result(task_id)
             safe_unlink(path)
+            cleanup_native(path)
         except Exception:
             pass
 
@@ -1961,6 +2138,9 @@ async def parse_document(
     file: UploadFile = File(...),
     parser_type: str = "docling",
     instance_id: str | None = Form(None),
+    unit_ids: str | None = Form(None),
+    small_table_rows: int | None = Form(None),
+    cache_source_hash: str | None = Form(None),
     ocr_provider: str | None = Form(None),
     ocr_endpoint: str | None = Form(None),
     ocr_api_key: str | None = Form(None),
@@ -1994,12 +2174,24 @@ async def parse_document(
         tasks.pop(task_id, None)
         raise HTTPException(status_code=400, detail="Invalid instance identity")
     tasks[task_id]["instanceId"] = identity
+    try:
+        requested = json.loads(unit_ids) if isinstance(unit_ids, str) and unit_ids else []
+        if not isinstance(requested, list) or len(requested) > 5000 or any(not isinstance(u, str) or not u or len(u) > 512 for u in requested):
+            raise ValueError("Invalid source unit identifiers")
+        if isinstance(small_table_rows, int) and not 1 <= small_table_rows <= 501:
+            raise ValueError("Invalid inline table preview limit")
+        tasks[task_id]["unit_ids"] = list(dict.fromkeys(requested))
+        tasks[task_id]["small_table_rows"] = small_table_rows if isinstance(small_table_rows, int) else 200
+    except (ValueError, TypeError):
+        tasks.pop(task_id, None)
+        raise HTTPException(status_code=400, detail="Invalid source selection or table preview limit")
     # Stream the upload straight to disk in bounded chunks. Reading the whole
     # body into memory first would let a few concurrent 200 MiB uploads
     # exhaust worker RAM, and the size limit is now enforced while
     # transferring instead of after the full payload already arrived.
     chunk_size = 8 * 1024 * 1024
     received_bytes = 0
+    source_hash = hashlib.sha256()
     try:
         with path.open("wb") as handle:
             while True:
@@ -2007,15 +2199,21 @@ async def parse_document(
                 if not chunk:
                     break
                 received_bytes += len(chunk)
+                source_hash.update(chunk)
                 if received_bytes > MAX_FILE_BYTES:
                     raise HTTPException(status_code=413, detail="File exceeds 200 MiB limit")
                 if shutil.disk_usage(UPLOAD_ROOT).free < len(chunk) + MAX_FILE_BYTES:
                     raise HTTPException(status_code=503, detail="Parser temporary disk budget exhausted")
-                await asyncio.to_thread(handle.write, chunk)
+                await asyncio.to_thread(temp_budget.write, handle, chunk, UPLOAD_ROOT)
     except BaseException:
         tasks.pop(task_id, None)
         safe_unlink(path)
         raise
+    tasks[task_id]["source_hash"] = source_hash.hexdigest()
+    if isinstance(cache_source_hash, str) and cache_source_hash and not secrets.compare_digest(cache_source_hash, source_hash.hexdigest()):
+        tasks.pop(task_id, None)
+        safe_unlink(path)
+        raise HTTPException(status_code=409, detail="Original document hash differs from requested retry source")
     # Credentials are request-scoped and deliberately not copied into tasks;
     # /parse/{task_id} must never expose them.
     ocr_config = {
@@ -2032,7 +2230,7 @@ def parse_status(task_id: str, _auth: None = Depends(verify_auth)):
     task = tasks.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Parse task not found")
-    return {"task_id": task_id, **task}
+    return {"task_id": task_id, **public_task_result(task)}
 
 
 @app.post("/parse-execute")
@@ -2040,6 +2238,9 @@ async def execute_document(
     file: UploadFile = File(...),
     parser_type: str = "auto",
     instance_id: str | None = Form(None),
+    unit_ids: str | None = Form(None),
+    small_table_rows: int | None = Form(None),
+    cache_source_hash: str | None = Form(None),
     ocr_provider: str | None = Form(None),
     ocr_endpoint: str | None = Form(None),
     ocr_api_key: str | None = Form(None),
@@ -2055,12 +2256,13 @@ async def execute_document(
     background = BackgroundTasks()
     accepted = await parse_document(
         background_tasks=background, file=file, parser_type=parser_type, instance_id=instance_id,
+        unit_ids=unit_ids, small_table_rows=small_table_rows, cache_source_hash=cache_source_hash,
         ocr_provider=ocr_provider, ocr_endpoint=ocr_endpoint,
         ocr_api_key=ocr_api_key, ocr_secret_key=ocr_secret_key, _auth=_auth,
     )
     try:
         await background()
-        return {"task_id": accepted.task_id, **tasks[accepted.task_id]}
+        return {"task_id": accepted.task_id, **public_task_result(tasks[accepted.task_id])}
     finally:
         tasks.pop(accepted.task_id, None)
 
@@ -2101,9 +2303,10 @@ async def ocr_embedded_images_endpoint(
                             status_code=413,
                             detail=f"Embedded-image OCR upload exceeds {OCR_MAX_FILE_BYTES // (1024 * 1024)}MB limit",
                         )
-                    await asyncio.to_thread(fh.write, chunk)
+                    await asyncio.to_thread(temp_budget.write, fh, chunk, UPLOAD_ROOT)
             if size == 0:
                 raise HTTPException(status_code=400, detail="Empty upload")
+            await asyncio.to_thread(structured_excel.check_package, path)
             ocr_config = {
                 "provider": (ocr_provider or OCR_PROVIDER).strip().lower(),
                 "endpoint": (ocr_endpoint or BAIDU_OCR_ENDPOINT).strip(),
@@ -2111,10 +2314,14 @@ async def ocr_embedded_images_endpoint(
                 "secret_key": ocr_secret_key or BAIDU_OCR_SECRET_KEY,
             }
             identity_token = artifact_cache.instance_identity.set(identity)
+            inline_token = source_contract.inline_asset_bytes.set(0)
+            assets_token = source_contract.asset_artifacts.set({})
             try:
                 markdown, metadata = await ocr_embedded_images_fragments(path, ocr_config)
             finally:
                 artifact_cache.instance_identity.reset(identity_token)
+                source_contract.inline_asset_bytes.reset(inline_token)
+                source_contract.asset_artifacts.reset(assets_token)
             return {"markdown": markdown, **metadata}
     except HTTPException:
         raise
@@ -2123,6 +2330,7 @@ async def ocr_embedded_images_endpoint(
         raise HTTPException(status_code=500, detail="Embedded-image OCR failed")
     finally:
         safe_unlink(path)
+        cleanup_native(path)
 
 if __name__ == "__main__":
     import uvicorn
@@ -2177,3 +2385,14 @@ async def shared_maxsim(request: Request, _auth: None = Depends(verify_auth)):
 @app.get('/resource-metrics')
 def resource_metrics(_auth: None = Depends(verify_auth)):
     return {'parser': {'active': _parse_limiter.active, 'queued': sum(len(q) for q in _parse_limiter.queues.values()), 'runningByInstance': _parse_limiter.running}, 'maxsim': {'active': _maxsim_limiter.active, 'queued': sum(len(q) for q in _maxsim_limiter.queues.values()), 'runningByInstance': _maxsim_limiter.running}}
+
+
+@app.get("/artifacts/{artifact_id}")
+def download_artifact(artifact_id: str, instance_id: str, _auth: None = Depends(verify_auth)):
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", instance_id):
+        raise HTTPException(status_code=404, detail="Parser artifact not found")
+    path = artifact_store.resolve(artifact_id, instance_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Parser artifact not found")
+    return FileResponse(path, media_type=artifact_store.media_type(artifact_id),
+                        filename=artifact_id, headers={"Cache-Control": "private, no-store"})

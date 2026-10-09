@@ -19,7 +19,7 @@ describe('KnowledgeOperationsService boundaries', () => {
   });
   it('applies the same ACL and temporal predicates before list pagination and total', async () => {
     await service.readResource(user, { kind: 'documents', args: { kb_id: kb, limit: 2, offset: 20 } }, db);
-    const query = db.document.findMany.mock.calls[0][0];
+    const query = db.document.findMany.mock.calls.find((call: any[]) => call[0].take !== undefined)[0];
     expect(query.take).toBe(2); expect(query.skip).toBe(20);
     expect(query.where).toEqual(db.document.count.mock.calls[0][0].where);
     const serialized = JSON.stringify(query.where);

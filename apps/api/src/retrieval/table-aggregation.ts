@@ -1,3 +1,4 @@
+import { parseMarkdownTableCells } from '../ingestion/markdown-table';
 import { createHash } from 'node:crypto';
 
 export interface RawTable { id: string; headers: string[]; rows: Array<{ cells: string[]; charStart: number; charEnd: number }> }
@@ -24,17 +25,8 @@ export function cellSpans(markdown: string, row: { cells: string[]; charStart: n
   if (cellStart >= 0 && column < row.cells.length) spans.push({ column, charStart: cellStart, charEnd: row.charEnd });
   return spans.slice(0, row.cells.length);
 }
-function cells(line: string): string[] {
-  const values: string[] = []; let value = '', escaped = false, code = false;
-  for (const char of line.trim().replace(/^\|/, '').replace(/\|$/, '')) {
-    if (escaped) { value += char; escaped = false; }
-    else if (char === '\\') escaped = true;
-    else if (char === '`') { code = !code; value += char; }
-    else if (char === '|' && !code) { values.push(value.trim()); value = ''; }
-    else value += char;
-  }
-  values.push(value.trim()); return values;
-}
+function cells(line: string): string[] { return parseMarkdownTableCells(line); }
+
 export function extractRawTables(markdown: string, versionId: string): RawTable[] {
   const lines = markdown.split('\n'); const offsets: number[] = []; let offset = 0;
   for (const line of lines) { offsets.push(offset); offset += line.length + 1; }
@@ -59,14 +51,14 @@ export function extractRawTables(markdown: string, versionId: string): RawTable[
   }
   return tables;
 }
-function decimal(value: string) {
+export function decimal(value: string) {
   const match = value.trim().match(/^([+-]?)(\d+(?:,\d{3})*(?:\.\d+)?|\.\d+)\s*([^\d\s.,+-]*)$/u);
   if (!match) throw new Error(`Non-numeric cell; cannot infer a value: ${value.slice(0, 80)}`);
   const number = match[2].replace(/,/g, ''); const [whole, fraction = ''] = number.split('.');
   if (fraction.length > 18 || whole.length > 30) throw new Error('Numeric precision budget exceeded');
   return { value: BigInt((match[1] === '-' ? '-' : '') + (whole || '0') + fraction), scale: fraction.length, unit: match[3] };
 }
-function formatted(value: bigint, scale: number): string {
+export function formatted(value: bigint, scale: number): string {
   const negative = value < 0n; const raw = (negative ? -value : value).toString().padStart(scale + 1, '0');
   return (negative ? '-' : '') + (scale ? `${raw.slice(0, -scale)}.${raw.slice(-scale)}`.replace(/\.?0+$/, '') : raw);
 }

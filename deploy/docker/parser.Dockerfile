@@ -4,7 +4,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends antiword curl \
+  && apt-get install -y --no-install-recommends antiword curl libreoffice-impress \
   && rm -rf /var/lib/apt/lists/*
 
 COPY apps/parser-worker/pyproject.toml apps/parser-worker/README.md ./
@@ -12,13 +12,14 @@ RUN pip install --no-cache-dir \
   "fastapi>=0.111.0" "uvicorn[standard]>=0.30.0" "pydantic>=2.7.0" \
   "python-multipart>=0.0.9" "httpx>=0.28.0" "pypdf>=5.0.0" \
   "python-docx>=1.1.0" "python-pptx>=1.0.0" "openpyxl>=3.1.0" \
-  "xlrd>=2.0.1" "pymupdf>=1.24.0"
+  "xlrd>=2.0.1" "Pillow==12.1.1" "PyMuPDF==1.28.2"
 # Deliberately NOT installed: docling / MinerU / layout models. They would add
 # several GB of local model weights, and this deployment's policy is that deep
 # layout extraction stays off (LOCAL_DOCLING_ENABLED=0) or runs through the
 # cloud OCR provider. `pymupdf` is a pure PDF rasteriser (no models) and is what
-# the page-level VLM enrichment needs to render a page to an image; without it
-# that path silently produced empty strings.
+# page text/image bounding boxes and vector-layout snapshots need. Pillow
+# decodes and bounds WebP/TIFF/BMP frames. libreoffice-impress provides only
+# cold, isolated legacy-PPT conversion; no shared Office listener is started.
 #
 # Removed dependency: minio — no code in this worker ever imported it.
 

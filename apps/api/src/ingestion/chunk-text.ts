@@ -27,6 +27,8 @@
  */
 export function indexableChunkText(text: string): string {
   if (!text) return '';
+  const qa = text.match(/^<!-- qa-question:([A-Za-z0-9+/=]+) -->/);
+  if (qa) return Buffer.from(qa[1], 'base64').toString('utf8');
   return text
     // Hierarchy echo — structure is preserved in metadata.breadcrumb instead.
     .replace(/<!--\s*大纲层级:[\s\S]*?-->/g, '')

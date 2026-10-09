@@ -1,0 +1,58 @@
+{
+  "benchmark": "Parser-Worker structured XLSX artifact reuse",
+  "worker_scale": [
+    {
+      "source_rows": 10000,
+      "fact_rows_including_header": 10001,
+      "cold_seconds": 2.422,
+      "warm_seconds": 2.105,
+      "peak_rss_kib": 55072,
+      "artifact_bytes": 5080405,
+      "preview_rows": 200,
+      "reused_batches": 11,
+      "batch_rows": 1000,
+      "same_complete_artifact_reused": true
+    },
+    {
+      "source_rows": 100000,
+      "fact_rows_including_header": 100001,
+      "cold_seconds": 23.279,
+      "warm_seconds": 20.507,
+      "peak_rss_kib": 71544,
+      "artifact_bytes": 51299015,
+      "preview_rows": 200,
+      "reused_batches": 101,
+      "batch_rows": 1000,
+      "same_complete_artifact_reused": true
+    }
+  ],
+  "final_end_to_end_10001_rows": {
+    "tableRows": 10001,
+    "uploadMilliseconds": 28.39352299999996,
+    "parsePublishMilliseconds": 3010.710886,
+    "aggregateMilliseconds": 313.3641319999997,
+    "apiMaxRssKiB": 204816,
+    "workerResourceMetrics": null,
+    "liveEmbeddingProvider": false,
+    "realQueue": false
+  },
+  "earlier_end_to_end_100001_rows_before_64k_buffering": {
+    "tableRows": 100001,
+    "uploadMilliseconds": 22.494252000000415,
+    "parsePublishMilliseconds": 76526.110286,
+    "aggregateMilliseconds": 2141.0362719999976,
+    "apiMaxRssKiB": 213920,
+    "workerResourceMetrics": null,
+    "liveEmbeddingProvider": false,
+    "realQueue": false
+  },
+  "scope": {
+    "local_database": "gbrain_core_opt_test @ 127.0.0.1:5433",
+    "redis_db": 15,
+    "worker": "local HTTP Worker, isolated upload roots",
+    "embedding": "deterministic fixture",
+    "queue": "test adapter; not real Redis throughput",
+    "worker_resource_metrics_in_e2e": null,
+    "mixed_format_pressure_test": false
+  }
+}

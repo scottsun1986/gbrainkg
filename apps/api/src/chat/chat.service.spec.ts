@@ -76,6 +76,7 @@ const mockPrisma: any = {
   message: {
     findMany: jest.fn(),
   },
+  chunk: { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]) },
   brainDerivedPage: {
     findMany: jest.fn().mockResolvedValue([]),
   },
@@ -85,7 +86,17 @@ const mockPrisma: any = {
 
 jest.mock("@prisma/client", () => ({
   ...jest.requireActual("@prisma/client"),
-  PrismaClient: jest.fn().mockImplementation(() => mockPrisma),
+  PrismaClient: jest.fn().mockImplementation(() => new Proxy(mockPrisma, {
+    get(target, property) {
+      if (property !== 'document') return Reflect.get(target, property);
+      return { ...target.document, findMany: (args: any) => {
+        // Ordinary source fixtures have no QA authority rows. Preserve live
+        // member replacement for count/enumeration tests and ACL race reads.
+        if (args.where?.sourceType === 'qa' || args.where?.AND?.some((part: any) => part.sourceType === 'qa')) return Promise.resolve([]);
+        return target.document.findMany(args);
+      } };
+    },
+  })),
 }));
 
 jest.mock("@llmwiki/gbrain-adapter", () => ({
@@ -716,9 +727,8 @@ describe("ChatService", () => {
   });
 
   it("should strip citations for documents that are revoked before emission", async () => {
-    // These cases pin the ordered findMany sequence of the version and
-    // permission gates; sibling-edition alignment adds its own lookups ahead of
-    // them and has dedicated coverage in version-sibling-evidence.spec.ts.
+    // A real state transition during generation, independent of how many
+    // scoped QA/ACL lookups occur before the final output verification.
     process.env.RETRIEVAL_SIBLING_EDITION_ALIGN = "false";
     // 1. Initial layer permission check (retrieval time)
     mockPermissionService.getVisibleKnowledgeBases
@@ -730,51 +740,42 @@ describe("ChatService", () => {
       gitRepoUrl: "/tmp/repo",
     });
 
-    // 2. Initial layer doc check passes
-    mockPrisma.document.findMany
-      .mockResolvedValueOnce([
-        { id: "doc-1", kbId: "kb-1", aclMode: "inherit", title: "规则.md", kb: { name: "知识库", type: "platform" } },
-      ])
-      // middle version check (base family docs)
-      .mockResolvedValueOnce([
-        { id: "doc-1", title: "规则.md" },
-      ])
-      // version check: superseding editions lookup (none)
-      .mockResolvedValueOnce([])
-      // 3. Third-layer emission doc check FAILS (returns empty array, meaning doc-1 was revoked or unpublished)
-      .mockResolvedValueOnce([]);
+    let revoked = false;
+    let readsAfterRevocation = 0;
+    const source = { id: "doc-1", kbId: "kb-1", aclMode: "inherit", title: "规则.md", version: 1,
+      kb: { name: "知识库", type: "platform" } };
+    mockPrisma.document.findMany.mockReset().mockImplementation(async (args: any) => {
+      if (revoked) { readsAfterRevocation++; return []; }
+      if (args.where?.supersedesDocumentId) return [];
+      return [source];
+    });
 
     process.env.DEEPSEEK_API_KEY = "test-key";
     const originalFetch = global.fetch;
-    const fetchMock = jest
-      .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          choices: [{ message: { content: '{"query":"测试问题","breadth":false}' } }],
-        }),
+    const generationRead = jest.fn()
+      .mockImplementationOnce(async () => {
+        revoked = true; // grant removed during an actually consumed model stream
+        return { done: false, value: new TextEncoder().encode('data: {"choices":[{"delta":{"content":"这里是回答[1]"}}]}\n\n') };
       })
-      .mockResolvedValueOnce({
-        ok: true,
-        body: {
-          getReader: () => ({
-            // Streaming an answer that cites [1]
-            read: jest.fn()
-              .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode('data: {"choices":[{"delta":{"content":"这里是回答[1]"}}]}\n\n') })
-              .mockResolvedValueOnce({ done: true, value: undefined }),
-          }),
-        },
-      });
+      .mockResolvedValueOnce({ done: true, value: undefined });
+    const fetchMock = jest.fn().mockImplementation(async (_url: unknown, init: RequestInit) => {
+      const request = JSON.parse(String(init.body));
+      if (!request.stream) return { ok: true, json: async () => ({
+        choices: [{ message: { content: '{"query":"测试问题","breadth":false}' } }],
+      }) };
+      return { ok: true, body: { getReader: () => ({ read: generationRead,
+        cancel: jest.fn().mockResolvedValue(undefined), releaseLock: jest.fn(),
+      }) } };
+    });
     (global as any).fetch = fetchMock;
 
     try {
       const stream$ = await service.handleChatStream("user-1", "测试问题", ["kb-1"]);
       const events = await lastValueFrom(stream$.pipe(toArray()));
       
-      // Ensure we hit the database for each gate (retrieval, version family
-      // base + superseding lookup, emission) — the revoked doc must never
-      // survive to a citation event.
-      expect(mockPrisma.document.findMany.mock.calls.length).toBeGreaterThanOrEqual(4);
+      expect(generationRead).toHaveBeenCalled();
+      expect(revoked).toBe(true);
+      expect(readsAfterRevocation).toBeGreaterThan(0);
 
       // Verify citation event was stripped (not emitted)
       const citationEvents = events.filter((e) => (e.data as any).type === "citation");
@@ -786,9 +787,8 @@ describe("ChatService", () => {
     }
   });
   it("should detect version conflicts and include version details in timeline_entry", async () => {
-    // These cases pin the ordered findMany sequence of the version and
-    // permission gates; sibling-edition alignment adds its own lookups ahead of
-    // them and has dedicated coverage in version-sibling-evidence.spec.ts.
+    // Query-driven fixtures preserve the physical version for every ACL
+    // refresh; version-family reads return both published same-title editions.
     process.env.RETRIEVAL_SIBLING_EDITION_ALIGN = "false";
     mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(["kb-1"]);
 
@@ -797,20 +797,14 @@ describe("ChatService", () => {
       gitRepoUrl: "/tmp/repo",
     });
 
-    mockPrisma.document.findMany
-      .mockResolvedValueOnce([
-        { id: "doc-1", kbId: "kb-1", aclMode: "inherit", title: "规则.md", version: 2, kb: { name: "知识库", type: "platform" } },
-      ])
-      .mockResolvedValueOnce([
-        { id: "doc-1", title: "规则.md", version: 2 },
-        { id: "doc-2", title: "规则.md", version: 3 },
-      ])
-      // superseding editions lookup: none (the two editions are linked only
-      // by sharing a title, the legacy-corpus fallback)
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        { id: "doc-1" },
-      ]);
+    const current = { id: "doc-1", kbId: "kb-1", aclMode: "inherit", title: "规则.md", version: 2,
+      kb: { name: "知识库", type: "platform" } };
+    const sibling = { ...current, id: "doc-2", version: 3 };
+    mockPrisma.document.findMany.mockReset().mockImplementation(async (args: any) => {
+      if (args.where?.supersedesDocumentId) return [];
+      if (args.select?.supersedesDocumentId && args.where?.OR) return [current, sibling];
+      return [current];
+    });
 
     process.env.DEEPSEEK_API_KEY = "test-key";
     const originalFetch = global.fetch;

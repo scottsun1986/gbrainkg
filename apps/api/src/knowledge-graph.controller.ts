@@ -95,7 +95,7 @@ export class KnowledgeGraphController {
     const maxChunksPerDoc = Math.max(5, Number(process.env.KG_MAX_CHUNKS_PER_DOC || 40));
     const requestedPage = Number(rawPage);
     const page = Number.isFinite(requestedPage) ? Math.min(1000000, Math.max(0, Math.floor(requestedPage))) : 0;
-    const readableWhere = await readableDocumentWhere(this.prisma, userId);
+    const readableWhere = await readableDocumentWhere(this.prisma, userId, visibleKbIds);
     let neighborhood: any = {};
     if (root) {
       if (root.startsWith('kb:')) neighborhood = { kbId: root.slice(3) };
@@ -231,7 +231,7 @@ export class KnowledgeGraphController {
   ) {
     const authority = await readAuthorizationSnapshot(userId);
     const buildStartedAt = Date.now();
-    const readableWhere = await readableDocumentWhere(this.prisma, userId);
+    const readableWhere = await readableDocumentWhere(this.prisma, userId, visibleKbIds);
     const candidates = await this.prisma.document.findMany({
       where: projection?.where || { kbId: { in: visibleKbIds }, status: 'published', ...readableWhere },
       orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],

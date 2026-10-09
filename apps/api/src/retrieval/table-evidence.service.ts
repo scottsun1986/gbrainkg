@@ -6,17 +6,30 @@ import { getPrismaClient } from '../prisma';
 import { DocumentAclService } from '../permission/document-acl.service';
 import { PermissionService } from '../permission/permission.service';
 import { withAuthorizedRequest, assertAuthorizationSnapshot } from '../permission/authorization-revision';
-import { extractRawTables, aggregateTable, cellSpans } from './table-aggregation';
+import { extractRawTables, aggregateTable, cellSpans, RawTable } from './table-aggregation';
+import { aggregateStructuredTable, cellAt, TableFilter } from './structured-table-aggregation';
+import { StructuredTable } from '../ingestion/source-artifacts';
 import { uploadRoot } from '../storage/upload-paths';
 
 export class TableEvidenceService {
-  async readPublishedTables(userId: string, documentId: string, versionId: string) {
+  async readPublishedTables(userId: string, documentId: string, versionId: string): Promise<{ tables:RawTable[]; sourceHash:string; versionId:string; structuredTables?:StructuredTable[] }> {
     return withAuthorizedRequest(userId, async snapshot => {
       if (!await new DocumentAclService(new PermissionService()).isDocumentReadable(userId, documentId)) throw new NotFoundException('Document not found');
       const version = await getPrismaClient().documentVersion.findFirst({
         where: { id: versionId, documentId, state: 'published', document: { status: 'published', activeVersionId: versionId } },
       });
       if (!version) throw new NotFoundException('Active published version not found');
+      const structuredTables: StructuredTable[] = (version.publicationData as any)?.parserMetadata?.structured_tables;
+      if (Array.isArray(structuredTables) && structuredTables.length) {
+        // Preview rows are a schema/planning aid only. Execution below always
+        // consumes the complete typed fact source, including streamed files.
+        const tables:RawTable[] = structuredTables.map(table => ({ id:table.id, headers:table.headers,
+          rows:(table.rows || []).filter(row => !row.is_header).map(row => ({ cells:table.headers.map((_header,index) => {
+            const cell=cellAt(row,index,table); return cell?.value === null || cell?.value === undefined ? '' : String(cell.value);
+          }),charStart:0,charEnd:0 })) }));
+        await assertAuthorizationSnapshot(userId,snapshot);
+        return { tables, structuredTables, sourceHash:version.sourceHash || '', versionId:version.id };
+      }
       const root = uploadRoot();
       const path = resolve(root, version.mdPath);
       if (!path.startsWith(root + sep)) throw new BadRequestException('Invalid source path');
@@ -28,12 +41,20 @@ export class TableEvidenceService {
     });
   }
 
-  async execute(userId: string, request: { documentId: string; versionId: string; tableId?: string; operation?: 'count'|'sum'|'min'|'max'|'avg'; column?: number }) {
+  async execute(userId: string, request: { documentId: string; versionId: string; tableId?: string; operation?: 'count'|'sum'|'min'|'max'|'avg'; column?: number; filters?: TableFilter[]; includeSummary?: boolean }) {
     return withAuthorizedRequest(userId, async snapshot => {
       const db = getPrismaClient();
       if (!await new DocumentAclService(new PermissionService()).isDocumentReadable(userId, request.documentId)) throw new NotFoundException('Document not found');
       const version = await db.documentVersion.findFirst({ where: { id: request.versionId, documentId: request.documentId, state: 'published', document: { status: 'published', activeVersionId: request.versionId } } });
       if (!version) throw new NotFoundException('Published version not found');
+      const structured = (version.publicationData as any)?.parserMetadata?.structured_tables;
+      if (Array.isArray(structured) && structured.length) {
+        if (!request.operation) { await assertAuthorizationSnapshot(userId, snapshot); return { documentId: request.documentId, versionId: version.id, tables: structured.map(table => ({ tableId: table.id, headers: table.headers, rowCount: table.row_count, sheet: table.sheet, range: table.range, complete: table.complete })) }; }
+        const table = structured.find(table => table.id === request.tableId);
+        if (!table) throw new NotFoundException('Table not found');
+        try { const result = await aggregateStructuredTable(table, request.documentId, request.operation, request.column, request.filters, request.includeSummary); await assertAuthorizationSnapshot(userId, snapshot); return { ...result, documentId: request.documentId, versionId: version.id }; }
+        catch (error) { throw new BadRequestException((error as Error).message); }
+      }
       const root = uploadRoot();
       const path = resolve(root, version.mdPath);
       if (!path.startsWith(root + sep)) throw new BadRequestException('Invalid source path');

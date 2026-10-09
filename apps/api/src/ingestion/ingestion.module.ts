@@ -1,5 +1,7 @@
 import { KnowledgeOperationsService } from './knowledge-operations.service';
 import { DocumentLifecycleService } from './document-lifecycle.service';
+import { QaController } from './qa.controller';
+import { IngestionArtifactsController } from './ingestion-artifacts.controller';
 import { Module } from '@nestjs/common';
 import { IngestionController } from './ingestion.controller';
 import { KnowledgeBaseController } from './knowledge-base.controller';
@@ -20,7 +22,7 @@ import { VersionChainModule } from './version-chain.module';
 @Module({
   imports: [PermissionModule, AuthModule, BrainCompilerModule, GraphRagModule, RaptorModule, LexicalIndexModule, StorageModule, VersionChainModule,
     BullModule.registerQueue({ name: 'ingestion-queue' }, { name: 'enrichment-queue' }, { name: 'aux-enrichment-queue' })],
-  controllers: [IngestionController, KnowledgeBaseController],
+  controllers: [IngestionController, KnowledgeBaseController, QaController, IngestionArtifactsController],
   providers: [KnowledgeOperationsService, DocumentLifecycleService, IngestionService, IngestionProcessor, EnrichmentProcessor, AuxiliaryEnrichmentProcessor],
   exports: [IngestionService, DocumentLifecycleService, KnowledgeOperationsService],
 })

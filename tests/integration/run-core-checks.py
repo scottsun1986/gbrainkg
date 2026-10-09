@@ -11,6 +11,7 @@ parser.add_argument("--database", default="gbrain_core_opt_test")
 parser.add_argument("--unit", action="store_true")
 parser.add_argument("--reliability", action="store_true", help="real process loss and application artifact/quota scale checks")
 parser.add_argument("--compiler", action="store_true", help="large source scan and compiled truth/graph checks")
+parser.add_argument("--ingestion", action="store_true", help="real local Parser-Worker structured tables, QA and package lifecycle checks")
 args = parser.parse_args()
 if not args.database.startswith("gbrain_core_opt_test") or not args.database.replace("_", "").isalnum():
     parser.error("database must be an isolated gbrain_core_opt_test database")
@@ -36,6 +37,8 @@ run(["node", "tests/integration/core-ingestion-replacement.cjs"])
 run(["node", "tests/integration/core-application-permissions.cjs"])
 if args.compiler:
     run(["node", "tests/integration/core-compiler-coverage.cjs"])
+if args.ingestion:
+    run(["node", "tests/integration/core-ingestion-structured.cjs"])
 if args.reliability:
     env.update(REDIS_HOST="127.0.0.1", REDIS_PORT="6379", REDIS_DB="15")
     run(["node", "tests/integration/core-service-loss.cjs"])

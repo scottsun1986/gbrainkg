@@ -62,3 +62,15 @@ docker exec -i llmwiki-postgres psql -U llmwiki -d llmwiki_inst99999 \
 完整回归：/tmp/gbrain-core-integrated-final13.log；空库迁移：/tmp/gbrain-core-fresh-migrations-valid2.log；Parser：/tmp/gbrain-core-parser-final2.log；adapter：/tmp/gbrain-core-adapter-final.log。这些本地日志不是可跨环境重放的基准数据。
 
 精度、延迟、成本与十实例容量由 tests/evaluation/core-flow 的真实隔离评测验收；以上 fixture 不提供性能收益结论。
+
+## 2026-10-09 结构化入库闭环
+
+`core-ingestion-structured.cjs` 必须在 `gbrain_core_opt_test*` 数据库及 loopback Parser-Worker 运行，拒绝生产/远程 Worker。先应用新增 ImportBatch 扩展迁移并生成 Prisma client、构建 API，再启动同版本 Worker。Python 需具有该 Worker 的 openpyxl 环境，可设 `PARSER_TEST_PYTHON`；本地 Worker 可用 `PARSER_WORKER_URL` 指定。
+
+```bash
+python3 tests/integration/run-core-checks.py --database gbrain_core_opt_test --ingestion
+```
+
+该测试调用真实上传控制器、解析 HTTP、不可变版本发布、BM25 和完整事实计算，覆盖万行 XLSX、单元重试、QA 字段映射/候选/审核版本 CAS/原子答案/别名索引、旧发布期限保留、Markdown ZIP 依赖及逐项清单、资产授权/删除、来源变更后派生 QA 范围失效。仅入队与 embedding provider 使用确定性 fixture，不产生模型费用；不声称真实模型准确率或吞吐提升。所有数据和文件在 finally 中清理，执行结果由测试代理记录。
+
+可设置 `INGESTION_TEST_ROWS=100001` 执行十万行同一闭环，`INGESTION_REPORT_PATH` 将实测上传、解析到发布、完整聚合时间和 API 峰值 RSS 写入 JSON（目录须预先存在）。Worker 自身资源指标有值才报告；该脚本没有真实队列时延和 live embedding 成本，不用零值伪装为性能改进。

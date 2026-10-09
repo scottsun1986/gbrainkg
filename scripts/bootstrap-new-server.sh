@@ -84,7 +84,7 @@ ssh "$PROD_HOST" "
   set -e
   sudo apt-get update -y
   sudo apt-get install -y --no-install-recommends \
-    curl wget git rsync jq build-essential antiword \
+    curl wget git rsync jq build-essential antiword libreoffice-impress \
     libpq-dev python3 python3-pip python3-venv openssl \
     ca-certificates gnupg lsb-release
 "
@@ -252,13 +252,13 @@ ssh "$PROD_HOST" "
     python3 -m venv .venv
   fi
   .venv/bin/pip install --upgrade pip
-  # pymupdf is a pure PDF rasteriser (no model weights) required for page-level
-  # VLM enrichment. Local layout models (docling) stay out of this deployment on
+  # pymupdf is a required PDF rasteriser/region extractor (no model weights);
+  # Pillow handles bounded image frames; cold soffice conversion is installed above. Local layout models (docling) stay out of this deployment on
   # purpose; the loop below tolerates a failure of that optional extra.
   .venv/bin/pip install \
     'fastapi>=0.111.0' 'uvicorn>=0.30.0' 'pydantic>=2.7.0' 'python-multipart>=0.0.9' \
     'httpx>=0.28.0' 'pypdf>=5.0.0' 'python-docx>=1.1.0' 'python-pptx>=1.0.0' \
-    'openpyxl>=3.1.0' 'xlrd>=2.0.1' 'pymupdf>=1.24.0'
+    'openpyxl>=3.1.0' 'xlrd>=2.0.1' 'Pillow==12.1.1' 'PyMuPDF==1.28.2'
   if [[ \"\${INSTALL_LOCAL_LAYOUT_MODELS:-0}\" == \"1\" ]]; then
     .venv/bin/pip install 'docling>=1.1.0' && echo 'Installed optional docling layout models.'
   fi

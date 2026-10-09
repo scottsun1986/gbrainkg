@@ -1,3 +1,4 @@
+import { parseMarkdownTableCells, isMarkdownTableDelimiter } from './markdown-table';
 import { positiveNumber } from '../config-numbers';
 import { estimateTokens } from '../chat/context-budget';
 import { classifyTableRole } from '../chat/section-align';
@@ -105,7 +106,90 @@ function parseChineseNumber(str: string): number | null {
   return hasDigit ? total : null;
 }
 
-function findSections(markdown: string): Section[] {
+
+type MarkdownBlock = { start: number; end: number; kind: 'code' | 'math' | 'table' | 'list'; fence?: string; fenceInfo?: string };
+type MarkdownLine = { start: number; end: number; text: string };
+function sourceLines(markdown: string): MarkdownLine[] {
+  const lines: MarkdownLine[] = [];
+  const pattern = /[^\n]*(?:\n|$)/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(markdown)) && match[0].length) {
+    lines.push({ start: match.index, end: match.index + match[0].length, text: match[0].replace(/\r?\n$/, '') });
+  }
+  return lines;
+}
+
+/** Source ranges are computed once before section discovery. Small structured
+ * blocks stay atomic; large ones may split at source lines with their complete
+ * parent range retained in chunk metadata. No Markdown is executed. */
+function markdownBlocks(markdown: string): MarkdownBlock[] {
+  const lines = sourceLines(markdown), blocks: MarkdownBlock[] = [];
+  const listMarker = /^ {0,3}(?:[-+*]|\d+[.)])\s+/;
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    const fence = line.text.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (fence) {
+      let endIndex = index + 1;
+      const close = new RegExp(`^ {0,3}${fence[1][0]}{${fence[1].length},}\\s*$`);
+      while (endIndex < lines.length && !close.test(lines[endIndex].text)) endIndex++;
+      const last = Math.min(endIndex, lines.length - 1);
+      blocks.push({ start: line.start, end: lines[last].end, kind: 'code', fence: fence[1], fenceInfo: fence[2] });
+      index = last; continue;
+    }
+    const math = /^ {0,3}\$\$/.test(line.text) ? '$$' : /^ {0,3}\\\[/.test(line.text) ? '\\[' : '';
+    if (math) {
+      const closing = math === '$$' ? '$$' : '\\]';
+      let endIndex = index;
+      if (!line.text.trim().slice(math.length).includes(closing)) {
+        endIndex++;
+        while (endIndex < lines.length && !lines[endIndex].text.trim().endsWith(closing)) endIndex++;
+      }
+      const last = Math.min(endIndex, lines.length - 1);
+      blocks.push({ start: line.start, end: lines[last].end, kind: 'math' }); index = last; continue;
+    }
+    const cells = parseMarkdownTableCells(line.text);
+    if (cells.length > 0 && (line.text.trim().startsWith('|') || (lines[index + 1] && isMarkdownTableDelimiter(lines[index + 1].text)))) {
+      let endIndex = index + 1;
+      while (endIndex < lines.length && lines[endIndex].text.trim() && parseMarkdownTableCells(lines[endIndex].text).length > 0 && (lines[endIndex].text.includes('|'))) endIndex++;
+      blocks.push({ start: line.start, end: lines[endIndex - 1].end, kind: 'table' }); index = endIndex - 1; continue;
+    }
+    // Keep isolated numbered policy clauses as headings. Consecutive Markdown
+    // ordered items and unordered lists form atomic list blocks.
+    const isList = /^ {0,3}[-+*]\s+/.test(line.text) || (listMarker.test(line.text) && !!lines[index + 1] && listMarker.test(lines[index + 1].text));
+    if (isList) {
+      let endIndex = index + 1;
+      while (endIndex < lines.length) {
+        const next = lines[endIndex].text;
+        if (listMarker.test(next) || /^\s{2,}\S/.test(next)) { endIndex++; continue; }
+        if (!next.trim() && lines[endIndex + 1] && (listMarker.test(lines[endIndex + 1].text) || /^\s{2,}\S/.test(lines[endIndex + 1].text))) { endIndex++; continue; }
+        break;
+      }
+      blocks.push({ start: line.start, end: lines[endIndex - 1].end, kind: 'list' }); index = endIndex - 1;
+    }
+  }
+  return blocks;
+}
+
+function insideBlock(blocks: MarkdownBlock[], offset: number): MarkdownBlock | undefined {
+  let low = 0, high = blocks.length - 1;
+  while (low <= high) {
+    const middle = (low + high) >>> 1, block = blocks[middle];
+    if (offset < block.start) high = middle - 1;
+    else if (offset >= block.end) low = middle + 1;
+    else return block;
+  }
+  return undefined;
+}
+
+function tableLines(text: string): string[] {
+  const blocks = markdownBlocks(text);
+  return sourceLines(text).filter(line => {
+    const block = insideBlock(blocks, line.start);
+    return (!block || block.kind === 'table') && line.text.includes('|') && parseMarkdownTableCells(line.text).length > 0;
+  }).map(line => line.text.trim());
+}
+
+function findSections(markdown: string, blocks: MarkdownBlock[]): Section[] {
   const sections: Section[] = [];
   // Parsed office documents often have no Markdown headings. Promote their
   // native structural boundaries (chapters, articles and enumerated clauses)
@@ -116,6 +200,7 @@ function findSections(markdown: string): Section[] {
   let currentHeading = '';
   let match: RegExpExecArray | null;
   while ((match = heading.exec(markdown))) {
+    if (insideBlock(blocks, match.index)) continue;
     if (match.index > currentStart && markdown.slice(currentStart, match.index).trim()) {
       sections.push({ start: currentStart, end: match.index, heading: currentHeading });
     }
@@ -128,12 +213,20 @@ function findSections(markdown: string): Section[] {
   return sections.length ? sections : [{ start: 0, end: markdown.length, heading: '' }];
 }
 
-function chooseBoundary(markdown: string, start: number, targetEnd: number): number {
+function chooseBoundary(markdown: string, start: number, targetEnd: number, sectionEnd: number, blocks: MarkdownBlock[]): number {
+  const block = insideBlock(blocks, targetEnd);
+  if (block && targetEnd > block.start) {
+    if (block.end - block.start <= activeSplitOptions.maxChars) {
+      return block.start > start ? block.start : Math.min(block.end, sectionEnd);
+    }
+    const line = markdown.lastIndexOf('\n', targetEnd - 1);
+    return line >= start ? line + 1 : targetEnd;
+  }
   if (targetEnd >= markdown.length) return markdown.length;
   const paragraph = markdown.lastIndexOf('\n\n', targetEnd);
-  if (paragraph > start + Math.floor(activeSplitOptions.maxChars * 0.55)) return paragraph;
+  if (paragraph > start + Math.floor(activeSplitOptions.maxChars * 0.55) && !insideBlock(blocks, paragraph)) return paragraph;
   const line = markdown.lastIndexOf('\n', targetEnd);
-  if (line > start + Math.floor(activeSplitOptions.maxChars * 0.55)) return line;
+  if (line > start + Math.floor(activeSplitOptions.maxChars * 0.55) && !insideBlock(blocks, line)) return line;
 
   // Adaptive Semantic Boundary: search for sentence punctuation (。！？； or .!? followed by space)
   const minPos = start + Math.floor(activeSplitOptions.maxChars * 0.50);
@@ -142,7 +235,7 @@ function chooseBoundary(markdown: string, start: number, targetEnd: number): num
   if (sentenceMatches.length > 0) {
     const lastMatch = sentenceMatches[sentenceMatches.length - 1];
     const sentenceEnd = minPos + (lastMatch.index ?? 0) + lastMatch[0].length;
-    if (sentenceEnd > minPos && sentenceEnd <= targetEnd) {
+    if (sentenceEnd > minPos && sentenceEnd <= targetEnd && !insideBlock(blocks, sentenceEnd)) {
       return sentenceEnd;
     }
   }
@@ -151,44 +244,31 @@ function chooseBoundary(markdown: string, start: number, targetEnd: number): num
 }
 
 function extractTableHeader(text: string): string | null {
-  const match = text.match(/(?:^|\n)(\|[^\n]+\|\r?\n\|[-\s:|]+\|)(?:\r?\n|$)/);
-  return match ? match[1].trim() : null;
+  const lines = tableLines(text);
+  for (let index = 1; index < lines.length; index++) {
+    if (isMarkdownTableDelimiter(lines[index])) return `${lines[index - 1]}\n${lines[index]}`;
+  }
+  return null;
 }
 
 export function getTableColumnCount(headerOrRow: string): number {
-  if (!headerOrRow) return 0;
-  const line = headerOrRow.split(/\r?\n/).find((l) => l.trim().startsWith('|') && l.trim().endsWith('|'));
-  if (!line) return 0;
-  return line.trim().slice(1, -1).split('|').length;
+  const line = tableLines(headerOrRow)[0];
+  return line ? parseMarkdownTableCells(line).length : 0;
 }
 
 export function parseTableRowsToKeyValues(tableText: string): { headers: string[]; rowsKv: string[] } {
-  const lines = tableText.split(/\r?\n/).map(l => l.trim()).filter(l => l.startsWith('|') && l.endsWith('|'));
-  if (lines.length < 3) return { headers: [], rowsKv: [] };
-  
-  const headerLine = lines[0];
-  const separatorLine = lines[1];
-  if (!separatorLine.includes('---')) return { headers: [], rowsKv: [] };
-  
-  const headers = headerLine.slice(1, -1).split('|').map(c => c.trim().replace(/\*\*/g, ''));
+  const lines = tableLines(tableText);
+  const delimiter = lines.findIndex(isMarkdownTableDelimiter);
+  if (delimiter < 1) return { headers: [], rowsKv: [] };
+  const headers = parseMarkdownTableCells(lines[delimiter - 1]).map(cell => cell.replace(/\*\*/g, ''));
   const rowsKv: string[] = [];
-  
-  for (let i = 2; i < lines.length; i++) {
-    const row = lines[i];
-    const cells = row.slice(1, -1).split('|').map(c => c.trim().replace(/\*\*/g, ''));
-    if (cells.length === 0 || cells.every(c => !c)) continue;
-    
-    const kvParts: string[] = [];
-    for (let j = 0; j < Math.min(headers.length, cells.length); j++) {
-      if (headers[j] && cells[j]) {
-        kvParts.push(`${headers[j]}: ${cells[j]}`);
-      }
-    }
-    if (kvParts.length > 0) {
-      rowsKv.push(kvParts.join(' | '));
-    }
+  for (const row of lines.slice(delimiter + 1)) {
+    if (isMarkdownTableDelimiter(row)) break;
+    const cells = parseMarkdownTableCells(row).map(cell => cell.replace(/\*\*/g, ''));
+    if (cells.every(cell => !cell)) continue;
+    const parts = headers.flatMap((header, index) => header && cells[index] ? [`${header}: ${cells[index]}`] : []);
+    if (parts.length) rowsKv.push(parts.join(' | '));
   }
-  
   return { headers, rowsKv };
 }
 
@@ -199,6 +279,8 @@ export function parseTableRowsToKeyValues(tableText: string): { headers: string[
 export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[] {
   const cleanMarkdown = (markdown || '').replace(/\0/g, '').replace(/\u0000/g, '');
   
+  const blocks = markdownBlocks(cleanMarkdown);
+
   // 1. Detect page markers
   type PageMarker = { index: number; pageNo: number };
   const pageMarkers: PageMarker[] = [];
@@ -206,6 +288,7 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
   let pMatch: RegExpExecArray | null;
   let autoPage = 1;
   while ((pMatch = pageRegex.exec(cleanMarkdown))) {
+    if (insideBlock(blocks, pMatch.index)?.kind === 'code' || insideBlock(blocks, pMatch.index)?.kind === 'math') continue;
     let pageNo = autoPage + 1;
     if (pMatch[1]) pageNo = parseInt(pMatch[1], 10);
     else if (pMatch[2]) pageNo = parseInt(pMatch[2], 10);
@@ -230,7 +313,7 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
 
   // 2. Detect clause structure
   const clauseMarkerRegex = /第[\d一二三四五六七八九十百千万〇零两]+[章节条]/g;
-  const clauseMarkersCount = (cleanMarkdown.match(clauseMarkerRegex) || []).length;
+  const clauseMarkersCount = Array.from(cleanMarkdown.matchAll(clauseMarkerRegex)).filter(match => !insideBlock(blocks, match.index ?? 0)).length;
   const hasClauseStructure = clauseMarkersCount >= 3;
 
   const chunks: IndexedMarkdownChunk[] = [];
@@ -245,7 +328,7 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
   let carriedTableHeader: string | null = null;
   const headingStack: Array<{ level: number; text: string }> = [];
   
-  for (const section of findSections(cleanMarkdown)) {
+  for (const section of findSections(cleanMarkdown, blocks)) {
     const sectionBody = cleanMarkdown.slice(section.start, section.end).trim();
     const isPageSection = !section.heading || /^#{1,6}\s*第\s*\d+\s*页/.test(section.heading);
     
@@ -285,10 +368,11 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
 
     let start = section.start;
     let first = true;
+    let actualOverlap = 0;
     while (start < section.end) {
       let end = section.end;
       if (!hasClauseStructure || (section.end - start > 5000)) {
-        end = chooseBoundary(cleanMarkdown, start, Math.min(start + activeSplitOptions.maxChars, section.end));
+        end = chooseBoundary(cleanMarkdown, start, Math.min(start + activeSplitOptions.maxChars, section.end), section.end, blocks);
         // If the remaining fragment after this split is tiny (< 150 chars, e.g. 1-2 table rows or half a sentence),
         // absorb it into the current chunk rather than creating an isolated orphaned fragment.
         if (section.end - end < 150) {
@@ -297,19 +381,28 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
       }
       
       const raw = cleanMarkdown.slice(start, end);
-      let content = raw.trim();
+      let content = insideBlock(blocks, start)?.kind === 'code' ? raw : raw.trim();
+      let syntheticFences = false;
+      // Long fenced blocks retain valid Markdown in each fragment; synthetic
+      // delimiters are projections, while charStart/End still identify source.
+      for (const block of blocks.filter(block => block.kind === 'code' && block.start < end && block.end > start)) {
+        if (start > block.start) { content = `${block.fence}${block.fenceInfo || ''}\n${content}`; syntheticFences = true; }
+        if (end < block.end) { content = `${content}\n${block.fence}`; syntheticFences = true; }
+      }
       // Extract OCR bounding boxes (emitted by the parser as hidden HTML
       // comments) and strip them from the indexed text so visual grounding
       // metadata never pollutes keyword/BM25 matching.
       const bboxes: Array<{ x: number; y: number; w: number; h: number; page?: number }> = [];
-      content = content.replace(/<!--\s*bbox:(\d+),(\d+),(\d+),(\d+)\s*-->/g, (_full, x, y, w, h) => {
+      const contentBlocks = markdownBlocks(content);
+      content = content.replace(/<!--\s*bbox:(\d+),(\d+),(\d+),(\d+)\s*-->/g, (_full, x, y, w, h, offset) => {
+        if (insideBlock(contentBlocks, offset)?.kind === 'code') return _full;
         bboxes.push({ x: Number(x), y: Number(y), w: Number(w), h: Number(h), page: getPageNo(start) });
         return '';
-      }).replace(/[ \t]+\n/g, '\n').trim();
+      }).trim();
       if (content) {
         // Table header propagation & fidelity (TAT-QA / MultiHiertt / TabFact optimization):
         // Automatically injects table headers into continuation chunks that contain orphan table rows.
-        const containsHeader = /(?:^|\n)\|[^\n]+\|\r?\n\s*\|[-\s:|]+\|/.test(content);
+        const containsHeader = !!extractTableHeader(content);
         let tableHeaderAdded = false;
 
         if (containsHeader) {
@@ -321,9 +414,10 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
         } else if (lastTableHeader) {
           const headerColCount = getTableColumnCount(lastTableHeader);
           const lines = content.split(/\r?\n/);
+          const availableTableRows = new Set(tableLines(content));
           const firstTableRowIdx = lines.findIndex((l) => {
             const trimmed = l.trim();
-            return trimmed.startsWith('|') && trimmed.endsWith('|') && !trimmed.includes('---');
+            return availableTableRows.has(trimmed) && !isMarkdownTableDelimiter(trimmed);
           });
           if (firstTableRowIdx >= 0) {
             const rowColCount = getTableColumnCount(lines[firstTableRowIdx]);
@@ -339,7 +433,7 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
           ? `${section.heading}\n\n${content}`
           : content;
           
-        const hasTableContent = containsHeader || tableHeaderAdded || /(?:^|\n)\s*\|[^\n]+\|/.test(content);
+        const hasTableContent = containsHeader || tableHeaderAdded || tableLines(content).length > 0;
         let tableHeaders: string[] | undefined;
         let tableRowsCount: number | undefined;
 
@@ -385,7 +479,9 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
               })
             : undefined,
           chunkStrategy: hasClauseStructure ? 'clause-based' : 'parent-child-section-window',
-          overlapChars: first ? 0 : activeSplitOptions.overlapChars,
+          overlapChars: actualOverlap,
+          ...(syntheticFences ? { synthetic_code_fences: true } : {}),
+          source_blocks: blocks.filter(block => block.start < end && block.end > start).map(block => ({ kind: block.kind, char_start: block.start, char_end: block.end, fragment_start: Math.max(start, block.start), fragment_end: Math.min(end, block.end), continued: start > block.start || end < block.end })),
           has_table: hasTableContent,
           ...(tableHeaders ? { table_headers: tableHeaders } : {}),
           ...(tableRowsCount ? { table_rows_count: tableRowsCount } : {}),
@@ -414,7 +510,13 @@ export function splitMarkdownIntoChunks(markdown: string): IndexedMarkdownChunk[
         });
       }
       if (end >= section.end) break;
-      const nextStart = Math.max(start + 1, end - activeSplitOptions.overlapChars);
+      let nextStart = Math.max(start + 1, end - activeSplitOptions.overlapChars);
+      const overlapBlock = insideBlock(blocks, nextStart);
+      if (overlapBlock) {
+        if (overlapBlock.end - overlapBlock.start <= activeSplitOptions.maxChars) nextStart = overlapBlock.start > start ? overlapBlock.start : end;
+        else { const newline = cleanMarkdown.indexOf('\n', nextStart); if (newline >= 0 && newline < end) nextStart = newline + 1; }
+      }
+      actualOverlap = Math.max(0, end - nextStart);
       start = nextStart;
       first = false;
     }
