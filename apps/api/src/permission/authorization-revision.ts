@@ -45,7 +45,9 @@ export async function readAuthorizationSnapshot(userId: string): Promise<Authori
 export async function assertAuthorizationSnapshot(userId: string, snapshot: AuthorizationSnapshot): Promise<void> {
   const current = await readAuthorizationSnapshot(userId);
   if (current.revision !== snapshot.revision || current.policyVersion !== snapshot.policyVersion || Date.now() >= snapshot.expiresAt) {
-    throw new ForbiddenException('Authorization changed; retry the request');
+    // 中止进行中的请求是"权限撤销最高优先级"的既定语义：并发发生的权限或
+    // 知识版本变更会让本轮证据失效。向用户说明可重试，避免暴露英文内部错误。
+    throw new ForbiddenException('您的权限或可见知识在此刻发生了变化，请重新提问以获取当前授权下的答案。');
   }
 }
 

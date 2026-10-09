@@ -1,5 +1,6 @@
 import { extractRawChunkText } from './retrieval-arms';
 import { answerStyleRule } from './answer-style';
+import { selectSupportingCitations } from './supporting-citations';
 
 /** Source indices are assigned after chunk merging. Preserve every relation
  * link in the final answer so an end value cannot masquerade as a proven path. */
@@ -18,7 +19,11 @@ export function multiHopAnswerDirective(complexity: string, citations: any[], en
   return rule + (plan ? '\n' + (english ? 'Retrieval grouping (navigation only, not facts):\n' : '检索分组（仅供定位，不是事实证据）：\n') + plan : '');
 }
 
-export function buildSourceContext(citations: any[], fallbackAnswer: string | undefined, isEnglishQuery: boolean, logger: { log(message: string): void }): string {
+export function buildSourceContext(allCitations: any[], fallbackAnswer: string | undefined, isEnglishQuery: boolean, logger: { log(message: string): void }): string {
+  // Only evidence that the reranker actually measured may support an answer.
+  // Unmeasured or far-below-best citations stay retrievable but are not handed
+  // to the model, which otherwise cites them as if they supported the claim.
+  const citations = selectSupportingCitations(allCitations);
   return citations.length > 0
       ? citations
           .map((cit: any, idx: number) => {
@@ -82,6 +87,7 @@ const CHINESE_ANSWER_RULES = `你是一个专业的企业级知识库智能助�
 （b）【多源合并】：若每个附加来源均直接支持同一条具体断言，可合并标注如 [1][2]。每个列举项和每个数值只引用实际记载该项或该数值及其适用范围的来源；只记载数量引导句、相关流程或另一项占比的来源，不能支撑缺失的名称或数值。合并角标时，每个附加来源都必须支持该条具体断言；否则拆分断言并分别引用。
 （c）仅有一份来源直接陈述该属性时，直接作答。
 （d）没有任何来源直接陈述该属性时：先给出已支持的部分事实与适用范围，再准确说明未覆盖的具体细节；只有检查全部提供的证据后才能声称某个维度未被覆盖，须区分已记载的阶段或类别名称与未提供的实施细节。只有参考资料与问题主体完全无关时才整句拒答。
+（d-1）【主体完全无关时直接拒答】：当问题所问的主体、对象或系统在全部来源中都没有出现（不是"缺某个属性"，而是"根本没有这个主体"）时，只用一句话明确说明知识库中没有该主体或该信息，随后即可结束；此时不得罗列其他主体的价格、数值或条目来说明"不相关"，也不得用"虽然没有 X 但有 Y"的句式代替拒答。
 （e）【问项歧义才附其他理解】：有一种理解直接契合问题时，回答该理解后即结束。只有问题文本本身存在实质歧义，且无法优先确定一个直接匹配问项时，才按所问属性标明有证据的不同理解并简短给出各自答案及角标。回答其他属性的相关框架不自动构成有效理解；不能把管理流程当作对象组成；明确的列举问题不得追加框架差异说明。此规则针对问题的理解，不针对来源之间取值不同；来源取值不同仍按（a）完整呈现。
 第 4 步 组稿：回答第一句开门见山，简明给出核心结论、明确答案、实体或数值、必要的适用范围及引用角标；不能为压缩字数删除必要限定。先用支撑原文明示的人群确定首句语法主语，再选择组成项名称；问题人群更宽泛时，答案必须将其替换为来源中的较窄人群，不能照搬问题中的宽泛主语。此范围要求优先于简短要求，即使只回答一句组成清单也必须保留。严禁开头堆砌客套废话。只输出答案，不展示选择过程。
 

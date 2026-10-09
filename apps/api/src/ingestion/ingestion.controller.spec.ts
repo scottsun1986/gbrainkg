@@ -1,5 +1,5 @@
 import AdmZip = require('adm-zip');
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, UnsupportedMediaTypeException } from '@nestjs/common';
 import { IngestionController } from './ingestion.controller';
 
 const mockPrisma: any = {
@@ -113,7 +113,7 @@ describe('IngestionController', () => {
       expect(mockIngestionService.enqueue).toHaveBeenCalledTimes(1);
     });
 
-    it('rejects unsupported file extension', async () => {
+    it('rejects unsupported file extension with 415', async () => {
       const file = {
         originalname: 'virus.exe',
         buffer: Buffer.from('binary-content'),
@@ -122,7 +122,24 @@ describe('IngestionController', () => {
 
       await expect(
         controller.uploadDocument('kb-1', file, {} as any),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(UnsupportedMediaTypeException);
+    });
+
+    it('treats a filename without an extension as Markdown', async () => {
+      const file = {
+        originalname: 'README',
+        buffer: Buffer.from('# 标题\n\n无扩展名正文。'),
+        size: 24,
+      };
+
+      const res = await controller.uploadDocument('kb-1', file, {} as any);
+
+      expect(res.status).toBe('accepted');
+      expect(res.documents.length).toBe(1);
+      expect(mockPrisma.document.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ title: 'README.md' }) }),
+      );
+      expect(mockIngestionService.enqueue).toHaveBeenCalledTimes(1);
     });
   });
 

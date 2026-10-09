@@ -52,7 +52,11 @@ def chars(text) -> int:
 
 
 def _value(value):
-    if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
+    if isinstance(value, datetime.datetime):
+        # Excel dates carry midnight as their time component; rendering that as
+        # "T00:00:00" is noise for readers and breaks exact date matching.
+        return value.date().isoformat() if (value.hour, value.minute, value.second, value.microsecond) == (0, 0, 0, 0) else value.isoformat()
+    if isinstance(value, (datetime.date, datetime.time)):
         return value.isoformat()
     if isinstance(value, datetime.timedelta):
         return value.total_seconds()
@@ -505,7 +509,9 @@ def _xls_cell(workbook, raw, column: int, row: int) -> dict:
     if kind == 'boolean':
         value = bool(value)
     elif kind == 'date':
-        value = xlrd.xldate_as_datetime(value, workbook.datemode).isoformat()
+        stamp = xlrd.xldate_as_datetime(value, workbook.datemode)
+        # Keep a real time component; drop the artificial midnight Excel stores.
+        value = stamp.date().isoformat() if (stamp.hour, stamp.minute, stamp.second) == (0, 0, 0) else stamp.isoformat()
     elif kind == 'error':
         value = xlrd.error_text_from_code.get(value, str(value))
     fmt = 'General'

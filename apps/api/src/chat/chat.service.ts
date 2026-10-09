@@ -2,6 +2,7 @@ import { getChatTiming } from '../observability/chat-timing';
 import { fallbackChunkToCitation } from './fallback-citation';
 export { fallbackChunkToCitation, type CitationScoreSource } from './fallback-citation';
 export { truncateKeepingHeadAndTail, smartTruncateChunkText } from './answer-prompt';
+import { selectSupportingCitations } from './supporting-citations';
 import { buildSourceContext, buildStaticAnswerRules, multiHopAnswerDirective, truncateKeepingHeadAndTail, smartTruncateChunkText } from './answer-prompt';
 import { buildCoverageQualifier, buildCoverageScopeNote, isIncompleteCoverage, normalizeParseCoverage } from './parse-coverage';
 import { evidenceConfidenceScores, decideEvidenceSufficiency } from './evidence-sufficiency';
@@ -4812,16 +4813,19 @@ export class ChatService {
         { before: citationsBeforeMerge, after: orderedCitations.length },
       );
     }
-    queryResult.citations = orderedCitations;
+    // Long-tail hits below the support ratio are not evidence: they stay out of
+    // both the prompt and the citation list the user sees, so the displayed
+    // sources match the claims actually made in the answer.
+    queryResult.citations = selectSupportingCitations(orderedCitations);
     // Diagnostic only: the selected-source list repeats on every turn, so it
     // must not pollute warn-level logs (operators triage warns as incidents).
-    this.logger.debug('[PROMPT_SOURCES] ' + orderedCitations.map((c: any, i: number) => `[${i + 1}] ${c.docTitle}`).join(' | '));
+    this.logger.debug('[PROMPT_SOURCES] ' + queryResult.citations.map((c: any, i: number) => `[${i + 1}] ${c.docTitle}`).join(' | '));
     const isEnglishQuery = /^[\x00-\x7F]*$/.test(question);
-    const evidenceReasoningGroups = buildEvidenceReasoningGroups(orderedCitations);
+    const evidenceReasoningGroups = buildEvidenceReasoningGroups(queryResult.citations);
     const evidenceReasoningMap = structuredEvidencePlan.groups.length > 0
       ? formatEvidenceReasoningMap(evidenceReasoningGroups, isEnglishQuery)
       : '';
-    const sourceContext = buildSourceContext(orderedCitations, queryResult.answer, isEnglishQuery, this.logger);
+    const sourceContext = buildSourceContext(queryResult.citations, queryResult.answer, isEnglishQuery, this.logger);
     let compiledTruthContext = evidenceReasoningMap
       ? `${evidenceReasoningMap}\n\n${sourceContext}`
       : sourceContext;

@@ -29,7 +29,7 @@ describe('strict output exact source barrier', () => {
   it('rejects a changed authority before consulting source evidence', async () => {
     tx.$queryRaw.mockResolvedValueOnce([{ revision: 11n, policyVersion: 'test', active: true }]);
     const emit = jest.fn();
-    await expect(withStrictOutputPermit('user', snapshot, emit, manifest)).rejects.toThrow('Authorization changed');
+    await expect(withStrictOutputPermit('user', snapshot, emit, manifest)).rejects.toThrow(/权限或可见知识/);
     expect(validateEvidenceDependenciesInClient).not.toHaveBeenCalled();
     expect(emit).not.toHaveBeenCalled();
   });
@@ -44,7 +44,7 @@ describe('strict output exact source barrier', () => {
   it('never reads resource content after authority revocation', async () => {
     tx.$queryRaw.mockResolvedValueOnce([{ revision: 11n, policyVersion: 'test', active: true }]);
     const read = jest.fn(); const drain = jest.fn();
-    await expect(withStrictResourceOutput('user', snapshot, read, drain)).rejects.toThrow('Authorization changed');
+    await expect(withStrictResourceOutput('user', snapshot, read, drain)).rejects.toThrow(/权限或可见知识/);
     expect(read).not.toHaveBeenCalled(); expect(drain).not.toHaveBeenCalled();
   });
 

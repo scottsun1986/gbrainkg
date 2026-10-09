@@ -129,3 +129,18 @@ describe('answer prompt ownership', () => {
     expect(multiHopAnswerDirective('multi_hop', [], true)).toBe('');
   });
 });
+
+describe('answer prompt refusal rules', () => {
+  it('forbids substituting unrelated values for a missing subject', () => {
+    const rules = buildStaticAnswerRules(false);
+    expect(rules).toContain('【主体完全无关时直接拒答】');
+    expect(rules).toContain('不得罗列其他主体的价格、数值或条目来说明"不相关"');
+  });
+
+  it('keeps the partial-coverage rule for missing attributes', () => {
+    // A missing attribute is not the same as a missing subject: partial answers
+    // with scope notes must remain reachable.
+    const rules = buildStaticAnswerRules(false);
+    expect(rules).toContain('（d）没有任何来源直接陈述该属性时');
+  });
+});

@@ -13,6 +13,7 @@ import {
   Post,
   Req,
   UploadedFile,
+  UnsupportedMediaTypeException,
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
@@ -123,7 +124,11 @@ export class IngestionController {
     if (!file.size || !file.buffer || file.buffer.length === 0) {
       throw new BadRequestException("上传的文件为空，已拒绝受理。");
     }
-    const filename = normalizeUploadFilename(file.originalname);
+    let filename = normalizeUploadFilename(file.originalname);
+    // A filename without an extension is plain text; parser-worker already
+    // defaults such uploads to Markdown, so accept them here instead of
+    // rejecting the same payload the parser would have handled.
+    if (!extname(filename)) filename = `${filename}.md`;
     const extension = extname(filename).toLowerCase();
     const textLikeExtensions = new Set([".md", ".txt", ".csv", ".html", ".htm"]);
     if (
@@ -248,7 +253,11 @@ export class IngestionController {
 
     const documentId = randomUUID();
     if (!SUPPORTED_UPLOAD_EXTENSIONS.has(extension)) {
-      throw new BadRequestException("Unsupported file type.");
+      // 415 keeps the machine-readable contract aligned with the parser worker,
+      // which rejects unknown types with 415 as well.
+      throw new UnsupportedMediaTypeException(
+        `不支持的文件类型：${extension || "无扩展名"}。支持：${[...SUPPORTED_UPLOAD_EXTENSIONS].join(" ")}`,
+      );
     }
     const contentHash = createHash('sha256').update(file.buffer).digest('hex');
     const rawPath = `${documentId}/${filename}`;

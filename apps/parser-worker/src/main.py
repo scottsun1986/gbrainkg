@@ -16,6 +16,7 @@ import re
 import secrets
 import subprocess
 import signal
+import zipfile
 import resource
 import sys
 if TYPE_CHECKING or __package__:
@@ -111,7 +112,15 @@ def safe_error(error: BaseException) -> str:
     # Never expose provider response bodies or URLs carrying OAuth credentials.
     if isinstance(error, (RuntimeError, ValueError)) and (str(error) == "Image extraction requires configured OCR, VLM, or local Docling" or str(error).startswith(("Image exceeds ", "Workbook exceeds ", "Worksheet exceeds ", "Office package exceeds ", "Structured table exceeds ", "Shared parser temporary ", "Parser temporary disk ", "Legacy PPT conversion requires ", "Parser returned only scaffolding"))):
         return str(error)
-    return f"Parser operation failed ({type(error).__name__})"
+    # Corrupt / unreadable containers are the most common operator-facing failure.
+    # Report them as such; the internal exception class never reaches the user.
+    if isinstance(error, zipfile.BadZipFile):
+        return "文件已损坏或不是有效的 Office/ZIP 压缩包，请重新导出后上传"
+    if isinstance(error, PermissionError):
+        return "文件已加密或受密码保护，请提供未加密版本"
+    if isinstance(error, UnicodeDecodeError):
+        return "文件编码无法识别，请另存为 UTF-8 后重试"
+    return f"文件解析失败（{type(error).__name__}），请确认文件完整且格式正确"
 
 
 def _module_available(name: str) -> bool:

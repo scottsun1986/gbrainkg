@@ -15,7 +15,7 @@ async function withOutputLock<T>(userId: string, snapshot: AuthorizationSnapshot
       FROM "AuthorizationState" WHERE id=1
     `;
     if (!rows[0]?.active || String(rows[0].revision) !== snapshot.revision || rows[0].policyVersion !== snapshot.policyVersion || Date.now() >= snapshot.expiresAt) {
-      throw new ForbiddenException('Authorization changed; buffered answer discarded');
+      throw new ForbiddenException('您的权限或可见知识在回答输出前发生变化，已丢弃本次输出，请重新提问。');
     }
     if (getRequestContext()?.cancellation?.aborted) throw getRequestContext()!.cancellation!.reason;
     return work(tx);
