@@ -102,4 +102,21 @@ describe('query arm contribution ledger', () => {
     execution.recordEvidenceStage('citations', [{ ...a, evidenceId: undefined, documentVersionId: 'v2' }]);
     expect(execution.report().arms.dense.finalCitations).toBe(0);
   });
+
+  it('summarizes channel contributions for budget decisions (F07)', () => {
+    const execution = new QueryExecution('q');
+    const a = { id: 'a', documentId: 'doc', documentVersionId: 'v1', content: 'evidence' };
+    const b = { id: 'b', documentId: 'doc', documentVersionId: 'v1', content: 'other' };
+    execution.startArm('dense'); execution.finishArm('dense', [a]);
+    execution.startArm('graph'); execution.finishArm('graph', [b]);
+    execution.skipArm('sparse', 'disabled');
+    execution.recordEvidenceStage('context', [a]);
+    execution.recordEvidenceStage('citations', [a]);
+    const contributions = execution.report().contributions;
+    // Sorted by final citations, then unique candidates: the arm that produced
+    // evidence the answer consumed ranks first, skipped arms keep their reason.
+    expect(contributions[0]).toMatchObject({ channel: 'dense', uniqueCandidates: 1, finalCitations: 1 });
+    expect(contributions.find((row) => row.channel === 'graph')).toMatchObject({ uniqueCandidates: 1, finalCitations: 0 });
+    expect(contributions.find((row) => row.channel === 'sparse')).toMatchObject({ started: false, skippedReason: 'disabled' });
+  });
 });

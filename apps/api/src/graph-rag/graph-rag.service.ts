@@ -51,6 +51,7 @@ import { withServiceContext } from '../db/tenant-context.service';
 import { recordFailopen } from '../observability/failopen';
 import { randomUUID } from 'node:crypto';
 import { reconcileIncrementalGraph,communityInputFingerprint,withCommunityInputs } from './incremental-projection';
+import { entityIdentityKey } from './graph-identity';
 
 export type EntityType = 'concept' | 'organization' | 'system' | 'policy' | 'person' | 'document';
 export type RelationType = 'contains' | 'references' | 'regulates' | 'depends_on' | 'relates_to' | 'mentions' | 'supersedes' | 'amends';
@@ -61,6 +62,8 @@ export interface ExtractedEntity {
   description?: string;
   sourceDocId?: string;
 }
+
+export { entityIdentityKey } from './graph-identity';
 
 export interface ExtractedRelation {
   sourceName: string;
@@ -759,7 +762,9 @@ ${chunkContent.slice(0, 4000)}
     const { entities, relations } = extracted;
     if (!entities.length) return { entityCount: 0, relationCount: 0 };
 
-    const entityNameToId = new Map<string, string>();
+    const entityIdByIdentity = new Map<string, string>();
+    const entityIdsByName = new Map<string, string[]>();
+    const resolvedIdByAlias = new Map<string, string>();
     const entityContributions: Array<{ id: string; docId: string }> = [];
 
     // 0. Entity resolution. Surface forms of the same real-world entity (an
@@ -767,13 +772,18 @@ ${chunkContent.slice(0, 4000)}
     //    same person written with/without a title) used to become separate nodes, so
     //    relations landed on different nodes and the graph fragmented. Fold each
     //    incoming name into an existing canonical entity and remember the new
-    //    surface form as an alias.
-    const aliasToCanonical = await this.resolveEntityAliases(kbId, entities);
-    const canonicalByName = new Map<string, ExtractedEntity>();
+    //    surface form as an alias WITH its merge evidence (ledger below).
+    //    Resolution is type-aware: a name folded into a different-kind entity is
+    //    how "系统A" silently became an organisation before (F05).
+    const aliasAssignments = await this.resolveEntityAliases(kbId, entities);
+    const canonicalByIdentity = new Map<string, ExtractedEntity>();
     for (const entity of entities) {
-      const canonicalName = aliasToCanonical.get(entity.name) || entity.name;
-      if (!canonicalByName.has(canonicalName)) {
-        canonicalByName.set(canonicalName, { ...entity, name: canonicalName });
+      const assignment = aliasAssignments.get(entity.name);
+      const canonicalName = assignment?.canonical || entity.name;
+      const canonicalType = assignment?.type || entity.type;
+      const identity = entityIdentityKey(canonicalName, canonicalType);
+      if (!canonicalByIdentity.has(identity)) {
+        canonicalByIdentity.set(identity, { ...entity, name: canonicalName, type: canonicalType as EntityType });
       }
     }
 
@@ -781,19 +791,21 @@ ${chunkContent.slice(0, 4000)}
     //    The previous per-entity upsert was a serial N+1: a document with 200
     //    entities cost 200 round trips inside the ingestion worker. The batch
     //    statement keeps the "create or refresh type/description" semantics and
-    //    returns every id in a single RETURNING set. Names are de-duplicated
+    //    returns every id in a single RETURNING set. Identities are de-duplicated
     //    first because PostgreSQL rejects two rows touching the same conflict
     //    target in one statement.
     const uniqueEntities: typeof entities = [];
-    const seenEntityNames = new Set<string>();
-    const dedupedCanonical = Array.from(canonicalByName.values());
+    const seenIdentities = new Set<string>();
+    const dedupedCanonical = Array.from(canonicalByIdentity.values());
     for (let i = dedupedCanonical.length - 1; i >= 0; i -= 1) {
       const entity = dedupedCanonical[i];
-      if (seenEntityNames.has(entity.name)) continue;
-      seenEntityNames.add(entity.name);
+      const identity = entityIdentityKey(entity.name, entity.type);
+      if (seenIdentities.has(identity)) continue;
+      seenIdentities.add(identity);
       uniqueEntities.push(entity);
     }
     const entityPayload = uniqueEntities.map((e) => ({
+      entityKey: entityIdentityKey(e.name, e.type),
       name: e.name,
       type: e.type,
       description: e.description || null,
@@ -801,14 +813,13 @@ ${chunkContent.slice(0, 4000)}
     }));
     const upserted: any[] = entityPayload.length
       ? await withServiceContext(this.prisma, (tx) => (tx as any).$queryRaw`
-          INSERT INTO "GraphEntity" ("id", "kbId", "name", "type", "description", "aliases", "properties", "createdAt", "updatedAt")
-          SELECT gen_random_uuid(), ${kbId}::uuid, t.name, COALESCE(t.type, 'concept'), t.description,
+          INSERT INTO "GraphEntity" ("id", "kbId", "entityKey", "name", "type", "description", "aliases", "properties", "createdAt", "updatedAt")
+          SELECT gen_random_uuid(), ${kbId}::uuid, t."entityKey", t.name, COALESCE(t.type, 'concept'), t.description,
                  '[]'::jsonb, COALESCE(t.properties, '{}'::jsonb), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
           FROM jsonb_to_recordset(${JSON.stringify(entityPayload)}::jsonb)
-            AS t(name text, type text, description text, properties jsonb)
-          ON CONFLICT ("kbId", "name") DO UPDATE
-            SET "type" = EXCLUDED."type",
-                "description" = COALESCE(EXCLUDED."description", "GraphEntity"."description"),
+            AS t("entityKey" text, name text, type text, description text, properties jsonb)
+          ON CONFLICT ("kbId", "entityKey") DO UPDATE
+            SET "description" = COALESCE(EXCLUDED."description", "GraphEntity"."description"),
                 "properties" = COALESCE("GraphEntity"."properties", '{}'::jsonb)
                   || CASE WHEN EXCLUDED."properties"->'docIds' IS NULL
                           THEN '{}'::jsonb
@@ -819,22 +830,64 @@ ${chunkContent.slice(0, 4000)}
                                )
                      END,
                 "updatedAt" = CURRENT_TIMESTAMP
-          RETURNING "id", "name"
+          RETURNING "id", "name", "entityKey"
         `)
       : [];
     for (const row of upserted) {
-      entityNameToId.set(String(row.name), String(row.id));
+      const id = String(row.id);
+      entityIdByIdentity.set(String(row.entityKey), id);
+      const name = String(row.name);
+      const list = entityIdsByName.get(name) || [];
+      if (!list.includes(id)) list.push(id);
+      entityIdsByName.set(name, list);
     }
+    /**
+     * Resolve a possibly-ambiguous display name to one entity id. Same-name
+     * entities of different kinds coexist, so a relation endpoint prefers the
+     * entity contributed by the relation's own provenance document; otherwise
+     * the choice is deterministic (sorted id) instead of last-write-wins.
+     */
+    const resolveEntityId = (name: string, provenanceDocId?: string): string | undefined => {
+      const aliasTarget = resolvedIdByAlias.get(name);
+      if (aliasTarget) return aliasTarget;
+      const ids = (entityIdsByName.get(name) || []).slice().sort();
+      if (!ids.length) return undefined;
+      if (ids.length === 1) return ids[0];
+      if (provenanceDocId) {
+        const fromDoc = [...new Set(uniqueEntities
+          .filter((e) => e.name === name && e.sourceDocId === provenanceDocId)
+          .map((e) => entityIdByIdentity.get(entityIdentityKey(e.name, e.type)))
+          .filter((id): id is string => Boolean(id)))];
+        if (fromDoc.length === 1) return fromDoc[0];
+      }
+      return ids[0];
+    };
     // Record the resolved surface forms as aliases of their canonical entity, and
-    // let relations that referenced the alias resolve to the same id.
+    // let relations that referenced the alias resolve to the same id. The same
+    // merge is written to the reviewable alias ledger with its evidence.
     const aliasPayload = new Map<string, string[]>();
-    for (const [alias, canonicalName] of aliasToCanonical) {
-      const canonicalId = entityNameToId.get(canonicalName);
-      if (!canonicalId || alias === canonicalName) continue;
-      entityNameToId.set(alias, canonicalId);
+    const aliasLedger: Array<{ entityId: string; alias: string; evidence: Record<string, unknown> }> = [];
+    for (const [alias, assignment] of aliasAssignments) {
+      if (alias === assignment.canonical) continue;
+      const canonicalId = entityIdByIdentity.get(entityIdentityKey(assignment.canonical, assignment.type));
+      if (!canonicalId) continue;
+      resolvedIdByAlias.set(alias, canonicalId);
       const list = aliasPayload.get(canonicalId) || [];
       if (!list.includes(alias)) list.push(alias);
       aliasPayload.set(canonicalId, list);
+      aliasLedger.push({ entityId: canonicalId, alias, evidence: assignment.evidence || {} });
+    }
+    if (aliasLedger.length) {
+      await withServiceContext(this.prisma, (tx) => (tx as any).$executeRaw`
+        INSERT INTO "GraphEntityAlias" ("id", "kbId", "entityId", "alias", "evidence", "createdAt")
+        SELECT gen_random_uuid(), ${kbId}::uuid, t."entityId"::uuid, t.alias,
+               COALESCE(t.evidence, '{}'::jsonb), CURRENT_TIMESTAMP
+        FROM jsonb_to_recordset(${JSON.stringify(aliasLedger)}::jsonb)
+          AS t("entityId" text, alias text, evidence jsonb)
+        ON CONFLICT ("kbId", "alias") DO UPDATE
+          SET "entityId" = EXCLUDED."entityId",
+              "evidence" = EXCLUDED."evidence"
+      `);
     }
     if (aliasPayload.size) {
       const payload = Array.from(aliasPayload.entries()).map(([id, aliases]) => ({ id, aliases }));
@@ -854,7 +907,7 @@ ${chunkContent.slice(0, 4000)}
     }
     const entityIdBySourceDoc = new Map<string, { id: string; docId: string }>();
     for (const e of uniqueEntities) {
-      const id = entityNameToId.get(e.name);
+      const id = entityIdByIdentity.get(entityIdentityKey(e.name, e.type));
       if (!id || !e.sourceDocId) continue;
       // One contribution per (entity, document): the merge below is a set
       // union, so repeating the same documentId would be wasted work.
@@ -902,8 +955,8 @@ ${chunkContent.slice(0, 4000)}
       }
     >();
     for (const r of relations) {
-      const sourceId = entityNameToId.get(r.sourceName);
-      const targetId = entityNameToId.get(r.targetName);
+      const sourceId = resolveEntityId(r.sourceName, r.provenanceDocId);
+      const targetId = resolveEntityId(r.targetName, r.provenanceDocId);
       if (!sourceId || !targetId || sourceId === targetId) continue;
       const key = relationKey(sourceId, targetId, r.relationType);
       const newProv = r.snippet
@@ -984,23 +1037,26 @@ ${chunkContent.slice(0, 4000)}
     }
 
     return {
-      entityCount: entityMapSize(entityNameToId),
+      entityCount: entityIdByIdentity.size,
       relationCount: savedRelations,
     };
   }
 
   /**
    * Resolve incoming entity names against the entities already stored for this
-   * knowledge base, returning a `surface form -> canonical name` map.
+   * knowledge base, returning `surface form -> { canonical name, type, evidence }`.
    *
-   * Two rules, both conservative and configuration-gated:
+   * Rules, all conservative and configuration-gated:
+   *  0. the alias ledger is consulted first: a recorded merge is re-applied
+   *     with its evidence instead of being re-derived heuristically;
    *  1. trigram similarity >= GRAPHRAG_ENTITY_ALIAS_THRESHOLD (default 0.86):
    *     catches spacing/punctuation/inflection variants of the same string;
-   *  2. containment *with matching type* (an abbreviation inside the full legal
-   *     name), which is how an abbreviation relates to a full name.
+   *  2. containment (an abbreviation inside the full legal name).
    *     The shorter name must be at least GRAPHRAG_ENTITY_ALIAS_MIN_CHARS (4)
    *     characters and at least 60% of the longer one, so a short title is not
    *     folded into a longer, distinct title that merely contains it.
+   * Both rules require matching entity kinds (F05); a cross-kind string match is
+   * a mis-merge risk, not an alias.
    *
    * pg_trgm's GIN index on GraphEntity.name backs the candidate lookup
    * (migration 20260919100000_graph_search_indexes); the decision itself is made
@@ -1009,8 +1065,8 @@ ${chunkContent.slice(0, 4000)}
   private async resolveEntityAliases(
     kbId: string,
     entities: ExtractedEntity[],
-  ): Promise<Map<string, string>> {
-    const assignments = new Map<string, string>();
+  ): Promise<Map<string, { canonical: string; type: string; evidence: Record<string, unknown> }>> {
+    const assignments = new Map<string, { canonical: string; type: string; evidence: Record<string, unknown> }>();
     if (process.env.GRAPHRAG_ENTITY_RESOLUTION === 'false') return assignments;
     const threshold = Number(process.env.GRAPHRAG_ENTITY_ALIAS_THRESHOLD || 0.86);
     const minChars = Math.max(4, Number(process.env.GRAPHRAG_ENTITY_ALIAS_MIN_CHARS || 4));
@@ -1022,6 +1078,34 @@ ${chunkContent.slice(0, 4000)}
     if (!seeds.length) return assignments;
 
     const typeByName = new Map(entities.map((e) => [e.name, e.type]));
+
+    // 0. Ledger first: a previously accepted merge is a recorded decision, not
+    //    a heuristic, so re-apply it exactly (with its evidence). Type
+    //    compatibility still gates it — a surface form that now appears with a
+    //    different kind must not be folded across kinds again.
+    try {
+      const ledger: any[] = (await withServiceContext(this.prisma, (tx) => (tx as any).$queryRaw`
+        SELECT a.alias AS incoming, e.name AS canonical, e.type AS "canonicalType"
+        FROM "GraphEntityAlias" a
+        JOIN "GraphEntity" e ON e.id = a."entityId"
+        WHERE a."kbId" = ${kbId}::uuid AND a.alias = ANY(${seeds}::text[])
+      `)) || [];
+      for (const row of ledger) {
+        const incoming = String(row.incoming);
+        const incomingType = typeByName.get(incoming);
+        const canonicalType = String(row.canonicalType || 'concept');
+        if (incomingType && canonicalType && incomingType !== canonicalType) continue;
+        assignments.set(incoming, {
+          canonical: String(row.canonical),
+          type: canonicalType,
+          evidence: { method: 'alias_ledger' },
+        });
+      }
+    } catch (err) { throwAuthorizationFailure(err);
+      this.logger.debug(
+        `Entity alias ledger lookup failed (continuing with fresh resolution): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
 
     let candidates: any[] = [];
     try {
@@ -1053,12 +1137,15 @@ ${chunkContent.slice(0, 4000)}
       return assignments;
     }
 
-    const bestByIncoming = new Map<string, { canonical: string; similarity: number; accepted: boolean }>();
+    const bestByIncoming = new Map<string, { canonical: string; type: string; similarity: number; accepted: boolean; method: 'similarity' | 'contains' }>();
     for (const row of candidates) {
       const incoming = String(row.incoming);
+      // A ledger decision already fixed this surface form's identity.
+      if (assignments.has(incoming)) continue;
       const canonical = String(row.canonical);
       const similarity = Number(row.similarity) || 0;
       const incomingType = typeByName.get(incoming);
+      const canonicalType = String(row.canonicalType || 'concept');
       const typeCompatible = !incomingType || !row.canonicalType || incomingType === row.canonicalType;
       const shorter = incoming.length <= canonical.length ? incoming : canonical;
       const longer = incoming.length <= canonical.length ? canonical : incoming;
@@ -1072,18 +1159,33 @@ ${chunkContent.slice(0, 4000)}
         longer.includes(shorter) &&
         shorter.length >= minChars &&
         (shorter.length / longer.length >= 0.6 || Boolean(legalFormSuffix));
-      const accepted = similarity >= threshold || (contains && typeCompatible);
+      // Type compatibility gates BOTH rules (F05): a near-identical string of a
+      // different kind (a system vs an organisation) is a mis-merge risk, not
+      // a safe alias. The previous code only enforced it on containment, so a
+      // high trigram score could still collapse different kinds.
+      const accepted = typeCompatible && (similarity >= threshold || contains);
       if (!accepted) continue;
+      const method: 'similarity' | 'contains' = similarity >= threshold ? 'similarity' : 'contains';
       const previous = bestByIncoming.get(incoming);
       const score = similarity + (contains ? 0.1 : 0);
       const previousScore = previous ? previous.similarity + (previous.accepted ? 0.1 : 0) : -1;
       if (!previous || score > previousScore) {
-        bestByIncoming.set(incoming, { canonical, similarity, accepted });
+        bestByIncoming.set(incoming, { canonical, type: canonicalType, similarity, accepted, method });
       }
     }
 
     for (const [incoming, match] of bestByIncoming) {
-      if (incoming !== match.canonical) assignments.set(incoming, match.canonical);
+      if (incoming === match.canonical) continue;
+      assignments.set(incoming, {
+        canonical: match.canonical,
+        type: match.type,
+        evidence: {
+          method: match.method,
+          similarity: Number(match.similarity.toFixed(4)),
+          incomingType: typeByName.get(incoming) || null,
+          canonicalType: match.type,
+        },
+      });
     }
     if (assignments.size) {
       this.logger.log(
@@ -2342,8 +2444,4 @@ ${relationLines.length ? relationLines.join('\n') : '（无显式关系）'}`;
       return empty;
     }
   }
-}
-
-function entityMapSize(map: Map<any, any>): number {
-  return map.size;
 }

@@ -1,5 +1,15 @@
 import { HybridRetrievalService, lateInteractionScore } from './hybrid-retrieval.service';
 import * as failopen from '../observability/failopen';
+import { runWithRequestContext } from '../observability/request-context';
+
+const mockPrisma: any = {
+  $queryRaw: jest.fn(),
+  $executeRaw: jest.fn(),
+  // boundedReadSql sets statement_timeout through $queryRaw and then runs the
+  // probe against the same surface.
+  $transaction: jest.fn(async (fn: any) => fn({ $queryRaw: mockPrisma.$queryRaw })),
+};
+jest.mock('../prisma', () => ({ getPrismaClient: jest.fn(() => mockPrisma) }));
 
 /**
  * The sparse arm is a recall channel: when it degrades it must fail open
@@ -74,5 +84,46 @@ describe('HybridRetrievalService.searchSparse', () => {
     await svc.searchSparse(['kb-1'], 'same query');
     await svc.searchSparse(['kb-1'], 'same query');
     expect(embedding.embedHybridOne).toHaveBeenCalledTimes(1);
+  });
+
+  it('applies the readable-document predicate inside the ranked CTE before LIMIT', async () => {
+    const embedding = makeEmbedding();
+    const svc = new HybridRetrievalService(embedding as any);
+    mockPrisma.$queryRaw.mockResolvedValue([]);
+    const userId = '11111111-1111-4111-8111-111111111111';
+    await runWithRequestContext({ requestId: 'f03-test', userId }, () =>
+      svc.searchSparse(['22222222-2222-4222-8222-222222222222'], 'query', 5),
+    );
+    expect(mockPrisma.$transaction).toHaveBeenCalled();
+    const calls = mockPrisma.$queryRaw.mock.calls;
+    // Rebuild the tagged template faithfully: strings[0] value[0] strings[1]…
+    // Nested Prisma.Sql fragments (the readable-document predicate) arrive as
+    // interpolated values with a rendered `.text`. The last call is the ranked
+    // sparse probe (set_config runs first).
+    const renderTagged = (args: any[]) => {
+      const strings = args[0] as string[];
+      let out = '';
+      for (let i = 0; i < strings.length; i += 1) {
+        out += strings[i];
+        if (i < args.length - 1) {
+          const value = args[i + 1];
+          out += typeof value?.text === 'string' ? value.text : String(value);
+        }
+      }
+      return out;
+    };
+    const sql = renderTagged(calls[calls.length - 1]);
+    const rankedIdx = sql.indexOf('ranked AS');
+    const aclIdx = sql.indexOf('"DocumentAcl"');
+    const limitIdx = sql.lastIndexOf('LIMIT');
+    expect(rankedIdx).toBeGreaterThan(-1);
+    // Authorization (ACL) resolves where the candidate set is built, and the
+    // LIMIT that used to truncate unreadable rows away from the TopK comes after.
+    expect(aclIdx).toBeGreaterThan(rankedIdx);
+    expect(aclIdx).toBeLessThan(limitIdx);
+    // The whole probe runs under a server-side statement budget: boundedRead
+    // sets statement_timeout for the transaction before the probe executes.
+    const allSql = calls.map((call: any[]) => renderTagged(call)).join('\n');
+    expect(allSql).toContain('statement_timeout');
   });
 });

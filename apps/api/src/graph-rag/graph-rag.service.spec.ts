@@ -1,4 +1,5 @@
 import { GraphRagService } from './graph-rag.service';
+import { entityIdentityKey } from './graph-identity';
 
 const mockPrisma: any = {
   $executeRaw: jest.fn(),
@@ -52,6 +53,15 @@ describe('GraphRagService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     service = new GraphRagService();
+  });
+
+  describe('entityIdentityKey (F05)', () => {
+    it('normalizes the label but keeps the kind in the identity', () => {
+      expect(entityIdentityKey(' 数据 平台 ', 'system')).toBe('数据 平台|system');
+      expect(entityIdentityKey('RAGFlow', 'system')).toBe('ragflow|system');
+      expect(entityIdentityKey('RAGFlow', 'organization')).not.toBe(entityIdentityKey('RAGFlow', 'system'));
+      expect(entityIdentityKey('RAGFlow', '')).toBe('ragflow|concept');
+    });
   });
 
   describe('classifyEntityType', () => {
@@ -133,14 +143,14 @@ describe('GraphRagService', () => {
   describe('persistGraphElements', () => {
     it('persists entities and relations gracefully', async () => {
       mockPrisma.graphEntity.upsert
-        .mockResolvedValueOnce({ id: 'ent-1', name: '系统A' })
-        .mockResolvedValueOnce({ id: 'ent-2', name: '服务B' });
+        .mockResolvedValueOnce({ id: 'ent-1', name: '系统A', entityKey: '系统a|system' })
+        .mockResolvedValueOnce({ id: 'ent-2', name: '服务B', entityKey: '服务b|system' });
 
       // Entities are upserted with one batched statement that returns ids.
       mockPrisma.$queryRaw
         .mockResolvedValueOnce([
-          { id: 'ent-1', name: '系统A' },
-          { id: 'ent-2', name: '服务B' },
+          { id: 'ent-1', name: '系统A', entityKey: '系统a|system' },
+          { id: 'ent-2', name: '服务B', entityKey: '服务b|system' },
         ])
         .mockResolvedValueOnce([{ id: 'rel-1' }]);
 
@@ -163,7 +173,8 @@ describe('GraphRagService', () => {
       expect(mockPrisma.graphRelation.findUnique).not.toHaveBeenCalled();
       expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(2);
       const entitySql = (mockPrisma.$queryRaw.mock.calls[0][0] as TemplateStringsArray).join(' ');
-      expect(entitySql).toContain('ON CONFLICT ("kbId", "name") DO UPDATE');
+      // Identity is (normalized name, type), not the bare name (F05).
+      expect(entitySql).toContain('ON CONFLICT ("kbId", "entityKey") DO UPDATE');
       const relationSql = (mockPrisma.$queryRaw.mock.calls[1][0] as TemplateStringsArray).join(' ');
       expect(relationSql).toContain('ON CONFLICT ("sourceId", "targetId", "relationType") DO UPDATE');
     });
@@ -177,8 +188,8 @@ describe('GraphRagService', () => {
     it('appends provenance when updating existing relations with documentVersion', async () => {
       mockPrisma.$queryRaw
         .mockResolvedValueOnce([
-          { id: 'ent-1', name: '系统A' },
-          { id: 'ent-2', name: '服务B' },
+          { id: 'ent-1', name: '系统A', entityKey: '系统a|system' },
+          { id: 'ent-2', name: '服务B', entityKey: '服务b|system' },
         ])
         .mockResolvedValueOnce([{ id: 'rel-1' }]);
 
@@ -224,7 +235,7 @@ describe('GraphRagService', () => {
     });
 
     it('merges entity document provenance for existing entities', async () => {
-      mockPrisma.$queryRaw.mockResolvedValueOnce([{ id: 'ent-1', name: '系统A' }]);
+      mockPrisma.$queryRaw.mockResolvedValueOnce([{ id: 'ent-1', name: '系统A', entityKey: '系统a|system' }]);
       await service.persistGraphElements('kb-1', {
         entities: [{ name: '系统A', type: 'system', sourceDocId: 'doc-2' }],
         relations: [],
@@ -241,11 +252,99 @@ describe('GraphRagService', () => {
       );
     });
 
+    const sqlOf = (strings: any): string => Array.isArray(strings) ? strings.join(' ') : String(strings);
+
+    it('creates separate identities for same-name entities of different kinds (F05)', async () => {
+      mockPrisma.$queryRaw.mockImplementation(async (strings: any) => {
+        const sql = sqlOf(strings);
+        if (sql.includes('"GraphEntityAlias"')) return [];
+        if (sql.includes('similarity(')) return [];
+        if (sql.includes('INSERT INTO "GraphEntity"')) return [
+          { id: 'ent-sys', name: '同名实体', entityKey: '同名实体|system' },
+          { id: 'ent-org', name: '同名实体', entityKey: '同名实体|organization' },
+        ];
+        return [];
+      });
+      const res = await service.persistGraphElements('kb-1', {
+        entities: [
+          { name: '同名实体', type: 'system' },
+          { name: '同名实体', type: 'organization' },
+        ],
+        relations: [],
+      });
+      expect(res.entityCount).toBe(2);
+      const upsertCall = mockPrisma.$queryRaw.mock.calls.find((call: any[]) =>
+        Array.isArray(call[0]) && call[0].join(' ').includes('INSERT INTO "GraphEntity"'));
+      const payload = upsertCall!.find((value: any) => typeof value === 'string' && value.includes('|system'));
+      const rows = JSON.parse(payload);
+      mockPrisma.$queryRaw.mockReset();
+      expect(rows.map((row: any) => row.entityKey).sort())
+        .toEqual(['同名实体|organization', '同名实体|system']);
+    });
+
+    it('never folds a high-similarity surface form across entity kinds (F05)', async () => {
+      mockPrisma.$queryRaw.mockImplementation(async (strings: any) => {
+        const sql = sqlOf(strings);
+        if (sql.includes('"GraphEntityAlias"')) return [];
+        if (sql.includes('similarity(')) return [
+          { incoming: '数据平台系统', canonical: '数据平台', canonicalType: 'organization', similarity: 0.97 },
+        ];
+        if (sql.includes('INSERT INTO "GraphEntity"')) return [
+          { id: 'ent-sys', name: '数据平台系统', entityKey: '数据平台系统|system' },
+        ];
+        return [];
+      });
+      await service.persistGraphElements('kb-1', {
+        entities: [{ name: '数据平台系统', type: 'system' }],
+        relations: [],
+      });
+      const upsertCall = mockPrisma.$queryRaw.mock.calls.find((call: any[]) =>
+        Array.isArray(call[0]) && call[0].join(' ').includes('INSERT INTO "GraphEntity"'));
+      const payload = upsertCall!.find((value: any) => typeof value === 'string' && value.includes('|system'));
+      const rows = JSON.parse(payload);
+      mockPrisma.$queryRaw.mockReset();
+      expect(rows[0].name).toBe('数据平台系统');
+      expect(rows[0].entityKey).toBe('数据平台系统|system');
+      const aliasWrite = mockPrisma.$executeRaw.mock.calls.find((call: any[]) =>
+        Array.isArray(call[0]) && call[0].join(' ').includes('INSERT INTO "GraphEntityAlias"'));
+      expect(aliasWrite).toBeUndefined();
+    });
+
+    it('records accepted aliases in the reviewable ledger with evidence (F05)', async () => {
+      mockPrisma.$queryRaw.mockImplementation(async (strings: any) => {
+        const sql = sqlOf(strings);
+        if (sql.includes('"GraphEntityAlias"')) return [];
+        if (sql.includes('similarity(')) return [
+          { incoming: '数据平台系统', canonical: '数据平台系统架构', canonicalType: 'system', similarity: 0.95 },
+        ];
+        if (sql.includes('INSERT INTO "GraphEntity"')) return [
+          { id: 'ent-canonical', name: '数据平台系统架构', entityKey: '数据平台系统架构|system' },
+        ];
+        return [];
+      });
+      await service.persistGraphElements('kb-1', {
+        entities: [{ name: '数据平台系统', type: 'system' }],
+        relations: [],
+      });
+      mockPrisma.$queryRaw.mockReset();
+      const aliasWrite = mockPrisma.$executeRaw.mock.calls.find((call: any[]) =>
+        Array.isArray(call[0]) && call[0].join(' ').includes('INSERT INTO "GraphEntityAlias"'));
+      expect(aliasWrite).toBeDefined();
+      const payload = aliasWrite!.find((value: any) => typeof value === 'string' && value.startsWith('[{'));
+      expect(JSON.parse(payload)).toEqual([
+        expect.objectContaining({
+          entityId: 'ent-canonical',
+          alias: '数据平台系统',
+          evidence: expect.objectContaining({ method: 'similarity', similarity: 0.95 }),
+        }),
+      ]);
+    });
+
     it('surfaces relation persistence failures so enrichment can retry', async () => {
       mockPrisma.$queryRaw
         .mockResolvedValueOnce([
-          { id: 'ent-1', name: '系统A' },
-          { id: 'ent-2', name: '服务B' },
+          { id: 'ent-1', name: '系统A', entityKey: '系统a|system' },
+          { id: 'ent-2', name: '服务B', entityKey: '服务b|system' },
         ])
         .mockRejectedValueOnce(new Error('database unavailable'));
 

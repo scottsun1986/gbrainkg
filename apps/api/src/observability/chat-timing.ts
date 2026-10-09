@@ -31,7 +31,11 @@ export class ChatTiming {
     const elapsed = Math.max(0, Date.now() - this.startedAt);
     this.milestones[name] = elapsed;
     metricsService.observeChatMilestone(name, elapsed);
+    // Acceptance timings are the user-visible milestones: first readable text
+    // on the wire, and the complete answer on the wire (F08). The provider's
+    // first token and the pipeline's own completion stay separate marks.
     if (name === 'transportFirstText') metricsService.observeChatLatency('first_text', elapsed);
+    if (name === 'transportComplete') metricsService.observeChatLatency('user_complete', elapsed);
   }
   snapshot(): ChatTimingSnapshot {
     const now = Date.now();

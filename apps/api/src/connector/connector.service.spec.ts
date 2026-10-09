@@ -21,7 +21,7 @@ jest.mock('../redis/redis.service', () => ({
     async onModuleDestroy() {}
   },
 }));
-import { ConnectorService } from './connector.service';
+import { ConnectorService, assessConnectorFreshness } from './connector.service';
 import { WebhookConnector } from './webhook-connector';
 
 const mockPrisma: any = {
@@ -35,6 +35,7 @@ const mockPrisma: any = {
   connectorRun: {
     create: jest.fn(),
     update: jest.fn(),
+    updateMany: jest.fn(),
     findMany: jest.fn(),
     findFirst: jest.fn(),
   },
@@ -92,6 +93,7 @@ describe('ConnectorService.sync', () => {
     mockPrisma.connectorRun.create.mockResolvedValue({ id: 'run-1' });
     mockPrisma.connectorRun.findFirst.mockResolvedValue(null);
     mockPrisma.connectorRun.update.mockResolvedValue({});
+    mockPrisma.connectorRun.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.connectorSource.update.mockResolvedValue({});
     mockPrisma.document.findFirst.mockResolvedValue(null);
     mockPrisma.document.create.mockResolvedValue({ id: 'doc-new' });
@@ -234,8 +236,9 @@ describe('ConnectorService.sync', () => {
     const summary = await service.sync('src-1');
     expect(summary.status).toBe('failed');
     expect(summary.error).toMatch(/git exploded/);
-    expect(mockPrisma.connectorRun.update).toHaveBeenCalledWith(
+    expect(mockPrisma.connectorRun.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
+        where: expect.objectContaining({ id: 'run-1', status: 'running' }),
         data: expect.objectContaining({
           status: 'failed',
           error: expect.stringMatching(/git exploded/),
@@ -272,6 +275,65 @@ describe('ConnectorService.sync', () => {
     await expect(service.sync('src-1')).rejects.toThrow('already running');
     resolveSource(SOURCE);
     await first;
+  });
+
+  it('reclaims an expired-lease running run instead of colliding forever (F01)', async () => {
+    mockPrisma.connectorRun.findFirst.mockResolvedValueOnce({
+      id: 'run-stale',
+      ownerId: 'dead-process',
+      leaseExpiresAt: new Date(Date.now() - 60_000),
+    });
+    gitFetch.mockResolvedValue({ changes: [], nextCursor: 'commit-b' });
+
+    const summary = await service.sync('src-1');
+
+    expect(summary.status).toBe('success');
+    // The stale run is CAS-failed before the new run claims the source.
+    expect(mockPrisma.connectorRun.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: 'run-stale', status: 'running', ownerId: 'dead-process' }),
+        data: expect.objectContaining({ status: 'failed' }),
+      }),
+    );
+    const created = mockPrisma.connectorRun.create.mock.calls[0][0].data;
+    expect(created.status).toBe('running');
+    expect(created.ownerId).toEqual(expect.any(String));
+    expect(created.leaseExpiresAt).toBeInstanceOf(Date);
+    expect(created.heartbeatAt).toBeInstanceOf(Date);
+  });
+
+  it('rejects a second sync while the current lease is still valid (F01)', async () => {
+    mockPrisma.connectorRun.findFirst.mockResolvedValueOnce({
+      id: 'run-live',
+      ownerId: 'live-process',
+      leaseExpiresAt: new Date(Date.now() + 60_000),
+    });
+    await expect(service.sync('src-1')).rejects.toThrow('already has a running sync');
+    expect(gitFetch).not.toHaveBeenCalled();
+  });
+
+  it('does not claim a run when the reclaim CAS loses a race to a live owner (F01)', async () => {
+    mockPrisma.connectorRun.findFirst
+      .mockResolvedValueOnce({ id: 'run-stale', ownerId: 'dead-process', leaseExpiresAt: new Date(Date.now() - 60_000) })
+      .mockResolvedValueOnce({ id: 'run-stale', leaseExpiresAt: new Date(Date.now() + 60_000) });
+    mockPrisma.connectorRun.updateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(service.sync('src-1')).rejects.toThrow('already has a running sync');
+    expect(mockPrisma.connectorRun.create).not.toHaveBeenCalled();
+  });
+
+  it('never advances the cursor when the terminal CAS loses ownership (F01)', async () => {
+    gitFetch.mockResolvedValue({ changes: [{ externalId: 'x', content: 'hello' }], nextCursor: 'commit-b' });
+    mockPrisma.connectorRun.updateMany.mockResolvedValue({ count: 0 });
+    const summary = await service.sync('src-1');
+    expect(summary.status).toBe('failed');
+    expect(summary.error).toMatch(/lease lost/);
+    expect(mockPrisma.connectorSource.update).not.toHaveBeenCalled();
+  });
+
+  it('heartbeat marks ownership lost when its CAS no longer matches', async () => {
+    mockPrisma.connectorRun.updateMany.mockResolvedValueOnce({ count: 0 });
+    await (service as any).renewLease('run-1');
+    expect((service as any).lostOwnership.has('run-1')).toBe(true);
   });
 
   it('releases the local guard when creating a run fails', async () => {
@@ -337,6 +399,37 @@ describe('ConnectorService.sync', () => {
       kind: 's3',
     });
     await expect(service.sync('src-1')).rejects.toThrow(/unsupported connector kind/);
+  });
+});
+
+describe('ConnectorService freshness (stage 4 visibility)', () => {
+  it('flags overdue, failed and never-synced sources without flagging fresh ones', () => {
+    const now = new Date('2026-10-09T12:00:00Z');
+    expect(assessConnectorFreshness({ lastSyncAt: new Date('2026-10-09T11:00:00Z') }, now))
+      .toMatchObject({ stale: false, state: 'fresh' });
+    expect(assessConnectorFreshness({ lastSyncAt: new Date('2026-10-07T00:00:00Z') }, now))
+      .toMatchObject({ stale: true, state: 'overdue' });
+    expect(assessConnectorFreshness({ lastSyncAt: new Date('2026-10-07T00:00:00Z'), lastError: 'boom' }, now))
+      .toMatchObject({ stale: true, state: 'last_run_failed' });
+    // Never synced: only overdue once a full interval has passed since creation.
+    expect(assessConnectorFreshness({ lastSyncAt: null, createdAt: new Date('2026-10-08T00:00:00Z') }, now))
+      .toMatchObject({ stale: true, state: 'never_synced' });
+    expect(assessConnectorFreshness({ lastSyncAt: null, createdAt: new Date('2026-10-09T11:00:00Z') }, now))
+      .toMatchObject({ stale: false, state: 'fresh' });
+    // Per-source override wins over the global threshold.
+    expect(assessConnectorFreshness({ lastSyncAt: new Date('2026-10-07T00:00:00Z'), config: { staleAfterHours: 100 } }, now))
+      .toMatchObject({ stale: false, staleAfterHours: 100 });
+  });
+
+  it('returns freshness alongside every listed source', async () => {
+    const service = new ConnectorService(ingestionService as any, new WebhookConnector());
+    mockPrisma.connectorSource.findMany.mockResolvedValueOnce([
+      { id: 'src-fresh', lastSyncAt: new Date(), lastError: null, status: 'active', config: {} },
+      { id: 'src-stale', lastSyncAt: new Date(Date.now() - 3 * 86_400_000), lastError: null, status: 'active', config: {} },
+    ]);
+    const sources = await service.listSources('kb-1');
+    expect(sources[0].freshness.stale).toBe(false);
+    expect(sources[1].freshness).toMatchObject({ stale: true, state: 'overdue' });
   });
 });
 

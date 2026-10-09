@@ -1,4 +1,5 @@
 import { uploadRoot } from '../storage/upload-paths';
+import { instanceIdentity } from '../observability/instance-identity';
 import {
   ConflictException,
   Injectable,
@@ -34,6 +35,55 @@ export interface SyncRunSummary {
   error?: string;
 }
 
+export interface ConnectorFreshness {
+  lastSyncAt: string | null;
+  staleAfterHours: number;
+  stale: boolean;
+  /** never_synced | overdue | last_run_failed | fresh */
+  state: 'never_synced' | 'overdue' | 'last_run_failed' | 'fresh';
+}
+
+/**
+ * Freshness assessment for the connector list (stage 4: operator visibility).
+ * A source that silently stopped syncing keeps serving old knowledge, so the
+ * list must say when the last successful sync is overdue instead of leaving
+ * that to a manual timestamp comparison. Threshold overridable per source
+ * (`config.staleAfterHours`) or globally (CONNECTOR_FRESHNESS_STALE_HOURS).
+ */
+export function assessConnectorFreshness(
+  source: { lastSyncAt?: Date | string | null; lastError?: string | null; createdAt?: Date | string | null; config?: unknown },
+  now: Date = new Date(),
+): ConnectorFreshness {
+  const fallbackHours = Math.max(1, Number(process.env.CONNECTOR_FRESHNESS_STALE_HOURS || 24));
+  const configured = Number((source.config as any)?.staleAfterHours);
+  const staleAfterHours = Number.isFinite(configured) && configured > 0 ? configured : fallbackHours;
+  const lastSyncAt = source.lastSyncAt ? new Date(source.lastSyncAt) : null;
+  if (!lastSyncAt || Number.isNaN(lastSyncAt.getTime())) {
+    // A source created more than a full interval ago and never synced is also
+    // overdue; a brand-new source is not flagged yet.
+    const createdAt = source.createdAt ? new Date(source.createdAt) : null;
+    const ageHours = createdAt && !Number.isNaN(createdAt.getTime())
+      ? (now.getTime() - createdAt.getTime()) / 3_600_000
+      : 0;
+    return {
+      lastSyncAt: null,
+      staleAfterHours,
+      stale: ageHours >= staleAfterHours,
+      state: ageHours >= staleAfterHours ? 'never_synced' : 'fresh',
+    };
+  }
+  const ageHours = (now.getTime() - lastSyncAt.getTime()) / 3_600_000;
+  if (ageHours < staleAfterHours) {
+    return { lastSyncAt: lastSyncAt.toISOString(), staleAfterHours, stale: false, state: 'fresh' };
+  }
+  return {
+    lastSyncAt: lastSyncAt.toISOString(),
+    staleAfterHours,
+    stale: true,
+    state: source.lastError ? 'last_run_failed' : 'overdue',
+  };
+}
+
 @Injectable()
 export class ConnectorService {
   private readonly logger = new Logger(ConnectorService.name);
@@ -42,6 +92,15 @@ export class ConnectorService {
     uploadRoot();
   private readonly connectors: Map<string, EnterpriseConnector>;
   private readonly runningSyncs = new Set<string>();
+  /**
+   * This process's execution identity for connector runs. One id per service
+   * instance is enough: a given source has at most one local sync (runningSyncs)
+   * and the lease CAS decides across processes.
+   */
+  private readonly ownerId = `${instanceIdentity()}:${randomUUID()}`;
+  private readonly leaseMs = Math.max(30_000, Number(process.env.CONNECTOR_SYNC_LEASE_MS || 120_000));
+  /** Runs whose lease heartbeat no longer matches: stop persisting work on them. */
+  private readonly lostOwnership = new Set<string>();
 
   constructor(
     // 复用 IngestionService：创建文档后走既有解析/索引管线
@@ -96,10 +155,17 @@ export class ConnectorService {
   }
 
   async listSources(kbId: string) {
-    return this.prisma.connectorSource.findMany({
+    const sources = await this.prisma.connectorSource.findMany({
       where: { kbId, status: { not: 'deleted' } },
       orderBy: { createdAt: 'desc' },
     });
+    // Freshness (stage 4): the list is the operator's only view of whether a
+    // source still advances; mark overdue sources instead of making every
+    // caller re-derive it from timestamps.
+    return sources.map((source: any) => ({
+      ...source,
+      freshness: assessConnectorFreshness(source),
+    }));
   }
 
   async getSource(sourceId: string) {
@@ -157,24 +223,71 @@ export class ConnectorService {
   // authorised by the endpoint before we get here; the work itself is system-owned.
   private async syncLocked(sourceId: string): Promise<SyncRunSummary> {
     const { source, run } = await withSystemWrite(this.prisma, async (tx) => {
-      // Serialize the check/create across API processes sharing this database.
+      // Serialize the claim across API processes sharing this database.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${sourceId}, 0))`;
       const source = await tx.connectorSource.findUnique({ where: { id: sourceId } });
       if (!source || source.status !== 'active') throw new NotFoundException('active connector source not found');
       this.getConnector(source.kind);
+      const now = new Date();
+      const leaseExpiresAt = new Date(now.getTime() + this.leaseMs);
       const activeRun = await tx.connectorRun.findFirst({
         where: { sourceId, status: 'running' },
-        select: { id: true },
+        select: { id: true, ownerId: true, leaseExpiresAt: true },
       });
       if (activeRun) {
-        throw new ConflictException(`connector source ${sourceId} already has a running sync (run ${activeRun.id})`);
+        const leaseValid = activeRun.leaseExpiresAt != null
+          && new Date(activeRun.leaseExpiresAt).getTime() > now.getTime();
+        if (leaseValid) {
+          throw new ConflictException(`connector source ${sourceId} already has a running sync (run ${activeRun.id})`);
+        }
+        // Crashed executor (F01): the persisted running row has an expired (or
+        // absent, pre-lease) lease. Reclaim it by CAS on the recorded owner and
+        // lease value so a live executor that refreshed ownership meanwhile is
+        // not overwritten.
+        const reclaimed = await tx.connectorRun.updateMany({
+          where: {
+            id: activeRun.id,
+            status: 'running',
+            ownerId: activeRun.ownerId ?? null,
+            leaseExpiresAt: activeRun.leaseExpiresAt,
+          },
+          data: {
+            status: 'failed',
+            finishedAt: now,
+            error: 'sync lease expired; reclaimed by a newer run',
+            heartbeatAt: now,
+          },
+        });
+        if (reclaimed.count === 0) {
+          const stillRunning = await tx.connectorRun.findFirst({
+            where: { sourceId, status: 'running' },
+            select: { id: true, leaseExpiresAt: true },
+          });
+          const stillLeased = stillRunning?.leaseExpiresAt != null
+            && new Date(stillRunning.leaseExpiresAt).getTime() > now.getTime();
+          if (stillRunning && stillLeased) {
+            throw new ConflictException(`connector source ${sourceId} already has a running sync (run ${stillRunning.id})`);
+          }
+        }
       }
       const run = await tx.connectorRun.create({
-        data: { id: randomUUID(), sourceId, status: 'running', startedAt: new Date() },
+        data: {
+          id: randomUUID(), sourceId, status: 'running', startedAt: now,
+          ownerId: this.ownerId, leaseExpiresAt, heartbeatAt: now,
+        },
       });
       return { source, run };
     });
     const connector = this.getConnector(source.kind);
+
+    // Lease heartbeat (F01): renew while this execution owns the run. A
+    // heartbeat that no longer matches a running row owned by us means another
+    // process reclaimed the run; work must then stop persisting state.
+    const heartbeatTimer = setInterval(
+      () => { void this.renewLease(run.id); },
+      Math.max(5_000, Math.floor(this.leaseMs / 3)),
+    );
+    heartbeatTimer.unref?.();
 
     let fetched = 0;
     let ingested = 0;
@@ -193,6 +306,12 @@ export class ConnectorService {
       }
 
       for (const change of result.changes) {
+        if (this.lostOwnership.has(run.id)) {
+          this.logger.warn(
+            `connector ${sourceId} lost its run lease; stopping before change ${change.externalId} (a newer run owns the source)`,
+          );
+          break;
+        }
         try {
           const outcome = await this.ingestChange(source, change);
           if (outcome === 'ingested') ingested += 1;
@@ -208,11 +327,28 @@ export class ConnectorService {
         }
       }
 
+      // A reclaimed run must not touch the cursor or report success: the newer
+      // owner continues from the retained checkpoint.
+      if (this.lostOwnership.has(run.id)) {
+        return {
+          runId: run.id,
+          sourceId,
+          status: 'failed',
+          fetched,
+          ingested,
+          failed: failed || 1,
+          skipped,
+          error: 'sync lease lost; reclaimed by a newer run',
+        };
+      }
+
       const status = failed > 0 ? 'failed' : 'success';
       const finishedAt = new Date();
-      await withSystemWrite(this.prisma, async (tx) => {
-        await tx.connectorRun.update({
-          where: { id: run.id },
+      const finalized = await withSystemWrite(this.prisma, async (tx) => {
+        // CAS on (id, owner, still-running): a terminal write from a stale
+        // executor is a no-op instead of overwriting the newer run's state.
+        const guard = await tx.connectorRun.updateMany({
+          where: { id: run.id, ownerId: this.ownerId, status: 'running' },
           data: {
             status,
             finishedAt,
@@ -222,6 +358,7 @@ export class ConnectorService {
             detail: { processed, skipped } as never,
           },
         });
+        if (guard.count === 0) return false;
         await tx.connectorSource.update({
           where: { id: sourceId },
           data: {
@@ -231,7 +368,21 @@ export class ConnectorService {
             lastError: failed > 0 ? `${failed} change(s) failed` : null,
           },
         });
+        return true;
       });
+
+      if (!finalized) {
+        return {
+          runId: run.id,
+          sourceId,
+          status: 'failed',
+          fetched,
+          ingested,
+          failed: failed || 1,
+          skipped,
+          error: 'sync lease lost; reclaimed by a newer run',
+        };
+      }
 
       return {
         runId: run.id,
@@ -244,9 +395,9 @@ export class ConnectorService {
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await withSystemWrite(this.prisma, async (tx) => {
-        await tx.connectorRun.update({
-          where: { id: run.id },
+      const finalized = await withSystemWrite(this.prisma, async (tx) => {
+        const guard = await tx.connectorRun.updateMany({
+          where: { id: run.id, ownerId: this.ownerId, status: 'running' },
           data: {
             status: 'failed',
             finishedAt: new Date(),
@@ -257,6 +408,7 @@ export class ConnectorService {
             detail: { processed, skipped } as never,
           },
         });
+        if (guard.count === 0) return false;
         await tx.connectorSource.update({
           where: { id: sourceId },
           data: { lastError: message, lastSyncAt: new Date() },
@@ -267,6 +419,7 @@ export class ConnectorService {
           await tx.documentAcl.deleteMany({ where:{ documentId:{ in:docs.map((d: { id:string }) => d.id) } } });
           if (docs.length) await tx.brainChangeEvent.createMany({ data:docs.map((d: { id:string }) => ({ eventType:'doc_acl_change',resourceType:'document',resourceId:d.id,status:'pending',payload:{ reason:'source_unavailable' } })) });
         }
+        return true;
       });
       return {
         runId: run.id,
@@ -276,8 +429,33 @@ export class ConnectorService {
         ingested,
         failed: failed || 1,
         skipped,
-        error: message,
+        error: finalized ? message : `${message} (sync lease lost; reclaimed by a newer run)`,
       };
+    } finally {
+      clearInterval(heartbeatTimer);
+      this.lostOwnership.delete(run.id);
+    }
+  }
+
+  /**
+   * Renew this execution's lease on a run. A no-match update means the run is
+   * no longer owned/running (reclaimed after a missed heartbeat or finalized),
+   * so later persistence from this executor must be suppressed.
+   */
+  private async renewLease(runId: string): Promise<void> {
+    try {
+      const now = new Date();
+      const result: { count: number } = await withSystemWrite(this.prisma, (tx) =>
+        tx.connectorRun.updateMany({
+          where: { id: runId, ownerId: this.ownerId, status: 'running' },
+          data: { heartbeatAt: now, leaseExpiresAt: new Date(now.getTime() + this.leaseMs) },
+        }),
+      );
+      if (result.count === 0) this.lostOwnership.add(runId);
+    } catch (err) {
+      this.logger.warn(
+        `connector run ${runId} lease heartbeat failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 

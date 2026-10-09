@@ -27,7 +27,9 @@ PermissionService 定义权限语义。个人库仅属主可见，包括系统�
 | `withAdminInventory`：AdminController.getAllData / loadGrantsWithKb | AdminGuard 与 handler 校验 capabilities/资源关系；事务只读 | 用户本人或管辖子树成员；组织管理员=管辖子树∪行业库关联组织，行业库创建者/管理员=全量组织树（业务规则 3.5），纯行业库角色 canManage/canCreateChild/canSetAdmin 恒 false、叠加组织管理员时仅管辖子树内为 true；可读或负责的库；个人库仅本人；授权仅负责行业库；SQL 范围先于 take，嵌套库同范围，响应再次裁剪 |
 | `withSystemWrite`：BrainCompilerService.ensureUserBrainRepo | 创建用户已鉴权，或后台维护入口 | 指定目标用户的兼容 BrainRepo provision，不根据 service 查询结果扩张请求能力 |
 | `withSystemWrite`：VersionChainService.createVersion | 文档版本入口已校验目标库管理权限 | 当前上传的版本链与系统索引产物 |
-| `withSystemWrite`：ConnectorService.syncLocked、ingestChange 的执行记录/失败记录/ACL 同步 | ConnectorController 已校验目标知识库及 connector.manage；后台同步有 service principal | 当前 connector/run/document 的系统执行产物与外部 ACL，不可由回调替换为任意资源 |
+| `withSystemWrite`：ConnectorService.syncLocked、ingestChange、renewLease 的执行记录/失败记录/ACL 同步/租约心跳 | ConnectorController 已校验目标知识库及 connector.manage；后台同步有 service principal | 当前 connector/run/document 的系统执行产物与外部 ACL；租约声明/心跳/终态写入均以 `(id, ownerId, status=running)` CAS 收敛到本次执行，过期回收先标记旧 run failed 再创建新 run，不可由回调替换为任意资源 |
+| `withSystemWrite`：GraphRagService.persistGraphElements / resolveEntityAliases 的实体、别名台账与关系写入 | 仅后台图谱抽取 worker（servicePrincipal）；kbId 由已鉴权文档范围收敛 | 当前库的 GraphEntity/GraphEntityAlias/GraphRelation 系统产物；别名归并写 `GraphEntityAlias` 台账并附带依据（method/similarity/type），身份键为 `(规范化名称, 类型)`，不跨越类型做近似合并 |
+| `HybridRetrievalService.searchSparse` 的学习稀疏召回（请求内可读范围） | 请求用户上下文；`readableDocumentSql()` 在 ranked CTE 的排名与 LIMIT 之前应用，服务端 statement_timeout 受请求预算约束 | 仅当前用户可读的 published 文档 chunk 及 sparse 得分；上层仍做最终 ACL 复核，sparse 通道不做独立鉴权裁决 |
 | `runAsAuth`：AuthService、MfaService、OidcService、McpController 的身份读/绑定/provision | 尚在身份认证阶段，登录信息/签名/挑战/绑定约束由相应认证流程校验 | 指定登录身份/受验身份；结果进入认证裁决，不提供用户目录或业务资源；OIDC 身份创建/绑定是受控写例外 |
 
 上述入口现均为普通事务包装，不再设置 `SET TRANSACTION READ ONLY`，也不设置任何

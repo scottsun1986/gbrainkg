@@ -97,6 +97,25 @@ describe('pre-cache entailment gate', () => {
     expect(store).not.toHaveBeenCalled();
   });
 
+  it('does not run a duplicate judge call when the statement-level judge already rejected a claim (F08)', async () => {
+    // 5 lexically grounded sentences + 1 ungrounded filler keep the coverage
+    // ratio above the cache threshold, so the cache gate would normally run.
+    const answer = Array.from({ length: 5 }, () => groundedAnswer).join('') + '另见补充说明。';
+    const judge = jest.fn(async (statements: string[]) =>
+      statements.length === 1 && statements[0].includes('补充说明')
+        ? new Set<number>()
+        : new Set(statements.map((_, index) => index)));
+    const svc = buildService(judge as any);
+    await svc.emitCitationsAndComplete('user-1', [citation()], subscriber, 0, answer, trace, '年假是多少天？', {
+      fingerprint: 'scope-1',
+      knowledgeEpoch: 1,
+    });
+    // One call: the statement-level judge. The cache gate reuses its rejection
+    // instead of paying for a second, same-outcome judge call.
+    expect(judge).toHaveBeenCalledTimes(1);
+    expect(store).not.toHaveBeenCalled();
+  });
+
   it('skips the judge entirely when the gate is disabled by configuration', async () => {
     process.env.CACHE_ENTAILMENT_GATE = '0';
     const judge = jest.fn(async (statements: string[]) => new Set(statements.map((_, i) => i)));

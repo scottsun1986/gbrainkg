@@ -72,9 +72,20 @@ type RawCapable = {
 export async function withServiceContext(
   prisma: RawCapable | null | undefined,
   fn: (client: any) => Promise<any>,
+  /**
+   * Optional explicit transaction budget. Long, block-count-proportional
+   * version builds/publishes exceed Prisma's 5s interactive default and need a
+   * bounded, configurable budget; without it the transaction is closed
+   * mid-build (F09). Omitting the options keeps the previous default.
+   */
+  options: { timeoutMs?: number; maxWaitMs?: number } = {},
 ): Promise<any> {
   if (!prisma || typeof prisma.$transaction !== 'function') return fn(prisma);
-  return prisma.$transaction((tx: any) => fn(tx), { isolationLevel: 'ReadCommitted' });
+  const budget = {
+    ...(Number.isFinite(options.timeoutMs) ? { timeout: Math.max(1_000, Math.floor(options.timeoutMs!)) } : {}),
+    ...(Number.isFinite(options.maxWaitMs) ? { maxWait: Math.max(1_000, Math.floor(options.maxWaitMs!)) } : {}),
+  };
+  return prisma.$transaction((tx: any) => fn(tx), { isolationLevel: 'ReadCommitted', ...budget });
 }
 
 /** 管理面清单读入口。原为显式 service RLS 范围，现为普通事务。 */

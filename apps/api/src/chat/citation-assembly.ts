@@ -18,6 +18,7 @@ import { measuredScoreOf } from "../retrieval/score-contract";
 import { retrievalConfigFingerprint } from "../retrieval/retrieval-config";
 import { buildDocumentPreviewUrl } from "../ingestion/preview-url";
 import { isProviderErrorText } from "./output-hygiene";
+import { isCoverageScopeStatement } from "./parse-coverage";
 import { classifyTableRole, extractSectionAnchors } from './section-align';
 import {
   calibratedScoreOf,
@@ -1542,7 +1543,12 @@ export class CitationAssemblyService {
       for (const index of siblings) citedIndices.add(index);
     }
 
-    const statements = safeAnswer.split(/(?:\n+|[。！？])/).map(s => s.trim()).filter(s => s.length >= 5);
+    // Deterministic scope qualifiers (F06) are meta-statements about parsing,
+    // not factual claims: counting them as ungrounded would depress the
+    // coverage ratio and block caching for correctly qualified answers.
+    const statements = safeAnswer.split(/(?:\n+|[。！？])/).map(s => s.trim())
+      .filter(s => s.length >= 5)
+      .filter(s => !isCoverageScopeStatement(s));
     const totalStatements = statements.length;
     let groundedStatements = 0;
     const ungroundedStatements: string[] = [];
@@ -1586,6 +1592,7 @@ export class CitationAssemblyService {
     // fabrication must face the judge even when the rest of the answer is
     // well grounded. The 0.6 ratio no longer gates the judge — it only decides
     // whether the trace warns about low coverage below.
+    let entailmentJudgeRejectedStatements = false;
     if (
       process.env.SEMANTIC_COVERAGE_JUDGE !== 'false' &&
       finalCitations.length > 0 &&
@@ -1596,6 +1603,7 @@ export class CitationAssemblyService {
         .join('\n\n');
       const entailed = await this.judgeEntailment(ungroundedStatements, evidenceText);
       groundedStatements += entailed.size;
+      if (entailed.size < ungroundedStatements.length) entailmentJudgeRejectedStatements = true;
       // 蕴含判定放行的语句在绑定表中标注为 supported（判定通道与词面通道分开）。
       for (const entailedIndex of entailed) {
         const text = ungroundedStatements[entailedIndex];
@@ -1664,6 +1672,9 @@ export class CitationAssemblyService {
             page_no: cit.pageNo || cit.page_no || cit.metadata?.page_no,
             bbox: cit.bbox || cit.bboxes?.[0] || cit.metadata?.bbox,
             version_conflict: cit.versionConflict,
+            // F06: ingestion-time parse coverage of this source, so the client
+            // and audit trail can distinguish "not found" from "not parsed".
+            parse_coverage: cit.parseCoverage,
           },
         },
       });
@@ -1741,7 +1752,16 @@ export class CitationAssemblyService {
       !privateContextNotCacheable &&
       statements.length > 0
     ) {
-      try {
+      if (entailmentJudgeRejectedStatements) {
+        // The statement-level judge already refused at least one claim using
+        // the same model and evidence pool, so the cache veto is already
+        // determined; a second judge call would only re-confirm it (F08:
+        // remove duplicated verification that cannot change the outcome).
+        entailmentVetoed = true;
+        this.logger.debug(
+          'Answer not cached: statement-level entailment judge already rejected a claim; skipped a duplicate judge call.',
+        );
+      } else try {
         // Evidence is the same pool the answer was allowed to cite - the union
         // of selected citation texts, which is what the judge needs to decide
         // entailment rather than mere topicality.
@@ -1779,7 +1799,6 @@ export class CitationAssemblyService {
     ) {
       this.semanticCacheService.store(
         question,
-        null,
         // userScope.fingerprint here IS the semanticCacheScopeKey hash: the
         // processChat call site passes { fingerprint: cacheScopeKey }, so
         // lookup and store share the same salted scope key.

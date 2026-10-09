@@ -1,4 +1,5 @@
 import { getRequestContext } from '../observability/request-context';
+import { kbMetaCache } from '../retrieval/kb-intent-router';
 import { TableEvidenceService } from '../retrieval/table-evidence.service';
 import { countTables } from './table-count';
 import { Test, TestingModule } from "@nestjs/testing";
@@ -102,6 +103,7 @@ jest.mock("@prisma/client", () => ({
 jest.mock("@llmwiki/gbrain-adapter", () => ({
   BrainRepoAdapter: jest.fn().mockImplementation(() => ({
     query: mockGbrainQuery,
+    queryMany: mockGbrainQuery,
     isSourceMaterialized: jest.fn().mockResolvedValue(false),
   })),
 }));
@@ -978,6 +980,44 @@ describe("ChatService", () => {
     expect(result.results.length).toBeGreaterThan(0);
     expect(result.results[0].documentId).toBe("doc-1");
     expect(result.results[0].previewUrl).toContain("/api/v1/kbs/kb-1/documents/doc-1/preview-config");
+  });
+
+  it('keeps every authorized KB in retrieval and passes routed KBs only as a priority hint (F02)', async () => {
+    const kbs = ['kb-1', 'kb-2', 'kb-3', 'kb-4'];
+    mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(kbs);
+    mockCompilerService.ensureUserBrainRepo.mockResolvedValue({ gitRepoUrl: '/tmp/repo' });
+    // Pre-seed router metadata so the decision never depends on the DB fixture.
+    kbMetaCache.set('kb-2', { id: 'kb-2', name: '人事规章', description: '年假与考勤', domainTerms: ['年假'] });
+    for (const id of ['kb-1', 'kb-3', 'kb-4']) {
+      kbMetaCache.set(id, { id, name: `通用资料库${id}`, description: '', domainTerms: [] });
+    }
+    mockPrisma.document.findMany.mockResolvedValue([
+      { id: 'doc-1', kbId: 'kb-1', aclMode: 'inherit', title: '规则.md', version: 1, activeVersionId: 'v1', contentHash: 'hash' },
+    ]);
+    const fallback = jest.spyOn(service as any, 'searchChunksFallback').mockResolvedValue([
+      { documentId: 'doc-1', kbId: 'kb-1', title: '规则.md', evidence: '可读证据', score: 0.9, previewUrl: null },
+    ]);
+    const poolAcl = jest.spyOn(service as any, 'filterQueryResultByCurrentPermission').mockImplementation(async (result: any) => result);
+    const finalAcl = jest.spyOn(service as any, 'filterSearchResultsForUser').mockImplementation(async (_user: string, _scope: string[], results: any[]) => results);
+    try {
+      const result = await service.searchKnowledgeForAgent('user-1', '年假怎么申请', undefined, 5);
+      expect(result.success).toBe(true);
+      // The authorized scope is returned unchanged...
+      expect(result.kbScope).toEqual(kbs);
+      // ...every retrieval arm searched all four authorized KBs...
+      const scopes = fallback.mock.calls.map((call: any[]) => call[0]);
+      expect(scopes.length).toBeGreaterThan(0);
+      for (const scopeArg of scopes) expect(scopeArg).toEqual(kbs);
+      // ...and the routed KB is only a priority hint, never an exclusive filter.
+      const priorityArgs = fallback.mock.calls.map((call: any[]) => call[5]).filter(Boolean);
+      expect(priorityArgs.length).toBeGreaterThan(0);
+      expect(priorityArgs[0]).toEqual(['kb-2']);
+    } finally {
+      fallback.mockRestore();
+      poolAcl.mockRestore();
+      finalAcl.mockRestore();
+      kbMetaCache.clear();
+    }
   });
 
   it("projects search hits without leaking internal source manifests or inventory scope", () => {

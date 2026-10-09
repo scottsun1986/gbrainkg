@@ -11,8 +11,16 @@ jest.mock('../observability/failopen', () => ({
 
 const mockPrisma: any = { $queryRaw: jest.fn(),
   $executeRaw: jest.fn().mockResolvedValue(1),
-  $executeRawUnsafe: jest.fn().mockResolvedValue(1) };
-jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => mockPrisma) }));
+  $executeRawUnsafe: jest.fn().mockResolvedValue(1),
+  // boundedReadSql runs the sparse probe inside a transaction that first sets
+  // a server-side statement_timeout through the same $queryRaw surface.
+  $transaction: jest.fn(async (fn: any) => fn({ $queryRaw: mockPrisma.$queryRaw })) };
+// Keep the real Prisma namespace (Prisma.sql is used by the shared readable-
+// document predicate); only the client constructor is replaced.
+jest.mock('@prisma/client', () => ({
+  ...jest.requireActual('@prisma/client'),
+  PrismaClient: jest.fn(() => mockPrisma),
+}));
 jest.mock('../prisma', () => ({ getPrismaClient: jest.fn(() => mockPrisma) }));
 
 import { recordFailopen } from '../observability/failopen';
@@ -115,7 +123,9 @@ describe('BGE-M3 hybrid enablement', () => {
           multiVector: null,
         }),
       } as any;
-      mockPrisma.$queryRaw.mockResolvedValueOnce([
+      // boundedReadSql issues set_config first, then the ranked sparse probe;
+      // both share $queryRaw, so the fixture is returned for either call.
+      mockPrisma.$queryRaw.mockResolvedValue([
         {
           chunkId: 'c1', sparseScore: 0.8, documentId: 'd1', kbId: 'k1', ord: 0,
           content: 'source text', metadata: {}, docTitle: 'doc', docVersion: 1,

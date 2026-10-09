@@ -15,6 +15,23 @@ describe('incremental graph projection', () => {
     expect(updated.nodes.find(node=>node.name==='b')!.properties.projectionHash).toBe(old.nodes.find(node=>node.name==='b')!.properties.projectionHash);
     expect(updated.nodes.find(node=>node.name==='shared spelling')!.properties.projectionHash).not.toBe(old.nodes.find(node=>node.name==='shared spelling')!.properties.projectionHash);
   });
+  it('keeps same-name entities of different kinds as separate nodes (F05)', () => {
+    const projection=graphProjection([{ input:{ documentId:'a',versionId:'a-version',sourceHash:'a:1' },
+      entities:[
+        { name:'同名实体',type:'system' as const,description:'系统' },
+        { name:'同名实体',type:'organization' as const,description:'组织' },
+        { name:'a',type:'document' as const },
+      ],
+      relations:[{ sourceName:'同名实体',targetName:'a',relationType:'mentions' as const,snippet:'source' }] }]);
+    const named=projection.nodes.filter(node=>node.name==='同名实体');
+    expect(named).toHaveLength(2);
+    expect(named.map(node=>node.type).sort()).toEqual(['organization','system']);
+    // The relation endpoint is ambiguous by label alone; the projection must
+    // still resolve deterministically and never crash on the duplicate label.
+    const edge=projection.edges[0];
+    expect(edge.sourceKey).toBe('同名实体|organization');
+    expect(edge.targetKey).toBe('a|document');
+  });
   it('does not reuse a community solely because member IDs stayed the same', () => {
     const old=[{ id:'entity',description:'old',outgoingRelations:[] }];
     expect(communityInputFingerprint([{ ...old[0],description:'new' }])).not.toBe(communityInputFingerprint(old));

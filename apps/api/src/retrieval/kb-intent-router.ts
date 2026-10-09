@@ -121,8 +121,14 @@ export function scoreKbRelevance(kb: KnowledgeBaseMetadata, queryTokens: string[
 
 /**
  * Intelligent Knowledge Base Intent Router.
- * When the search scope includes many KBs (e.g. > 3), scores candidate KBs and routes
- * the query to the Top-K relevant knowledge bases, shrinking search space and query latency.
+ * When the search scope includes many KBs (e.g. > 3), scores candidate KBs
+ * against the query and returns the Top-K best-matching KBs.
+ *
+ * The result is a PRIORITY set, not an exclusive filter: callers must keep the
+ * full authorized scope in retrieval and use `targetedScope` only to allocate
+ * preferential ranking/budget. Word-overlap routing over KB metadata is a
+ * relevance heuristic; it is not evidence that the remaining readable KBs hold
+ * nothing, so it must never silently exclude them from recall.
  * Falls back to the full scope if no specific KB exhibits strong intent affinity.
  */
 export async function routeKnowledgeBasesByIntent(

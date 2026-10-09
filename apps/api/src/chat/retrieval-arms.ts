@@ -1283,6 +1283,13 @@ export class RetrievalArmsService {
     limit = 15,
     extraQueries: string[] = [],
     variant?: RetrievalVariantParams,
+    /**
+     * KB intent routing is a priority signal, not a filter (F02): the scope
+     * keeps every authorized KB, and routed KBs get a bounded ranking
+     * preference here so their evidence surfaces first without starving
+     * evidence that only lives in a lower name-match KB.
+     */
+    priorityKbIds?: string[],
   ): Promise<
     Array<{
       id?: string;
@@ -1305,6 +1312,7 @@ export class RetrievalArmsService {
       return [];
     }
 
+    const priorityKbSet = new Set((priorityKbIds || []).map((id) => String(id)).filter(Boolean));
     const readableWhere = await readableDocumentWhere(this.prisma, undefined, scope);
     const sharedExecution = getRequestContext()?.execution;
     if (sharedExecution?.adaptive && !sharedExecution.reserveProbeFor(query)) return [];
@@ -1602,10 +1610,17 @@ export class RetrievalArmsService {
         if (!this.graphRagService || !scope.length) return [];
         if (process.env.ENABLE_GRAPHRAG_CONTEXT === "false") return [];
         try {
+          // Channel budget follows the execution plan when adaptive retrieval is
+          // on (F07): a graph expansion is a measured enhancement, not something
+          // every request must pay for at a fixed depth. The environment value
+          // remains the non-adaptive/legacy budget.
+          const graphArmLimit = execution?.adaptive
+            ? Math.max(5, execution.plan.graph)
+            : Math.max(5, Number(process.env.RETRIEVAL_GRAPH_ARM_LIMIT || 20));
           const related = await this.graphRagService.searchRelatedChunkIds(
             scope,
             query,
-            Math.max(5, Number(process.env.RETRIEVAL_GRAPH_ARM_LIMIT || 20)),
+            graphArmLimit,
           );
           if (!related.length) return [];
           const ids = related.map((r) => r.chunkId);
@@ -1853,6 +1868,10 @@ export class RetrievalArmsService {
         if (mRank) rrfScore += lateRrfWeight / (rrfK + mRank);
 
         let boost = 1.0;
+        // Intent-router preference (F02): multiplicative and bounded, so it can
+        // break near-ties toward the routed KBs but cannot override a stronger
+        // relevance signal coming from another readable KB.
+        if (priorityKbSet.size && priorityKbSet.has(String(c.kbId))) boost *= 1.08;
         const text = (c.content || "").toLowerCase();
         const docTitle = (c.document?.title || "").toLowerCase();
         const baseTitle = docTitle.replace(/\.[a-z0-9]+$/i, "").trim();

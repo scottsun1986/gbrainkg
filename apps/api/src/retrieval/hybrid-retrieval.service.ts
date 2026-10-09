@@ -7,7 +7,9 @@ import { Injectable, Logger } from '@nestjs/common';
 import { getPrismaClient } from '../prisma';
 import { EmbeddingService, HybridEmbedding } from '../embedding/embedding.service';
 import { withServiceContext } from '../db/tenant-context.service';
-import { embeddingFingerprint, hybridFingerprint } from '../embedding/model-fingerprint';
+import { boundedRead, readableDocumentSql } from './readable-document-scope';
+import { getRequestContext } from '../observability/request-context';
+import { hybridFingerprint } from '../embedding/model-fingerprint';
 
 export interface HybridChunkHit {
   id: string;
@@ -89,11 +91,18 @@ export class HybridRetrievalService {
     try {
       const sparseIndices: number[] = representation.sparse!.indices;
       const sparseWeights: number[] = representation.sparse!.values;
-      const rows = await withServiceContext(this.prisma, (tx) =>
-        tx.$queryRaw<Array<{
+      // Authorization and freshness predicates are applied inside the ranked
+      // CTE, before ORDER BY/LIMIT: unreadable documents must not occupy the
+      // sparse TopK and starve readable evidence (the caller's final ACL
+      // re-check still runs, but it can only remove rows, not restore recall).
+      // The query also runs under the request's server-side budget so a slow
+      // probe cannot outlive its deadline.
+      const remaining = getRequestContext()?.execution?.deadline.remainingMs();
+      const timeoutMs = Math.max(1, Math.min(Number(process.env.RETRIEVAL_SPARSE_TIMEOUT_MS || 2000), remaining ?? Number.MAX_SAFE_INTEGER));
+      const rows: Array<{
         chunkId: string; sparseScore: number; documentId: string; kbId: string;
         ord: number; content: string; metadata: any; docTitle: string; docVersion: number;
-      }>>`
+      }> = await boundedRead(this.prisma, (tx) => tx.$queryRaw`
         WITH query_terms AS (
           SELECT token_id, SUM(query_weight)::float8 AS query_weight
           FROM unnest(${sparseIndices}::integer[], ${sparseWeights}::real[]) AS q(token_id, query_weight)
@@ -105,6 +114,7 @@ export class HybridRetrievalService {
           JOIN "Chunk" c ON c.id = s."chunkId"
           JOIN "Document" d ON d.id = c."documentId"
           WHERE c."kbId" = ANY(${kbIds}::uuid[]) AND d.status = 'published'
+            AND ${readableDocumentSql()}
             AND (${fingerprint}::text IS NULL OR c.hybrid_fingerprint=${fingerprint})
           GROUP BY s."chunkId"
           ORDER BY score DESC
@@ -117,7 +127,7 @@ export class HybridRetrievalService {
         JOIN "Chunk" c ON c.id = ranked."chunkId"
         JOIN "Document" d ON d.id = c."documentId"
         ORDER BY ranked.score DESC
-      `);
+      `, timeoutMs);
       return (rows || []).map((row: {
         chunkId: string; sparseScore: number; documentId: string; kbId: string;
         ord: number; content: string; metadata: any; docTitle: string; docVersion: number;

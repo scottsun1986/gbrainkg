@@ -1,8 +1,7 @@
 import { rethrowAuthorizationFailure } from '../permission/authorization-revision';
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { getPrismaClient } from '../prisma';
 import { ModelConfigService } from '../model-config.service';
-import { EmbeddingService } from '../embedding/embedding.service';
 import { withServiceContext } from '../db/tenant-context.service';
 import { recordFailopen } from '../observability/failopen';
 import { getRequestContext } from '../observability/request-context';
@@ -15,7 +14,6 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
   private readonly logger = new Logger(SemanticCacheService.name);
   private readonly prisma = getPrismaClient();
   private readonly enabled = process.env.SEMANTIC_CACHE_ENABLED !== 'false';
-  private readonly similarityThreshold = Number(process.env.SEMANTIC_CACHE_SIMILARITY || '0.96');
   private readonly ttlHours = Number(process.env.SEMANTIC_CACHE_TTL_HOURS || '24');
   private readonly l1ExactCache = new Map<string, { hit: any; expiresAt: number }>();
   private cleanupTimer?: NodeJS.Timeout;
@@ -35,10 +33,7 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
     }
   }
 
-  constructor(
-    private readonly modelConfigService: ModelConfigService,
-    @Optional() private readonly embeddingService?: EmbeddingService,
-  ) {}
+  constructor(private readonly modelConfigService: ModelConfigService) {}
 
   onModuleInit(): void {
     // Expired rows are never matched at lookup time (epoch + TTL check), but
@@ -54,11 +49,24 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
     if (this.cleanupTimer) clearInterval(this.cleanupTimer);
   }
 
+  /**
+   * Exact-text answer cache lookup.
+   *
+   * Deliberately exact-only: a previous vector near-neighbour fallback
+   * (cosine >= SEMANTIC_CACHE_SIMILARITY) reused whole answers for questions
+   * that were merely similar. Nothing in the stored row proves the candidate
+   * question shares the original's entities, dates, numerals, negation or
+   * operations, so a reworded question could be answered from a different
+   * question's answer. Whole-answer reuse therefore requires a full question
+   * equivalence contract (entity/time/numeric/polarity checks plus embedding
+   * model fingerprints and historical-row isolation); until that exists the
+   * cache serves byte-identical questions only. Retrieval-level near-match
+   * caching would be the place to reintroduce semantic reuse.
+   */
   async lookup(
     queryText: string,
     scopeFingerprint: string,
     knowledgeEpoch: number,
-    queryEmbedding?: number[] | null,
   ): Promise<any | null> {
     if (!this.enabled) return null;
 
@@ -90,16 +98,7 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
         LIMIT 1
       `);
 
-      let hit: any = Array.isArray(results) && results.length > 0 ? (results as any[])[0] : null;
-
-      // B-5: vector near-match. The exact queryText match above only serves
-      // byte-identical questions; reworded or near-synonymous questions all
-      // missed. Fall back to pgvector cosine over the persisted
-      // queryEmbedding column within the same scope fingerprint and knowledge
-      // epoch, above the configured similarity threshold.
-      if (!hit) {
-        hit = await this.lookupByVectorSimilarity(queryText, scopeFingerprint, knowledgeEpoch, queryEmbedding);
-      }
+      const hit: any = Array.isArray(results) && results.length > 0 ? (results as any[])[0] : null;
 
       if (hit) {
         if (authorizationEnforced() && !await validateEvidenceDependencies(getRequestContext()?.userId || '', hit.dependencyManifest)) return null;
@@ -131,51 +130,8 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
     }
   }
 
-  /**
-   * Vector near-match lookup (B-5). Uses the caller-supplied query embedding
-   * when retrieval already produced one; otherwise embeds the query lazily.
-   * Corpus-agnostic by construction: similarity is pure vector cosine inside
-   * the same scope/epoch bucket — no query rewriting, no synonym tables.
-   */
-  private async lookupByVectorSimilarity(
-    queryText: string,
-    scopeFingerprint: string,
-    knowledgeEpoch: number,
-    queryEmbedding?: number[] | null,
-  ): Promise<any | null> {
-    try {
-      let embedding = Array.isArray(queryEmbedding) && queryEmbedding.length
-        ? queryEmbedding
-        : null;
-      if (!embedding) {
-        if (!this.embeddingService?.isEnabled?.()) return null;
-        embedding = await this.embeddingService!.embedOne(queryText);
-      }
-      if (!embedding || !embedding.length) return null;
-      const vectorLiteral = `[${embedding.join(',')}]`;
-      const results = await withServiceContext(this.prisma, (tx) =>
-        tx.$queryRaw<any[]>`
-        SELECT id, "queryText", "responseContent", citations, "dependencyManifest", "processingTrace", "modelName", "expiresAt",
-               1 - ("queryEmbedding" <=> ${vectorLiteral}::vector) AS similarity
-        FROM "SemanticCache"
-        WHERE "scopeFingerprint" = ${scopeFingerprint}
-          AND "knowledgeEpoch" = ${knowledgeEpoch}
-          AND "queryEmbedding" IS NOT NULL
-          AND ("expiresAt" IS NULL OR "expiresAt" > NOW())
-          AND 1 - ("queryEmbedding" <=> ${vectorLiteral}::vector) >= ${this.similarityThreshold}
-        ORDER BY "queryEmbedding" <=> ${vectorLiteral}::vector ASC, "createdAt" DESC
-        LIMIT 1
-      `);
-      return Array.isArray(results) && results.length > 0 ? results[0] : null;
-    } catch (err) { rethrowAuthorizationFailure(err);
-      this.logger.warn(`Vector similarity cache lookup failed: ${err instanceof Error ? err.message : String(err)}`);
-      return null;
-    }
-  }
-
   async store(
     queryText: string,
-    queryEmbedding: number[] | null | undefined,
     scopeFingerprint: string,
     knowledgeEpoch: number,
     responseContent: string,
@@ -188,9 +144,11 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
     if (authorizationEnforced() && (!dependencies || !await validateEvidenceDependencies(getRequestContext()?.userId || '', dependencies))) return;
 
     try {
-      // Exact matching needs no extra model call. The nullable vector is only
-      // retained when retrieval has already produced it.
-      const embedding = queryEmbedding || null;
+      // The stored vector stays NULL: the exact-only lookup never reads it,
+      // and asking the embedding provider for a vector nobody will query is
+      // pure cost. The column is retained for schema compatibility with rows
+      // written by older builds (which are now unreachable by construction).
+      const embedding = null;
 
       const expiresAt = new Date(Math.min(Date.now() + this.ttlHours * 3600000,
         getRequestContext()?.authorization?.expiresAt ?? Infinity,

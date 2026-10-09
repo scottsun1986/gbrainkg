@@ -283,11 +283,20 @@ export class MetricsService {
     metricsRegistry.incCounter('outbox_dead_letter_total', {}, delta);
   }
 
-  /** Chat latency marks: time to first readable text and total answer time. */
-  observeChatLatency(kind: 'first_text' | 'total', durationMs: number): void {
+  /**
+   * Chat latency marks, all user-visible milestones rather than provider
+   * timings (F08):
+   * - first_text: transport delivered the first readable text to the client;
+   * - user_complete: the response for the answer finished on the wire;
+   * - total: answer completion inside the pipeline (buffer/replace included),
+   *   retained as the server-side comparison point.
+   */
+  observeChatLatency(kind: 'first_text' | 'user_complete' | 'total', durationMs: number): void {
     try {
       metricsRegistry.observeHistogram(
-        kind === 'first_text' ? 'chat_first_text_ms' : 'chat_total_ms',
+        kind === 'first_text' ? 'chat_first_text_ms'
+          : kind === 'user_complete' ? 'chat_user_complete_ms'
+            : 'chat_total_ms',
         Math.max(0, durationMs),
       );
     } catch {

@@ -144,7 +144,34 @@ export class QueryExecution {
       else arm.contextTokens = matches.reduce((tokens, item) => tokens + Math.ceil((Number.isFinite(item.contextChars) ? item.contextChars : String(item.context || item.evidence || item.content || item.snippet || item.text || '').length) / 4), 0);
     }
   }
-  report() { return { arms: Object.fromEntries([...this.arms].map(([label, arm]) => [label, { ...arm, uniqueCandidates: arm.candidateIds.filter(id => [...this.arms.values()].filter(other => other.candidateIds.includes(id)).length === 1).length }])), planVersion: this.planVersion, tier: this.tier, retrievalMs: this.retrievalMs,
+  /**
+   * Per-channel contribution summary (F07): which arms were the sole source of
+   * a candidate and which arms' candidates actually survived into the final
+   * citations. This is the measurement input for budget decisions — a channel
+   * that neither contributes unique candidates nor final citations on a query
+   * class is a candidate for a smaller budget, decided by paired ablation, not
+   * by a snapshot. Sorted by final citations, then unique candidates.
+   */
+  contributions() {
+    const uniqueCount = (candidateIds: string[]) =>
+      candidateIds.filter(id => [...this.arms.values()].filter(other => other.candidateIds.includes(id)).length === 1).length;
+    return [...this.arms.entries()]
+      .map(([channel, arm]) => ({
+        channel,
+        started: arm.started,
+        skippedReason: arm.skippedReason,
+        uniqueCandidates: uniqueCount(arm.candidateIds),
+        authorized: arm.authorized,
+        reranked: arm.reranked,
+        finalCitations: arm.finalCitations,
+        contextTokens: arm.contextTokens,
+        elapsedMs: arm.elapsedMs,
+      }))
+      .sort((left, right) => right.finalCitations - left.finalCitations
+        || right.uniqueCandidates - left.uniqueCandidates
+        || right.contextTokens - left.contextTokens);
+  }
+  report() { return { arms: Object.fromEntries([...this.arms].map(([label, arm]) => [label, { ...arm, uniqueCandidates: arm.candidateIds.filter(id => [...this.arms.values()].filter(other => other.candidateIds.includes(id)).length === 1).length }])), contributions: this.contributions(), planVersion: this.planVersion, tier: this.tier, retrievalMs: this.retrievalMs,
     rounds: this.rounds, probes: this.probes, rerankPairs: this.pairs, modelCalls: this.modelCalls, actualPromptTokens: this.actualPromptTokens, actualCompletionTokens: this.actualCompletionTokens, usageReports: this.usageReports, authRevision: getRequestContext()?.authorization?.revision, versionManifest: getRequestContext()?.evidenceDependencies, estimatedInputTokens: this.inputTokens, stopReason: this.stopReason || 'evidence_complete' }; }
 }
 export function currentQueryExecution(): QueryExecution | undefined { return getRequestContext()?.execution; }

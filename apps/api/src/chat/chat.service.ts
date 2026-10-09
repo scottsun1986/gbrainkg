@@ -3,6 +3,7 @@ import { fallbackChunkToCitation } from './fallback-citation';
 export { fallbackChunkToCitation, type CitationScoreSource } from './fallback-citation';
 export { truncateKeepingHeadAndTail, smartTruncateChunkText } from './answer-prompt';
 import { buildSourceContext, buildStaticAnswerRules, multiHopAnswerDirective, truncateKeepingHeadAndTail, smartTruncateChunkText } from './answer-prompt';
+import { buildCoverageQualifier, buildCoverageScopeNote, isIncompleteCoverage, normalizeParseCoverage } from './parse-coverage';
 import { evidenceConfidenceScores, decideEvidenceSufficiency } from './evidence-sufficiency';
 export { evidenceConfidenceScores, decideEvidenceSufficiency, EvidenceSufficiency } from './evidence-sufficiency';
 import { scanDeterministicChunks } from './deterministic-scan';
@@ -53,7 +54,7 @@ import { AgenticRagService } from "./agentic-rag.service";
 import { applySectionAlign, extractSectionAnchors } from './section-align';
 import { needsSectionRescue } from './section-rescue';
 import { ShadowRetrievalService } from '../experiments/shadow-retrieval.service';
-import { CONTROL_VARIANT } from '../experiments/retrieval-variants';
+import { CONTROL_VARIANT, RetrievalVariantParams } from '../experiments/retrieval-variants';
 import { surfaceFormsForRelation, shouldProbeEvidenceHops, extractRelationFromQuery as extractRelationFromQueryImpl } from './relation-extractor';
 import { RaptorService } from "../raptor/raptor.service";
 import { EmbeddingService } from "../embedding/embedding.service";
@@ -1096,6 +1097,8 @@ export class ChatService {
     query: string,
     limit = 15,
     extraQueries: string[] = [],
+    variant?: RetrievalVariantParams,
+    priorityKbIds?: string[],
   ): Promise<
     Array<{
       documentId: string | null;
@@ -1113,7 +1116,7 @@ export class ChatService {
       previewUrl: string | null;
     }>
   > {
-    return this.retrievalArms.searchChunksFallback(scope, query, limit, extraQueries);
+    return this.retrievalArms.searchChunksFallback(scope, query, limit, extraQueries, variant, priorityKbIds);
   }
 
   // ---- orchestration & retained responsibilities ----
@@ -1387,8 +1390,18 @@ export class ChatService {
       };
     }
 
-    // Large-scale optimization: When search scope is broad (> 3 KBs) and user did not specify
-    // a narrow scope, use intelligent KB intent routing to focus recall on the Top-K relevant KBs.
+    // When search scope is broad (> 3 KBs) and the user did not specify a narrow
+    // scope, intent routing names the Top-K KBs whose metadata best matches the
+    // query. That result is a PRIORITY signal only: the authorized scope is never
+    // narrowed here. Word-overlap routing over KB names/descriptions used to drop
+    // every non-matching KB from retrieval, so necessary evidence could sit in a
+    // readable KB that merely failed a name similarity test (e.g. a cross-KB
+    // comparison), and the later probes inherited the shrunken range too.
+    // Routed KBs keep their full budget and a bounded ranking preference; every
+    // other readable KB keeps a recall budget as well, so missing evidence is a
+    // retrieval outcome, not a routing decision. Explicit user-selected scopes
+    // are still honoured exactly as before.
+    let routedPriorityKbs: string[] = [];
     if (!parsedRequestedScope && scope.length > 3) {
       const routingResult = await routeKnowledgeBasesByIntent(
         query,
@@ -1401,10 +1414,10 @@ export class ChatService {
         },
       );
       if (routingResult.routed && routingResult.targetedScope.length > 0) {
+        routedPriorityKbs = routingResult.targetedScope;
         this.logger.log(
-          `[KB-Router] Narrowed multi-KB search space from ${scope.length} to ${routingResult.targetedScope.length} KBs for query: "${query.slice(0, 30)}"`,
+          `[KB-Router] Prioritised ${routedPriorityKbs.length}/${scope.length} KBs for query: "${query.slice(0, 30)}" (authorized scope retained for recall)`,
         );
-        scope = routingResult.targetedScope;
       }
     }
 
@@ -1436,7 +1449,7 @@ export class ChatService {
     // cross-encoding group, so the budget trades recall coverage against latency.
     const maxSubQueryProbes = Math.max(1, Number(process.env.RETRIEVAL_SUBQUERY_PROBES_MAX || 4));
     const fallbackChunksPromise = (async () => {
-      const base: any[] = await this.searchChunksFallback(scope, query, limit).catch(() => [] as any[]);
+      const base: any[] = await this.searchChunksFallback(scope, query, limit, [], undefined, routedPriorityKbs).catch(() => [] as any[]);
       // Hits added by auxiliary probes (sub-questions, bridge entities) are tracked
       // with the probes that produced them, so corroborated evidence can be promoted
       // and single-probe noise banded below the primary query's evidence.
@@ -1481,7 +1494,7 @@ export class ChatService {
       if (llmEntityProbes.length) {
         const entityChunks = await Promise.all(
           llmEntityProbes.map((name) =>
-            this.searchChunksFallback(scope, name, Math.max(3, Math.floor(limit / 2)))
+            this.searchChunksFallback(scope, name, Math.max(3, Math.floor(limit / 2)), [], undefined, routedPriorityKbs)
               .then((hits) => hits.map((h: any) => ({ ...h, subQueryOrigin: name })))
               .catch(() => [] as any[]),
           ),
@@ -1505,7 +1518,7 @@ export class ChatService {
         try {
           const subChunks = await Promise.all(
             subQueries.slice(0, maxSubQueryProbes).map((sub) =>
-              this.searchChunksFallback(scope, sub, Math.max(3, Math.floor(limit / 2)))
+              this.searchChunksFallback(scope, sub, Math.max(3, Math.floor(limit / 2)), [], undefined, routedPriorityKbs)
                 .then((hits) => {
                   for (const h of hits) (h as any).subQueryOrigin = (h as any).subQueryOrigin || sub;
                   return hits;
@@ -1565,7 +1578,7 @@ export class ChatService {
             if (unseenBridges.length === 0) break;
 
             const bridgeResults = await Promise.all(
-              unseenBridges.map((br) => this.searchChunksFallback(scope, br, 5).catch(() => [] as any[])),
+              unseenBridges.map((br) => this.searchChunksFallback(scope, br, 5, [], undefined, routedPriorityKbs).catch(() => [] as any[])),
             );
 
             const newlyAddedChunks: any[] = [];
@@ -1775,7 +1788,7 @@ export class ChatService {
       const queriesToSearch = [query, ...subQueries];
       for (const q of queriesToSearch) {
         if (results.length >= limit || getRequestContext()?.execution?.deadline.expired()) break;
-        const fallbackResults = await this.searchChunksFallback(scope, q, limit - results.length);
+        const fallbackResults = await this.searchChunksFallback(scope, q, limit - results.length, [], undefined, routedPriorityKbs);
         const existingSnippets = new Set(
           results.map((r) => evidenceIdentity(r.evidence)),
         );
@@ -4471,6 +4484,9 @@ export class ChatService {
 
     trace.start("version_conflict_check", "时序效力与版本裁决", "检测同源多版本；跨文档同属性差异交由回答并列");
     let versionConflictNote = "";
+    // F06: cited documents' parse coverage, carried onto the evidence so the
+    // answer contract can distinguish "not found" from "not parsed".
+    const incompleteCoverageTitles: string[] = [];
     if (citations.length > 0) {
       const docTitles: string[] = Array.from(new Set(citations.map((c: any) => c.docTitle).filter(Boolean))) as string[];
       const citedDocIds: string[] = Array.from(new Set(
@@ -4642,6 +4658,19 @@ export class ChatService {
         };
         const conflictTitles: string[] = [];
         for (const cit of citations as any[]) {
+          // Attach the ingestion-time parse coverage of the cited document.
+          // A citation without coverage metadata carries none: absence of the
+          // record is not evidence of completeness (F06).
+          if (cit.docId) {
+            const coverage = normalizeParseCoverage((docsById.get(cit.docId) as any)?.parserMetadata?.coverage);
+            if (coverage) {
+              cit.parseCoverage = coverage;
+              if (isIncompleteCoverage(coverage) && cit.docTitle
+                && !incompleteCoverageTitles.includes(cit.docTitle)) {
+                incompleteCoverageTitles.push(cit.docTitle);
+              }
+            }
+          }
           const citTitleVersion = String(cit.docTitle || "").match(/[vV](\d+)(?:\.\d+)?/);
           const citDetectedVersion = (citTitleVersion && parseInt(citTitleVersion[1], 10) > 1)
             ? parseInt(citTitleVersion[1], 10)
@@ -4798,6 +4827,18 @@ export class ChatService {
       : sourceContext;
     if (versionConflictNote) {
       compiledTruthContext += `\n\n${versionConflictNote.trim()}`;
+    }
+    // F06: the prompt carries the parsed range of every partially parsed cited
+    // source, so anonymity of "not found" vs "not parsed" is visible to the model.
+    const parseCoverageNote = buildCoverageScopeNote(orderedCitations, isEnglishQuery);
+    if (parseCoverageNote) {
+      compiledTruthContext += `\n\n${parseCoverageNote}`;
+      trace.warn(
+        'parse_coverage',
+        '解析覆盖提示',
+        `已提示 ${incompleteCoverageTitles.length} 份来源存在未解析单元，完整性结论需限定范围`,
+        { incompleteTitles: incompleteCoverageTitles.slice(0, 10) },
+      );
     }
     // GraphRAG participates through provenance-bound source chunks in the RRF
     // and hop-retrieval arms. Never append formatted graph prose directly: it
@@ -5747,6 +5788,19 @@ ${dynamicDirectives}
         fullAnswer = isEnglishQuery
           ? 'Based on the provided reference materials, the relevant information is not available.'
           : '已知知识库资料中未包含相关信息，无法回答该问题。';
+      }
+      // F06: a completeness-sensitive answer ("all", "how many", "does X
+      // exist") whose cited sources include unparsed units must not read as
+      // absolute. The qualifier is deterministic, count-based and idempotent;
+      // answers that already acknowledge the parsing limit are left untouched.
+      const coverageQualifier = buildCoverageQualifier(
+        question,
+        queryResult.citations || [],
+        fullAnswer,
+        isEnglishQuery,
+      );
+      if (coverageQualifier) {
+        fullAnswer = `${fullAnswer.trimEnd()}${coverageQualifier}`;
       }
       await assertRequestAuthorization();
       // B-1：增量模式下此前已分块下发 tidy 稳定前缀，这里只补尾段；

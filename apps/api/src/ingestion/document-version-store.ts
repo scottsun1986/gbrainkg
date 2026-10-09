@@ -5,6 +5,22 @@ import { indexDocumentChunks, unindexDocument } from '../retrieval/lexical-index
 import { withServiceContext } from '../db/tenant-context.service';
 
 export function immutableVersionsEnabled(): boolean { return process.env.CORE_VERSIONING_ENABLED === '1'; }
+
+/**
+ * Version stage/publish transactions are proportional to the block count: the
+ * 10k-block publish benchmark takes ~3.8s and a 50k-block build exceeds
+ * Prisma's 5s interactive-transaction default (F09, measured 2026-10-09). The
+ * budget is therefore explicit and bounded instead of relying on the default;
+ * exceeding it still rolls the whole transaction back, so a half-published
+ * document remains impossible. The full generational-pointer redesign stays a
+ * measured follow-up, not a prerequisite for large documents to publish.
+ */
+export function versionTransactionBudget(): { timeoutMs: number; maxWaitMs: number } {
+  return {
+    timeoutMs: Math.max(5_000, Number(process.env.CORE_VERSION_TX_TIMEOUT_MS || 120_000)),
+    maxWaitMs: Math.max(2_000, Number(process.env.CORE_VERSION_TX_MAX_WAIT_MS || 10_000)),
+  };
+}
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 function canonical(value: any): any {
   if (Array.isArray(value)) return value.map(canonical);
@@ -58,7 +74,7 @@ export class DocumentVersionStore {
         payload: { kbId: input.kbId, version: input.number, versionId },
       } });
       return version;
-    });
+    }, versionTransactionBudget());
   }
 
   private async snapshotDense(tx: any, version: any, fingerprint: string, count: number): Promise<string> {
@@ -82,7 +98,7 @@ export class DocumentVersionStore {
       const blocks = await tx.blockArtifact.findMany({ where: { versionId }, orderBy: { ord: 'asc' } });
       if (!blocks.length || artifactManifest(blocks) !== version.manifestHash) throw new Error('Invalid immutable generation inputs');
       return this.snapshotDense(tx, version, fingerprint, blocks.length);
-    });
+    }, versionTransactionBudget());
   }
 
   /** CAS the active version, then atomically switch to a retained immutable vector generation. */
@@ -99,7 +115,7 @@ export class DocumentVersionStore {
       await tx.$executeRaw`UPDATE "Chunk" c SET embedding=v.embedding, embedding_fingerprint=${generation.modelFingerprint} FROM "GenerationVector" v WHERE v."generationId"=${generationId}::uuid AND c.id=v."blockId" AND c."documentId"=${doc.id}::uuid`;
       await tx.$executeRaw`INSERT INTO "ActiveIndexGeneration" ("versionId","generationId") VALUES (${versionId}::uuid,${generationId}::uuid) ON CONFLICT ("versionId") DO UPDATE SET "generationId"=EXCLUDED."generationId"`;
       return true;
-    });
+    }, versionTransactionBudget());
   }
 
   async publish(versionId: string, fingerprint: string): Promise<boolean> {
@@ -150,6 +166,6 @@ export class DocumentVersionStore {
         payload: { kbId: doc.kbId, version: version.number, versionId },
       } });
       return true;
-    });
+    }, versionTransactionBudget());
   }
 }

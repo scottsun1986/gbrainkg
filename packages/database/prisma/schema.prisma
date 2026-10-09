@@ -394,20 +394,29 @@ model ConnectorSource {
 }
 
 model ConnectorRun {
-  id         String   @id @default(uuid()) @db.Uuid
-  sourceId   String   @db.Uuid
-  startedAt  DateTime @default(now())
-  finishedAt DateTime?
-  status     String   @default("running") // running/success/failed
-  fetched    Int      @default(0)
-  ingested   Int      @default(0)
-  failed     Int      @default(0)
-  error      String?
-  detail     Json     @default("{}")
+  id             String    @id @default(uuid()) @db.Uuid
+  sourceId       String    @db.Uuid
+  startedAt      DateTime  @default(now())
+  finishedAt     DateTime?
+  status         String    @default("running") // running/success/failed
+  fetched        Int       @default(0)
+  ingested       Int       @default(0)
+  failed         Int       @default(0)
+  error          String?
+  detail         Json      @default("{}")
+  // Execution lease (F01): a crashed process leaves a running row behind. The
+  // owner + lease let the next sync CAS-reclaim it instead of colliding with a
+  // phantom run forever. Heartbeats extend the lease while work is alive, and
+  // terminal/cursor writes are CAS-guarded on the owner so a stale executor
+  // cannot overwrite a newer run's cursor.
+  ownerId        String?
+  leaseExpiresAt DateTime?
+  heartbeatAt    DateTime?
 
-  source     ConnectorSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  source         ConnectorSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
 
   @@index([sourceId, startedAt(sort: Desc)])
+  @@index([status, leaseExpiresAt])
 }
 
 // 会话
@@ -782,6 +791,13 @@ model AuditLog {
 model GraphEntity {
   id          String   @id @default(uuid()) @db.Uuid
   kbId        String   @db.Uuid
+  // Explicit identity (F05). Name alone was the identity, so a system and an
+  // organisation that share a spelling could not coexist, and a same-name
+  // merge of different kinds silently rewrote the type. entityKey is the
+  // normalized (name, type) identity; name stays a *label* that may repeat.
+  // Equal-type homonyms still share a key today; that residual case is
+  // reported by the read-only graph audit instead of being claimed resolved.
+  entityKey   String
   name        String
   type        String   @default("concept") // concept / organization / system / policy / person / document
   description String?
@@ -790,12 +806,30 @@ model GraphEntity {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @default(now()) @updatedAt
 
-  outgoingRelations GraphRelation[] @relation("SourceEntity")
-  incomingRelations GraphRelation[] @relation("TargetEntity")
+  outgoingRelations GraphRelation[]     @relation("SourceEntity")
+  incomingRelations GraphRelation[]     @relation("TargetEntity")
+  aliasEntries      GraphEntityAlias[]
 
-  @@unique([kbId, name])
+  @@unique([kbId, entityKey])
   @@index([kbId, type])
   @@index([name])
+}
+
+// Reviewable alias ledger (F05): every surface-form merge keeps the evidence
+// (method, similarity, type, source document) that justified it, so a merge
+// can be audited or withdrawn instead of being hidden inside an aliases jsonb.
+model GraphEntityAlias {
+  id        String   @id @default(uuid()) @db.Uuid
+  kbId      String   @db.Uuid
+  entityId  String   @db.Uuid
+  alias     String
+  evidence  Json     @default("{}")
+  createdAt DateTime @default(now())
+
+  entity    GraphEntity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  @@unique([kbId, alias])
+  @@index([entityId])
 }
 
 // 知识图谱关系（GraphRAG Relation）

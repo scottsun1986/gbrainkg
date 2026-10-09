@@ -5,7 +5,12 @@ const mockPrisma: any = { $queryRaw: jest.fn(),
   $executeRawUnsafe: jest.fn().mockResolvedValue(1),
   $transaction: jest.fn(async (fn: any) => fn(mockPrisma)),
 };
-jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => mockPrisma) }));
+// Prisma.sql must stay real: the sparse probe embeds the shared
+// readable-document predicate, which is built with Prisma.sql.
+jest.mock('@prisma/client', () => ({
+  ...jest.requireActual('@prisma/client'),
+  PrismaClient: jest.fn(() => mockPrisma),
+}));
 
 describe('BGE-M3 hybrid retrieval', () => {
   it('computes ColBERT MaxSim over query and document token vectors', () => {
@@ -36,7 +41,9 @@ describe('BGE-M3 hybrid retrieval', () => {
         multiVector: null,
       }),
     } as any;
-    mockPrisma.$queryRaw.mockResolvedValueOnce([
+    // boundedRead issues set_config first, then the ranked sparse probe; both
+    // share $queryRaw, so the fixture is returned for either call.
+    mockPrisma.$queryRaw.mockResolvedValue([
       {
         chunkId: 'c1', sparseScore: 1.0, documentId: 'd1', kbId: 'k1', ord: 0,
         content: 'source text', metadata: {}, docTitle: 'doc', docVersion: 1,

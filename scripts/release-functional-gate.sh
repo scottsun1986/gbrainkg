@@ -41,7 +41,10 @@ pnpm --filter web exec tsc --noEmit
 pnpm --filter web lint
 pnpm run test:api
 pnpm --filter web test
-python3 tests/integration/run-core-checks.py
+# F10: the recommended deployment combination (auth enforced + immutable
+# versioning + incremental graph) is a separate must-pass matrix; the ordinary
+# suites intentionally run with those flags off.
+python3 tests/integration/run-core-checks.py --recommended
 pnpm run test:parser
 pnpm run benchmark:selftest
 git diff --check
