@@ -20,6 +20,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Generate Prisma client
         run: pnpm --filter database exec prisma generate --schema=prisma/schema.prisma
+      - name: Build API workspace dependency
+        run: pnpm --filter @llmwiki/gbrain-adapter build
       - name: Typecheck and test API
         run: |
           pnpm --filter api exec tsc --noEmit

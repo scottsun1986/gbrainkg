@@ -33,6 +33,8 @@ if os.environ.get('RELEASE_GATE_PROFILE')!='quality-first':print('PASS: additive
 PY
 # These checks always run. Fingerprints reuse only expensive live scenarios.
 pnpm --filter database exec prisma generate --schema=prisma/schema.prisma
+# Build adapter declarations and retain contract coverage before API checks.
+pnpm run test:adapter
 pnpm --filter api exec tsc --noEmit
 pnpm --filter api lint
 pnpm --filter web exec tsc --noEmit
@@ -41,7 +43,6 @@ pnpm run test:api
 pnpm --filter web test
 python3 tests/integration/run-core-checks.py
 pnpm run test:parser
-pnpm run test:adapter
 pnpm run benchmark:selftest
 git diff --check
 if python3 scripts/release-gate-fingerprint.py check; then

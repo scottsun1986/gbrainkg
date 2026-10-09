@@ -11,8 +11,8 @@
 # GATE_STRICT=1 contract:
 #   - any failing layer  -> process exits non-zero (deploy must abort)
 #   - any required live layer skipped -> process exits non-zero
-# This script never runs a dist-writing build; callers that need artifacts
-# build them themselves (deploy-prod.sh already does).
+# Adapter contract tests build workspace declarations before API typechecking.
+# Callers build application release artifacts themselves (deploy-prod.sh does).
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -52,12 +52,13 @@ warn_skip() {
 }
 
 run "Prisma client generate" pnpm --filter database exec prisma generate --schema=prisma/schema.prisma
+# API imports the adapter declarations; prepare them even on a clean checkout.
+run "GBrain adapter contract tests" pnpm run test:adapter
 # Shared offline release checks; full strict mode also requires every live gate.
 run "API typecheck" pnpm --filter api exec tsc --noEmit
 run "API lint" pnpm --filter api lint
 run "API unit tests" pnpm run test:api
 run "Parser worker tests" pnpm run test:parser
-run "GBrain adapter contract tests" pnpm run test:adapter
 # P2: web unit tests (node:test via tsx, pure helpers only) + parser-worker
 # lint/type baseline. Ruff/mypy are skipped with a notice when not installed
 # so the unit layers still run on bare checkouts.
