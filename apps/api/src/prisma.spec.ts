@@ -1,6 +1,13 @@
 describe('prisma connection pool bounding', () => {
   const originalEnv = { ...process.env };
 
+  beforeEach(() => {
+    // Each case supplies its own URL. A runtime-role URL inherited from CI or
+    // a developer shell would otherwise replace that fixture at module load.
+    delete process.env.DATABASE_URL_APP;
+    delete process.env.LLMWIKI_FORCE_MIGRATOR_URL;
+  });
+
   afterEach(() => {
     process.env = { ...originalEnv };
     jest.resetModules();
