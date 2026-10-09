@@ -37,8 +37,15 @@ export function countTables(markdown: string): RawTable[] {
 }
 export function countSchema(tables: RawTable[]) {
   return tables.map((table, tableIndex) => ({ table: tableIndex, headers: table.headers,
-    columns: table.headers.map((header, column) => ({ column, header,
-      values: [...new Set(table.rows.map(r => r.cells[column]))].filter(Boolean).slice(0, 100) })) }));
+    columns: table.headers.map((header, column) => {
+      const distinct = [...new Set(table.rows.map(r => r.cells[column]))].filter(Boolean);
+      return { column, header,
+        values: distinct.slice(0, 100),
+        // Preview rows are only a sample of the source. A value that exists
+        // solely past the preview would otherwise be inexpressible, and the
+        // planner must know the domain it is shown is bounded.
+        value_domain_is_sample: distinct.length > 100 };
+    }) }));
 }
 /** Accept equivalent JSON representations without relaxing predicate semantics. */
 export function normalizeCountPlan(raw: unknown, tables: RawTable[]): CountPlan {

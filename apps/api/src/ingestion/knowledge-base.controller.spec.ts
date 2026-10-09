@@ -118,6 +118,29 @@ describe('document list ACL boundary', () => {
   });
 });
 
+describe('single document authorization', () => {
+  const kbId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const docId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  it('applies document ACL, not just knowledge base visibility', async () => {
+    const { DocumentAclService } = await import('../permission/document-acl.service');
+    const acl = jest.spyOn(DocumentAclService.prototype, 'filterReadableDocuments').mockResolvedValue(new Set());
+    mockPrisma.document.findFirst = jest.fn().mockResolvedValue({
+      id: docId, kbId, chunks: [], title: 'restricted', status: 'published', version: 1,
+      parserMetadata: { structured_tables: [{ id: 't', rows: [{ row: 1, cells: [{ column: 1, value: 'secret' }] }] }] },
+    });
+    const controller = new KnowledgeBaseController(
+      { getVisibleKnowledgeBases: jest.fn().mockResolvedValue([kbId]) } as any,
+      { userIdFromRequest: jest.fn().mockResolvedValue('user-1') } as any, {} as any,
+    );
+    try {
+      // KB visibility alone must not expose chunks, raw Markdown or full
+      // parserMetadata (which now carries every structured table cell).
+      await expect(controller.getDocument(kbId, docId, {} as any)).rejects.toThrow('Document not found.');
+      expect(mockPrisma.document.findFirst).not.toHaveBeenCalled();
+    } finally { acl.mockRestore(); }
+  });
+});
+
 describe('preview file current authorization', () => {
   const kbId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
   const docId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';

@@ -28,4 +28,15 @@ describe('native QA import and publication representation', () => {
     expect(assessContentQuality('# Page 1\n未识别', '.pdf', {native_text_chars:0,generated_text_chars:12}).quality_status).toBe('rejected');
     expect(assessContentQuality('0','.csv',{native_text_chars:1,coverage:{total:2,processed:1,failed:1}}).quality_status).toBe('passed');
   });
+  it('derives idProvided server-side so the overwrite guard cannot be bypassed', () => {
+    // The guard that stops a reviewed answer being silently replaced keyed off
+    // a client-supplied flag. Any caller that omitted it skipped the check, so
+    // the flag is now computed from the validated input.
+    expect(validateQa({question:'q',answer:'a',id:'stable:1'}).idProvided).toBe(true);
+    expect(validateQa({question:'q',answer:'a'}).idProvided).toBe(false);
+    expect(validateQa({question:'q',answer:'a',id:'   '}).idProvided).toBe(false);
+    // A caller cannot lie its way past the guard with an unrelated flag.
+    expect(validateQa({question:'q',answer:'a',idProvided:true}).idProvided).toBe(false);
+    expect(validateQa({question:'q',answer:'a',idProvided:false}).idProvided).toBe(false);
+  });
 });

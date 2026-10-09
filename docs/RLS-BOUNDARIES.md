@@ -111,14 +111,24 @@ PostgreSQL 官方行安全语义文档仍可作为历史迁移的参考：
 
 ## 2026-10-09 入库事实、资产、批次与 QA
 
-- `QaController` 的预览、清单、导入和审核均使用登录用户和 active KB，要求 KB 可见且可管理。清单先按文档 ACL 收敛，再截断 500 项；预览只对可读既有 QA 返回冲突。QA ID 是 KB 内稳定来源键，更新在 KB 锁下收敛 `kbId + sourceType=qa + sourceExternalId`，拒绝写他库对象。字段映射为显式契约，不按业务列名自动猜测。审核使用候选版本/hash 比较，来源版本和 ACL 再核验。
+- `QaController` 的预览、清单、导入和审核均使用登录用户和 active KB，先校验 `kbId` 为合法 UUID（避免 Prisma 校验错误逃过过滤器变成 500），要求 KB 可见且可管理。清单先按文档 ACL 收敛，再截断 500 项；预览只对可读既有 QA 返回冲突。QA ID 是 KB 内稳定来源键，更新在 KB 锁下收敛 `kbId + sourceType=qa + sourceExternalId`，拒绝写他库对象。字段映射为显式契约，不按业务列名自动猜测。审核使用候选版本/hash 比较，来源版本和 ACL 再核验。
+- QA 的“同题不同答案”硬阻断由 `validateQa` 在服务端计算 `idProvided`（依据是否真的提供 ID），不信任客户端上报的标志位；未经服务端确认的调用方无法跳过该保护。清单与预览的既有 QA 查询有 `take` 上界，不会把整个库的问答载入内存。审核读取候选 JSON 时读取/解析失败返回 404/400，不外泄文件系统路径。
 - QA 的有效期与新发布版本一同原子切换，不通过未批准候选改变旧发布版本。问题侧索引只包含标准问题/相似问；答案完整保留在一个 QA 文档/原子块。人工标准问答要求显式 reviewed/approved；生成与反馈默认候选，不能自动回灌为权威事实。
 - 派生 QA 只能绑定同 KB 的当前非 QA 原文。`DocumentAclService` 每次读取重验当前来源 activeVersion/status/时间及来源 ACL；`readable-document-scope.ts` 在 SQL/Prisma 排序、分页和 Top-K 前加入来源版本/权限条件。来源换版本、删除或撤权后，旧派生 QA 不再成为可读检索证据；人工独立 QA 保留独立生命周期。
+- `filterReadableDocuments` 与 `readableDocumentSql` 语料一致：默认包含 `effectiveFrom/effectiveTo/lifecycleStatus` 时间门（已撤销且无显式窗口的文档不是可引用答案），kbAdmin/owner 也不例外；管理面传 `probe: true` 显式跳过时间门，使已过期候选仍可见、可更新、可停用。`documentCurrentlyEffective` 是 SQL 谓词的唯一 Prisma 镜像实现。检索、引用、图、证据依赖入口保持严格时间门；KB 文档列表/详情、QA 列表、批次清单使用 probe。
+- `KnowledgeBaseController.getDocument` 除 KB 可见性外还执行文档 ACL（此前只校验 KB 可见性即可取得全部 chunk、原始 Markdown 与完整 `parserMetadata`）；分页文档列表同样在截断前收敛 ACL。
+- `ImportBatch` 保存轻量条目清单，不保存压缩包字节。读取/重试要求批次所属 active KB 的可见与管理权限，条目关联文档仍逐项按 ACL 收敛；删除/无权条目仅返回路径与状态，不返回已撤权正文。批次 retry 复用已保存子文档原件和既有 lifecycle，未受理子项要求重新上传，不恢复已删除原包。KB 删除级联清单。
+- `IngestionArtifactsController.asset` 要求登录身份、文档 ACL、KB active 和所请求的已发布版本，资产必须出自该文档/version 元数据；路径限制在文档目录，仅允许安全图像 MIME，不支持任意 URL/路径读取，输出 private/no-store/nosniff，传输前复验授权 snapshot。未传 `?version=` 时固定到 active published version 的元数据，避免把重解析中尚未发布（甚至已中止）的构建当作当前版本返回。
 - `ImportBatch` 保存轻量条目清单，不保存压缩包字节。读取/重试要求批次所属 active KB 的可见与管理权限，条目关联文档仍逐项按 ACL 收敛；删除/无权条目仅返回路径与状态，不返回已撤权正文。批次 retry 复用已保存子文档原件和既有 lifecycle，未受理子项要求重新上传，不恢复已删除原包。KB 删除级联清单。
 - `IngestionArtifactsController.asset` 要求登录身份、文档 ACL、KB active 和所请求的已发布版本，资产必须出自该文档/version 元数据；路径限制在文档目录，仅允许安全图像 MIME，不支持任意 URL/路径读取，输出 private/no-store/nosniff，传输前复验授权 snapshot。
 - `source-artifacts.ts` 将 Worker NDJSON/图片产物认证下载后存入接收文档的版本目录，缓存不会继承其他文档 URL/私有来源身份。Worker 下载绑定服务器配置的实例 ID 和 Bearer。组合产物预算 200 MiB，单图 50 MiB，失败下载清除临时文件；未引用失败版本清理目录，已发布旧版本保留到文档删除。新版本复制未改资产与事实的独立引用，删除沿用 lifecycle 的整文档目录清理。
 - `retry-units` 要求 KB manager + 文档 ACL，在文档锁内核对版本/hash/无正在替换原件后分配新 ingestVersion；Worker 只重做指定单元，应用合并未选正文/表/资产。遗漏、重复定位或重叠投影拒绝发布；保存仍受版本 claim 限制，旧任务不能覆盖新输入。
 - `TableEvidenceService` 完整聚合仍要求文档 ACL 和当前 active published version；源 NDJSON 限制在文档目录，流式核验完整行数/hash，过滤、汇总和合并锚点只使用真实原始事实，不使用检索 Top-K 样本计算。操作结束复验授权 snapshot；mixed units、缺失公式缓存和不完整表拒绝计算。
+- 2026-10-09 修正轮新增的确定性边界：
+  - 表格事实保真：合并 `merged_ranges` 只含与区域矩形相交的范围；`.xls` 与 `.xlsx` 对合并单元格同样写 `merged_anchor` + `merged_range`，继承单元格的 display 取自锚点的格式化显示；无缓存公式的 `display` 为空、公式文本只留在 `formula` 字段并计入 `unresolved_formulas` 与告警，不作为正文索引；仅有合并 presentation 且无自身标签的列回退为列字母，保证 `headers` 列名唯一可解析。
+  - 覆盖口径：内嵌图片/PDF 图片枚举失败改为抛出，不再以“0 张图片”返回 200，避免图片覆盖缺口隐形。
+  - 共享 Worker 临时盘：`UPLOAD_ROOT` 下全部为瞬时文件，按实际字节计入 `PARSER_MAX_TEMP_BYTES`；启动时强制回收、周期内在预算压力下回收被硬杀任务遗留的文件，回收地板为最旧在办任务创建时间，`/resource-metrics` 暴露占用与预算。
+  - 计数计划：`countSchema` 标注 `value_domain_is_sample`，规划器不把 100 条样例值当作完整值域。
 - 原始文本、表格、原图/OCR 与模型说明分别计量；质量覆盖告警不扩大发布门槛，只有缺少真实正文才拒绝。所有系统产物继承已有资源身份，数据库不提供 RLS 兜底；实例数据库与 Redis DB 隔离规则不变。
 - QA 适用性：`resolveQaApplicability` 使用维护者显式 scope/语言标签与请求问题进行通用匹配，查询当前已授权全部同题变体，拒绝按分数任意选择矛盾答案；未明确范围或并存冲突时返回待澄清范围/语言，不把冲突答案组合为事实。检索 API 返回 `qaAmbiguities`，问答在仅有歧义 QA 时直接请求澄清；不启用未经真实样本校准的自动权威直答阈值。
 - 大型原件在入库任务中流式哈希，并使用 file-backed Blob 向共享 Worker 发送，避免 API 再复制整份 Excel/PDF/图片。普通文件上传入口继续使用既有 200 MiB multipart 内存上限；压缩包按既有限额有界解包，未新增常驻解析服务或全局 SQL agent。

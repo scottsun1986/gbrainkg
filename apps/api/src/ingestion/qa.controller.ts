@@ -22,6 +22,10 @@ export class QaController {
   private readonly db = getPrismaClient();
   constructor(private readonly auth: AuthService, private readonly permission: PermissionService, private readonly ingestion: IngestionService) {}
   private async manage(req: any, kbId: string) {
+    const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(kbId);
+    // Without this the Prisma client raises its own validation error, which the
+    // exception filter does not map, so every malformed id becomes a 500.
+    if (!uuid) throw new NotFoundException('Knowledge base not found');
     const userId = await this.auth.userIdFromRequest(req);
     const kb = await this.db.knowledgeBase.findFirst({ where: { id: kbId, status: 'active' } });
     if (!kb) throw new NotFoundException('Knowledge base not found');
@@ -52,7 +56,9 @@ export class QaController {
         return cell?.value ?? cell?.display ?? '';
       }) })), mapping);
     } else throw new BadRequestException('QA supports CSV/XLS/XLSX/JSONL');
-    const existing = await this.db.document.findMany({ where: { kbId, sourceType: 'qa' }, select: { id: true, sourceExternalId: true, title: true, parserMetadata: true } });
+    // Conflict detection only needs the conflict key and ID, so bound the query
+    // instead of materialising every question and answer in the knowledge base.
+    const existing = await this.db.document.findMany({ where: { kbId, sourceType: 'qa' }, orderBy: { updatedAt: 'desc' }, take: 1000, select: { id: true, sourceExternalId: true, title: true, parserMetadata: true } });
     for (const row of preview.rows) {
       const match = existing.find(doc => (doc.parserMetadata as any)?.qa && qaConflictKey((doc.parserMetadata as any).qa) === qaConflictKey(row));
       if (match && (match.parserMetadata as any)?.qa?.answer !== row.answer && (match.sourceExternalId !== row.id || !row.idProvided) && await new DocumentAclService(this.permission).isDocumentReadable(userId, match.id)) {
@@ -67,8 +73,11 @@ export class QaController {
     const userId = await this.manage(req, kbId);
     // ACL must narrow before truncation; KB managers do not automatically
     // receive restricted document content.
-    const inventory = await this.db.document.findMany({ where: { kbId, sourceType: 'qa' }, orderBy: { updatedAt: 'desc' } });
-    const allowed = await new DocumentAclService(this.permission).filterReadableDocuments(userId, inventory.map(d => d.id), { docs: inventory });
+    // The list is a management view, so bound the inventory rather than loading
+    // every QA document in the knowledge base into memory.
+    const inventory = await this.db.document.findMany({ where: { kbId, sourceType: 'qa' }, orderBy: { updatedAt: 'desc' }, take: 500 });
+    // Probe: an expired candidate must stay visible so a maintainer can update or retire it.
+    const allowed = await new DocumentAclService(this.permission).filterReadableDocuments(userId, inventory.map(d => d.id), { docs: inventory, probe: true });
     const docs = inventory.filter(doc => allowed.has(doc.id)).slice(0, 500);
     const items = [];
     for (const doc of docs) {
@@ -97,7 +106,7 @@ export class QaController {
     if ([...conflictGroups.values()].some(answers => answers.size > 1)) throw new BadRequestException('同一问题与适用范围存在多个答案，需先解决冲突');
     if (records.some(row => row.errors.length)) throw new BadRequestException({ message: 'QA validation failed', errors: records.map((r, i) => ({ line: i + 1, errors: r.errors })) });
     const documents = [];
-    for (const [index,{ record }] of records.entries()) {
+    for (const [index,{ record, idProvided }] of records.entries()) {
       record.reviewStatus = body.reviewed === true ? 'approved' : 'pending';record.maintainerId=userId;
       // Explicit maintainer review is required for generated/feedback candidates too.
       if (record.sourceDocumentId) {
@@ -113,9 +122,11 @@ export class QaController {
           const source = await tx.document.findFirst({ where:{id:record.sourceDocumentId,kbId,activeVersionId:record.sourceVersionId,status:'published',sourceType:{not:'qa'}} });
           if (!source) throw new BadRequestException('QA source changed before import');
         }
-        if (existing && !await new DocumentAclService(this.permission).isDocumentReadable(userId, existing.id)) throw new NotFoundException('QA not found');
+        // Probe: repairing or retiring the caller's own expired candidate must
+        // stay possible, otherwise it is stuck in needs_review forever.
+        if (existing && !await new DocumentAclService(this.permission).isDocumentReadable(userId, existing.id, { probe: true })) throw new NotFoundException('QA not found');
         const conflicts = await tx.document.findMany({ where: { kbId, sourceType: 'qa', title: record.question, ...(existing ? { id: { not: existing.id } } : {}) }, select: { id: true, parserMetadata: true } });
-        if (conflicts.some(doc => (doc.parserMetadata as any)?.qa && qaConflictKey((doc.parserMetadata as any).qa) === qaConflictKey(record) && (doc.parserMetadata as any)?.qa?.answer !== record.answer) || (existing && body.rows[index].idProvided === false && (existing.parserMetadata as any)?.qa?.answer !== record.answer)) throw new BadRequestException('同一问题存在不同答案，请用原 QA ID 明确更新');
+        if (conflicts.some(doc => (doc.parserMetadata as any)?.qa && qaConflictKey((doc.parserMetadata as any).qa) === qaConflictKey(record) && (doc.parserMetadata as any)?.qa?.answer !== record.answer) || (existing && !idProvided && (existing.parserMetadata as any)?.qa?.answer !== record.answer)) throw new BadRequestException('同一问题存在不同答案，请用原 QA ID 明确更新');
         const id = existing?.id || randomUUID(); const version = existing ? (immutableVersionsEnabled() ? existing.ingestVersion || existing.version : existing.version) + 1 : 1;
         const text = JSON.stringify(record); const hash = createHash('sha256').update(text).digest('hex');
         const qaMetadata: Prisma.InputJsonObject = { ...record, aliases: [...record.aliases] };
@@ -137,13 +148,22 @@ export class QaController {
   @Post(':docId/review')
   async review(@Param('kbId') kbId: string, @Param('docId') docId: string, @Req() req: any, @Body() body: { approved?: boolean; expectedVersion?: number }) {
     const userId = await this.manage(req, kbId);
-    if (!await new DocumentAclService(this.permission).isDocumentReadable(userId, docId)) throw new NotFoundException('QA not found');
+    if (!await new DocumentAclService(this.permission).isDocumentReadable(userId, docId, { probe: true })) throw new NotFoundException('QA not found');
     const doc = await this.db.document.findFirst({ where: { id: docId, kbId, sourceType: 'qa' } });
     if (!doc?.rawFileOid) throw new NotFoundException('QA not found');
     if (body.approved !== true) throw new BadRequestException('Explicit approved=true required');
     if (body.expectedVersion !== undefined && body.expectedVersion !== (immutableVersionsEnabled() ? doc.ingestVersion || doc.version : doc.version)) throw new BadRequestException('QA candidate changed since it was displayed; reload before review');
-    const source = await readFile(resolveUploadPath(doc.pendingRawFileOid || doc.rawFileOid), 'utf8');
-    const qa = JSON.parse(source);
+    let source: string;
+    try {
+      source = await readFile(resolveUploadPath(doc.pendingRawFileOid || doc.rawFileOid), 'utf8');
+    } catch {
+      // A deleted or corrupted candidate snapshot must not leak a filesystem
+      // path through a raw 500.
+      throw new NotFoundException('QA candidate content is unavailable');
+    }
+    let qa: any;
+    try { qa = JSON.parse(source); } catch { throw new BadRequestException('QA candidate content is not valid JSON'); }
+    if (!qa || typeof qa !== 'object' || Array.isArray(qa)) throw new BadRequestException('QA candidate content is not an object');
     qa.sourceCategory = qa.sourceCategory || 'manual';
     return this.import(kbId, req, { rows:[qa],reviewed:true,expectedVersion:immutableVersionsEnabled() ? doc.ingestVersion || doc.version : doc.version,expectedHash:createHash('sha256').update(source).digest('hex') });
   }

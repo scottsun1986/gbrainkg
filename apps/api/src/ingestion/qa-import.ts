@@ -35,7 +35,7 @@ export function parseQaCsv(text: string): string[][] {
   return rows;
 }
 
-export function validateQa(input: any): { record: QaRecord; errors: string[] } {
+export function validateQa(input: any): { record: QaRecord; idProvided: boolean; errors: string[] } {
   const errors: string[] = [];
   if (!input || typeof input !== 'object' || Array.isArray(input)) { errors.push('QA 行必须是对象'); input = {}; }
   const value = (v: unknown) => v === undefined || v === null ? '' : String(v).trim();
@@ -61,9 +61,13 @@ export function validateQa(input: any): { record: QaRecord; errors: string[] } {
   if (value(input.sourceVersionId) && !value(input.sourceDocumentId)) errors.push('来源版本必须同时绑定来源文档');
   if (value(input.sourceCategory) && !['manual','document','feedback'].includes(value(input.sourceCategory))) errors.push('无效 QA 来源类别');
   if (value(input.scope).length > 2000 || value(input.language).length > 80) errors.push('适用范围或语言超过预算');
+  // The "same question, different answer" guard must key off whether the caller
+  // actually supplied an ID, never a client-reported flag: an unchecked flag
+  // lets any caller silently skip the guard and overwrite a reviewed answer.
+  const idProvided = value(input.id) !== '';
   return { record: { id, question, answer, aliases: [...new Set(aliases)].filter(a => a !== question),
     ...Object.fromEntries(['scope', 'language', 'effectiveFrom', 'effectiveTo', 'sourceDocumentId', 'sourceVersionId', 'sourceCategory']
-      .filter(key => value(input[key])).map(key => [key, value(input[key])])), sourceCategory: input.sourceCategory || 'manual', reviewStatus: 'pending' }, errors };
+      .filter(key => value(input[key])).map(key => [key, value(input[key])])), sourceCategory: input.sourceCategory || 'manual', reviewStatus: 'pending' }, idProvided, errors };
 }
 
 export function previewQaText(bytes: Buffer, extension: string, mapping: QaMapping) {
@@ -91,7 +95,7 @@ export function previewQaRows(fields: string[], sources: Array<{ line: number; d
   const rows = sources.map(source => {
     const input = Object.fromEntries(Object.entries(mapping).map(([key, column]) => [key, mapped(source.data, column)]));
     const result = validateQa(input);
-    return { ...result.record, idProvided: input.id !== undefined && input.id !== null && String(input.id).trim() !== "", line: source.line, errors: [...(source.parseError ? [source.parseError] : []), ...result.errors] };
+    return { ...result.record, idProvided: result.idProvided, line: source.line, errors: [...(source.parseError ? [source.parseError] : []), ...result.errors] };
   });
   const conflicts = new Map<string, typeof rows>();
   for (const row of rows) {

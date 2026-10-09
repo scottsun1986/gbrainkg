@@ -1,4 +1,4 @@
-import { DocumentAclService } from './document-acl.service';
+import { DocumentAclService, documentCurrentlyEffective } from './document-acl.service';
 
 const mockPrisma: any = {
   document: {
@@ -140,6 +140,30 @@ describe('DocumentAclService.isDocumentReadable', () => {
     mockPrisma.document.findUnique.mockResolvedValue(null);
     const readable = await service.isDocumentReadable('user-1', 'missing');
     expect(readable).toBe(false);
+  });
+
+  it('treats a retired or not-yet-effective document as unreadable evidence', async () => {
+    const within = (fields: any) => async () => {
+      mockPrisma.document.findMany.mockResolvedValue([{ id: 'doc-1', kbId: 'kb-1', ...fields }]);
+    };
+    // A KB manager is not automatically granted a stopped effective window.
+    mockPrisma.kbAdmin.findMany.mockResolvedValue([{ kbId: 'kb-1' }]);
+    await within({ effectiveTo: new Date(Date.now() - 60_000) })();
+    expect(await service.isDocumentReadable('user-1', 'doc-1')).toBe(false);
+    await within({ effectiveFrom: new Date(Date.now() + 60_000) })();
+    expect(await service.isDocumentReadable('user-1', 'doc-1')).toBe(false);
+    await within({ lifecycleStatus: 'repealed' })();
+    expect(await service.isDocumentReadable('user-1', 'doc-1')).toBe(false);
+    // ...but a management probe must still be able to see it and repair it.
+    expect(await service.isDocumentReadable('user-1', 'doc-1', { probe: true })).toBe(true);
+  });
+
+  it('matches the SQL predicate for a repealed document still inside its window', () => {
+    const window = { effectiveFrom: new Date(Date.now() - 10_000), effectiveTo: new Date(Date.now() + 10_000) };
+    expect(documentCurrentlyEffective({ ...window, lifecycleStatus: 'repealed' })).toBe(true);
+    expect(documentCurrentlyEffective(window)).toBe(true);
+    expect(documentCurrentlyEffective({})).toBe(true);
+    expect(documentCurrentlyEffective({ lifecycleStatus: 'repealed' })).toBe(false);
   });
 });
 

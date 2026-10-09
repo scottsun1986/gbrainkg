@@ -437,7 +437,7 @@ export class KnowledgeBaseController {
             : {}),
         };
     const candidates = await this.prisma.document.findMany({ where: { kbId }, select: { id: true } });
-    const readableIds = await new DocumentAclService(this.permissionService).filterReadableDocuments(userId, candidates.map(item => item.id), { visibleKbIds: visibleIds });
+    const readableIds = await new DocumentAclService(this.permissionService).filterReadableDocuments(userId, candidates.map(item => item.id), { visibleKbIds: visibleIds, probe: true });
     const readableScope = { id: { in: [...readableIds] } };
     const listWhere = { AND: [where, readableScope] };
     const [items, total, statusGroups] = await withServiceContext(this.prisma, async (db: any) => Promise.all([
@@ -531,6 +531,16 @@ export class KnowledgeBaseController {
     const visibleIds =
       await this.permissionService.getVisibleKnowledgeBases(userId);
     if (!visibleIds.includes(kbId))
+      throw new NotFoundException("Document not found.");
+    // KB visibility alone is not document authority. A member can see that a
+    // knowledge base exists without being granted any of its restricted
+    // documents, and this endpoint returns every chunk, the raw Markdown and
+    // the full parserMetadata (which now carries every structured table cell).
+    const readable = await new DocumentAclService(this.permissionService)
+      // Probe: reading a document the caller has ACL for is a viewing decision;
+      // retrieval decides separately whether it is still a citable answer.
+      .filterReadableDocuments(userId, [docId], { visibleKbIds: visibleIds, probe: true });
+    if (!readable.has(docId))
       throw new NotFoundException("Document not found.");
     const document = await this.prisma.document.findFirst({
       where: { id: docId, kbId },

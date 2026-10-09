@@ -1,4 +1,4 @@
-import { countDocumentNeedle, countDocumentTitleTerms, countDocumentTitleMatches, countTables, executeCount, cachedCountPlan, rememberCountPlan, normalizeCountPlan } from './table-count';
+import { countDocumentNeedle, countDocumentTitleTerms, countDocumentTitleMatches, countTables, executeCount, cachedCountPlan, rememberCountPlan, normalizeCountPlan, countSchema } from './table-count';
 const table = countTables('| 编号 | 团队名称 | 部门 | 得分 |\n| --- | --- | --- | --- |\n| 1 | 甲 | 研发组 | 90 |\n| 2 | 乙 | 研发组 | 95 |\n| 3 | 丙 | 运维组 | 99 |\n| 4 | 丁 | 研发组 | 80 |');
 const plan = (operator: 'gt'|'gte', value = '90') => ({ table: 0, filters: [
   {column:2,operator:'eq',value:'研发组'}, {column:3,operator,value},
@@ -55,5 +55,14 @@ describe('complete table conditional counts', () => {
       expect(countDocumentTitleMatches('研发组绩效管理办法.doc', needle)).toBe(false);
     }
     expect(countDocumentTitleMatches('打分表.xlsx', '超过90的队伍有几支')).toBe(false);
+  });
+  it('marks a truncated value domain so the planner knows it sees a sample', () => {
+    const rows = Array.from({length: 120}, (_, i) => ({cells: [`v${i}`], charStart: 0, charEnd: 1}));
+    const [schema] = countSchema([{id: 't', headers: ['状态'], rows}] as any);
+    expect(schema.columns[0].values).toHaveLength(100);
+    // Without this the planner treats the 100 shown values as the whole domain
+    // and a filter on a later value becomes an impossible predicate.
+    expect(schema.columns[0].value_domain_is_sample).toBe(true);
+    expect(countSchema([{id: 't', headers: ['状态'], rows: rows.slice(0, 5)} as any])[0].columns[0].value_domain_is_sample).toBe(false);
   });
 });

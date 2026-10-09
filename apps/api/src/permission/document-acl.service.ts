@@ -30,7 +30,27 @@ export interface FilterReadableDocsOpts {
   /** 调用方已知的可见 KB 集合（缺省时按 userId 现算）。 */
   visibleKbIds?: string[];
   /** 调用方已取到的文档行（id + kbId），避免重复查 Document。 */
-  docs?: Array<{ id: string; kbId?: string | null; aclMode?: string }>;
+  docs?: Array<{ id: string; kbId?: string | null; aclMode?: string; effectiveFrom?: Date | null; effectiveTo?: Date | null; lifecycleStatus?: string | null }>;
+  /** 时间参考点，默认 now。 */
+  asOf?: Date | number;
+  /** 管理面探针：跳过生效时间/生命周期门，使已过期候选仍可被维护者修复。 */
+  probe?: boolean;
+}
+
+/** Mirrors the effectiveFrom/effectiveTo/lifecycleStatus predicate of
+ * readableDocumentWhere, so "readable" means the same thing in SQL and Prisma.
+ * A repealed document stays readable while it is still inside an explicit
+ * window; otherwise it is no longer a citable answer. */
+export function documentCurrentlyEffective(doc: {
+  effectiveFrom?: Date | null; effectiveTo?: Date | null; lifecycleStatus?: string | null;
+}, asOf: Date | number = Date.now()): boolean {
+  const at = asOf instanceof Date ? asOf.getTime() : Number(asOf);
+  const from = doc.effectiveFrom ? new Date(doc.effectiveFrom).getTime() : null;
+  const to = doc.effectiveTo ? new Date(doc.effectiveTo).getTime() : null;
+  if (from !== null && from > at) return false;
+  if (to !== null && to <= at) return false;
+  if (doc.lifecycleStatus === 'repealed' && to === null) return false;
+  return true;
 }
 
 /** 解析当前请求用户：显式参数 > 请求上下文（AsyncLocalStorage）。 */
@@ -175,9 +195,10 @@ export class DocumentAclService {
   async isDocumentReadable(
     userId: string,
     documentId: string,
+    opts: Omit<FilterReadableDocsOpts, 'docs'> = {},
   ): Promise<boolean> {
     if (!userId || !documentId) return false;
-    const readable = await this.filterReadableDocuments(userId, [documentId]);
+    const readable = await this.filterReadableDocuments(userId, [documentId], opts);
     return readable.has(documentId);
   }
 
@@ -185,6 +206,8 @@ export class DocumentAclService {
    * 批量文档可读判定（常数次查询，禁止 N+1）。
    * 返回可读 documentId 集合，语义与 isDocumentReadable / app_document_readable 对齐：
    * kbAdmin/owner 恒可读；空 ACL 继承 KB 可见性；有 ACL 则 deny-by-default。
+   * 生效时间与生命周期与 readableDocumentWhere 同语料：已撤销/已过期的文档不是可引用答案。
+   * opts.probe=true 跳过该时间门（仅用于管理面，便于修复或显式停用已过期候选）。
    */
   async filterReadableDocuments(
     userId: string,
@@ -204,27 +227,30 @@ export class DocumentAclService {
     // 1) 文档 → kbId 映射。opts.docs 为权威集合（调用方刚查过 Document，
     //    未在其中的 id 直接视为不可读，不再回表，避免打乱调用方的查询序列）；
     //    未提供时批量查一次 Document。
-    const docById = new Map<string, { id: string; kbId: string | null; aclMode?: string }>();
+    const docById = new Map<string, { id: string; kbId: string | null; aclMode?: string; effectiveFrom?: Date | null; effectiveTo?: Date | null; lifecycleStatus?: string | null }>();
     if (opts.docs) {
       for (const d of opts.docs) {
         if (d?.id) {
-          docById.set(String(d.id), { id: String(d.id), kbId: d.kbId ? String(d.kbId) : null, aclMode: d.aclMode });
+          docById.set(String(d.id), { id: String(d.id), kbId: d.kbId ? String(d.kbId) : null, aclMode: d.aclMode,
+            effectiveFrom: d.effectiveFrom, effectiveTo: d.effectiveTo, lifecycleStatus: d.lifecycleStatus });
         }
       }
     } else {
       if (!p?.document?.findMany) return readable;
       const rows = await p.document.findMany({
         where: { id: { in: ids } },
-        select: { id: true, kbId: true, aclMode: true },
+        select: { id: true, kbId: true, aclMode: true, effectiveFrom: true, effectiveTo: true, lifecycleStatus: true },
       });
       for (const row of rows || []) {
-        docById.set(String(row.id), { id: String(row.id), kbId: String(row.kbId), aclMode: row.aclMode });
+        docById.set(String(row.id), { id: String(row.id), kbId: String(row.kbId), aclMode: row.aclMode,
+          effectiveFrom: row.effectiveFrom, effectiveTo: row.effectiveTo, lifecycleStatus: row.lifecycleStatus });
       }
     }
     const targets = ids
       .map((id) => docById.get(id))
-      .filter((d): d is { id: string; kbId: string | null; aclMode?: string } => Boolean(d));
+      .filter((d): d is { id: string; kbId: string | null; aclMode?: string; effectiveFrom?: Date | null; effectiveTo?: Date | null; lifecycleStatus?: string | null } => Boolean(d));
     if (!targets.length) return readable;
+    const asOf = new Date(opts.asOf ?? Date.now());
     // Older callers may omit the mode; never infer inheritance from an empty
     // ACL in that case. Resolve it from the authoritative document rows.
     const missingModes = targets.filter(d => d.aclMode === undefined).map(d => d.id);
@@ -297,6 +323,10 @@ export class DocumentAclService {
     }
 
     for (const doc of targets) {
+      // A revoked/expired document is not a citable answer, even for a KB
+      // manager. Management listings pass `probe: true` to skip this gate so a
+      // retired candidate can still be repaired or retired properly.
+      if (opts.probe !== true && !documentCurrentlyEffective(doc, asOf)) continue;
       // kbAdmin / KB owner 恒可读（覆盖 ACL 拒绝与 KB 可见性）。
       if (doc.kbId && (adminKbIds.has(doc.kbId) || ownerKbIds.has(doc.kbId))) {
         readable.add(doc.id);

@@ -207,6 +207,40 @@ def public_task_result(task: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in task.items() if not key.startswith("_")}
 
 
+def in_flight_temp_floor() -> float | None:
+    """Oldest creation time among tasks still queued or processing.
+
+    Used as the reclaim floor so a periodic sweep can never delete a file a
+    live task may still hold, however long that task has been running.
+    """
+    floors = [float(info["created_at"]) for info in tasks.values()
+              if info.get("status") in ("queued", "processing") and info.get("created_at")]
+    return min(floors) if floors else None
+
+
+def sweep_abandoned_temporaries(reason: str, force: bool = False) -> list[str]:
+    """Reclaim temporaries left behind by a hard kill.
+
+    A startup sweep always runs: at boot nothing is in flight, so every stale
+    entry belongs to a task that can never complete. The periodic sweep only
+    reclaims under budget pressure, so a healthy worker leaves graceful cleanup
+    in charge.
+    """
+    try:
+        reclaimed = (temp_budget.reclaim(UPLOAD_ROOT, None if force else in_flight_temp_floor())
+                     if force else
+                     temp_budget.reclaim_under_pressure(UPLOAD_ROOT, in_flight_temp_floor()))
+    except Exception as exc:  # a janitor failure must never stop parsing
+        logger.warning("Temporary reclaim skipped (%s): %s", reason, exc)
+        return []
+    if reclaimed:
+        logger.warning(
+            "Reclaimed %d abandoned parser temporaries (%s): %s",
+            len(reclaimed), reason, ", ".join(reclaimed[:10]),
+        )
+    return reclaimed
+
+
 async def periodic_cleanup():
     while True:
         await asyncio.sleep(300)
@@ -242,10 +276,16 @@ async def periodic_cleanup():
                 )
                 t_info["stale_timeout"] = True
                 t_info["completed_at"] = current_time
+        sweep_abandoned_temporaries("periodic")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
+    # A previous process killed by OOM/SIGKILL left its uploaded source, native
+    # workspace and spill files behind on a persistent volume. Without this
+    # sweep the shared temporary budget is consumed for good and every later
+    # upload is rejected with "capacity exhausted" until a human cleans up.
+    sweep_abandoned_temporaries("startup", force=True)
     if LOCAL_DOCLING_ENABLED and not DOCLING_INSTALLED:
         logger.error(
             "LOCAL_DOCLING_ENABLED is on but the docling package is not installed in this "
@@ -764,7 +804,12 @@ def extract_docx(path: Path, contract: dict[str, Any] | None = None, unit_ids: l
                             contract["native_text_chars"] += count
         return "\n\n".join(lines).strip(), image_parts
     except Exception as e:
+        # Record the failure so callers can distinguish "this DOCX is empty"
+        # from "extraction crashed". A swallowed ("", []) is indistinguishable
+        # from both, which is exactly how image coverage used to disappear.
         logger.warning(f"python-docx extraction failed for {path}: {e}")
+        if contract is not None:
+            contract["error"] = safe_error(e)
         return "", []
 
 def inspect_pdf_native(path: Path) -> dict[str, Any]:
@@ -1430,20 +1475,35 @@ async def ocr_image_parts_into_markdown(
 
 
 def extract_embedded_image_parts(path: Path) -> list[dict[str, Any]]:
-    """Collect embedded images from DOCX / PPTX / PDF for standalone OCR enrichment."""
+    """Collect embedded images from DOCX / PPTX / PDF for standalone OCR enrichment.
+
+    Raises on enumeration failure: silently returning ``[]`` would tell the API
+    the document contains no images, so figure text is never retried and the
+    failure is invisible in coverage reporting.
+    """
     suffix = path.suffix.lower()
-    try:
-        if suffix == ".docx":
-            _, images = extract_docx(path)
-            return images
-        if suffix == ".pptx":
-            _, images = extract_pptx_native(path)
-            return images
-        if suffix == ".pdf":
-            return extract_pdf_page_images(path)
-    except Exception as e:
-        logger.warning("Embedded image extraction failed for %s: %s", path.name, e)
+    if suffix == ".docx":
+        contract: dict[str, Any] = {}
+        _, images = extract_docx(path, contract)
+        if contract.get("error"):
+            raise RuntimeError(f"DOCX image enumeration failed: {contract['error']}")
+        return images
+    if suffix == ".pptx":
+        _, images = extract_pptx_native(path)
+        return images
+    if suffix == ".pdf":
+        return enumerate_pdf_images(path)
     return []
+
+
+def enumerate_pdf_images(path: Path) -> list[dict[str, Any]]:
+    """Strict PDF image enumeration: a failure is an error, not an empty list.
+
+    `extract_pdf_page_images` stays lenient because the PyMuPDF-less PDF region
+    path uses it as a fallback. This wrapper is for callers that must not
+    mistake a crash for "this PDF has no images".
+    """
+    return extract_pdf_page_images(path, strict=True)
 
 
 async def ocr_embedded_images_fragments(
@@ -1474,8 +1534,13 @@ async def ocr_embedded_images_fragments(
     return result.strip(), metadata
 
 
-def extract_pdf_page_images(path: Path) -> list[dict[str, Any]]:
-    """Collect embedded raster images per PDF page for optional OCR."""
+def extract_pdf_page_images(path: Path, strict: bool = False) -> list[dict[str, Any]]:
+    """Collect embedded raster images per PDF page for optional OCR.
+
+    Lenient by default: the PyMuPDF-less region path uses it as a fallback and
+    only needs whatever rows were recovered. `strict=True` re-raises, for
+    callers that must not mistake a crash for "this PDF has no images".
+    """
     results: list[dict[str, Any]] = []
     try:
         import pypdf
@@ -1509,7 +1574,12 @@ def extract_pdf_page_images(path: Path) -> list[dict[str, Any]]:
                         "Skip PDF image page=%s#%s: %s", page_index + 1, img_index, one_err
                     )
     except Exception as e:
+        # Lenient on purpose: the PyMuPDF-less PDF region path uses this as a
+        # fallback and only needs whatever images were recovered. Callers that
+        # must not mistake a crash for "no images" use enumerate_pdf_images.
         logger.warning("PDF image extraction failed for %s: %s", path.name, e)
+        if strict:
+            raise RuntimeError(f"PDF image extraction failed: {e}") from e
     return results
 
 
@@ -2334,8 +2404,20 @@ async def ocr_embedded_images_endpoint(
         cleanup_native(path)
 
 if __name__ == "__main__":
+    import argparse
+
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8100)
+
+    # `python -m src.main` sets __package__='src' and puts the worker root on
+    # sys.path, so the app must be referenced as src.main:app there, and as
+    # main:app when the file is executed directly with PYTHONPATH=src. Binding
+    # arguments are forwarded so the module entrypoint stays configurable
+    # instead of always stealing port 8100.
+    options = argparse.ArgumentParser(description='LLMWiki Parser Worker')
+    options.add_argument('--host', default='0.0.0.0')
+    options.add_argument('--port', type=int, default=8100)
+    parsed = options.parse_args()
+    uvicorn.run(f"{'src.' if __package__ else ''}main:app", host=parsed.host, port=parsed.port)
 
 _maxsim_limiter = FairLimiter(env_int('MAXSIM_GLOBAL_CONCURRENCY', 2), queue_limit=16, per_instance=1)
 
@@ -2385,7 +2467,10 @@ async def shared_maxsim(request: Request, _auth: None = Depends(verify_auth)):
 
 @app.get('/resource-metrics')
 def resource_metrics(_auth: None = Depends(verify_auth)):
-    return {'parser': {'active': _parse_limiter.active, 'queued': sum(len(q) for q in _parse_limiter.queues.values()), 'runningByInstance': _parse_limiter.running}, 'maxsim': {'active': _maxsim_limiter.active, 'queued': sum(len(q) for q in _maxsim_limiter.queues.values()), 'runningByInstance': _maxsim_limiter.running}}
+    owned = temp_budget.owned_bytes(UPLOAD_ROOT)
+    return {'parser': {'active': _parse_limiter.active, 'queued': sum(len(q) for q in _parse_limiter.queues.values()), 'runningByInstance': _parse_limiter.running},
+            'temporaries': {'owned_bytes': owned, 'budget_bytes': temp_budget.budget_bytes()},
+            'maxsim': {'active': _maxsim_limiter.active, 'queued': sum(len(q) for q in _maxsim_limiter.queues.values()), 'runningByInstance': _maxsim_limiter.running}}
 
 
 @app.get("/artifacts/{artifact_id}")

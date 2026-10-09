@@ -35,6 +35,11 @@ class StructuredExcelTests(unittest.TestCase):
         workbook.close()
         return path
 
+    def save_legacy(self, workbook, name='legacy.xls'):
+        path = self.root / name
+        workbook.save(str(path))
+        return path
+
     def test_zero_false_formula_cache_merge_coordinates_units_and_hidden(self):
         book = openpyxl.Workbook()
         sheet = book.active
@@ -205,3 +210,89 @@ class StructuredExcelTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'expanded input budget'):
                 structured_excel.extract(path)
             load.assert_not_called()
+
+    def test_merged_ranges_are_scoped_to_each_region_rectangle(self):
+        book = openpyxl.Workbook()
+        sheet = book.active
+        sheet['A1'] = '标题'
+        sheet.merge_cells('A1:C1')
+        sheet['A3'], sheet['B3'], sheet['C3'] = 1, 2, 3
+        sheet['A5'], sheet['B5'], sheet['C5'] = 4, 5, 6
+        tables = structured_excel.extract(self.save(book), 'inst1')['structured_tables']
+        with_merge = next(t for t in tables if t['range'] == 'A1:C1')
+        without_merge = next(t for t in tables if t['range'] == 'A3:C3')
+        self.assertEqual(with_merge['merged_ranges'], ['A1:C1'])
+        # A region with no merges of its own must not claim its neighbour's span.
+        self.assertEqual(without_merge['merged_ranges'], [])
+
+    def test_single_merged_header_keeps_headers_unique_per_logical_column(self):
+        book = openpyxl.Workbook()
+        sheet = book.active
+        sheet['A1'] = '数量'
+        sheet.merge_cells('A1:C1')
+        sheet['A2'], sheet['B2'], sheet['C2'] = 1, 2, 3
+        table = structured_excel.extract(self.save(book), 'inst1')['structured_tables'][0]
+        # One merged name, spanned columns without a name of their own fall back
+        # to the column letter, so header lookup is unambiguous.
+        self.assertEqual(table['headers'], ['数量', 'B', 'C'])
+        self.assertEqual(len(set(table['headers'])), 3)
+
+    def test_uncached_formula_is_not_indexed_as_document_content(self):
+        book = openpyxl.Workbook()
+        sheet = book.active
+        sheet['A1'] = '列'
+        sheet['A2'] = 1
+        sheet['A3'] = '=SUM(A2:A2)'
+        extracted = structured_excel.extract(self.save(book), 'inst1')
+        table = extracted['structured_tables'][0]
+        formula = next(c for c in table['rows'][-1]['cells'] if c['type'] == 'formula')
+        self.assertIsNone(formula['value'])
+        self.assertTrue(formula['cached_available'] is False)
+        # Formula source stays traceable but must not become display content.
+        self.assertEqual(formula['display'], '')
+        self.assertEqual(formula['formula'], '=SUM(A2:A2)')
+        self.assertTrue(table['warnings'])
+        self.assertEqual(table['unresolved_formulas'], 1)
+        self.assertNotIn('=SUM', extracted['markdown'])
+
+    def test_xls_merged_cells_carry_range_and_formatted_display(self):
+        import xlwt
+        book = xlwt.Workbook()
+        sheet = book.add_sheet('旧表')
+        style = xlwt.XFStyle()
+        sheet.write(1, 0, '数量')
+        sheet.write_merge(0, 2, 2, 2, '父项')       # vertical merge C1:C3
+        sheet.write(3, 0, 1234)
+        sheet.write_merge(3, 3, 1, 3, 1234, style)  # horizontal merge B4:D4
+        path = self.save_legacy(book, name='legacy-merge.xls')
+        table = structured_excel.extract(path, 'inst1')['structured_tables'][0]
+        anchor = next(c for c in table['rows'][3]['cells'] if c['coordinate'] == 'B4')
+        inherited = next(c for c in table['rows'][3]['cells'] if c['coordinate'] == 'D4')
+        self.assertEqual(anchor['merged_range'], 'B4:D4')
+        self.assertEqual(anchor['merged_anchor'], 'B4')
+        self.assertTrue(inherited['inherited'])
+        self.assertEqual(inherited['merged_range'], 'B4:D4')
+        self.assertEqual(inherited['merged_anchor'], 'B4')
+        # The inherited display must be the anchor's formatted display, never a
+        # raw str() of the cell value.
+        self.assertEqual(inherited['display'], anchor['display'])
+        self.assertNotIn('.0', inherited['display'])
+        vertical = next(c for c in table['rows'][1]['cells'] if c['coordinate'] == 'C2')
+        self.assertTrue(vertical['inherited'])
+        self.assertEqual(vertical['display'], '父项')
+        self.assertEqual(vertical['merged_range'], 'C1:C3')
+        # Presentation only: an inherited cell never counts as a real fact, so
+        # the merged value is reported exactly once.
+        self.assertEqual(sum(1 for c in table['rows'][3]['cells'] if c['value'] is not None
+                             and not c.get('inherited')), 2)
+
+    def test_xls_merged_anchor_display_matches_inherited_display(self):
+        import xlwt
+        book = xlwt.Workbook()
+        sheet = book.add_sheet('旧表')
+        style = xlwt.XFStyle()
+        style.num_format_str = 'General'
+        sheet.write_merge(0, 0, 0, 2, 1234, style)
+        table = structured_excel.extract(self.save_legacy(book, name='legacy-number.xls'), 'inst1')['structured_tables'][0]
+        displays = [c['display'] for c in table['rows'][0]['cells']]
+        self.assertEqual(displays, ['1234', '1234', '1234'])

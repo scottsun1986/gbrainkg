@@ -117,7 +117,14 @@ def _cell(cell, cached_cell):
     if formula:
         result.update(formula=str(value), cached=_value(cached), cached_available=cached is not None)
         if cached is None:
-            result['display'] = str(value)
+            # No cached result: the cell holds no verifiable fact. The formula
+            # source stays in `formula` for traceability, but it must never
+            # become `display`, otherwise a cell is simultaneously "empty
+            # value" and "has text" and the formula string is embedded and
+            # counted as document content. Every workbook written by a
+            # non-Excel writer (openpyxl/xlwt) has no cached values at all.
+            result['display'] = ''
+            result['unresolved'] = True
     return result
 
 
@@ -126,12 +133,13 @@ def _escape(value):
 
 
 class Region:
-    def __init__(self, sheet, index, instance, hidden, epoch, merged_ranges, requested=None, definition=None):
+    def __init__(self, sheet, index, instance, hidden, epoch, merges, requested=None, definition=None):
         self.definition = definition
         self.id = f'sheet:{sheet}:table:{definition["name"]}' if definition else f'sheet:{sheet}:table:{index}'
         self.selected = not requested or f'sheet:{sheet}' in requested or self.id in requested
         self.header_rows = []
         self.header_hierarchy = {}
+        self.header_own_labels: dict[int, int] = {}
         self.previous_header_merged = False
         self.column_units = {}
         self.columns_seen = set()
@@ -141,9 +149,27 @@ class Region:
         self.count = self.native_chars = 0
         self.minrow = self.maxrow = self.mincol = self.maxcol = None
         self.writer = None
-        self.hidden, self.epoch, self.merged_ranges = hidden, epoch, merged_ranges
+        self.hidden, self.epoch, self.merges = hidden, epoch, list(merges)
         self.headers = []
         self.header_columns = []
+        # Raw first-header-row labels, kept for the Markdown projection so a
+        # merged header renders visually the same way its data rows do.
+        self.header_display: list[str] = []
+        self.unresolved_formulas = 0
+
+    @property
+    def merged_ranges(self) -> list[str]:
+        """Sheet merges that actually intersect this region's rectangle.
+
+        Reporting every merge in the sheet (the previous behaviour) made a table
+        with no merges at all claim its neighbours' spans, so a consumer
+        resolving `merged_ranges` would blank or duplicate unrelated values.
+        """
+        if self.minrow is None:
+            return []
+        return [label for label, bounds in self.merges
+                if not (bounds[3] < self.minrow or bounds[1] > self.maxrow
+                        or bounds[2] < self.mincol or bounds[0] > self.maxcol)]
 
     def add(self, row):
         cells = row['cells']
@@ -161,11 +187,20 @@ class Region:
             row['is_header'] = bool(not self.definition and self.previous_header_merged and substantive and all(c['type'] == 'string' for c in substantive))
         if row['is_header']:
             self.header_rows.append(row['row'])
+            if not self.header_display:
+                self.header_display = [c['display'] for c in cells]
             for cell in cells:
                 if cell['display']:
                     chain = self.header_hierarchy.setdefault(cell['column'], [])
                     if not chain or chain[-1] != cell['display']:
                         chain.append(cell['display'])
+                    # Merge inheritance is presentation: a merged parent header
+                    # legitimately qualifies every column it spans, so it is
+                    # kept for columns that also carry their own label, and
+                    # dropped for a column whose only name is the shared span
+                    # (that would otherwise emit N identical headers).
+                    self.header_own_labels[cell['column']] = \
+                        self.header_own_labels.get(cell['column'], 0) + (0 if cell.get('inherited') else 1)
             self.previous_header_merged = any(c.get('merged_range') for c in cells)
         else:
             self.previous_header_merged = False
@@ -189,6 +224,7 @@ class Region:
         row.setdefault('hidden', False)
         self.count += 1
         self.native_chars += sum(chars(c['display']) for c in cells if not c.get('inherited'))
+        self.unresolved_formulas += sum(1 for c in cells if c.get('unresolved'))
         self.minrow = min(self.minrow or row['row'], row['row'])
         self.maxrow = row['row']
         self.mincol = min(self.mincol or min(columns), min(columns))
@@ -212,7 +248,8 @@ class Region:
             return None, ''
         table_range = f'{get_column_letter(self.mincol)}{self.minrow}:{get_column_letter(self.maxcol)}{self.maxrow}'
         self.header_columns = sorted(self.columns_seen)
-        self.headers = [' / '.join(self.header_hierarchy[c]) if c in self.header_hierarchy else get_column_letter(c) for c in self.header_columns]
+        self.headers = [' / '.join(self.header_hierarchy[c]) if c in self.header_hierarchy and self.header_own_labels.get(c)
+                        else get_column_letter(c) for c in self.header_columns]
         header_units = []
         for column in self.header_columns:
             chain = self.header_hierarchy.get(column, [])
@@ -224,9 +261,11 @@ class Region:
                  'hidden': self.hidden, 'date_system': self.epoch,
                  'merged_ranges': self.merged_ranges, 'formula_capability': 'formula-and-cache',
                  'layout': 'defined-table' if self.definition else 'inferred-region',
-                 'warnings': [] if self.definition else ['Table boundaries/header roles are inferred from source structure; validate unspecified summary rows and units before whole-table aggregation'],
+                 'warnings': [*([] if self.definition else ['Table boundaries/header roles are inferred from source structure; validate unspecified summary rows and units before whole-table aggregation']),
+                              *(['Some formula cells carry no cached result; their formula text is kept for traceability but is not a usable fact'] if self.unresolved_formulas else [])],
                  'summary_detection': 'defined-totals-or-vertical-aggregate-formula',
-                 'range_origin': {'row': self.minrow, 'column': self.mincol}}
+                 'range_origin': {'row': self.minrow, 'column': self.mincol},
+                 'unresolved_formulas': self.unresolved_formulas}
         if self.writer:
             table['artifact_id'] = self.writer.finish()
             table['stream_batches'] = len(self.writer.batches)
@@ -235,8 +274,13 @@ class Region:
         width = self.maxcol - self.mincol + 1
         if width > MAX_COLUMNS:
             raise ValueError('Table exceeds column budget')
-        # First source row is retained even when it is not a header.
-        header = self.headers if len(self.headers) == width else [get_column_letter(c) for c in range(self.mincol, self.maxcol + 1)]
+        # First source row is retained even when it is not a header. The
+        # Markdown projection uses the raw header labels so a merged header is
+        # rendered exactly as its data rows are; `headers` above stays unique
+        # per logical column for programmatic resolution.
+        header = next((candidate for candidate in (self.header_display, self.headers)
+                       if len(candidate) == width), None) \
+            or [get_column_letter(c) for c in range(self.mincol, self.maxcol + 1)]
         lines = [f'### 工作表：{self.sheet} · {table_range}',
                  '| ' + ' | '.join(_escape(h) for h in header) + ' |',
                  '| ' + ' | '.join(['---'] * width) + ' |']
@@ -391,7 +435,7 @@ def _xlsx(path, instance, unit_ids):
                     target = defined_regions.get(identifier)
                     if target is None:
                         target = Region(sheet.title, identifier, instance, sheet.sheet_state != 'visible',
-                            '1904' if formulas.epoch.year == 1904 else '1900', [m[0] for m in merges], unit_ids, definition)
+                            '1904' if formulas.epoch.year == 1904 else '1900', merges, unit_ids, definition)
                         defined_regions[identifier] = target
                         active.append(target)
                     target.add({'row': number, 'cells': subset, 'hidden': number in hidden_rows})
@@ -411,7 +455,7 @@ def _xlsx(path, instance, unit_ids):
                     if len(tables) + index > MAX_TABLES:
                         raise ValueError('Workbook exceeds table region budget')
                     region = Region(sheet.title, index, instance, sheet.sheet_state != 'visible',
-                                    '1904' if formulas.epoch.year == 1904 else '1900', [m[0] for m in merges], unit_ids)
+                                    '1904' if formulas.epoch.year == 1904 else '1900', merges, unit_ids)
                     active.append(region)
                 region.add({'row': number, 'cells': cells, 'hidden': number in hidden_rows})
             if region:
@@ -451,6 +495,26 @@ def _append_region(region, table, md, requested, tables, units, sections):
         artifact_store.remove(table['artifact_id'], region.instance)
 
 
+def _xls_cell(workbook, raw, column: int, row: int) -> dict:
+    """One typed .xls cell, keeping 0/false/blank/error values distinguishable."""
+    import xlrd
+    from openpyxl.utils.cell import get_column_letter
+    value = raw.value
+    kind = {xlrd.XL_CELL_TEXT: 'string', xlrd.XL_CELL_NUMBER: 'number',
+            xlrd.XL_CELL_DATE: 'date', xlrd.XL_CELL_BOOLEAN: 'boolean', xlrd.XL_CELL_ERROR: 'error'}.get(raw.ctype, 'string')
+    if kind == 'boolean':
+        value = bool(value)
+    elif kind == 'date':
+        value = xlrd.xldate_as_datetime(value, workbook.datemode).isoformat()
+    elif kind == 'error':
+        value = xlrd.error_text_from_code.get(value, str(value))
+    fmt = 'General'
+    if raw.xf_index is not None:
+        fmt = workbook.format_map[workbook.xf_list[raw.xf_index].format_key].format_str
+    return {'coordinate': f'{get_column_letter(column + 1)}{row + 1}', 'column': column + 1,
+            'type': kind, 'value': _value(value), 'display': _display(value, fmt), 'number_format': fmt}
+
+
 def _xls(path, instance, unit_ids):
     import xlrd
     from openpyxl.utils.cell import get_column_letter
@@ -468,40 +532,38 @@ def _xls(path, instance, unit_ids):
             if sheet.nrows > MAX_ROWS or sheet.ncols > MAX_COLUMNS:
                 raise ValueError('Worksheet exceeds row/column budget')
             index = 0
-            merge_labels = [f'{get_column_letter(clo + 1)}{rlo + 1}:{get_column_letter(chi)}{rhi}' for rlo, rhi, clo, chi in sheet.merged_cells]
+            merges = [(f'{get_column_letter(clo + 1)}{rlo + 1}:{get_column_letter(chi)}{rhi}',
+                       (clo + 1, rlo + 1, chi, rhi)) for rlo, rhi, clo, chi in sheet.merged_cells]
             for r in range(sheet.nrows):
                 cells = []
                 for c in range(sheet.ncols):
                     raw = sheet.cell(r, c)
                     if raw.ctype in {xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK}:
                         continue
-                    value = raw.value
-                    kind = {xlrd.XL_CELL_TEXT: 'string', xlrd.XL_CELL_NUMBER: 'number',
-                            xlrd.XL_CELL_DATE: 'date', xlrd.XL_CELL_BOOLEAN: 'boolean', xlrd.XL_CELL_ERROR: 'error'}.get(raw.ctype, 'string')
-                    if kind == 'boolean':
-                        value = bool(value)
-                    elif kind == 'date':
-                        value = xlrd.xldate_as_datetime(value, workbook.datemode).isoformat()
-                    elif kind == 'error':
-                        value = xlrd.error_text_from_code.get(value, str(value))
-                    fmt = 'General'
-                    if raw.xf_index is not None:
-                        fmt = workbook.format_map[workbook.xf_list[raw.xf_index].format_key].format_str
-                    cells.append({'coordinate': f'{get_column_letter(c + 1)}{r + 1}', 'column': c + 1,
-                                  'type': kind, 'value': _value(value), 'display': _display(value, fmt), 'number_format': fmt})
+                    cells.append(_xls_cell(workbook, raw, c, r))
                 mapped = {cell['column']: cell for cell in cells}
-                for rlo, rhi, clo, chi in sheet.merged_cells:
-                    if not rlo <= r < rhi:
+                for label, (lo_col, lo_row, hi_col, hi_row) in merges:
+                    if not lo_row <= r + 1 <= hi_row:
                         continue
-                    anchor_value = sheet.cell_value(rlo, clo)
-                    anchor_coordinate = f'{get_column_letter(clo + 1)}{rlo + 1}'
-                    for c in range(clo, chi):
-                        if r == rlo and c == clo and c + 1 in mapped:
-                            mapped[c + 1]['merged_anchor'] = anchor_coordinate
-                        elif c + 1 not in mapped:
-                            mapped[c + 1] = {'coordinate': f'{get_column_letter(c + 1)}{r + 1}', 'column': c + 1,
-                                             'type': 'blank', 'value': None, 'display': str(anchor_value) if anchor_value is not None else '',
-                                             'inherited': True, 'merged_anchor': anchor_coordinate}
+                    anchor_row = lo_row == r + 1
+                    # Inherit the anchor's own formatted display, never a raw
+                    # str() of the cell value: one fact must not yield two
+                    # different retrieval strings inside a merged range.
+                    anchor = (mapped.get(lo_col) if anchor_row else None) \
+                        or _xls_cell(workbook, sheet.cell(lo_row - 1, lo_col - 1), lo_col - 1, lo_row - 1)
+                    if anchor_row and lo_col in mapped:
+                        mapped[lo_col]['merged_anchor'] = f'{get_column_letter(lo_col)}{lo_row}'
+                        mapped[lo_col]['merged_range'] = label
+                    # Spans both directions: a horizontal merge fills the other
+                    # columns of the anchor row, a vertical merge fills the
+                    # other rows of the anchor column.
+                    for column in range(lo_col, hi_col + 1):
+                        if column in mapped:
+                            continue
+                        mapped[column] = {'coordinate': f'{get_column_letter(column)}{r + 1}', 'column': column,
+                                          'type': 'blank', 'value': None, 'display': anchor['display'],
+                                          'inherited': True, 'merged_anchor': f'{get_column_letter(lo_col)}{lo_row}',
+                                          'merged_range': label}
                 cells = sorted(mapped.values(), key=lambda cell: cell['column'])
                 count += len(cells)
                 if count > MAX_CELLS:
@@ -517,7 +579,7 @@ def _xls(path, instance, unit_ids):
                 if not active:
                     index += 1
                     active = Region(sheet.name, index, instance, getattr(sheet, 'visibility', 0) != 0,
-                                    '1904' if workbook.datemode else '1900', merge_labels, unit_ids)
+                                    '1904' if workbook.datemode else '1900', merges, unit_ids)
                 active.add({'row': r + 1, 'cells': cells})
             if active:
                 table, md = active.finish()

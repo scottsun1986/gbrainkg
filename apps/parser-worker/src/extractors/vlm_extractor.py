@@ -8,15 +8,30 @@ from typing import TYPE_CHECKING
 
 import base64
 import asyncio
+import logging
 import math
+import os
+import re
+import tempfile
+from pathlib import Path
 if TYPE_CHECKING or (__package__ and "." in __package__):
     from ..env_config import env_int, env_float
 else:
     from env_config import env_int, env_float
-import logging
-import os
-import re
-from pathlib import Path
+
+
+def _spill_root() -> str:
+    """Rendered frames must spill into the accounted parser upload root.
+
+    Without an explicit dir, NamedTemporaryFile falls back to the system temp
+    directory, which is neither budgeted nor reclaimed by the parser sweeper.
+    """
+    root = os.environ.get('UPLOAD_ROOT', '/tmp/llmwiki/parser')
+    try:
+        Path(root).mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return tempfile.gettempdir()
+    return root
 from typing import Any
 
 import httpx
@@ -174,7 +189,7 @@ async def describe_pdf_page_with_vlm(
                 page = doc[page_number]
                 scale = min(dpi / 72, math.sqrt(8_000_000 / max(1, page.rect.width * page.rect.height)))
                 pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
-                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                with tempfile.NamedTemporaryFile(suffix='.png', delete=False, dir=_spill_root()) as tmp:
                     tmp_path = Path(tmp.name)
                 try:
                     pix.save(str(tmp_path))

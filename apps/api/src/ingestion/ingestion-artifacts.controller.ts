@@ -29,7 +29,8 @@ export class IngestionArtifactsController {
     const batch = await (this.db as any).importBatch.findUnique({ where: { id: batchId } });
     if (!batch || !(await this.permission.getVisibleKnowledgeBases(userId)).includes(batch.kbId) || !await this.permission.canManageKnowledgeBase(userId, batch.kbId)) throw new NotFoundException('Import batch not found');
     const ids = batch.items.flatMap((item: any) => item.documentId ? [item.documentId] : []);
-    const allowed = await new DocumentAclService(this.permission).filterReadableDocuments(userId, ids);
+    // Probe: a manager must see (and be able to retry) an expired batch item.
+    const allowed = await new DocumentAclService(this.permission).filterReadableDocuments(userId, ids, { probe: true });
     const docs = await this.db.document.findMany({ where: { id: { in: [...allowed] }, kbId: batch.kbId }, select: { id: true, status: true, parserMetadata: true, qualityIssues: true } });
     return { ...batch, items: batch.items.map((item: any) => {
       if (!item.documentId) return item;
@@ -83,10 +84,18 @@ export class IngestionArtifactsController {
       const doc = await this.db.document.findFirst({ where: { id: docId, ...(kbId !== '_' ? { kbId } : {}), kb: { status: 'active' } } });
       if (!doc) throw new NotFoundException('Asset not found');
       let metadata: any = doc.parserMetadata;
-      if (versionNumber && Number(versionNumber) !== doc.version) {
-        const version = await this.db.documentVersion.findFirst({ where: { documentId: docId, number: Number(versionNumber), state: 'published' } });
-        if (!version) throw new NotFoundException('Published asset version not found');
-        metadata = (version.publicationData as any)?.parserMetadata;
+      if (versionNumber) {
+        if (Number(versionNumber) !== doc.version) {
+          const version = await this.db.documentVersion.findFirst({ where: { documentId: docId, number: Number(versionNumber), state: 'published' } });
+          if (!version) throw new NotFoundException('Published asset version not found');
+          metadata = (version.publicationData as any)?.parserMetadata;
+        }
+      } else if (doc.activeVersionId) {
+        // A rebuild in flight keeps the previous build's assets in
+        // parserMetadata. Without pinning, images from an unpublished (and
+        // possibly aborted) build are served as if they were current.
+        const active = await this.db.documentVersion.findFirst({ where: { id: doc.activeVersionId, documentId: docId, state: 'published' } });
+        if (active) metadata = (active.publicationData as any)?.parserMetadata;
       }
       const asset = [...(metadata?.assets || []), ...(metadata?.package_assets || [])].find(asset => asset.id === assetId);
       if (!asset?.path || !/^image\/(?:png|jpeg|webp|tiff|bmp|gif)$/.test(asset.mime)) throw new NotFoundException('Asset not found');

@@ -27,6 +27,14 @@ def child(source, directory, rows):
     first = structured_excel.extract(source, 'benchmark-inst1')
     cold = time.monotonic() - started
     table = first['structured_tables'][0]
+    if not table.get('artifact_id'):
+        # Small sheets stay inline by design; there is no streamed artifact to
+        # measure. Force the streaming path so the probe always reports the same
+        # quantities instead of crashing on a missing artifact id.
+        raise RuntimeError(
+            'Benchmark table stayed inline; use --rows above the inline preview '
+            f'budget ({structured_excel.INLINE_ROWS} rows) to exercise streaming'
+        )
     path = artifact_store.resolve(table['artifact_id'], 'benchmark-inst1')
     with path.open('rb') as handle:
         facts = sum(1 for _ in handle)
