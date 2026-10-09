@@ -20,6 +20,7 @@ import { splitMarkdownIntoChunks } from "./markdown-chunker";
 import { assessContentQuality, assessExtendedQuality } from "./content-quality";
 import { isNearDuplicate, simhash64 } from "./content-dedupe";
 import { parserPollBudget } from "./parser-budget";
+import { fetchParserWithBackpressure } from "./parser-backpressure";
 import { ANYDOC_UPLOAD_EXTENSIONS, SUPPORTED_UPLOAD_EXTENSIONS } from './parser-capabilities';
 import { enrichChunksWithContext } from './contextual-retrieval';
 import { PrismaContextualPrefixCache } from './contextual-prefix-cache';
@@ -434,11 +435,11 @@ export class IngestionService implements OnModuleInit {
       const headers: Record<string, string> = {};
       const authToken = process.env.PARSER_AUTH_TOKEN || process.env.AUTH_TOKEN;
       if (authToken) headers.Authorization = `Bearer ${authToken}`;
-      const response = await fetch(`${this.parserUrl}/parse-execute?parser_type=auto`, {
+      const response = await fetchParserWithBackpressure(`${this.parserUrl}/parse-execute?parser_type=auto`, {
         method: "POST",
         body: form,
         headers,
-        signal: AbortSignal.timeout(parserPollBudget(process.env) + 30_000),
+        timeoutMs: parserPollBudget(process.env) + 30_000,
       });
       if (!response.ok) throw new Error(`Parser execution failed: ${response.status}`);
       parsed = await response.json();

@@ -752,6 +752,9 @@ SHARED_PARSER_DEPS
     if [[ '$GATE_PROFILE' == quality-first ]]; then
       python3 -c 'import json,urllib.request; p=json.load(urllib.request.urlopen(\"http://127.0.0.1:$API_PORT/ready\"))[\"knowledgeProfile\"]; assert p[\"profile\"]==\"quality-first\" and all(p[k] for k in [\"authorization\",\"immutableVersions\",\"incrementalGraph\",\"adaptiveRetrieval\"]) and not any(p[k] for k in [\"sparse\",\"maxSim\",\"lateChunking\"])' || { echo '  - Knowledge policy: FAIL'; ok=0; }
     fi
+    if [[ -z \"\${PARSER_AUTH_TOKEN:-}\" ]]; then echo '  - Parser auth token: MISSING in env file'; ok=0; fi
+    parser_auth_code=\$(curl -s -o /dev/null -w '%{http_code}' -X POST -H \"Authorization: Bearer \${PARSER_AUTH_TOKEN:-}\" 'http://127.0.0.1:8100/parse-execute?parser_type=auto' || true)
+    if [[ \"\$parser_auth_code\" == 401 || \"\$parser_auth_code\" == 000 ]]; then echo \"  - Parser auth (API token accepted): FAIL (HTTP \$parser_auth_code)\"; ok=0; else echo \"  - Parser auth (API token accepted): OK (HTTP \$parser_auth_code)\"; fi
     gbrain sources status --json >/dev/null && echo '  - GBrain engine status: OK' || { echo '  - GBrain engine status: FAIL'; ok=0; }
     exit \$((1 - ok))
   " || health_rc=1

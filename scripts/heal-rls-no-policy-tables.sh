@@ -23,6 +23,6 @@ HOST_ARG="${3:-127.0.0.1}"
 PORT_ARG="${4:-5432}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REVIEWED_SQL="$SCRIPT_DIR/../packages/database/prisma/migrations/20260926160000_rls_disable_no_policy_tables/migration.sql"
+REVIEWED_SQL="$SCRIPT_DIR/../packages/database/prisma/migrations/20261010000000_residual_rls_cleanup/migration.sql"
 PGPASSWORD="${PGPASSWORD:-}" psql -h "$HOST_ARG" -p "$PORT_ARG" -U "$USER_ARG" -d "$DB" -v ON_ERROR_STOP=1 -1 -f "$REVIEWED_SQL"
 echo "[heal-rls] $DB done"
