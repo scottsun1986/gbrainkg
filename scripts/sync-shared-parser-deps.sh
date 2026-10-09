@@ -25,7 +25,18 @@ if ! command -v soffice >/dev/null || [[ "$impress_installed" != true ]]; then
 fi
 
 mountpoint -q /data || { echo 'ERROR: /data must be mounted for parser dependency staging' >&2; exit 1; }
-parser_stage=$(mktemp -d /data/gbrain-parser-deps.XXXXXX)
+# /data itself is root-owned on a hardened host, so `mktemp -d /data/...` fails
+# with "Permission denied". $HOME usually sits on the small root disk, which pip
+# must not fill. Stage inside the deployed repository directory instead: the
+# deploy has already written to it, so it is guaranteed to be writable and to
+# live on the data disk.
+resolved_repo="$(readlink -f "$parser_repo")"
+stage_root=""
+for candidate in "$resolved_repo" /data/llmwiki/.releases; do
+  if [[ -d "$candidate" && -w "$candidate" ]]; then stage_root="$candidate"; break; fi
+done
+[[ -n "$stage_root" ]] || stage_root="$HOME"
+parser_stage=$(mktemp -d "$stage_root/.gbrain-parser-deps.XXXXXX")
 trap 'rm -rf "$parser_stage"' EXIT
 export TMPDIR="$parser_stage"
 
