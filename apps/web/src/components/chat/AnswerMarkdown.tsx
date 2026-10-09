@@ -56,7 +56,7 @@ function answerTokens(content: string): Token[] {
         const after = siblings[index + 1];
         const endsClaim = !before || before.type === 'br'
           || (before.type === 'text' && /(?:[。！？；;.!?]|\[\d+\])\s*$/.test(before.raw));
-        const opensBlock = !after || after.type === 'br' || /^\s*(?:\n|[：:])/.test(after.raw);
+        const opensBlock = !after || after.type === 'br' || /^\s*(?:[（(【\[][^（()【】\n]{0,120}[)）】\]]\s*)?(?:\n|[：:]|$)/.test(after.raw);
         if (opensBlock && (index === 0 || endsClaim)) {
           if (index === 0) return item.raw;
           changed = true;

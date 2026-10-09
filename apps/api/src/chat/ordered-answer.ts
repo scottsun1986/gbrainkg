@@ -403,7 +403,7 @@ function normalizeBoldMarkers(line: string): string {
 }
 
 /**
- * Guarantee one blank line before every block-level element.
+ * Guarantee one blank line around headings and before other blocks.
  *
  * The web renderer lexes with `breaks: true`, so a single newline is a hard
  * break *inside the same paragraph*: two sections separated by "\n" render
@@ -423,14 +423,35 @@ function normalizeBoldMarkers(line: string): string {
  * The model emits the same label both ways — "**来源 1《…》**" and
  * "来源2《…》（…）" — which renders inconsistently (one bold, one plain). A
  * source label is always a bold block label, so wrap every non-bold label in
- * `**…**`. A label is a leading source word + number + 《title》 + an optional
+ * `**…**`. A label is a leading source word + number or 《title》 + an optional
  * parenthetical (which may span lines), followed by a colon or the line end.
  * Already-bold labels are untouched; a sentence that merely starts with a
  * source word ("来源2《…》规定…") has trailing prose and is not matched.
  */
 export function boldSourceLabels(text: string): string {
-  const re = /(^|\n)([ \t]*(?:[-*+•][ \t]+)?)((?:来源|Source|引用|参考来源|来源文件|Ref)[ \t]*[:：]?[ \t]*\[?\d{1,2}\]?[ \t]*(?:《[^》\n]*》[ \t]*)?(?:[（(【\[][^（()）【】\[\]\n]*(?:\n[^（()）【】\[\]\n]*)*?[)）】\]][ \t]*)?)(?=[：:]|\n|$)/g;
-  return String(text || '').replace(re, (_match, lead: string, indent: string, label: string) => `${lead}${indent}**${label.trim()}**`);
+  // Match only source navigation: a numbered label or an explicit document
+  // title. A source mention followed by a predicate remains ordinary prose.
+  const re = /(^|\n)([ \t]*(?:[-*+•][ \t]+)?)((?:来源文件|参考来源|參考來源|来源|引用|Source|Reference|Ref)[ \t]*[:：]?[ \t]*(?:\[?\d{1,2}\]?[ \t]*(?:《[^》\n]*》[ \t]*)?|《[^》\n]*》[ \t]*)(?:[（(【\[][^（()）【】\[\]\n]*(?:\n[^（()）【】\[\]\n]*)*?[)）】\]][ \t]*)?)(?=[：:]|\n|$)/gi;
+  const bold = (block: string) => block.replace(re, (_match, lead: string, indent: string, label: string) => `${lead}${indent}**${label.trim()}**`);
+  const out: string[] = [];
+  let prose: string[] = [];
+  let fence: { marker: string; length: number } | undefined;
+  const flush = () => { if (prose.length) { out.push(bold(prose.join('\n'))); prose = []; } };
+  for (const line of String(text || '').split('\n')) {
+    const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (fence) {
+      out.push(line);
+      if (match && match[1][0] === fence.marker && match[1].length >= fence.length && !match[2].trim()) fence = undefined;
+    } else if (match) {
+      flush();
+      out.push(line);
+      fence = { marker: match[1][0], length: match[1].length };
+    } else {
+      prose.push(line);
+    }
+  }
+  flush();
+  return out.join('\n');
 }
 
 export function normalizeAnswerLayout(text: string): string {
@@ -450,17 +471,34 @@ export function normalizeAnswerLayout(text: string): string {
       if (match && match[1][0] === fence.marker && match[1].length >= fence.length && !match[2].trim()) fence = undefined;
       continue;
     }
-    for (const segment of splitInlineBlockLabels(rawLine)) {
-      const line = normalizeBoldMarkers(segment);
-      if (isMarkupResidueLine(line)) continue;
-      if (line.trim() && isAnswerBlockStart(line) && out.length && out[out.length - 1].trim()) {
-        const prev = out[out.length - 1];
-        const sameContinuation =
-          (isListItemLine(prev) && isListItemLine(line)) ||
-          (isTableSyntaxLine(prev) && isTableSyntaxLine(line));
-        if (!sameContinuation) out.push('');
+    const literals: string[] = [];
+    const masked = rawLine.replace(/(?<!`)(`+)(?!`)[^\n]*?(?<!`)\1(?!`)|\[[^\n]*?\]\([^\n]*?\)|\\[*_`#]/g, literal => {
+      literals.push(literal);
+      return `\u0000${literals.length - 1}\u0000`;
+    });
+    const restore = (line: string) => line.replace(/\u0000(\d+)\u0000/g, (_, index: string) => literals[Number(index)]);
+    for (const segment of splitInlineBlockLabels(masked)) {
+      const plainHeading = /^[一二三四五六七八九十百千零两]+[、．]/.test(segment.trim()) && isPlainTextHeading(segment.trim());
+      const normalized = normalizeBoldMarkers(plainHeading ? `**${segment.trim()}**` : segment);
+      // A standalone label owns a paragraph, including its scope qualifier.
+      // List-item labels and table cells keep their inline syntax.
+      const label = /^(\*\*[^*\n]+\*\*(?:[ \t]*[（(【\[][^（()【】\n]{0,120}[)）】\]])?[ \t]*)(?:([：:])[ \t]*(.*)|$)/.exec(normalized.trim());
+      const segments = label && !isListItemLine(normalized)
+        ? [label[1].trimEnd() + (label[2] || ''), ...(label[3] ? [label[3]] : [])]
+        : [normalized];
+      for (const maskedLine of segments) {
+        const line = restore(maskedLine);
+        if (isMarkupResidueLine(line)) continue;
+        const previousIsHeading = out.length > 0 && /^(?:\*\*[^*\n]+\*\*(?:[ \t]*[（(【\[][^（()【】\n]{0,120}[)）】\]])?[ \t]*[：:]?|#{1,6}\s+.+)$/.test(out[out.length - 1]);
+        if (line.trim() && (isAnswerBlockStart(line) || previousIsHeading) && out.length && out[out.length - 1].trim()) {
+          const prev = out[out.length - 1];
+          const sameContinuation =
+            (isListItemLine(prev) && isListItemLine(line)) ||
+            (isTableSyntaxLine(prev) && isTableSyntaxLine(line));
+          if (!sameContinuation) out.push('');
+        }
+        out.push(line);
       }
-      out.push(line);
     }
   }
   const collapsed: string[] = [];

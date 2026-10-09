@@ -190,9 +190,13 @@ describe('answer block layout normalization', () => {
     expect(normalizeAnswerLayout(input)).toBe([
       '研发人员的绩效组成，两份来源给出了不同结构，须并列参考：',
       '',
-      '**来源《软件研发中心绩效管理办法》**：三类指标 [2]',
+      '**来源《软件研发中心绩效管理办法》**：',
       '',
-      '**来源《企业研发管理规范》**：项目绩效+技术贡献 [3]',
+      '三类指标 [2]',
+      '',
+      '**来源《企业研发管理规范》**：',
+      '',
+      '项目绩效+技术贡献 [3]',
     ].join('\n'));
   });
 
@@ -207,14 +211,14 @@ describe('answer block layout normalization', () => {
 
   it('splits a bold label glued after a sentence boundary or a citation marker', () => {
     expect(normalizeAnswerLayout('原文表述：…[2]；**二、《企业研发管理规范》口径（适用范围）**\n研发人员考核…[3]。'))
-      .toBe('原文表述：…[2]；\n\n**二、《企业研发管理规范》口径（适用范围）**\n研发人员考核…[3]。');
+      .toBe('原文表述：…[2]；\n\n**二、《企业研发管理规范》口径（适用范围）**\n\n研发人员考核…[3]。');
     expect(normalizeAnswerLayout('前节结论[2] **来源《企业研发管理规范》**：研发人员考核…[3]'))
-      .toBe('前节结论[2]\n\n**来源《企业研发管理规范》**：研发人员考核…[3]');
+      .toBe('前节结论[2]\n\n**来源《企业研发管理规范》**：\n\n研发人员考核…[3]');
   });
 
   it('separates headings and code fences from surrounding prose without touching fenced content', () => {
     expect(normalizeAnswerLayout('结论。\n## 依据\n内容。\n```js\nx\n```'))
-      .toBe('结论。\n\n## 依据\n内容。\n\n```js\nx\n```');
+      .toBe('结论。\n\n## 依据\n\n内容。\n\n```js\nx\n```');
     const fenced = '说明。\n```text\n# 代码里的标题\n- 代码里的列表\n```';
     expect(normalizeAnswerLayout(fenced)).toBe('说明。\n\n```text\n# 代码里的标题\n- 代码里的列表\n```');
   });
@@ -236,7 +240,7 @@ describe('answer block layout normalization', () => {
     expect(normalizeAnswerLayout('资料记载有**业绩指标**和**行为指标**两部分[1]。'))
       .toBe('资料记载有业绩指标和行为指标两部分[1]。');
     expect(normalizeAnswerLayout('说明。\n**来源《X》**：内容 [1]'))
-      .toBe('说明。\n\n**来源《X》**：内容 [1]');
+      .toBe('说明。\n\n**来源《X》**：\n\n内容 [1]');
     // A list-item label keeps its bold; its trailing inline bold is stripped.
     expect(normalizeAnswerLayout('- **业绩指标**：衡量工作产出与**成果** [1]'))
       .toBe('- **业绩指标**：衡量工作产出与成果 [1]');
@@ -249,6 +253,38 @@ describe('answer block layout normalization', () => {
     // A rule carries limit wording or a predicate, regardless of topic.
     expect(isPlainTextHeading('三、超过10分钟以上')).toBe(false);
     expect(isPlainTextHeading('四、应当提交申请')).toBe(false);
+  });
+
+  it('normalizes mixed source labels and explicit section ordinals without inventing headings', () => {
+    const input = '**来源《A》**：甲[1]。\n来源《B》：乙[2]。\n一、适用范围\n条件[2]。';
+    const output = normalizeAnswerLayout(input);
+    expect(output).toContain('**来源《B》**：\n\n乙[2]。');
+    expect(output).toContain('**一、适用范围**');
+    expect(normalizeAnswerLayout(output)).toBe(output);
+    expect(boldSourceLabels('Reference 2《B》：')).toBe('**Reference 2《B》**：');
+    expect(normalizeAnswerLayout('1. 甲[1]\n2. 乙[2]')).toBe('1. 甲[1]\n2. 乙[2]');
+    expect(boldSourceLabels('来源《B》规定内容[2]。')).toBe('来源《B》规定内容[2]。');
+  });
+
+  it('preserves inline code, link labels and escaped markers during layout repair', () => {
+    const input = '运算符 `**` 与 ``x ** 2``；[示例。**标题**](https://example.test)；\\**原样\\**。';
+    expect(normalizeAnswerLayout(input)).toBe(input);
+    for (const code of ['``x `**` y``', '`x ``**`` y`', '```x ``**`` y```']) {
+      expect(normalizeAnswerLayout(`代码 ${code}。`)).toBe(`代码 ${code}。`);
+    }
+    expect(normalizeAnswerLayout('- **字段**：正文[1]\n- **字段**：正文[2]'))
+      .toBe('- **字段**：正文[1]\n- **字段**：正文[2]');
+  });
+
+  it('preserves source-looking text inside backtick and tilde code fences', () => {
+    for (const marker of ['```', '~~~~']) {
+      const input = `${marker}text\n来源2《B》：\n一、适用范围\n${marker}\n来源《C》：`;
+      const expected = `${marker}text\n来源2《B》：\n一、适用范围\n${marker}\n**来源《C》**：`;
+      expect(boldSourceLabels(input)).toBe(expected);
+      expect(normalizeAnswerLayout(input)).toBe(expected.replace('\n**来源《C》**', '\n\n**来源《C》**'));
+    }
+    const partial = '```text\n来源2《B》：';
+    expect(boldSourceLabels(partial)).toBe(partial);
   });
 
   it('makes every source label bold, including a multi-line parenthetical', () => {

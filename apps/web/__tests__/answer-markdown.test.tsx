@@ -53,6 +53,14 @@ describe('answer Markdown structure and citation safety', () => {
     assert.ok(!html('前节结论[2] **重点**仍是同一段。').includes('</p><p>'));
   });
 
+  it('keeps standalone source headings bold when a scope qualifier follows the marker', () => {
+    const result = html('**来源 1《A》**（适用范围）\n甲[2]。\n\n**来源 2《B》**（适用范围）：乙[2]。');
+    assert.equal((result.match(/<strong>/g) || []).length, 2);
+    assert.ok(result.includes('（适用范围）'));
+    assert.equal((result.match(/<button/g) || []).length, 2);
+    assert.ok(!html('**重点**（补充）仍是正文。').includes('<strong>'));
+  });
+
   it('renders task checkboxes once without leaking Markdown markers', () => {
     const result = html('- [x] 已完成\n- [ ] 待处理');
     assert.equal((result.match(/type="checkbox"/g) || []).length, 2);
