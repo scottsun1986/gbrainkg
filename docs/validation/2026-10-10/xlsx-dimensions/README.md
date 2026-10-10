@@ -4,7 +4,7 @@
 
 The production workbook `电信服务问答对100题.xlsx` declared worksheet dimension `A1`, while its worksheet XML contained 101 rows and 202 cells through row 101. The old openpyxl read-only path trusted the declared dimension and exposed only one row and one column. Local inspection of the original attachment confirmed this baseline: openpyxl 3.1.5 reported `A1:A1`, `max_row=1`, `max_column=1`, and yielded only the header row.
 
-The attachment was used only from `/tmp/telecom-qa100-prod.xlsx` for offline validation. It was not copied into this repository. No production service, production database, or question-answer import endpoint was called; no production reparsing, deployment, or database write occurred.
+During the initial offline validation, the attachment was used only from `/tmp/telecom-qa100-prod.xlsx` and was not copied into this repository. That local-only phase did not call a production service or write a production database. Production release and parser-only verification are recorded separately below.
 
 ## Verification
 
@@ -29,5 +29,23 @@ The final parser regression suite covers inaccurate small dimensions, formula/ca
 ## Q&A import behavior
 
 Ordinary spreadsheet upload parses the workbook as structured document content; it does not automatically convert every row into native Q&A records. The `QaPanel` provides a separate explicit import flow: select the question and answer columns (plus optional metadata), validate and preview the mapping, then import. Use that flow when each spreadsheet row should be a direct Q&A item. This parser repair restores complete worksheet reading and does not force automatic Q&A conversion for general uploads.
+
+## Demo deployment verification
+
+After the demo release, read-only service checks on `ubuntu@150.158.137.151` showed the three user units `llmwiki-api`, `llmwiki-web`, and `llmwiki-parser` active. API port 3202 `/ready` returned HTTP 200 with database and Redis `ok`; web port 50003 returned HTTP 200. The parser source SHA-256 and its regression test source SHA-256 matched the locally verified candidate exactly.
+
+The original workbook was sent to a temporary path on the demo host and submitted directly to the authenticated parser `/parse-execute?parser_type=auto` endpoint. It returned HTTP 200 with `status=completed`, engine `openpyxl-stream`, one table, 101 rows, and header columns `[1, 2]`. Its 7,913-character markdown contained the target question and full answer, and one structured row contained both. The parser's temporary upload and the staged workbook were removed after verification. This exercised the parser only; it did not write a business database or import Q&A records.
+
+The parser reported one source unit processed for the one-sheet workbook. As noted above, that unit count is not a row/cell coverage percentage. Machine-readable demo results are included in [results.json](./results.json).
+
+## Production parser verification
+
+After production deployment, read-only checks on `meetings2` showed the system units `llmwiki-api`, `llmwiki-web`, and `llmwiki-parser` active. API port 3000 `/ready` returned HTTP 200 with database and Redis `ok`; the public `knowledge.5gsailor.com:20080` entry redirected once from HTTP to HTTPS and returned HTTP 200. The deployed `structured_excel.py` and its test source SHA-256 values exactly matched the candidate.
+
+Using the existing service token without displaying it, the original workbook was submitted directly to the production parser `/parse-execute?parser_type=auto` endpoint. It returned HTTP 200 with `status=completed`, engine `openpyxl-stream`, one table with 101 rows and columns `[1, 2]`. The 7,913-character markdown contained the target question and full answer, and one structured row contained both. The staged workbook and parser response temporary file were removed. This direct parser check did not write the application database.
+
+This result covers parser execution only. A separate read-only production check used the real szq owner identity: the account was active, had no MFA or forced-password-change/setup requirement, and the authenticated GET for the one active personal knowledge base returned HTTP 200 with `total=0`. An exact document lookup found no original document, and same-owner lookup found no same-named copy. Therefore there was no published/ready document to reprocess and no source to test through chat. No reupload, recovery, retry POST, or chat POST was performed, and the verification wrote no business data. The original production question remains unverified against an indexed document; parser completeness on the supplied file does not establish production retrieval behavior. Production machine-readable health, parser, and source-presence results are in [results.json](./results.json).
+
+The production deployment log also reports Prisma migrations up to date with no pending migrations, while GBrain shared-skills migration `v0.53.0` finished **PARTIAL**: 13 sources require host action, including a `db_only_export_required` item. This is a pre-existing, separate migration follow-up; it is not represented as a full migration success and was not expanded or modified by this parser verification.
 
 Command summaries are recorded in [verification.log](./verification.log), and machine-readable results are in [results.json](./results.json).

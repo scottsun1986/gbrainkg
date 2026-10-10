@@ -22,4 +22,38 @@ Repository tests (completed before final parser-only merge/table-bound guard add
   exit 0; Turbo 6/6; API 187 passed, 1 skipped suite, 1,642 passed, 5 skipped;
   web 86 passed, 0 failed. Not repeated after final Python-only parser change.
 
-Not run: production deployment, production reparse, Q&A import, or database writes.
+During initial offline validation, no production service or database was called. Production release checks are recorded below.
+
+Demo post-release checks (2026-10-10):
+  systemctl --user is-active llmwiki-api llmwiki-web llmwiki-parser
+  exit 0; all three active
+  curl http://127.0.0.1:3202/ready; curl http://127.0.0.1:50003/
+  API ready HTTP 200 (database/Redis ok); web HTTP 200
+  sha256sum parser source and test source on demo
+  both hashes exactly matched the candidate checkout
+  Authenticated POST to parser /parse-execute?parser_type=auto with the original xlsx
+  HTTP 200; completed via openpyxl-stream; one table, 101 rows, columns [1, 2];
+  target question and answer present in markdown and the same structured row
+  temporary source file removed after parse; no business database write
+
+Production post-release checks (2026-10-10):
+  systemctl is-active llmwiki-api llmwiki-web llmwiki-parser
+  exit 0; all three system units active
+  curl http://127.0.0.1:3000/ready; curl -L http://knowledge.5gsailor.com:20080/
+  API ready HTTP 200 (database/Redis ok); public web final HTTPS HTTP 200
+  sha256sum parser source and test source on production
+  both hashes exactly matched the candidate checkout
+  Authenticated POST to parser /parse-execute?parser_type=auto with the original xlsx
+  HTTP 200; completed via openpyxl-stream; one table, 101 rows, columns [1, 2];
+  target question and answer present in markdown and the same structured row
+  temporary source file removed after parse; no business database write
+  deployment log: no pending Prisma migrations; shared-skills v0.53.0 PARTIAL,
+  13 sources require host action including db_only_export_required; unrelated to parser fix
+
+Production source-presence check (authenticated owner identity; read-only):
+  account active; no MFA or forced-password-change/setup requirement
+  GET for szq's one active personal knowledge base returned HTTP 200, total=0
+  exact original document lookup and same-owner same-title lookup both found 0
+  no reupload, recovery, retry POST, chat POST, or business database write
+  published/ready document reprocessing and szq chat question were not run because
+  the original source document is absent from the currently available personal KB
