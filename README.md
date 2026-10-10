@@ -66,4 +66,4 @@ bash scripts/deploy-prod.sh --target=all       # 全实例发布
 
 ## 版本
 
-当前版本 v53.0（语料无关与去业务硬编码大版本：标题判定去业务词、权限初始化去角色名、问答提示词全量审计）。近版发布记录见 [docs/RELEASE-v53.0.md](docs/RELEASE-v53.0.md)、[docs/RELEASE-v52.0.md](docs/RELEASE-v52.0.md)、[docs/RELEASE-v51.0.md](docs/RELEASE-v51.0.md)；历史发布记录见 [docs/archive/](docs/archive/)。
+当前版本 v57.0（全链路实测与质量、安全、韧性大版本：压缩包与批量入库修复、引用噪声收敛、拒答强化、TOTP 密钥加密、管理员解绑 MFA、ACL 越权边界统一）。近版发布记录见 [docs/RELEASE-v57.0.md](docs/RELEASE-v57.0.md)、[docs/RELEASE-v56.0.md](docs/RELEASE-v56.0.md)、[docs/RELEASE-v55.0.3.md](docs/RELEASE-v55.0.3.md)、[docs/RELEASE-v55.0.md](docs/RELEASE-v55.0.md)；历史发布记录见 [docs/archive/](docs/archive/)。
