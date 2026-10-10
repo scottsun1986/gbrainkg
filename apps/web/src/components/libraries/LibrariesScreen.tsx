@@ -11,7 +11,6 @@ import { ImportBatchPanel } from './ImportBatchPanel';
 import { IngestionCapabilities, type IngestionCapabilitiesData } from './IngestionCapabilities';
 import type { ImportBatch } from '@/lib/ingestion-ui';
 import type { ParserMetadata } from '../preview/IngestionCoverage';
-import { DocumentAclPanel } from './DocumentAclPanel';
 import { API_BASE_URL, apiHeaders } from '@/lib/api';
 import { appStore } from '@/lib/app-store';
 import { errorMessage, apiMessage, asRecord, asArray, str, num, bool } from '@/lib/errors';
@@ -68,7 +67,6 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
   const [previewDoc, setPreviewDoc] = useState<DocRow | null>(null);
   const [onlinePreview, setOnlinePreview] = useState<PreviewTarget | null>(null);
   const [confirmDoc, setConfirmDoc] = useState<DocRow | null>(null);
-  const [aclDoc, setAclDoc] = useState<DocRow | null>(null);
   const [confirmKb, setConfirmKb] = useState<KbInfo | null>(null);
   const [newPersonalOpen, setNewPersonalOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -500,7 +498,6 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
           <div className="actions">
             <button className="btn" onClick={()=>exportAllDocuments()}>导出</button>
             {current.type==='industry' && current.canGrant && <button className="btn" onClick={()=>onManageGrant?.(current)}>管理授权</button>}
-            {current.type==='personal' && <button className="btn" onClick={()=>window.dispatchEvent(new CustomEvent('app-toast',{detail:'个人库不可共享，权限仅随账号生效'}))}>查看权限</button>}
             {/* 危险操作与常规操作拉开距离（左外边距隔开），并降为描边样式，避免误触 */}
             {current.type==='personal' && current.canDelete && <button className="btn danger btn-danger-gap" onClick={()=>setConfirmKb(current)}>删除知识库</button>}
           </div>
@@ -741,7 +738,6 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
                   <div style={{color:'var(--ink-3)',fontVariantNumeric:'tabular-nums'}}>{d.size}</div>
                   <div className="actions" style={{display:'flex',gap:6,justifyContent:'flex-end'}}>
                     <button className="icon-btn" title="预览" onClick={()=>previewDocument(d)} aria-label="预览"><Icon name="search" size={14}/></button>
-                    {current.canWrite && !String(d.id).startsWith('temp-') && <button className="btn" onClick={() => setAclDoc(d)}>权限</button>}
                     {current.canWrite && (d.status==='failed' || d.status==='needs_review') && !String(d.id).startsWith('temp-') && <button className="icon-btn" title="重试" onClick={async()=>{try{const response=await fetch(`${API_BASE_URL}/api/v1/kbs/${current.id}/documents/${d.id}/retry`,{method:'POST',headers:apiHeaders()}); const result=await response.json().catch(()=>({})); if(!response.ok) throw new Error(result.message||'重试失败'); window.dispatchEvent(new CustomEvent('app-toast',{detail:'已重新提交解析'})); await loadDocuments(current.id);}catch(error){window.dispatchEvent(new CustomEvent('app-toast',{detail:errorMessage(error)||'重试失败'}));}}} aria-label="重试"><Icon name="refresh" size={14}/></button>}
                     {current.canWrite && !String(d.id).startsWith('temp-') && <button className="icon-btn danger" title="删除" onClick={()=>setConfirmDoc(d)} aria-label="删除"><Icon name="logout" size={14} style={{transform:'scaleX(-1)'}}/></button>}
                   </div>
@@ -832,7 +828,6 @@ export function LibrariesScreen({onManageGrant, initialKbId, capabilities = [], 
           </div>
         </div>
       )}
-      {aclDoc && <DocumentAclPanel key={aclDoc.id} documentId={aclDoc.id} title={aclDoc.name} onClose={() => setAclDoc(null)} />}
       {previewDoc && <Modal title={`预览 · ${previewDoc.name}`} onClose={()=>setPreviewDoc(null)} foot={<button className="btn" onClick={()=>setPreviewDoc(null)}>关闭</button>}><div style={{whiteSpace:'pre-wrap',lineHeight:1.7,maxHeight:'60vh',overflow:'auto',fontSize:13}}>{previewDoc.content || '当前文档暂无可预览内容。'}</div></Modal>}
       <OnlinePreviewModal preview={onlinePreview} onClose={()=>setOnlinePreview(null)}/>
       {confirmDoc && <ConfirmModal title="删除知识" msg={<>确认删除 <b style={{color:'var(--ink)'}}>{confirmDoc.name}</b>？删除后将从当前知识库移除。</>} onConfirm={()=>deleteDocument(confirmDoc)} onClose={()=>setConfirmDoc(null)}/>}
