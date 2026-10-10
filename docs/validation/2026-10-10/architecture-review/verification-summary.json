@@ -1,0 +1,124 @@
+{
+  "date": "2026-10-10",
+  "scope": "No business/source code was changed during verification; no production systems were accessed. Review documentation and evidence files were added separately.",
+  "test_runs": [
+    {
+      "command": "/usr/bin/time -f 'WALL_TIME_SECONDS=%e' -o /tmp/gbrainkg-review-test-time-20261010.txt env -u DATABASE_URL_APP -u USER_CREDENTIAL_TEST_DATABASE_URL -u REDIS_URL -u REDIS_HOST -u PARSER_WORKER_URL -u PARSER_URL -u OPENAI_API_KEY -u DEEPSEEK_API_KEY -u LLM_BASE_URL -u FAST_LLM_BASE_URL -u EMBEDDING_BASE_URL -u MAXSIM_ENDPOINT DATABASE_URL='postgresql://review:review@127.0.0.1:5432/review_test' pnpm test",
+      "exit_code": 0,
+      "wall_time_seconds": 46.58,
+      "turbo": {
+        "tasks_successful": 6,
+        "tasks_total": 6,
+        "cached": 4
+      },
+      "api": {
+        "suites_passed": 188,
+        "suites_skipped": 1,
+        "tests_passed": 1647,
+        "tests_skipped": 5,
+        "tests_failed": 0,
+        "duration_seconds": 43.931
+      },
+      "web": {
+        "suites": 29,
+        "tests_passed": 86,
+        "tests_skipped": 0,
+        "tests_failed": 0,
+        "duration_seconds": 2.19
+      },
+      "full_log": "/tmp/gbrainkg-review-tests-20261010.log",
+      "boundary": "Mostly unit tests with mocks/stubs (including Prisma, fetch/provider and Redis dependencies). The opt-in PostgreSQL lexical integration suite (1 suite/5 tests) was skipped because LEXICAL_INDEX_INTEGRATION was not enabled. DATABASE_URL was forced to a dummy localhost database and DATABASE_URL_APP unset; no real PostgreSQL, Redis, model provider, Feishu or production service integration ran."
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 PYTEST_ADDOPTS='-p no:cacheprovider' pnpm test:parser",
+      "exit_code": 0,
+      "wall_time_seconds": 33.88,
+      "pytest_duration_seconds": 32.12,
+      "tests_passed": 114,
+      "subtests_passed": 20,
+      "tests_skipped": 0,
+      "tests_failed": 0,
+      "full_log": "/tmp/gbrainkg-review-parser-tests-20261010.log",
+      "boundary": "Local parser tests and ASGITransport requests; startup tests briefly launch a localhost subprocess. No production/parser service or external provider was accessed."
+    }
+  ],
+  "function_reproductions": [
+    {
+      "candidate": "Feishu syncAcl stops after first raw download failure",
+      "result": "confirmed",
+      "script": "/tmp/gbrainkg-feishu-acl-repro-20261010.ts",
+      "command": "npx --yes tsx@4.23.13 /tmp/gbrainkg-feishu-acl-repro-20261010.ts",
+      "method": "Real FeishuConnector.fetchChanges with mocked token, listing, ACL and raw-download responses; no Feishu network call.",
+      "observed": "With files a,b and a raw download returning HTTP 403, result contained only a aclOnly change with externalAcl.verified=false; nextCursor was null; snapshotIds contained [a,b]. Calls included permissions/a and raw/a, with no request for b. ConnectorService ingest treats the aclOnly change as skipped, so it does not increment failed and finalizes the run as success."
+    },
+    {
+      "candidate": "QA source binding lost by DocumentVersionController.publishVersion",
+      "result": "not_reproduced_after_parse; candidate appears false-positive",
+      "method": "Static call-flow inspection only.",
+      "observed": "publishVersion omits parserMetadata when calling createVersion, but QA versions copy the original rawFileOid JSON and enqueue parsing. IngestionService parses sourceType=qa directly from that JSON, puts parsed.qa into parserMetadata.qa, and DocumentVersionStore publicationData writes parserMetadata back to Document. Normal sourceDocumentId/sourceVersionId binding is restored."
+    },
+    {
+      "candidate": "Graph projection merges Alpha/alpha identity but drops second raw-case edge",
+      "result": "confirmed",
+      "script": "/tmp/gbrainkg-graph-projection-repro-20261010.ts",
+      "command": "npx --yes tsx@4.23.13 /tmp/gbrainkg-graph-projection-repro-20261010.ts",
+      "method": "Real graphProjection function with in-memory document shards.",
+      "observed": "Same-type Alpha and alpha become one Alpha node. keysByName retains the first raw spelling Alpha; the alpha relation cannot resolve its source and is deleted. Output contains only doc-a relation provenance."
+    },
+    {
+      "candidate": "Graph projection cross-type relation merged by shared surface label",
+      "result": "confirmed; independent cross-type relation defect",
+      "script": "/tmp/gbrainkg-graph-projection-repro-20261010.ts",
+      "command": "npx --yes tsx@4.23.13 /tmp/gbrainkg-graph-projection-repro-20261010.ts",
+      "method": "Real graphProjection function with Mercury(planet)/Mercury(element), shared X(concept), and same relation type.",
+      "observed": "Output has one Mercury(planet)-has->X edge with inputs from doc-a and doc-b and provenance chunks from both documents. The element relation is incorrectly attributed to the planet edge."
+    },
+    {
+      "candidate": "assessConnectorFreshness returns fresh when a recent run has lastError",
+      "result": "confirmed",
+      "script": "/tmp/gbrainkg-connector-freshness-repro-20261010.ts",
+      "command": "npx --yes tsx@4.23.13 --tsconfig /home/scottsun/gbrainkg/apps/api/tsconfig.json /tmp/gbrainkg-connector-freshness-repro-20261010.ts",
+      "method": "Real exported assessConnectorFreshness function; no mocks or network calls.",
+      "input": {
+        "lastSyncAt": "2026-10-10T00:00:00.000Z",
+        "lastError": "network unavailable"
+      },
+      "output": {
+        "lastSyncAt": "2026-10-10T00:00:00.000Z",
+        "staleAfterHours": 24,
+        "stale": false,
+        "state": "fresh"
+      }
+    }
+  ],
+  "external_integration": "No real external integrations were run.",
+  "project_commit": "ad263dd258b9ff7afdcd195224463bcb3356d958",
+  "lifecycle_verification": {
+    "model": "gpt-6-luna",
+    "script_at_execution": "/tmp/audit-lifecycle-repro.ts",
+    "command": "apps/api/node_modules/.bin/ts-node --project apps/api/tsconfig.json --transpile-only /tmp/audit-lifecycle-repro.ts",
+    "scope": "Real VersionChainService and DocumentVersionController; mock database and queue, local temporary files; no real PostgreSQL or Redis",
+    "B01": {
+      "fixture": "reader can read anchor A; linked B ACL permits a different user",
+      "actual": "chain response includes linked B ID and restricted-new-title",
+      "result": "reproduced"
+    },
+    "B02": {
+      "fixture": "queue.add rejects with simulated queue outage",
+      "actual": {
+        "oldLifecycleStatusAfterError": "superseded",
+        "oldEffectiveToWasSet": true,
+        "newStatus": "parsing"
+      },
+      "result": "reproduced"
+    },
+    "B03": {
+      "result": "static call-chain finding; no multi-process fault injection executed",
+      "write_locations": [
+        "connector.service.ts:304-305",
+        "connector.service.ts:466-578"
+      ],
+      "existing_protection": "run completion/cursor CAS does not fence document mutations"
+    }
+  }
+}

@@ -1,0 +1,164 @@
+{
+  "review_date": "2026-10-10",
+  "project_commit": "ad263dd258b9ff7afdcd195224463bcb3356d958",
+  "snapshot_kind": "default branch commit observed during review, not necessarily stable release",
+  "sources": [
+    {
+      "repository": "labring/FastGPT",
+      "commit": "d5dfebbfc53d9e61c831760a54ef89ecb6d75da7",
+      "commit_date": "2026-10-10T04:32:53Z",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "84569a7a2a79f9f97093019ae12d914b975db773ed17443fb726a0b6f585bc24",
+          "url": "https://github.com/labring/FastGPT/blob/d5dfebbfc53d9e61c831760a54ef89ecb6d75da7/LICENSE"
+        },
+        {
+          "path": "packages/service/core/dataset/search/defaultRecall/index.ts",
+          "sha256": "1212a3ca8b2abaf0b4fd2a52844d57c975b708db7425e733cd72a24bcde17dd5",
+          "url": "https://github.com/labring/FastGPT/blob/d5dfebbfc53d9e61c831760a54ef89ecb6d75da7/packages/service/core/dataset/search/defaultRecall/index.ts"
+        },
+        {
+          "path": "packages/service/core/dataset/search/defaultRecall/rerank.ts",
+          "sha256": "80b9de6e72a5e01ef72b768833ba77d44e4aafadc52b2722408a32a0fe494268",
+          "url": "https://github.com/labring/FastGPT/blob/d5dfebbfc53d9e61c831760a54ef89ecb6d75da7/packages/service/core/dataset/search/defaultRecall/rerank.ts"
+        },
+        {
+          "path": "packages/service/core/workflow/dispatch/dataset/search.ts",
+          "sha256": "df1c7e8ca67cc18797ecbc5f27f3af53030fff7943a32ae930ce757aab41d38b",
+          "url": "https://github.com/labring/FastGPT/blob/d5dfebbfc53d9e61c831760a54ef89ecb6d75da7/packages/service/core/workflow/dispatch/dataset/search.ts"
+        }
+      ]
+    },
+    {
+      "repository": "Tencent/WeKnora",
+      "commit": "8125ed250f5ea404445e7952359a6ac686d90afc",
+      "commit_date": "2026-10-10T06:20:38Z",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "25cfeca2c3eee245313b1106cf1b27244e47b682802a02cc536f8f1beb6a29a6",
+          "url": "https://github.com/Tencent/WeKnora/blob/8125ed250f5ea404445e7952359a6ac686d90afc/LICENSE"
+        },
+        {
+          "path": "internal/application/access/kb_search.go",
+          "sha256": "b55cc66b5b8413296e163f0f680a95c20af93246ac6a387226fd04d83bffb003",
+          "url": "https://github.com/Tencent/WeKnora/blob/8125ed250f5ea404445e7952359a6ac686d90afc/internal/application/access/kb_search.go"
+        },
+        {
+          "path": "internal/application/service/knowledgebase_search.go",
+          "sha256": "989fe684cfb7b24b0867d2fe933d4a1ae63e10d3d578ef095efaee5990f7c9e6",
+          "url": "https://github.com/Tencent/WeKnora/blob/8125ed250f5ea404445e7952359a6ac686d90afc/internal/application/service/knowledgebase_search.go"
+        },
+        {
+          "path": "internal/application/service/knowledgebase_search_fusion.go",
+          "sha256": "1ea5345c28a00ede6954030ed2edf0b1c614a7314b591a286366bbe4f7afcff4",
+          "url": "https://github.com/Tencent/WeKnora/blob/8125ed250f5ea404445e7952359a6ac686d90afc/internal/application/service/knowledgebase_search_fusion.go"
+        }
+      ]
+    },
+    {
+      "repository": "langgenius/dify",
+      "commit": "f0a0ea807c4260996ead632d5b8080a876673563",
+      "commit_date": "2026-10-10T06:34:46Z",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "232cf91474932d5110ed304e53b6b742a58463857c571fae803fdf2ac36d7bb3",
+          "url": "https://github.com/langgenius/dify/blob/f0a0ea807c4260996ead632d5b8080a876673563/LICENSE"
+        },
+        {
+          "path": "api/core/rag/index_processor/processor/parent_child_index_processor.py",
+          "sha256": "3051b6c9a8d4d15d2b610d0cc8a804682db841e59620d77b2d4fdf4355009df4",
+          "url": "https://github.com/langgenius/dify/blob/f0a0ea807c4260996ead632d5b8080a876673563/api/core/rag/index_processor/processor/parent_child_index_processor.py"
+        },
+        {
+          "path": "api/core/rag/retrieval/dataset_retrieval.py",
+          "sha256": "a6f4a1385cf1e1cbd346982ba4c44a12beadca81490c225dfe23268e36630bb6",
+          "url": "https://github.com/langgenius/dify/blob/f0a0ea807c4260996ead632d5b8080a876673563/api/core/rag/retrieval/dataset_retrieval.py"
+        },
+        {
+          "path": "api/services/knowledge/dataset_access.py",
+          "sha256": "81c4ddcec98e2aefab420ad4b955aafaa3c96d5f850057f14e2a429f30c0ffba",
+          "url": "https://github.com/langgenius/dify/blob/f0a0ea807c4260996ead632d5b8080a876673563/api/services/knowledge/dataset_access.py"
+        }
+      ]
+    },
+    {
+      "repository": "microsoft/graphrag",
+      "commit": "5faaaf4f5685fa2056fa8c3bf9342cb089f2942f",
+      "commit_date": "2026-10-08T18:24:13Z",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+          "url": "https://github.com/microsoft/graphrag/blob/5faaaf4f5685fa2056fa8c3bf9342cb089f2942f/LICENSE"
+        },
+        {
+          "path": "packages/graphrag/graphrag/index/operations/extract_graph/graph_extractor.py",
+          "sha256": "300825a90fdf53c43d017d9a5f0146cb56e0265f9594424bb4b4f7fd251242df",
+          "url": "https://github.com/microsoft/graphrag/blob/5faaaf4f5685fa2056fa8c3bf9342cb089f2942f/packages/graphrag/graphrag/index/operations/extract_graph/graph_extractor.py"
+        },
+        {
+          "path": "packages/graphrag/graphrag/query/structured_search/global_search/search.py",
+          "sha256": "c201e86aa401452ab4b5eee25f439283b572e7148ab3d823bf555f68c495cd30",
+          "url": "https://github.com/microsoft/graphrag/blob/5faaaf4f5685fa2056fa8c3bf9342cb089f2942f/packages/graphrag/graphrag/query/structured_search/global_search/search.py"
+        }
+      ]
+    },
+    {
+      "repository": "onyx-dot-app/onyx",
+      "commit": "ab2e6bbe74d968853c67730040123b3b0878a91a",
+      "commit_date": "2026-10-10T00:59:20Z",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "d4847240794058c7ac3cfdf8e5d528fe8b0edf15b32a96612ecb9b3e182092b7",
+          "url": "https://github.com/onyx-dot-app/onyx/blob/ab2e6bbe74d968853c67730040123b3b0878a91a/LICENSE"
+        },
+        {
+          "path": "backend/onyx/background/indexing/checkpointing_utils.py",
+          "sha256": "309cb4026358b001dbf81432e1924e0f545b2159d60747c6db14d7091ac91c75",
+          "url": "https://github.com/onyx-dot-app/onyx/blob/ab2e6bbe74d968853c67730040123b3b0878a91a/backend/onyx/background/indexing/checkpointing_utils.py"
+        },
+        {
+          "path": "backend/onyx/context/search/retrieval/search_runner.py",
+          "sha256": "cea8bd614c06ff3e70484aa6a9aadc000d80b23d1548a8f347e59eca41181713",
+          "url": "https://github.com/onyx-dot-app/onyx/blob/ab2e6bbe74d968853c67730040123b3b0878a91a/backend/onyx/context/search/retrieval/search_runner.py"
+        },
+        {
+          "path": "backend/onyx/tools/tool_implementations/search/search_tool.py",
+          "sha256": "64f268f8a54e38a9923bdffeffe7e689d7405b03ec7630f6d48d90a2956608c7",
+          "url": "https://github.com/onyx-dot-app/onyx/blob/ab2e6bbe74d968853c67730040123b3b0878a91a/backend/onyx/tools/tool_implementations/search/search_tool.py"
+        }
+      ]
+    },
+    {
+      "repository": "infiniflow/ragflow",
+      "commit": "1dc6f3ea638bd3af76a7b2fc48c397f0bdc7fcd8",
+      "commit_date": "2026-10-10T06:21:00Z",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "url": "https://github.com/infiniflow/ragflow/blob/1dc6f3ea638bd3af76a7b2fc48c397f0bdc7fcd8/LICENSE"
+        },
+        {
+          "path": "internal/ingestion/task/pipeline_executor.go",
+          "sha256": "8c589314174e2b625446b543c078880bb3aa1494eddcd775eef1775ea3650384",
+          "url": "https://github.com/infiniflow/ragflow/blob/1dc6f3ea638bd3af76a7b2fc48c397f0bdc7fcd8/internal/ingestion/task/pipeline_executor.go"
+        },
+        {
+          "path": "internal/service/kb_prompt.go",
+          "sha256": "6361cb2c382af2b0a523edbab2a84390d6a269715533e813da840e6fa2eacb48",
+          "url": "https://github.com/infiniflow/ragflow/blob/1dc6f3ea638bd3af76a7b2fc48c397f0bdc7fcd8/internal/service/kb_prompt.go"
+        },
+        {
+          "path": "internal/service/nlp/retrieval.go",
+          "sha256": "ff48ecc7fa3ac57b4019c71e8fd329493aa900dac608a7a1f16bf02e38b95920",
+          "url": "https://github.com/infiniflow/ragflow/blob/1dc6f3ea638bd3af76a7b2fc48c397f0bdc7fcd8/internal/service/nlp/retrieval.go"
+        }
+      ]
+    }
+  ]
+}
