@@ -1497,6 +1497,18 @@ export class CitationAssemblyService {
       if (referenced.length > 0) {
         finalCitations = referenced;
       }
+    } else if (isRefusalAnswerText(fullAnswer)) {
+      // A marker-less standard refusal states the knowledge base holds no
+      // usable evidence, so it references no source. Surfacing ranked retrieval
+      // candidates as "引用" made the UI imply documents backed an answer that
+      // explicitly says nothing was found — the identical-content expansion
+      // then blew a candidate slice up into 20 duplicate-looking entries
+      // (regression 2026-10-10: "引用 20 条" beside "未包含相关信息…"). The
+      // fast-refusal gate already passes [] (chat.service.ts) and this aligns
+      // the synthesized / model-shaped refusals with it. Refusals that walk
+      // through each checked source AND cite it ([1][3]…) keep their references
+      // via the citedIndices branch above.
+      finalCitations = [];
     } else if (citations.length > 8) {
       finalCitations = finalCitations.slice(0, 8);
     }

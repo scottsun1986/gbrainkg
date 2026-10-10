@@ -5853,6 +5853,14 @@ ${dynamicDirectives}
         },
       );
 
+      // A marker-less standard refusal (synthesized fallback or model-shaped
+      // text) asserts the KB holds no usable evidence: its citations are zeroed
+      // centrally in emitCitationsAndComplete. Marking the answer kind here
+      // lets the controller persist a non_evidence dependency manifest
+      // (chat.controller.ts), so the refusal is never later rewritten to
+      // "该回答的来源已失效或您已无权访问。" when a retrieved doc is revoked —
+      // matching the fast-refusal gate, which already passes 'refusal'.
+      const refusalAnswerKind = isRefusalAnswerText(fullAnswer) ? 'refusal' as const : undefined;
       await this.emitCitationsAndComplete(
         userId,
         queryResult.citations || [],
@@ -5869,6 +5877,7 @@ ${dynamicDirectives}
           cacheable: personalMemory.count === 0 && priorConversationTurnCount === 0,
         },
         modelName,
+        refusalAnswerKind,
       );
     } catch (error: any) {
       rethrowAuthorizationFailure(error);

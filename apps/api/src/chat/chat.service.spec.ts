@@ -757,7 +757,12 @@ describe("ChatService", () => {
     const generationRead = jest.fn()
       .mockImplementationOnce(async () => {
         revoked = true; // grant removed during an actually consumed model stream
-        return { done: false, value: new TextEncoder().encode('data: {"choices":[{"delta":{"content":"这里是回答[1]"}}]}\n\n') };
+        // The sentence must overlap the citation evidence ("Compiled truth")
+        // so it survives the grounding gate: this test targets the emit-time
+        // ACL strip of a cited answer, not the refusal fallback (a marker-less
+        // refusal now emits zero citations by contract — see
+        // refusal-citation-output.spec.ts).
+        return { done: false, value: new TextEncoder().encode('data: {"choices":[{"delta":{"content":"Compiled truth[1]"}}]}\n\n') };
       })
       .mockResolvedValueOnce({ done: true, value: undefined });
     const fetchMock = jest.fn().mockImplementation(async (_url: unknown, init: RequestInit) => {
@@ -816,8 +821,13 @@ describe("ChatService", () => {
         getReader: () => ({
           cancel: jest.fn().mockResolvedValue(undefined),
           releaseLock: jest.fn(),
+          // The sentence overlaps the citation evidence ("Compiled truth") so
+          // it survives the grounding gate and actually cites [1]: the
+          // version-conflict metadata must reach the timeline_entry of a real
+          // cited answer. (A marker-less refusal now emits zero citations by
+          // contract — see refusal-citation-output.spec.ts.)
           read: jest.fn()
-            .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode('data: {"choices":[{"delta":{"content":"这里是回答[1]"}}]}\n\n') })
+            .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode('data: {"choices":[{"delta":{"content":"Compiled truth[1]"}}]}\n\n') })
             .mockResolvedValueOnce({ done: true, value: undefined }),
         }),
       },
@@ -1574,6 +1584,83 @@ describe("ChatService", () => {
       const deltas = events.filter((e) => (e.data as any).type === "delta");
       expect(deltas.length).toBeGreaterThan(0);
       expect((deltas[0].data as any).content).toContain("已知知识库资料中未包含与该问题直接相关的信息");
+    });
+
+    it("emits ZERO citations when every sentence is held and the answer degrades to the standard refusal", async () => {
+      // Regression (2026-10-10): the synthesized refusal used to ship the ranked
+      // retrieval candidates as citations — the UI showed "引用 20 条" beside an
+      // answer that explicitly says nothing was found. A marker-less refusal
+      // references no source, and the done event must mark answer_kind=refusal so
+      // the controller persists a non_evidence dependency manifest.
+      process.env.RETRIEVAL_SIBLING_EDITION_ALIGN = "false";
+      mockPermissionService.getVisibleKnowledgeBases.mockResolvedValue(["kb-1"]);
+      mockCompilerService.ensureUserBrainRepo.mockResolvedValue({
+        id: "repo-1",
+        gitRepoUrl: "/tmp/repo",
+      });
+      // Self-contained retrieval mock: one ranked citation must come back so the
+      // run reaches generation (the shared default is mutated by earlier tests).
+      mockGbrainQuery.mockResolvedValue({
+        topics: ["数据合规"],
+        answer: "Compiled truth",
+        citations: [
+          {
+            topic: "数据合规",
+            docId: "doc-1",
+            docTitle: "规则.md",
+            snippet: "Compiled truth",
+            score: 0.9,
+          },
+        ],
+        reranked: true,
+      });
+
+      mockPrisma.document.findMany.mockReset().mockImplementation(async (args: any) => {
+        if (args.where?.supersedesDocumentId) return [];
+        return [
+          { id: "doc-1", kbId: "kb-1", aclMode: "inherit", title: "规则.md", version: 1,
+            kb: { name: "知识库", type: "platform" } },
+        ];
+      });
+
+      process.env.DEEPSEEK_API_KEY = "test-key";
+      const originalFetch = global.fetch;
+      // The streamed sentence ("这里是回答") does not overlap the citation
+      // evidence ("Compiled truth"), so the grounding gate holds it and the
+      // pipeline falls back to the standard refusal.
+      const fetchMock = jest.fn().mockResolvedValue({
+        ok: true,
+        body: {
+          getReader: () => ({
+            cancel: jest.fn().mockResolvedValue(undefined),
+            releaseLock: jest.fn(),
+            read: jest.fn()
+              .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode('data: {"choices":[{"delta":{"content":"这里是回答[1]"}}]}\n\n') })
+              .mockResolvedValueOnce({ done: true, value: undefined }),
+          }),
+        },
+      });
+      (global as any).fetch = fetchMock;
+
+      try {
+        const stream$ = await service.handleChatStream("user-1", "测试问题", ["kb-1"]);
+        const events = await lastValueFrom(stream$.pipe(toArray()));
+
+        const citationEvents = events.filter((e) => (e.data as any).type === "citation");
+        expect(citationEvents).toHaveLength(0);
+
+        const answerText = events
+          .filter((e) => ["delta", "replace"].includes((e.data as any)?.type))
+          .map((e) => String((e.data as any).content || ""))
+          .join("");
+        expect(answerText).toContain("已知知识库资料中未包含相关信息，无法回答该问题。");
+
+        const done = events.find((e) => (e.data as any).type === "done");
+        expect((done?.data as any)?.answer_kind).toBe("refusal");
+      } finally {
+        (global as any).fetch = originalFetch;
+        delete process.env.DEEPSEEK_API_KEY;
+      }
     });
   });
 
