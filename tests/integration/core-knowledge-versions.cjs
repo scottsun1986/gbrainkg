@@ -71,7 +71,12 @@ async function main() {
     assert.equal(committed, false, 'revoke cannot commit while strict bytes drain');
     release(); await permit; await revoke;
     let leaked = false;
-    await assert.rejects(withStrictOutputPermit(userId, snapshot, async () => { leaked = true; }, manifest), /Authorization changed/);
+    // Assert the behaviour (a revoked revision must never emit buffered
+    // bytes), not the wording of the operator-facing message.
+    await assert.rejects(
+      withStrictOutputPermit(userId, snapshot, async () => { leaked = true; }, manifest),
+      (error) => error?.constructor?.name === 'ForbiddenException' && /权限|可见知识/.test(String(error?.message || '')),
+    );
     assert.equal(leaked, false, 'revoked revision never emits buffered content');
     console.log('Generation build/switch/rollback and real strict-output/revoke commit serialization passed.');
 
