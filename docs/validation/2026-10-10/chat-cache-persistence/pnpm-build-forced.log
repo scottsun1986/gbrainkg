@@ -1,0 +1,66 @@
+
+> llmwiki@1.0.0 build /home/scottsun/gbrainkg
+> turbo run build --force
+
+• turbo 2.10.12
+
+   • Packages in scope: @llmwiki/gbrain-adapter, @llmwiki/shared-types, api, database, web
+   • Running build in 5 packages
+   • Remote caching disabled
+
+web:build: cache bypass, force executing 19e4b5dc679e6ed7
+@llmwiki/gbrain-adapter:build: cache bypass, force executing f67cee6529d262bf
+@llmwiki/shared-types:build: cache bypass, force executing ad1cb327807c7563
+@llmwiki/shared-types:build: 
+@llmwiki/shared-types:build: > @llmwiki/shared-types@1.0.0 build /home/scottsun/gbrainkg/packages/shared-types
+@llmwiki/shared-types:build: > tsc
+@llmwiki/shared-types:build: 
+web:build: 
+web:build: > web@0.1.0 build /home/scottsun/gbrainkg/apps/web
+web:build: > next build
+web:build: 
+@llmwiki/gbrain-adapter:build: 
+@llmwiki/gbrain-adapter:build: > @llmwiki/gbrain-adapter@1.0.0 build /home/scottsun/gbrainkg/packages/gbrain-adapter
+@llmwiki/gbrain-adapter:build: > tsc
+@llmwiki/gbrain-adapter:build: 
+web:build: ▲ Next.js 16.3.3 (Turbopack)
+web:build: - Environments: .env.local, .env.production
+web:build: ✓ Running next.config.mjs took 38ms
+web:build: - Experiments (use with caution):
+web:build:   · proxyClientMaxBodySize: "200mb"
+web:build: 
+web:build:   Creating an optimized production build ...
+api:build: cache bypass, force executing dc71efe03d7b945c
+api:build: 
+api:build: > api@0.0.1 build /home/scottsun/gbrainkg/apps/api
+api:build: > nest build
+api:build: 
+web:build: ✓ Compiled successfully in 6.0s
+web:build:   Running TypeScript ...
+web:build:   Finished TypeScript in 3.7s ...
+web:build:   Collecting page data using 3 workers ...
+web:build:   Generating static pages using 3 workers (0/7) ...
+web:build:   Generating static pages using 3 workers (1/7) 
+web:build:   Generating static pages using 3 workers (3/7) 
+web:build:   Generating static pages using 3 workers (5/7) 
+web:build: ✓ Generating static pages using 3 workers (7/7) in 313ms
+web:build:   Finalizing page optimization ...
+web:build: 
+web:build: Route (app)
+web:build: ┌ ƒ /
+web:build: ├ ○ /_not-found
+web:build: ├ ƒ /admin
+web:build: ├ ƒ /chat
+web:build: └ ○ /help
+web:build: 
+web:build: 
+web:build: ƒ Proxy (Middleware)
+web:build: 
+web:build: ○  (Static)   prerendered as static content
+web:build: ƒ  (Dynamic)  server-rendered on demand
+web:build: 
+
+ Tasks:    4 successful, 4 total
+Cached:    0 cached, 4 total
+  Time:    19.086s 
+

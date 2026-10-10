@@ -1,0 +1,52 @@
+{
+  "verified_at": "2026-10-10T10:18:21+08:00",
+  "deployment": {
+    "command": "bash scripts/deploy-prod.sh --target=inst1 --skip-build --skip-gate",
+    "exit_code": 0,
+    "snapshot": "20261010021359",
+    "prisma_migrations_found": 85,
+    "pending_prisma_migrations": 0,
+    "shared_skills_migration": {
+      "version": "0.53.0",
+      "status": "PARTIAL",
+      "sources_requiring_host_action": 13,
+      "export_or_vendor_upgrade_performed": false
+    }
+  },
+  "services": {
+    "llmwiki-api": "active",
+    "llmwiki-web": "active",
+    "llmwiki-parser": "active"
+  },
+  "api_ready": {
+    "url": "http://127.0.0.1:3000/ready",
+    "http_status": 200,
+    "status": "ready",
+    "database": "ok",
+    "redis": "ok",
+    "api_release_fingerprint": "bb2e4184c279fc7da4a557b0ef86c5987c367697c18a261bba97adbbfde9c9ac",
+    "candidate_fingerprint_match": true
+  },
+  "public_web": {
+    "url": "http://knowledge.5gsailor.com:20080/",
+    "initial_status": 307,
+    "redirects": 1,
+    "final_url": "https://knowledge.5gsailor.com:20080/",
+    "final_status": 200
+  },
+  "compiled_cache_artifact": {
+    "path": "/home/ubuntu/gbrainkg/apps/api/dist/chat/semantic-cache.service.js",
+    "sha256": "2f730b1a4c5234df0ab57c359f980ad1d11001efe1b9ca46a8d2d7119142d9ba",
+    "candidate_sha256_match": true,
+    "has_similarity_double_precision_cast": true,
+    "has_numeric_normalization": true
+  },
+  "api_journal_since_deployment_window": {
+    "assistant_message_persistence_failures": 0,
+    "prisma_message_create_validation_failures": 0,
+    "constructor_function_serialization_errors": 0,
+    "function_serialization_errors": 0
+  },
+  "live_chat_question_submitted": false,
+  "business_data_written_by_verification": false
+}

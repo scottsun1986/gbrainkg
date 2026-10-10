@@ -1,0 +1,75 @@
+Scope: all 6 workspace projects
+Lockfile is up to date, resolution step is skipped
+Already up to date
+
+Done in 1.8s
+Environment variables loaded from .env
+Prisma schema loaded from prisma/schema.prisma
+
+✔ Generated Prisma Client (v5.22.0) to ./../../node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client in 1.38s
+
+Start by importing your Prisma Client (See: https://pris.ly/d/importing-client)
+
+Tip: Want to turn off tips and other hints? https://pris.ly/tip-4-nohints
+
+Environment variables loaded from .env
+Prisma schema loaded from prisma/schema.prisma
+Datasource "db": PostgreSQL database "llmwiki", schema "public" at "127.0.0.1:5432"
+
+85 migrations found in prisma/migrations
+
+Applying migration `20261010000000_residual_rls_cleanup`
+
+The following migration(s) have been applied:
+
+migrations/
+  └─ 20261010000000_residual_rls_cleanup/
+    └─ migration.sql
+      
+All migrations have been successfully applied.
+
+> @llmwiki/gbrain-adapter@1.0.0 build /home/ubuntu/gbrainkg/packages/gbrain-adapter
+> tsc
+
+
+> api@0.0.1 build /home/ubuntu/gbrainkg/apps/api
+> nest build
+
+
+> web@0.1.0 build /home/ubuntu/gbrainkg/apps/web
+> next build
+
+▲ Next.js 16.3.3 (Turbopack)
+- Environments: .env.local, .env.production
+✓ Running next.config.mjs took 21ms
+- Experiments (use with caution):
+  · proxyClientMaxBodySize: "200mb"
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 12.8s
+  Running TypeScript ...
+  Finished TypeScript in 11.3s ...
+  Collecting page data using 1 worker ...
+  Generating static pages using 1 worker (0/7) ...
+  Generating static pages using 1 worker (1/7) 
+  Generating static pages using 1 worker (3/7) 
+  Generating static pages using 1 worker (5/7) 
+✓ Generating static pages using 1 worker (7/7) in 515ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ƒ /
+├ ○ /_not-found
+├ ƒ /admin
+├ ƒ /chat
+└ ○ /help
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
+active
+active
+active

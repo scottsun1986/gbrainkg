@@ -1,0 +1,158 @@
+knowledge quality-first policy: already current
+[deploy-prod 2026-10-10 10:13:58] [1/5] Skip build (--skip-build), expecting existing dist/.next
+[deploy-prod 2026-10-10 10:13:58] WARNING: --skip-gate specified: SKIPPING release gate (offline + functional checks; full profile adds strict quality checks).
+[deploy-prod 2026-10-10 10:13:58] WARNING: Production deploy proceeds WITHOUT automated test verification.
+Warning: Permanently added '119.45.22.137' (ED25519) to the list of known hosts.
+[deploy-prod 2026-10-10 10:13:58] [inst1] retrieval config fingerprint: 944c26a05d735312
+[deploy-prod 2026-10-10 10:13:58] >>> Deploying target: inst1 (llmwiki-api, llmwiki-web, port 20080, DB llmwiki, Redis DB 0) <<<
+Warning: Permanently added '119.45.22.137' (ED25519) to the list of known hosts.
+[deploy-prod 2026-10-10 10:13:59] [inst1] Pre-release snapshot -> /data/llmwiki/.releases/20261010021359 ...
+Warning: Permanently added '119.45.22.137' (ED25519) to the list of known hosts.
+  - manifest: git=unknown api=0.0.1 env=bf0bb7fe1039… tree=1067bc614dda…
+  - pruning old snapshot 20261009115358
+[deploy-prod 2026-10-10 10:15:43] [inst1] Synchronizing code + dist...
+Warning: Permanently added '119.45.22.137' (ED25519) to the list of known hosts.
+
+sent 1,601,155 bytes  received 146,662 bytes  699,126.80 bytes/sec
+total size is 1,325,390,987  speedup is 758.31
+[deploy-prod 2026-10-10 10:15:45] [inst1] Pruning stale build artifacts (dist, .next)...
+Warning: Permanently added '119.45.22.137' (ED25519) to the list of known hosts.
+Warning: Permanently added '119.45.22.137' (ED25519) to the list of known hosts.
+Warning: Permanently added '119.45.22.137' (ED25519) to the list of known hosts.
+knowledge quality-first policy: already current
+[deploy-prod 2026-10-10 10:15:46] [inst1] Running database migrations & pnpm install...
+Warning: Permanently added '119.45.22.137' (ED25519) to the list of known hosts.
+
+Done in 1.7s
+Shared parser dependency: pymupdf==1.28.2
+Shared parser dependency: pillow==12.1.1
+Shared parser dependency: numpy==2.4.6
+Environment variables loaded from .env
+Prisma schema loaded from prisma/schema.prisma
+
+✔ Generated Prisma Client (v5.22.0) to ./../../node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client in 691ms
+
+Start by importing your Prisma Client (See: https://pris.ly/d/importing-client)
+
+Tip: Want to react to database changes in your app as they happen? Discover how with Pulse: https://pris.ly/tip-1-pulse
+
+Environment variables loaded from .env
+Prisma schema loaded from prisma/schema.prisma
+Datasource "db": PostgreSQL database "llmwiki", schema "public" at "127.0.0.1:5432"
+
+85 migrations found in prisma/migrations
+
+
+No pending migrations to apply.
+ALTER ROLE
+ALTER ROLE
+GRANT
+GRANT
+REVOKE
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+ALTER DEFAULT PRIVILEGES
+ALTER DEFAULT PRIVILEGES
+{"progress":0,"created":0,"missing":0}
+{"documents":0,"created":0,"existing":361,"missingSources":[]}
+UPGRADE_AVAILABLE 0.60.84.0 0.60.136.0
+gbrain 0.60.84.0 -> 0.60.136.0 available. Run: gbrain self-upgrade
+All migrations up to date. This covers orchestrator checkpoints only; host publication and client activation are being rechecked.
+
+=== Applying migration v0.53.0: Knowledge and shared skills belong to the same source-scoped content repository. ===
+  content-checkpoints — next step: gbrain apply-migrations --migration 0.53.0 --dry-run --json
+Migration v0.53.0 finished as PARTIAL. Run `gbrain apply-migrations` again after resolving any pending host-work items.
+[shared-skills] conflict. 13 source(s) need host action; no grants or bundle consent changed. Inspect each source's next step: gbrain apply-migrations --migration 0.53.0 --dry-run --json
+[shared-skills] default: db_only_export_required: preview gbrain apply-migrations --migration 0.53.0 --export-db-only --content-root <new-root> --export-source default --dry-run --json; approve quiescence and backup choice before exporting. Memory stays available.
+[shared-skills] llmwiki-d-50721f22f7f6c4e1: A content-root component is not a real directory.
+[shared-skills] llmwiki-d-a4023249e0940e64: A content-root component is not a real directory.
+[shared-skills] llmwiki-d-b1a2ba0a960b339f: A content-root component is not a real directory.
+[shared-skills] llmwiki-d-c700a323e9005b27: A content-root component is not a real directory.
+[shared-skills] llmwiki-kb-078a26ba9f2ad774: A content-root component is not a real directory.
+[shared-skills] llmwiki-kb-2e93a610ca88a15a: A content-root component is not a real directory.
+[shared-skills] llmwiki-kb-3ed1cbd431327b86: A content-root component is not a real directory.
+[shared-skills] llmwiki-kb-6c3d213489acf354: A content-root component is not a real directory.
+[shared-skills] llmwiki-kb-9e422c23196fad0b: A content-root component is not a real directory.
+[shared-skills] llmwiki-kb-aec5f435ec0ec893: A content-root component is not a real directory.
+[shared-skills] llmwiki-kb-e535cc2587984a63: A content-root component is not a real directory.
+[shared-skills] llmwiki-kb-ff6fd2e17fd05da4: A content-root component is not a real directory.
+  - ADMIN_INITIAL_PASSWORD not provided: skipping admin password bootstrap (existing admins are untouched).
+[deploy-prod 2026-10-10 10:15:54] [inst1] Restarting llmwiki-api and llmwiki-web...
+Warning: Permanently added '119.45.22.137' (ED25519) to the list of known hosts.
+Restarting shared llmwiki-parser service (shared by all instances)...
+active
+active
+active
+Warning: Permanently added '119.45.22.137' (ED25519) to the list of known hosts.
+[deploy-prod 2026-10-10 10:15:58] [inst1] Verifying health...
+Warning: Permanently added '119.45.22.137' (ED25519) to the list of known hosts.
+  - API (port 3000): OK
+  - Web (port 3200): OK
+  - Public Gateway (): HTTP 200
+  - Parser auth (API token accepted): OK (HTTP 422)
+UPGRADE_AVAILABLE 0.60.84.0 0.60.136.0
+gbrain 0.60.84.0 -> 0.60.136.0 available. Run: gbrain self-upgrade
+  - GBrain engine status: OK
+[deploy-prod 2026-10-10 10:16:00] [inst1] Successfully deployed!
