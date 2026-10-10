@@ -2102,6 +2102,17 @@ export class AdminController {
       data.status = body.status;
     if (body?.password)
       data.passwordHash = this.authService.hashPassword(String(body.password));
+    // A lost authenticator must be recoverable by an administrator; otherwise a
+    // user who cannot produce a TOTP code can never regain access to the
+    // account, and forcing a password reset alone would leave MFA in place.
+    if (typeof body?.mfaEnabled === "boolean") {
+      data.mfaEnabled = body.mfaEnabled;
+      data.mfaEnabledAt = body.mfaEnabled ? (exists.mfaEnabledAt ?? null) : null;
+      if (!body.mfaEnabled) {
+        data.mfaSecret = null;
+        data.mfaLastCounter = null;
+      }
+    }
     const roleIds: string[] | undefined = Array.isArray(body?.roleIds)
       ? Array.from(
           new Set<string>(body.roleIds.map((item: string) => String(item))),

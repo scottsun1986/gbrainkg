@@ -1,7 +1,7 @@
-import { describe, it } from 'node:test';
+import { describe, it, test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  applyPoll, isTerminal, labelForRun, pollDelayFor, runningConversationIds,
+  applyPoll, isTerminal, labelForRun, pollDelayFor, pollDelayForVisibility, runningConversationIds,
   type RunMap, type RunState,
 } from '../src/lib/stream-registry';
 
@@ -96,4 +96,13 @@ describe('run identity', () => {
     assert.equal(after.get('conv-a')?.runId, 'new-run');
     assert.equal(after.get('conv-a')?.status, 'running');
   });
+});
+
+test('a hidden tab throttles polling but a visible one does not', () => {
+  assert.equal(pollDelayForVisibility('retrieving', false), pollDelayFor('retrieving'));
+  assert.equal(pollDelayForVisibility('retrieving', true), 8000);
+  // The throttled interval must never be shorter than the active one.
+  for (const stage of ['queued', 'retrieving', 'reranking', 'generating', 'verifying', 'persisting'] as const) {
+    assert.ok(pollDelayForVisibility(stage, true) >= pollDelayFor(stage));
+  }
 });

@@ -1,3 +1,4 @@
+import { decryptModelCredential } from '../model-credential';
 import { UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { MfaService } from './mfa.service';
@@ -188,7 +189,10 @@ describe('MFA/TOTP two-step login', () => {
       expect(setup.otpauthUri).toContain('otpauth://totp/');
       expect(setup.mfaEnabled).toBe(false);
       expect(userState.mfaEnabled).toBe(false);
-      expect(userState.mfaSecret).toBe(setup.secret);
+      // The seed is stored as an encrypted envelope, never as plaintext.
+      expect(userState.mfaSecret).not.toBe(setup.secret);
+      expect(userState.mfaSecret).toMatch(/^enc:v1:/);
+      expect(decryptModelCredential(Buffer.from(userState.mfaSecret ?? '', 'utf8'))).toBe(setup.secret);
     });
 
     it('verify with a bad code does not enable MFA', async () => {
@@ -243,5 +247,77 @@ describe('MFA/TOTP two-step login', () => {
       expect(result.token).toBeTruthy();
       expect(result.mfaSetupRequired).toBeUndefined();
     });
+  });
+});
+
+const totpCounterOf = (key: Buffer): number => Math.floor(Date.now() / 1000 / 30);
+
+describe('MFA secret storage hardening', () => {
+  const hardenedUserId = '22222222-2222-4222-8222-222222222222';
+  const password = 'correct-horse-battery';
+  let mfaService: MfaService;
+  let userState: any;
+
+  const baseUser = () => ({
+    id: hardenedUserId, username: 'bob', displayName: 'Bob', email: 'bob@example.com',
+    passwordHash: new AuthService().hashPassword(password),
+    mustChangePassword: false, status: 'active', source: 'manual',
+    mfaSecret: null as string | null, mfaEnabled: false, mfaEnabledAt: null as Date | null,
+    mfaLastCounter: null as number | null, oidcSub: null as string | null,
+    createdAt: new Date(), roles: [] as any[], orgs: [] as any[],
+  });
+
+  beforeEach(() => {
+    process.env.AUTH_SECRET = process.env.AUTH_SECRET || 'llmwiki-unittest-secret-0123456789';
+    jest.restoreAllMocks();
+    const auth = new AuthService();
+    jest.spyOn(auth, 'invalidateUserStatus').mockImplementation(() => undefined);
+    mfaService = new MfaService(auth as any);
+    jest.spyOn(prisma.user, 'findFirst').mockImplementation((async (args: any) => {
+      if (args?.where?.status !== 'active') return null;
+      return { ...userState } as any;
+    }) as any);
+    jest.spyOn(prisma.user, 'findUnique').mockImplementation((async (args: any) => {
+      if (args?.where?.id === hardenedUserId) return { ...userState } as any;
+      return null;
+    }) as any);
+    jest.spyOn(prisma.user, 'updateMany').mockImplementation((async (args: any) => {
+      if (Object.entries(args.where).some(([key, value]) => key !== 'OR' && (userState as any)[key] !== value)) return { count: 0 };
+      if (args.where.OR && userState.mfaLastCounter !== null && !args.where.OR.some((part: any) => part.mfaLastCounter?.lt > userState.mfaLastCounter!)) return { count: 0 };
+      userState = { ...userState, ...args.data };
+      return { count: 1 };
+    }) as any);
+    mfaService = new MfaService(auth as any);
+    userState = baseUser();
+  });
+
+  it('never persists the TOTP seed in plaintext', async () => {
+    const setup = await mfaService.setup(hardenedUserId);
+    expect(userState.mfaSecret).not.toBe(setup.secret);
+    expect(userState.mfaSecret).toMatch(/^enc:v1:/);
+    expect(decryptModelCredential(Buffer.from(userState.mfaSecret, 'utf8'))).toBe(setup.secret);
+  });
+
+  it('still verifies enrolment and login against the encrypted seed', async () => {
+    const setup = await mfaService.setup(hardenedUserId);
+    await expect(mfaService.verify(hardenedUserId, totpNow(base32Decode(setup.secret)))).resolves.toEqual({ ok: true, mfaEnabled: true });
+  });
+
+  it('lets the owner disable MFA with the account password alone', async () => {
+    const setup = await mfaService.setup(hardenedUserId);
+    await mfaService.verify(hardenedUserId, totpNow(base32Decode(setup.secret)));
+    await expect(mfaService.disable(hardenedUserId, password, '')).resolves.toEqual({ ok: true, mfaEnabled: false });
+    expect(userState.mfaSecret).toBeNull();
+    expect(userState.mfaEnabled).toBe(false);
+  });
+
+  it('does not let a consumed TOTP code block password-based recovery', async () => {
+    const setup = await mfaService.setup(hardenedUserId);
+    await mfaService.verify(hardenedUserId, totpNow(base32Decode(setup.secret)));
+    // Enrolment consumed this counter, so replaying the same code fails...
+    userState.mfaLastCounter = totpCounterOf(base32Decode(setup.secret));
+    await expect(mfaService.disable(hardenedUserId, '', totpNow(base32Decode(setup.secret)))).rejects.toThrow(/already used/);
+    // ...so the password path must remain available, or the account is stuck.
+    await expect(mfaService.disable(hardenedUserId, password, '')).resolves.toMatchObject({ mfaEnabled: false });
   });
 });

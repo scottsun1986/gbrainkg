@@ -71,6 +71,17 @@ export function pollDelayFor(stage: RunStage): number {
   }
 }
 
+/**
+ * Background tabs poll on a slow cadence to stay off the server's hot path.
+ * The cost is that a run which finished while the tab was hidden can sit
+ * unrendered for a full interval after the user comes back, which reads as a
+ * stalled answer. Returning to the foreground therefore warrants an immediate
+ * poll rather than the normal (or throttled) delay.
+ */
+export function pollDelayForVisibility(stage: RunStage, hidden: boolean): number {
+  return hidden ? 8000 : pollDelayFor(stage);
+}
+
 export function labelForRun(run: RunState | undefined): string | null {
   if (!run) return null;
   if (run.status === 'completed') return '已完成';

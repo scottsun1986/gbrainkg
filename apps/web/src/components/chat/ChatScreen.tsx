@@ -9,7 +9,7 @@ import { API_BASE_URL, apiHeaders } from '@/lib/api';
 import { appStore } from '@/lib/app-store';
 import { errorMessage } from '@/lib/errors';
 import {
-  applyPoll, isTerminal, labelForRun, pollDelayFor, runningConversationIds, STAGE_LABELS,
+  applyPoll, isTerminal, labelForRun, pollDelayForVisibility, runningConversationIds, STAGE_LABELS,
   type RunPollResult, type RunStage, type RunState,
 } from '@/lib/stream-registry';
 import { observeAnswerVisibility } from '@/lib/render-timing';
@@ -301,7 +301,7 @@ export function ChatScreen(){
           runsRef.current = applyPoll(runsRef.current, id, state);
           syncRuns();
           if (!isTerminal(state.status)) {
-            schedule(typeof document !== 'undefined' && document.hidden ? 8000 : pollDelayFor(state.stage));
+            schedule(pollDelayForVisibility(state.stage, typeof document !== 'undefined' && document.hidden));
             return;
           }
           const measurement = renderMeasurementsRef.current.get(id);
@@ -333,6 +333,25 @@ export function ChatScreen(){
     }
     if (changed) syncRuns();
   }, [pollRun, syncRuns]);
+
+  // A run that completed while the tab was hidden is already finished on the
+  // server; re-poll as soon as the user returns so the answer appears at once
+  // instead of after the throttled background interval.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const onVisible = () => {
+      if (document.hidden) return;
+      for (const run of runsRef.current.values()) {
+        if (!isTerminal(run.status)) pollRun(run);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, [pollRun]);
 
   useEffect(() => {
     const refresh = () => {

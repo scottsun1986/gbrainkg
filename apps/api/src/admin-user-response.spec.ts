@@ -78,6 +78,30 @@ describe('admin user responses', () => {
     expectSafe(result.user);
   });
 
+  it('clears the stored seed so an administrator can unbind a lost authenticator', async () => {
+    mockPrisma.user.findUnique.mockResolvedValue({
+      ...secretUser, mfaEnabled: true, mfaEnabledAt: new Date(), mfaSecret: 'enc:v1:abc',
+    });
+    mockPrisma.user.update.mockImplementation(async (args: any) => ({ ...secretUser, ...args.data }));
+
+    await controller.updateUser({}, secretUser.id, { mfaEnabled: false });
+
+    const data = mockPrisma.user.update.mock.calls.at(-1)?.[0].data;
+    expect(data).toMatchObject({ mfaEnabled: false, mfaSecret: null, mfaLastCounter: null, mfaEnabledAt: null });
+  });
+
+  it('never rewrites the secret when MFA is left enabled', async () => {
+    mockPrisma.user.findUnique.mockResolvedValue({ ...secretUser, mfaEnabled: true, mfaEnabledAt: new Date() });
+    mockPrisma.user.update.mockImplementation(async (args: any) => ({ ...secretUser, ...args.data }));
+
+    await controller.updateUser({}, secretUser.id, { displayName: 'Renamed' });
+
+    const data = mockPrisma.user.update.mock.calls.at(-1)?.[0].data;
+    expect(data).not.toHaveProperty('mfaSecret');
+    expect(data).not.toHaveProperty('mfaEnabled');
+  });
+
+
   it('DELETE /admin/users/:id returns a safe user DTO', async () => {
     const result = await controller.disableUser({}, secretUser.id);
     expect(mockPrisma.user.update.mock.calls[0][0].select).toBeDefined();

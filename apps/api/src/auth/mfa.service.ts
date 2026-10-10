@@ -6,12 +6,30 @@ import {
 import { getPrismaClient } from '../prisma';
 import { runAsAuth } from '../db/tenant-context.service';
 import { AuthService } from './auth.service';
+import { decryptModelCredential, encryptModelCredential } from '../model-credential';
 import {
   base32Decode,
   buildOtpauthUri,
   generateTotpSecret,
   matchTotpCounter,
 } from './totp';
+
+/**
+ * TOTP seeds are shared secrets: anyone holding one can mint valid codes, so
+ * they are stored with the same envelope as model credentials. Reads stay
+ * backward compatible with rows written before encryption was enabled.
+ */
+function readMfaSecret(stored?: string | null): string {
+  if (!stored) return '';
+  try {
+    return decryptModelCredential(Buffer.from(stored, 'utf8'));
+  } catch {
+    // A row encrypted under a rotated key must not lock the account out of
+    // second-factor login; treat it as "no usable secret" so the user can
+    // re-enrol instead of failing with an opaque error.
+    return '';
+  }
+}
 
 export interface MfaSetupResult {
   secret: string;
@@ -83,7 +101,7 @@ export class MfaService {
     });
     const updated = await this.prisma.user.updateMany({
       where: { id: userId, status: 'active', mfaEnabled: false },
-      data: { mfaSecret: base32, mfaEnabled: false, mfaEnabledAt: null, mfaLastCounter: null },
+      data: { mfaSecret: encryptModelCredential(base32).toString('utf8'), mfaEnabled: false, mfaEnabledAt: null, mfaLastCounter: null },
     });
     if (updated.count !== 1) throw new BadRequestException('MFA state changed. Restart enrolment.');
     this.authService.invalidateUserStatus(userId);
@@ -118,10 +136,11 @@ export class MfaService {
     if (user.mfaEnabled) {
       throw new BadRequestException('MFA is already enabled.');
     }
-    if (!user.mfaSecret) {
+    const secret = readMfaSecret(user.mfaSecret);
+    if (!secret) {
       throw new BadRequestException('MFA setup has not been started. Call /auth/mfa/setup first.');
     }
-    const counter = matchTotpCounter(base32Decode(user.mfaSecret), code);
+    const counter = matchTotpCounter(base32Decode(secret), code);
     if (counter === null) {
       throw new UnauthorizedException('Invalid TOTP code.');
     }
@@ -150,7 +169,8 @@ export class MfaService {
     const passwordOk = Boolean(
       password && user.passwordHash && this.authService.verifyPassword(password, user.passwordHash),
     );
-    const counter = code && user.mfaSecret ? matchTotpCounter(base32Decode(user.mfaSecret), code) : null;
+    const storedSecret = readMfaSecret(user.mfaSecret);
+    const counter = code && storedSecret ? matchTotpCounter(base32Decode(storedSecret), code) : null;
     if (!passwordOk && counter === null) {
       throw new UnauthorizedException('A valid password or TOTP code is required to disable MFA.');
     }
@@ -175,7 +195,9 @@ export class MfaService {
     if (!user || user.status !== 'active' || !user.mfaEnabled || !user.mfaSecret) {
       throw new UnauthorizedException('MFA is not available for this account.');
     }
-    const counter = matchTotpCounter(base32Decode(user.mfaSecret), code);
+    const secret = readMfaSecret(user.mfaSecret);
+    if (!secret) throw new UnauthorizedException('MFA is not available for this account.');
+    const counter = matchTotpCounter(base32Decode(secret), code);
     if (counter === null) {
       throw new UnauthorizedException('Invalid TOTP code.');
     }
