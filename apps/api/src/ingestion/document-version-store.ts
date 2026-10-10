@@ -3,6 +3,7 @@ import { getPrismaClient } from '../prisma';
 import { indexableChunkText } from './chunk-text';
 import { indexDocumentChunks, unindexDocument } from '../retrieval/lexical-index-store';
 import { withServiceContext } from '../db/tenant-context.service';
+import { retireSupersededPredecessors } from './version-chain-retirement';
 
 export function immutableVersionsEnabled(): boolean { return process.env.CORE_VERSIONING_ENABLED === '1'; }
 
@@ -161,6 +162,10 @@ export class DocumentVersionStore {
         pendingRawFileOid: null, pendingTitle: null, pendingContentHash: null,
         status: 'published', indexReadiness: 'ready',
       } });
+      // Cross-document chain switch (B02): retiring the predecessor joins the
+      // successor's publish transaction so the replacement goes live exactly
+      // once and never leaves a window with no readable version.
+      await retireSupersededPredecessors(tx, doc.id);
       for (const eventType of ['doc_change', 'aux_enrichment_request']) await tx.brainChangeEvent.create({ data: {
         eventType, resourceType: 'document', resourceId: doc.id, status: 'pending',
         payload: { kbId: doc.kbId, version: version.number, versionId },

@@ -23,7 +23,11 @@ const mockPrisma: any = {
     findMany: jest.fn(),
     updateMany: jest.fn(),
   },
+  documentVersionLink: {
+    findMany: jest.fn().mockResolvedValue([]),
+  },
   $queryRaw: jest.fn(),
+  $executeRaw: jest.fn().mockResolvedValue(1),
 
   $transaction: jest.fn(async (fn: any) => fn(mockPrisma)),
 };
@@ -211,6 +215,28 @@ describe("BrainCompilerProcessor", () => {
     });
     expect(compilerService.invalidateScopesForSource).toHaveBeenCalledWith("llmwiki-kb-stable");
     expect(compilerService.queueScopeSynthesis).toHaveBeenCalledWith(["scope-1"], 3);
+  });
+
+  it("retires cross-document chain predecessors together with the legacy publish (B02)", async () => {
+    compilerService.syncKnowledgeBaseSource.mockResolvedValue({
+      sourceKey: "llmwiki-kb-stable",
+      synced: 1,
+      removed: 0,
+    });
+    compilerService.invalidateScopesForSource.mockResolvedValue([]);
+    compilerService.queueScopeSynthesis.mockResolvedValue(undefined);
+    mockPrisma.documentVersionLink.findMany.mockResolvedValueOnce([{ fromDocumentId: "doc-old" }]);
+
+    await processor.process({
+      name: "source-sync", data: { kbId: "kb-1", docIds: ["doc-new"] },
+    } as Job);
+
+    expect(mockPrisma.documentVersionLink.findMany).toHaveBeenCalledWith({
+      where: { toDocumentId: "doc-new", relation: { not: "translation" } },
+      select: { fromDocumentId: true },
+    });
+    const retireCall = mockPrisma.$executeRaw.mock.calls.map((call: any[]) => call[0]).find((raw: any) => String((raw?.strings ?? raw ?? []).join("")).includes(`'superseded'`));
+    expect(retireCall).toBeTruthy();
   });
 
   it('completes stale source-sync jobs for archived knowledge bases without retrying', async () => {

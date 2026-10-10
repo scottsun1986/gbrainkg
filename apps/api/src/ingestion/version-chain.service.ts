@@ -32,8 +32,9 @@ export interface PublishNewVersionInput {
 }
 
 /**
- * 文档版本链：同 sourceExternalId/content 演进时创建新版本并链接，
- * 旧版标记 superseded；检索侧可沿 DocumentVersionLink 追溯。
+ * 文档版本链：同 sourceExternalId/content 演进时创建新版本并链接。
+ * 旧版在新版成功发布前保持 current（B02）：退役动作移入发布事务
+ * （见 version-chain-retirement.ts），创建阶段只记录待发布意图。
  */
 @Injectable()
 export class VersionChainService {
@@ -70,6 +71,25 @@ export class VersionChainService {
           : null;
 
       if (previous && previous.lifecycleStatus !== "current") throw new ConflictException("Document version has already been superseded");
+      if (previous && !['published', 'failed'].includes(previous.status)) {
+        // A version replacement targets live knowledge: superseding a document
+        // that is itself still building would let the two publications land out
+        // of order. Retry or fix the predecessor first (retryDocument covers
+        // failed/needs_review/stale-parsing documents).
+        throw new ConflictException(`Document version cannot be superseded while its status is ${previous.status}`);
+      }
+      if (previous) {
+        // At most one non-failed successor may be in flight (B02): otherwise a
+        // repeated request would build two replacements and publish two current
+        // versions. Failed successors do not block — that is the retry path.
+        const building = (await tx.documentVersionLink.findMany({
+          where: { fromDocumentId: previous.id, relation: { not: 'translation' } },
+          select: { toDocumentId: true, toDocument: { select: { status: true } } },
+        })) as Array<{ toDocumentId: string; toDocument?: { status?: string } }>;
+        if (building.some(link => link.toDocument?.status !== undefined && !['published', 'failed'].includes(link.toDocument.status))) {
+          throw new ConflictException("A newer version of this document is already being built");
+        }
+      }
       directory = join(uploadRoot(), documentId);
       await mkdir(directory, { recursive: true });
       const sourceRaw = input.objectKey || previous?.rawFileOid;
@@ -113,6 +133,8 @@ export class VersionChainService {
         if (grants.length) await tx.documentAcl.createMany({ data: grants.map((grant: any) => ({
           id: randomUUID(), documentId: doc.id, subjectType: grant.subjectType, subjectId: grant.subjectId, permission: grant.permission,
         })) });
+        // Pending-intent link only: the predecessor is retired inside the
+        // successor's successful publish transaction (B02), not here.
         await tx.documentVersionLink.create({
           data: {
             id: randomUUID(),
@@ -121,13 +143,9 @@ export class VersionChainService {
             relation,
           },
         });
-        await tx.document.update({
-          where: { id: previous.id },
-          data: { lifecycleStatus: 'superseded', effectiveTo: previous.effectiveTo ?? new Date() },
-        });
       }
       this.logger.log(
-        `document version ${doc.id} v${nextVersion} ${previous ? `supersedes ${previous.id}` : 'created'}`,
+        `document version ${doc.id} v${nextVersion} ${previous ? `supersedes ${previous.id} on publish` : 'created'}`,
       );
       return doc;
       });
@@ -135,7 +153,19 @@ export class VersionChainService {
       if (directory) await rm(directory, { recursive: true, force: true }).catch(() => undefined);
       throw error;
     }
-    await enqueueDocumentParse(this.ingestionQueue, doc.id, doc.version, "upload");
+    try {
+      await enqueueDocumentParse(this.ingestionQueue, doc.id, doc.version, "upload");
+    } catch (error) {
+      // The successor row committed but the queue never accepted the job. The
+      // predecessor keeps serving (B02); mark this candidate failed so the
+      // in-flight guard above allows a retry instead of leaving an eternal
+      // "building" successor. The copied files stay for the retry.
+      await this.prisma.document.updateMany({
+        where: { id: doc.id, status: 'parsing' },
+        data: { status: 'failed' },
+      }).catch(() => undefined);
+      throw error;
+    }
     return doc;
   }
 

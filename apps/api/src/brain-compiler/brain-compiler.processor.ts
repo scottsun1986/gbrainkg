@@ -14,6 +14,7 @@ import { getSharedBrainRepoAdapter } from "./brain-adapter.provider";
 import { ChunkEmbeddingService } from "../embedding/chunk-embedding.service";
 import { uploadRoot as resolveUploadRoot } from "../storage/upload-paths";
 import { compiledTruthDiff } from './compiled-truth';
+import { retireSupersededPredecessors } from '../ingestion/version-chain-retirement';
 
 // Cross-source parallelism: different knowledge bases own different GBrain
 // repositories, so their syncs are independent. Same-source syncs remain
@@ -133,9 +134,15 @@ export class BrainCompilerProcessor extends WorkerHost {
         ? await this.compilerService.syncKnowledgeBaseSource(kbId, docIds)
         : await this.compilerService.syncKnowledgeBaseSource(kbId, [], true);
       if (docIds && docIds.length) {
-        await this.prisma.document.updateMany({
-          where: { id: { in: docIds }, status: "indexing" },
-          data: { status: "published" },
+        // Legacy (non-versioned) publish path: the status switch and the
+        // cross-document chain retirement (B02) commit together, mirroring the
+        // versioned publish transaction.
+        await this.prisma.$transaction(async (tx: any) => {
+          await tx.document.updateMany({
+            where: { id: { in: docIds }, status: "indexing" },
+            data: { status: "published" },
+          });
+          for (const docId of docIds) await retireSupersededPredecessors(tx, docId);
         });
       }
       const scopeIds = await this.compilerService.invalidateScopesForSource(result.sourceKey);
