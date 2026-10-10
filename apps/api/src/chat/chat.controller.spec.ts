@@ -9,6 +9,49 @@ const mockPrisma = {
 jest.mock('../prisma', () => ({ getPrismaClient: () => mockPrisma }));
 
 describe('Chat completion message identity', () => {
+  it.each([true, false])('reports a persistence failure without leaking Prisma input (stream=%s)', async stream => {
+    jest.clearAllMocks();
+    const persistenceError = new Error('Invalid prisma.message.create() invocation: secret-database-input constructor [object Function]');
+    const logged = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      mockPrisma.conversation.create.mockResolvedValue({ id: 'conversation-1' });
+      mockPrisma.message.create.mockResolvedValueOnce({ id: 'question-1' }).mockRejectedValueOnce(persistenceError);
+      const service = {
+        assertRequestedScopeAuthorized: jest.fn(),
+        handleChatStream: jest.fn().mockResolvedValue(of(
+          { data: { type: 'delta', content: 'Answer' } },
+          { data: { type: 'done', total_tokens: 3 } },
+        )),
+      };
+      const runs = { start: jest.fn().mockResolvedValue({ runId: 'run-1' }), complete: jest.fn(), fail: jest.fn() };
+      const controller = new ChatController(service as any, { userIdFromRequest: async () => 'user-1' } as any, runs as any);
+      const events: any[] = [];
+      let finish!: () => void;
+      const ended = new Promise<void>(resolve => { finish = resolve; });
+      const response = {
+        writableEnded: false, setHeader: jest.fn(), flushHeaders: jest.fn(),
+        status: jest.fn().mockReturnValue({ json: jest.fn() }),
+        write: (raw: string) => { events.push(JSON.parse(raw.slice(6))); }, end: finish,
+      };
+      await controller.streamCompletions({ message: 'Question', stream }, { on: jest.fn() }, response as any);
+      await ended;
+      expect(logged).toHaveBeenCalledWith('Failed to persist assistant message:', persistenceError);
+      expect(runs.complete).not.toHaveBeenCalled();
+      expect(JSON.stringify(events)).not.toMatch(/prisma\.message|secret-database-input|constructor|object Function/);
+      if (stream) {
+        expect(events).toContainEqual({ type: 'error', content: '回答保存失败，请重试。' });
+        expect(events.find(event => event.node?.id === 'message_persistence' && event.node.status === 'failed')?.node.summary)
+          .toBe('回答保存失败，请重试。');
+        expect(events.find(event => event.type === 'done')?.message_id).toBeUndefined();
+      } else {
+        expect(runs.fail).toHaveBeenCalledWith('run-1', '回答保存失败，请重试。');
+      }
+      expect(mockPrisma.message.update).not.toHaveBeenCalled();
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
   it.each([true, false])('persists failure status without source data (stream=%s)', async stream => {
     jest.clearAllMocks();
     mockPrisma.conversation.create.mockResolvedValue({ id: 'conversation-1' });

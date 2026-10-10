@@ -88,7 +88,7 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
     try {
       const results = await withServiceContext(this.prisma, (tx) =>
         tx.$queryRaw<any[]>`
-        SELECT id, "queryText", "responseContent", citations, "dependencyManifest", "processingTrace", "modelName", "expiresAt", 1.0 AS similarity
+        SELECT id, "queryText", "responseContent", citations, "dependencyManifest", "processingTrace", "modelName", "expiresAt", 1.0::double precision AS similarity
         FROM "SemanticCache"
         WHERE "scopeFingerprint" = ${scopeFingerprint}
           AND "knowledgeEpoch" = ${knowledgeEpoch}
@@ -98,7 +98,12 @@ export class SemanticCacheService implements OnModuleDestroy, OnModuleInit {
         LIMIT 1
       `);
 
-      const hit: any = Array.isArray(results) && results.length > 0 ? (results as any[])[0] : null;
+      const row: any = Array.isArray(results) && results.length > 0 ? results[0] : null;
+      // Raw SQL numeric values can arrive as Prisma.Decimal. Keep the public
+      // cache contract JSON-safe before returning or promoting the hit to L1;
+      // otherwise trace sanitization exposes Decimal's constructor function
+      // and Prisma rejects the assistant message's processingTrace JSON.
+      const hit = row ? { ...row, similarity: Number(row.similarity ?? 1) } : null;
 
       if (hit) {
         if (authorizationEnforced() && !await validateEvidenceDependencies(getRequestContext()?.userId || '', hit.dependencyManifest)) return null;

@@ -307,11 +307,13 @@ export class ChatController {
           if (runId && errorContent) await this.chatRunService.fail(runId, errorContent);
         } catch (error: any) {
           console.error("Failed to persist assistant message:", error);
+          const saveFailureMessage = '回答保存失败，请重试。';
           upsertPersistenceTrace(
             "failed",
-            `保存失败：${String(error?.message || error || "未知错误").slice(0, 300)}`,
+            saveFailureMessage,
           );
-          if (runId) await this.chatRunService.fail(runId, `保存失败：${String(error?.message || error).slice(0, 300)}`);
+          writeEvent({ type: 'error', content: saveFailureMessage });
+          if (runId) await this.chatRunService.fail(runId, saveFailureMessage);
         } finally {
           timing.finish('persistence');
           if (runId && errorContent && !messageId) await this.chatRunService.fail(runId, errorContent);

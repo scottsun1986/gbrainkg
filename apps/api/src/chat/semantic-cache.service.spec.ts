@@ -1,4 +1,7 @@
 import { SemanticCacheService } from './semantic-cache.service';
+import { Prisma } from '@prisma/client';
+import { serializeJsonQuery } from '@prisma/client/runtime/library';
+import { ChatTraceRecorder } from './chat-trace';
 
 const prisma = {
   $queryRaw: jest.fn(),
@@ -32,6 +35,39 @@ describe('SemanticCacheService exact cache', () => {
     expect(await service.lookup('q', 'scope', 1)).toBeNull();
     // one exact probe per lookup; no vector probe follows an exact miss
     expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps Decimal database hits and their L1 replays safe for assistant-message JSON persistence', async () => {
+    const serializeTrace = (processingTrace: ReturnType<ChatTraceRecorder['snapshot']>) => serializeJsonQuery({
+      modelName: 'Message', action: 'create',
+      args: { data: { conversationId: 'conversation', role: 'assistant', content: 'Cached answer', processingTrace: processingTrace as any } },
+      runtimeDataModel: { models: { Message: { fields: [] } }, enums: {}, types: {} } as any,
+      clientMethod: 'message.create', clientVersion: Prisma.prismaVersion.client,
+      errorFormat: 'minimal', previewFeatures: [],
+    });
+    const rawSimilarity = new Prisma.Decimal('1.0');
+    const baseline = new ChatTraceRecorder({ closed: false, next: jest.fn() } as any);
+    baseline.finish('semantic_cache', 'success', 'Cached answer', { similarity: rawSimilarity });
+    // Reproduce the production failure first: trace sanitization flattens
+    // Decimal into an object containing its enumerable constructor function.
+    expect(() => serializeTrace(baseline.snapshot())).toThrow(/constructor/);
+    prisma.$queryRaw.mockResolvedValueOnce([{
+      id: 'database-hit', responseContent: 'Cached answer', similarity: rawSimilarity,
+    }]);
+    const databaseHit = await service.lookup('Question', 'scope', 1);
+    const memoryHit = await service.lookup('Question', 'scope', 1);
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(String(prisma.$queryRaw.mock.calls[0][0])).toContain('1.0::double precision AS similarity');
+    for (const hit of [databaseHit, memoryHit]) {
+      expect(hit.similarity).toBe(1);
+      const recorder = new ChatTraceRecorder({ closed: false, next: jest.fn() } as any);
+      recorder.finish('semantic_cache', 'success', 'Cached answer', { similarity: hit.similarity });
+      const processingTrace = recorder.snapshot();
+      expect(processingTrace[0].details?.similarity).toBe(1);
+      // Exercise Prisma's actual input serializer, without a database write.
+      // JSON.stringify alone hides functions and would miss the reported bug.
+      expect(() => serializeTrace(processingTrace)).not.toThrow();
+    }
   });
 
   it('bounds entries promoted from database hits', async () => {
