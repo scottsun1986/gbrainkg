@@ -1,0 +1,65 @@
+{
+  "verified_at": "2026-10-10",
+  "source_attachment": {
+    "local_path": "/tmp/telecom-qa100-prod.xlsx",
+    "copied_to_repository": false,
+    "xml_declared_dimension": "A1",
+    "xml_rows": 101,
+    "xml_cells": 202,
+    "xml_last_row": 101,
+    "old_openpyxl_read_only_observation": {
+      "version": "3.1.5",
+      "reported_dimension": "A1:A1",
+      "max_row": 1,
+      "max_column": 1,
+      "yielded_rows": 1
+    }
+  },
+  "fixed_parser_result": {
+    "tables": 1,
+    "row_counts": [101],
+    "header_columns": [[1, 2]],
+    "markdown_characters": 7913,
+    "source_units": 1,
+    "processed_source_units": 1,
+    "target_question_found": true,
+    "target_answer_found": true,
+    "matching_structured_rows": 1,
+    "target_question": "小翼管家APP是做什么的？",
+    "target_answer": "小翼管家是电信智能家居管理APP，可统一管理电信智能网关、摄像头、门铃、灯具等全屋智能设备，支持远程控制。"
+  },
+  "checks": {
+    "structured_excel_targeted_pytest": {
+      "exit_code": 0,
+      "passed": 18,
+      "subtests_passed": 9
+    },
+    "ruff_changed_parser_files": {
+      "exit_code": 0,
+      "passed": true
+    },
+    "full_parser_pytest": {
+      "command": "pnpm run test:parser",
+      "exit_code": 0,
+      "passed": 114,
+      "subtests_passed": 20
+    },
+    "repository_pnpm_test": {
+      "exit_code": 0,
+      "completed_before_final_parser_only_guard_change": true,
+      "turbo_tasks_passed": 6,
+      "turbo_tasks_total": 6,
+      "api_suites_passed": 187,
+      "api_suites_skipped": 1,
+      "api_tests_passed": 1642,
+      "api_tests_skipped": 5,
+      "web_tests_passed": 86,
+      "web_tests_failed": 0
+    }
+  },
+  "coverage_semantics": "source_units total=1 and processed=1 indicates the sheet source unit completed; it is not a row/cell coverage metric",
+  "qa_import_semantics": "Ordinary spreadsheet upload parses structured document content but does not automatically create native QA items. QaPanel requires explicit question/answer column mapping, preview, and import.",
+  "production_deployed": false,
+  "production_reparsed": false,
+  "database_written": false
+}

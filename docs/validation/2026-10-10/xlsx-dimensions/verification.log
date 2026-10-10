@@ -1,0 +1,25 @@
+XLSX dimension recovery verification — 2026-10-10
+
+Final parser-only patch verification:
+  cd apps/parser-worker && PYTHONPATH=src python3 -m pytest tests/test_structured_excel.py -q
+  exit 0; 18 passed, 9 subtests passed
+
+Offline source workbook parser check (temporary artifact and cache directories; original attachment remains in /tmp):
+  PYTHONPATH=apps/parser-worker/src python3 - [inline structured_excel.extract check]
+  exit 0; one table, row_count 101, header_columns [1, 2], markdown 7913 chars;
+  target question and target answer present; one matching structured row
+
+Lint:
+  cd apps/parser-worker && python3 -m ruff check src/structured_excel.py tests/test_structured_excel.py
+  exit 0; All checks passed
+
+Full parser tests:
+  pnpm run test:parser
+  exit 0; 114 passed, 20 subtests passed in 19.34s
+
+Repository tests (completed before final parser-only merge/table-bound guard addition):
+  pnpm test
+  exit 0; Turbo 6/6; API 187 passed, 1 skipped suite, 1,642 passed, 5 skipped;
+  web 86 passed, 0 failed. Not repeated after final Python-only parser change.
+
+Not run: production deployment, production reparse, Q&A import, or database writes.

@@ -299,7 +299,7 @@ class Region:
 
 
 def _xlsx_merges(path, sheet_paths):
-    from openpyxl.utils.cell import range_boundaries
+    from openpyxl.utils.cell import coordinate_to_tuple, range_boundaries
     results = {}
     with zipfile.ZipFile(path) as archive:
         for name, xmlpath in sheet_paths.items():
@@ -308,11 +308,21 @@ def _xlsx_merges(path, sheet_paths):
             with archive.open(xmlpath) as source:
                 for event, node in ET.iterparse(source, events=('end',)):
                     if node.tag == NS + 'mergeCell':
-                        ranges.append((node.attrib['ref'], range_boundaries(node.attrib['ref'])))
+                        bounds = range_boundaries(node.attrib['ref'])
+                        if bounds[2] > MAX_COLUMNS or bounds[3] > MAX_ROWS:
+                            raise ValueError('Worksheet exceeds row/column budget')
+                        ranges.append((node.attrib['ref'], bounds))
                         if len(ranges) > 100_000:
                             raise ValueError('Workbook exceeds merge complexity budget')
-                    elif node.tag == NS + 'row' and node.attrib.get('hidden') == '1':
-                        hidden_rows.add(int(node.attrib['r']))
+                    elif node.tag == NS + 'row':
+                        if int(node.attrib.get('r', 0)) > MAX_ROWS:
+                            raise ValueError('Worksheet exceeds row budget')
+                        if node.attrib.get('hidden') == '1':
+                            hidden_rows.add(int(node.attrib['r']))
+                    elif node.tag == NS + 'c' and node.attrib.get('r'):
+                        row, column = coordinate_to_tuple(node.attrib['r'])
+                        if row > MAX_ROWS or column > MAX_COLUMNS:
+                            raise ValueError('Worksheet exceeds row/column budget')
                     elif node.tag == NS + 'tablePart':
                         references.append(node.attrib.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id'))
                     elif node.tag == NS + 'col' and node.attrib.get('hidden') == '1':
@@ -330,8 +340,11 @@ def _xlsx_merges(path, sheet_paths):
                     if not target.startswith('xl/tables/') or target not in archive.namelist():
                         raise ValueError('Invalid workbook table relationship')
                     node = ET.fromstring(archive.read(target))
+                    bounds = range_boundaries(node.attrib['ref'])
+                    if bounds[2] > MAX_COLUMNS or bounds[3] > MAX_ROWS:
+                        raise ValueError('Worksheet exceeds row/column budget')
                     definitions.append({'name': node.attrib.get('displayName') or node.attrib['name'],
-                        'bounds': range_boundaries(node.attrib['ref']), 'header_count': int(node.attrib.get('headerRowCount', 1)),
+                        'bounds': bounds, 'header_count': int(node.attrib.get('headerRowCount', 1)),
                         'totals_count': int(node.attrib.get('totalsRowCount', 0))})
             results[name] = (ranges, hidden_rows, hidden_columns, definitions)
     return results
@@ -370,29 +383,38 @@ def _xlsx(path, instance, unit_ids):
     active = []
     try:
         cached = openpyxl.load_workbook(path, read_only=True, data_only=True, keep_links=False)
-        paths = {sheet.title: sheet._worksheet_path for sheet in formulas.worksheets}
+        paths = {sheet.title: sheet._worksheet_path for sheet in formulas.worksheets
+                 if not unit_ids or f'sheet:{sheet.title}' in unit_ids
+                 or any(u.startswith(f'sheet:{sheet.title}:') for u in unit_ids)}
         metadata = _xlsx_merges(path, paths)
         tables, units, sections = [], [], []
         native_chars = cell_count = 0
         for sheet in formulas.worksheets:
             sheetid = f'sheet:{sheet.title}'
-            selected_sheet = not unit_ids or sheetid in unit_ids or any(u.startswith(sheetid + ':') for u in unit_ids)
+            selected_sheet = sheet.title in paths
             if not selected_sheet:
                 units.append({'id': sheetid, 'kind': 'sheet', 'sheet': sheet.title, 'status': 'skipped',
                               'native_text_chars': 0, 'generated_text_chars': 0, 'error': 'not_selected'})
                 continue
-            if (sheet.max_row or 0) > MAX_ROWS or (sheet.max_column or 0) > MAX_COLUMNS:
-                raise ValueError('Worksheet exceeds row/column budget')
+            # Exporters can declare A1 even when sheetData contains many rows.
+            # Ignore declared dimensions in both streams so formulas and cached
+            # values stay aligned. The XML scan above bounds actual coordinates
+            # before openpyxl allocates padding for sparse rows or columns.
+            sheet.reset_dimensions()
+            cached_sheet = cached[sheet.title]
+            cached_sheet.reset_dimensions()
             merges, hidden_rows, hidden_columns, definitions = metadata[sheet.title]
             defined_regions = {}
             anchors = {}
             region = None
             index = 0
             # Separate regions on empty rows; original row indices never shift.
-            for number, pair in enumerate(zip_longest(sheet.iter_rows(), cached[sheet.title].iter_rows()), 1):
+            for number, pair in enumerate(zip_longest(sheet.iter_rows(), cached_sheet.iter_rows()), 1):
                 raw, cache = pair
                 if number > MAX_ROWS:
                     raise ValueError('Worksheet exceeds row budget')
+                if max(len(raw or []), len(cache or [])) > MAX_COLUMNS:
+                    raise ValueError('Worksheet exceeds column budget')
                 cells = []
                 for col, (cell, cached_cell) in enumerate(zip_longest(raw or [], cache or []), 1):
                     if cell is None or cell.value is None:

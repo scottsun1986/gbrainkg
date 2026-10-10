@@ -1,5 +1,6 @@
 """Real spreadsheet fixtures: typed facts, complete streams and recovery."""
 import json
+import re
 import tempfile
 import unittest
 import zipfile
@@ -39,6 +40,141 @@ class StructuredExcelTests(unittest.TestCase):
         path = self.root / name
         workbook.save(str(path))
         return path
+
+    def rewrite_sheet_xml(self, path, transform):
+        with zipfile.ZipFile(path) as source:
+            entries = {name: source.read(name) for name in source.namelist()}
+        key = 'xl/worksheets/sheet1.xml'
+        entries[key] = transform(entries[key])
+        with zipfile.ZipFile(path, 'w') as output:
+            for name, data in entries.items():
+                output.writestr(name, data)
+
+    def set_dimension(self, path, dimension):
+        def replace(xml):
+            updated, count = re.subn(rb'<dimension ref="[^"]+"',
+                                    b'<dimension ref="' + dimension.encode() + b'"', xml)
+            self.assertEqual(count, 1)
+            return updated
+        self.rewrite_sheet_xml(path, replace)
+
+    def test_incorrect_dimensions_do_not_truncate_spreadsheet_content(self):
+        # A workbook exporter can write a plausible but incorrect dimension.
+        # The complete 100 question/answer rows must reach the text projection.
+        for dimension in ['A1', 'A1:B2', 'A1:XFD1048576']:
+            with self.subTest(dimension=dimension):
+                book = openpyxl.Workbook()
+                sheet = book.active
+                sheet.title = '产品问答'
+                sheet.append(['问题', '答案'])
+                for index in range(1, 101):
+                    sheet.append([f'产品{index}的功能是什么？', f'产品{index}可以管理家庭设备。'])
+                path = self.save(book)
+                self.set_dimension(path, dimension)
+                result = structured_excel.extract(path, 'inst1')
+                table = result['structured_tables'][0]
+                self.assertEqual(table['row_count'], 101)
+                self.assertEqual(table['range'], 'A1:B101')
+                self.assertTrue(table['complete'])
+                self.assertEqual(len(table['rows']), 101)
+                self.assertEqual(sum(len(row['cells']) for row in table['rows']), 202)
+                self.assertIn('产品73的功能是什么？', result['markdown'])
+                self.assertIn('产品73可以管理家庭设备。', result['markdown'])
+                self.assertIn('产品100可以管理家庭设备。', result['markdown'])
+                self.assertEqual(result['source_units'][0]['range'], 'A1:B101')
+
+    def test_incorrect_dimensions_keep_formula_and_cached_streams_aligned(self):
+        book = openpyxl.Workbook()
+        sheet = book.active
+        sheet.append(['名称', '数值'])
+        sheet.append(['已缓存', '=1+1'])
+        sheet.append(['未缓存', '=2+2'])
+        path = self.save(book)
+        self.set_dimension(path, 'A1')
+        self.rewrite_sheet_xml(path, lambda xml: xml.replace(b'<f>1+1</f><v></v>', b'<f>1+1</f><v>2</v>'))
+        table = structured_excel.extract(path, 'inst1')['structured_tables'][0]
+        cells = {cell['coordinate']: cell for row in table['rows'] for cell in row['cells']}
+        self.assertEqual(table['range'], 'A1:B3')
+        self.assertEqual(cells['B2']['formula'], '=1+1')
+        self.assertEqual(cells['B2']['cached'], 2)
+        self.assertEqual(cells['B2']['value'], 2)
+        self.assertTrue(cells['B2']['cached_available'])
+        self.assertEqual(cells['B3']['formula'], '=2+2')
+        self.assertIsNone(cells['B3']['value'])
+        self.assertFalse(cells['B3']['cached_available'])
+        self.assertEqual(cells['B3']['display'], '')
+
+    def test_incorrect_dimensions_cannot_bypass_actual_coordinate_budgets(self):
+        for coordinate, budget in [('A20', {'MAX_ROWS': 10}), ('T1', {'MAX_COLUMNS': 10})]:
+            with self.subTest(coordinate=coordinate):
+                book = openpyxl.Workbook()
+                sheet = book.active
+                sheet['A1'] = '表头'
+                sheet[coordinate] = '超限数据'
+                path = self.save(book)
+                self.set_dimension(path, 'A1')
+                with patch.multiple(structured_excel, **budget), \
+                        patch('openpyxl.worksheet._read_only.ReadOnlyWorksheet.iter_rows') as rows:
+                    with self.assertRaisesRegex(ValueError, 'row.*budget'):
+                        structured_excel.extract(path, 'inst1')
+                    rows.assert_not_called()
+
+    def test_unselected_worksheet_is_not_subject_to_actual_coordinate_budgets(self):
+        book = openpyxl.Workbook()
+        sheet = book.active
+        sheet.title = '保留'
+        sheet.append(['名称', '金额'])
+        sheet.append(['甲', 1])
+        other = book.create_sheet('跳过')
+        other['T20'] = '未选择数据'
+        with patch.multiple(structured_excel, MAX_ROWS=10, MAX_COLUMNS=10):
+            result = structured_excel.extract(self.save(book), 'inst1', ['sheet:保留'])
+        self.assertEqual(len(result['structured_tables']), 1)
+        self.assertEqual(result['structured_tables'][0]['range'], 'A1:B2')
+        self.assertEqual(result['coverage']['skipped'], 1)
+
+    def test_incorrect_dimensions_cannot_bypass_merge_range_budgets(self):
+        for region, budget in [('A1:T1', {'MAX_COLUMNS': 10}), ('A1:A20', {'MAX_ROWS': 10})]:
+            with self.subTest(region=region):
+                book = openpyxl.Workbook()
+                sheet = book.active
+                sheet['A1'] = '合并单元格'
+                path = self.save(book)
+                self.set_dimension(path, 'A1')
+                # Keep source cells at A1; only the merge range is oversized.
+                self.rewrite_sheet_xml(path, lambda xml: xml.replace(
+                    b'</worksheet>', b'<mergeCells count="1"><mergeCell ref="' +
+                    region.encode() + b'"/></mergeCells></worksheet>'))
+                with patch.multiple(structured_excel, **budget), \
+                        patch('openpyxl.worksheet._read_only.ReadOnlyWorksheet.iter_rows') as rows:
+                    with self.assertRaisesRegex(ValueError, 'row/column budget'):
+                        structured_excel.extract(path, 'inst1')
+                    rows.assert_not_called()
+
+    def test_incorrect_dimensions_cannot_bypass_defined_table_range_budgets(self):
+        for region, budget in [('A1:T2', {'MAX_COLUMNS': 10}), ('A1:B20', {'MAX_ROWS': 10})]:
+            with self.subTest(region=region):
+                book = openpyxl.Workbook()
+                sheet = book.active
+                sheet.append(['名称', '数值'])
+                sheet.append(['甲', 1])
+                sheet.add_table(Table(displayName='Facts', ref='A1:B2'))
+                path = self.save(book)
+                self.set_dimension(path, 'A1')
+                # Only the table definition exceeds the budget; source cells
+                # remain in A1:B2, so this exercises the structure range guard.
+                with zipfile.ZipFile(path) as source:
+                    entries = {name: source.read(name) for name in source.namelist()}
+                key = 'xl/tables/table1.xml'
+                entries[key] = entries[key].replace(b'ref="A1:B2"', b'ref="' + region.encode() + b'"')
+                with zipfile.ZipFile(path, 'w') as output:
+                    for name, data in entries.items():
+                        output.writestr(name, data)
+                with patch.multiple(structured_excel, **budget), \
+                        patch('openpyxl.worksheet._read_only.ReadOnlyWorksheet.iter_rows') as rows:
+                    with self.assertRaisesRegex(ValueError, 'row/column budget'):
+                        structured_excel.extract(path, 'inst1')
+                    rows.assert_not_called()
 
     def test_zero_false_formula_cache_merge_coordinates_units_and_hidden(self):
         book = openpyxl.Workbook()
