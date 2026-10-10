@@ -186,15 +186,29 @@ export class FeishuConnector implements EnterpriseConnector {
     const pending = syncAcl ? sorted : sorted.filter((f) => f.token > after);
 
     const changes: ConnectorChange[] = [];
+    const failures: Array<{ externalId: string; error: string }> = [];
     let nextCursor = after;
     for (const file of pending) {
-      let content = '';
-      const externalAcl = syncAcl ? await this.sourceAcl(config,token,file) : undefined;
+      const externalAcl = syncAcl ? await this.sourceAcl(config, token, file) : undefined;
+      let content: string | null = null;
       try {
         content = await this.downloadRaw(config, token, file.token, file);
-      } catch {
-        if (syncAcl) changes.push({ externalId:file.token,title:file.name,content:'',aclOnly:true,externalAcl:{ revision:'unavailable',verified:false,subjects:[] } });
-        break;
+      } catch (error) {
+        failures.push({ externalId: file.token, error: error instanceof Error ? error.message : String(error) });
+      }
+      if (content === null) {
+        // One failed download must not quarantine the remaining objects (B04):
+        // keep scanning and still propagate whatever ACL evidence this file
+        // has, so a revoked permission stays visible even when the body is
+        // unavailable. An unverified ACL keeps the deny policy.
+        if (syncAcl) changes.push({
+          externalId: file.token,
+          title: file.name,
+          content: '',
+          aclOnly: true,
+          externalAcl: externalAcl ?? { revision: 'unavailable', verified: false, subjects: [] },
+        });
+        continue;
       }
       changes.push({
         externalId: file.token,
@@ -205,6 +219,11 @@ export class FeishuConnector implements EnterpriseConnector {
       });
       nextCursor = file.token;
     }
-    return { changes, nextCursor: nextCursor || after || null, ...(syncAcl ? { snapshotIds:files.map(f => f.token) } : {}) };
+    return {
+      changes,
+      nextCursor: nextCursor || after || null,
+      ...(syncAcl ? { snapshotIds: files.map(f => f.token) } : {}),
+      ...(failures.length ? { failures } : {}),
+    };
   }
 }

@@ -182,9 +182,42 @@ describe('Feishu source ACL synchronization', () => {
     const result = await connector.fetchChanges(config,null);
     expect(result.changes[0].externalAcl).toMatchObject({ verified:false,subjects:[] });
   });
-  it('emits a closed ACL update when source content cannot be fetched', async () => {
+  it('still refreshes the readable ACL of a file whose content download failed', async () => {
     const connector = new FeishuConnector('feishu_drive',sourceFetch(false,true) as any);
     const result = await connector.fetchChanges(config,null);
+    // Content failure no longer discards fresh permission evidence (B04): the
+    // object keeps serving its previous body under its CURRENT permissions.
+    expect(result.changes[0]).toMatchObject({ aclOnly:true });
+    expect(result.changes[0].externalAcl).toMatchObject({ verified:true,subjects:[{ type:'openid',id:'source-reader' }] });
+    expect(result.failures).toEqual([{ externalId:'same-id',error:expect.stringContaining('unavailable') }]);
+  });
+  it('falls back to the deny policy when both the content and the ACL are unavailable', async () => {
+    const connector = new FeishuConnector('feishu_drive',sourceFetch(true,true) as any);
+    const result = await connector.fetchChanges(config,null);
     expect(result.changes[0]).toMatchObject({ aclOnly:true,externalAcl:{ verified:false } });
+    expect(result.failures).toHaveLength(1);
+  });
+  it('keeps scanning and ACL-syncing the remaining files after one download fails (B04)', async () => {
+    const fetchFn = jest.fn(async (url: string) => {
+      if (url.includes('tenant_access_token')) return jsonResponse({ code:0,tenant_access_token:'test' });
+      if (url.includes('/drive/v1/files')) return jsonResponse({ code:0,data:{ files:[
+        { token:'tok-a',name:'a.docx',type:'docx' },
+        { token:'tok-b',name:'b.docx',type:'docx' },
+      ],has_more:false } });
+      if (url.includes('/permissions/tok-a')) return jsonResponse({ code:999,msg:'denied' },false,403);
+      if (url.includes('/permissions/tok-b')) return jsonResponse({ code:0,data:{ items:[{ member_type:'openid',member_id:'source-reader',perm:'view' }] } });
+      if (url.includes('/raw_content') && url.includes('tok-a')) return jsonResponse({},false,503);
+      if (url.includes('/raw_content') && url.includes('tok-b')) return jsonResponse({ code:0,data:{ content:'b body' } });
+      throw new Error(`unexpected url ${url}`);
+    });
+    const connector = new FeishuConnector('feishu_drive',fetchFn as any);
+    const result = await connector.fetchChanges(config,null);
+
+    // a: content + ACL both failed → aclOnly with deny policy; b: fully processed.
+    expect(result.snapshotIds).toEqual(['tok-a','tok-b']);
+    expect(result.changes.map(change => change.externalId)).toEqual(['tok-a','tok-b']);
+    expect(result.changes[0]).toMatchObject({ aclOnly:true,externalAcl:{ verified:false } });
+    expect(result.changes[1]).toMatchObject({ content:'b body',externalAcl:{ verified:true } });
+    expect(result.failures).toEqual([expect.objectContaining({ externalId:'tok-a' })]);
   });
 });

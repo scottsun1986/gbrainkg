@@ -41,12 +41,22 @@ const mockPrisma: any = {
   },
   document: {
     findFirst: jest.fn(),
+    findMany: jest.fn().mockResolvedValue([]),
     create: jest.fn(),
     update: jest.fn(),
     updateMany: jest.fn(),
   },
+  documentAcl: {
+    deleteMany: jest.fn(),
+    createMany: jest.fn(),
+  },
+  brainChangeEvent: {
+    create: jest.fn(),
+    createMany: jest.fn(),
+  },
 
   $executeRaw: jest.fn().mockResolvedValue(0),
+  $queryRaw: jest.fn().mockResolvedValue([{ id: 'run-1' }]),
   $transaction: jest.fn(async (fn: any) => fn(mockPrisma)),
 };
 
@@ -411,11 +421,18 @@ describe('ConnectorService freshness (stage 4 visibility)', () => {
       .toMatchObject({ stale: true, state: 'overdue' });
     expect(assessConnectorFreshness({ lastSyncAt: new Date('2026-10-07T00:00:00Z'), lastError: 'boom' }, now))
       .toMatchObject({ stale: true, state: 'last_run_failed' });
-    // Never synced: only overdue once a full interval has passed since creation.
+    // B06: a recent failure must not be presented as fresh knowledge. The
+    // failure state wins while staleness still measures the last full success.
+    expect(assessConnectorFreshness({ lastSyncAt: new Date('2026-10-09T11:00:00Z'), lastError: 'network unavailable' }, now))
+      .toMatchObject({ stale: false, state: 'last_run_failed' });
+    // Never synced: not fresh at any age (B06) — only staleness waits for the
+    // threshold so a brand-new source is not flagged overdue immediately.
     expect(assessConnectorFreshness({ lastSyncAt: null, createdAt: new Date('2026-10-08T00:00:00Z') }, now))
       .toMatchObject({ stale: true, state: 'never_synced' });
     expect(assessConnectorFreshness({ lastSyncAt: null, createdAt: new Date('2026-10-09T11:00:00Z') }, now))
-      .toMatchObject({ stale: false, state: 'fresh' });
+      .toMatchObject({ stale: false, state: 'never_synced' });
+    expect(assessConnectorFreshness({ lastSyncAt: null, lastError: 'first run failed', createdAt: new Date('2026-10-09T11:30:00Z') }, now))
+      .toMatchObject({ stale: false, state: 'never_synced' });
     // Per-source override wins over the global threshold.
     expect(assessConnectorFreshness({ lastSyncAt: new Date('2026-10-07T00:00:00Z'), config: { staleAfterHours: 100 } }, now))
       .toMatchObject({ stale: false, staleAfterHours: 100 });
@@ -433,8 +450,7 @@ describe('ConnectorService freshness (stage 4 visibility)', () => {
   });
 });
 
-describe('ConnectorService source identity and unchanged-content permissions', () => {
-  const saved = process.env.CORE_EXTERNAL_ACL_REQUIRED;
+describe('ConnectorService source identity and unchanged-content permissions', () => {  const saved = process.env.CORE_EXTERNAL_ACL_REQUIRED;
   beforeEach(() => {
     jest.clearAllMocks();process.env.CORE_EXTERNAL_ACL_REQUIRED='1';
     mockPrisma.documentAcl = { deleteMany:jest.fn(),createMany:jest.fn() };
@@ -449,5 +465,158 @@ describe('ConnectorService source identity and unchanged-content permissions', (
     expect(mockPrisma.document.update).toHaveBeenCalledWith(expect.objectContaining({ data:expect.objectContaining({ aclMode:'restricted' }) }));
     expect(mockPrisma.documentAcl.deleteMany).toHaveBeenCalled();
     expect(ingestionService.enqueue).not.toHaveBeenCalled();
+  });
+});
+
+describe('ConnectorService run-ownership fence for business writes (B03)', () => {
+  let service: ConnectorService;
+  let gitFetch: jest.Mock;
+  const savedAclRequired = process.env.CORE_EXTERNAL_ACL_REQUIRED;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    service = new ConnectorService(ingestionService as any, new WebhookConnector());
+    gitFetch = jest.fn();
+    (service as any).connectors.set('git', { kind: 'git', testConnection: jest.fn(), fetchChanges: gitFetch });
+    mockPrisma.connectorSource.findUnique.mockResolvedValue({ ...SOURCE });
+    mockPrisma.connectorRun.create.mockResolvedValue({ id: 'run-1' });
+    mockPrisma.connectorRun.findFirst.mockResolvedValue(null);
+    mockPrisma.connectorRun.update.mockResolvedValue({});
+    mockPrisma.connectorRun.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.connectorSource.update.mockResolvedValue({});
+    mockPrisma.document.findFirst.mockResolvedValue(null);
+    mockPrisma.document.create.mockResolvedValue({ id: 'doc-new' });
+    mockPrisma.document.update.mockResolvedValue({});
+    mockPrisma.document.updateMany.mockResolvedValue({ count: 0 });
+    mockPrisma.$queryRaw.mockResolvedValue([{ id: 'run-1' }]);
+    mockPrisma.$transaction.mockImplementation(async (fn: any) => fn(mockPrisma));
+    ingestionService.enqueue.mockResolvedValue(undefined);
+    process.env.CORE_EXTERNAL_ACL_REQUIRED = '1';
+  });
+  afterEach(() => {
+    if (savedAclRequired === undefined) delete process.env.CORE_EXTERNAL_ACL_REQUIRED;
+    else process.env.CORE_EXTERNAL_ACL_REQUIRED = savedAclRequired;
+  });
+
+  it('fences snapshot repeal on the run row and suppresses it after ownership is lost', async () => {
+    gitFetch.mockResolvedValue({ changes: [], nextCursor: 'commit-b', snapshotIds: ['tok-1'] });
+    mockPrisma.$queryRaw.mockResolvedValue([]); // run reclaimed before the write
+    mockPrisma.connectorRun.updateMany.mockResolvedValue({ count: 0 }); // terminal CAS fails the same way
+
+    const summary = await service.sync('src-1');
+
+    expect(summary.status).toBe('failed');
+    expect(summary.error).toMatch(/lost his lease|lost its lease/);
+    const repealCalls = mockPrisma.document.updateMany.mock.calls.filter(([args]: any[]) => args?.data?.lifecycleStatus === 'repealed');
+    expect(repealCalls).toHaveLength(0);
+    expect(mockPrisma.connectorSource.update).not.toHaveBeenCalled();
+  });
+
+  it('locks the run row inside the same transaction as every business write', async () => {
+    gitFetch.mockResolvedValue({
+      changes: [{ externalId: 'README.md', title: 'README.md', content: '# hi' }],
+      nextCursor: 'commit-b',
+      snapshotIds: ['README.md'],
+    });
+
+    const summary = await service.sync('src-1');
+
+    expect(summary.status).toBe('success');
+    // Snapshot repeal + document create each ran behind the ownership fence.
+    const ownershipChecks = mockPrisma.$queryRaw.mock.calls.filter(([query]: any[]) =>
+      String((query as any)?.sql ?? (query as any)?.strings?.join('') ?? (Array.isArray(query) ? query.join('') : '')).includes('FOR UPDATE'));
+    expect(ownershipChecks.length).toBeGreaterThanOrEqual(2);
+    const repealCalls = mockPrisma.document.updateMany.mock.calls.filter(([args]: any[]) => args?.data?.lifecycleStatus === 'repealed');
+    expect(repealCalls).toHaveLength(1);
+    expect(mockPrisma.document.create).toHaveBeenCalled();
+  });
+
+  it('aborts the remaining changes when ownership is lost mid-run', async () => {
+    gitFetch.mockResolvedValue({
+      changes: [
+        { externalId: 'a.md', title: 'a', content: 'A' },
+        { externalId: 'b.md', title: 'b', content: 'B' },
+      ],
+      nextCursor: 'commit-b',
+    });
+    mockPrisma.$queryRaw.mockResolvedValueOnce([{ id: 'run-1' }]).mockResolvedValueOnce([]); // lost on second write
+    mockPrisma.connectorRun.updateMany.mockResolvedValue({ count: 0 });
+
+    const summary = await service.sync('src-1');
+
+    expect(summary.status).toBe('failed');
+    expect(summary.error).toMatch(/lost his lease|lost its lease/);
+    // Only the first change reached the database; the second write was suppressed.
+    expect(mockPrisma.document.create).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.connectorSource.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('ConnectorService partial-fetch failures (B04/B06)', () => {
+  let service: ConnectorService;
+  let gitFetch: jest.Mock;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    service = new ConnectorService(ingestionService as any, new WebhookConnector());
+    gitFetch = jest.fn();
+    (service as any).connectors.set('git', { kind: 'git', testConnection: jest.fn(), fetchChanges: gitFetch });
+    mockPrisma.connectorSource.findUnique.mockResolvedValue({ ...SOURCE });
+    mockPrisma.connectorRun.create.mockResolvedValue({ id: 'run-1' });
+    mockPrisma.connectorRun.findFirst.mockResolvedValue(null);
+    mockPrisma.connectorRun.update.mockResolvedValue({});
+    mockPrisma.connectorRun.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.connectorSource.update.mockResolvedValue({});
+    mockPrisma.document.findFirst.mockResolvedValue(null);
+    mockPrisma.document.create.mockResolvedValue({ id: 'doc-new' });
+    mockPrisma.document.update.mockResolvedValue({});
+    mockPrisma.document.updateMany.mockResolvedValue({ count: 0 });
+    mockPrisma.$queryRaw.mockResolvedValue([{ id: 'run-1' }]);
+    ingestionService.enqueue.mockResolvedValue(undefined);
+  });
+
+  it('marks the run failed, keeps the cursor and the last success time, and records the failed objects', async () => {
+    gitFetch.mockResolvedValue({
+      changes: [{ externalId: 'b.md', title: 'b', content: 'B' }],
+      nextCursor: 'commit-z',
+      snapshotIds: ['a.md', 'b.md'],
+      failures: [{ externalId: 'a.md', error: 'feishu download failed: 503' }],
+    });
+    process.env.CORE_EXTERNAL_ACL_REQUIRED = '1';
+    try {
+      const summary = await service.sync('src-1');
+      expect(summary).toMatchObject({ status: 'failed', failed: 1 });
+      expect(summary.error).toMatch(/a\.md.*503/);
+      // Failed objects still get their ACL refreshed (the aclOnly change was
+      // delivered) while the checkpoint and success time stay put.
+      expect(mockPrisma.connectorSource.update).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          cursor: 'commit-a',
+          lastError: expect.stringMatching(/1 object\(s\) failed to fetch/),
+        }),
+      }));
+      const sourceUpdate = mockPrisma.connectorSource.update.mock.calls[0][0].data;
+      expect(sourceUpdate.lastSyncAt).toBeUndefined();
+    } finally {
+      delete process.env.CORE_EXTERNAL_ACL_REQUIRED;
+    }
+  });
+
+  it('advances the checkpoint and success time only on a complete pass', async () => {
+    gitFetch.mockResolvedValue({
+      changes: [{ externalId: 'b.md', title: 'b', content: 'B' }],
+      nextCursor: 'commit-z',
+      snapshotIds: ['a.md', 'b.md'],
+    });
+    process.env.CORE_EXTERNAL_ACL_REQUIRED = '1';
+    try {
+      const summary = await service.sync('src-1');
+      expect(summary.status).toBe('success');
+      expect(mockPrisma.connectorSource.update).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ cursor: 'commit-z', lastSyncAt: expect.any(Date), lastError: null }),
+      }));
+    } finally {
+      delete process.env.CORE_EXTERNAL_ACL_REQUIRED;
+    }
   });
 });

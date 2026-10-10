@@ -24,6 +24,12 @@ export interface FetchChangesResult {
   snapshotIds?: string[];
   /** 下次拉取的游标；null 表示源不支持游标 */
   nextCursor: string | null;
+  /**
+   * 单项失败（B04）：内容下载或权限读取失败的对象。同步编排必须把
+   * 部分失败表达为 partial/failed，不得记录成全部成功；失败项之外的
+   * 对象仍要继续处理（尤其是撤权同步）。
+   */
+  failures?: Array<{ externalId: string; error: string }>;
 }
 
 export interface EnterpriseConnector {

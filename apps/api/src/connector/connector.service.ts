@@ -49,6 +49,12 @@ export interface ConnectorFreshness {
  * list must say when the last successful sync is overdue instead of leaving
  * that to a manual timestamp comparison. Threshold overridable per source
  * (`config.staleAfterHours`) or globally (CONNECTOR_FRESHNESS_STALE_HOURS).
+ *
+ * B06: `lastSyncAt` records the last COMPLETE success only (failed runs write
+ * `lastError`, not `lastSyncAt`), and a recorded failure is shown even when
+ * that success is recent — a fresh-looking timestamp must never present
+ * failed knowledge as up to date. A source without any successful sync is
+ * `never_synced`, never `fresh`.
  */
 export function assessConnectorFreshness(
   source: { lastSyncAt?: Date | string | null; lastError?: string | null; createdAt?: Date | string | null; config?: unknown },
@@ -59,8 +65,8 @@ export function assessConnectorFreshness(
   const staleAfterHours = Number.isFinite(configured) && configured > 0 ? configured : fallbackHours;
   const lastSyncAt = source.lastSyncAt ? new Date(source.lastSyncAt) : null;
   if (!lastSyncAt || Number.isNaN(lastSyncAt.getTime())) {
-    // A source created more than a full interval ago and never synced is also
-    // overdue; a brand-new source is not flagged yet.
+    // Never fully synced: not "fresh" at any age — only the threshold decides
+    // whether it is already overdue as well.
     const createdAt = source.createdAt ? new Date(source.createdAt) : null;
     const ageHours = createdAt && !Number.isNaN(createdAt.getTime())
       ? (now.getTime() - createdAt.getTime()) / 3_600_000
@@ -69,10 +75,20 @@ export function assessConnectorFreshness(
       lastSyncAt: null,
       staleAfterHours,
       stale: ageHours >= staleAfterHours,
-      state: ageHours >= staleAfterHours ? 'never_synced' : 'fresh',
+      state: 'never_synced',
     };
   }
   const ageHours = (now.getTime() - lastSyncAt.getTime()) / 3_600_000;
+  // Failure wins over recency: operators see the error and the age of the
+  // knowledge separately (stale still measures the last full success).
+  if (source.lastError) {
+    return {
+      lastSyncAt: lastSyncAt.toISOString(),
+      staleAfterHours,
+      stale: ageHours >= staleAfterHours,
+      state: 'last_run_failed',
+    };
+  }
   if (ageHours < staleAfterHours) {
     return { lastSyncAt: lastSyncAt.toISOString(), staleAfterHours, stale: false, state: 'fresh' };
   }
@@ -80,8 +96,16 @@ export function assessConnectorFreshness(
     lastSyncAt: lastSyncAt.toISOString(),
     staleAfterHours,
     stale: true,
-    state: source.lastError ? 'last_run_failed' : 'overdue',
+    state: 'overdue',
   };
+}
+
+/** Raised when a business write cannot confirm it still owns the run (B03). */
+export class RunLeaseLostError extends Error {
+  constructor(runId: string) {
+    super(`connector run ${runId} lost its lease before a business write; suppressed`);
+    this.name = 'RunLeaseLostError';
+  }
 }
 
 @Injectable()
@@ -301,8 +325,15 @@ export class ConnectorService {
         source.cursor ?? null,
       );
       fetched = result.changes.length;
+      // Per-object failures (B04): a partial scan is a failed run, not a
+      // silent success — the checkpoint only advances on a complete pass.
+      const downloadFailures = result.failures ?? [];
       if (result.snapshotIds && (process.env.CORE_EXTERNAL_ACL_REQUIRED==='1' || process.env.CORE_AUTH_ENFORCE==='1')) {
-        await this.prisma.document.updateMany({ where:{ sourceConnectorId:sourceId, lifecycleStatus:'current',sourceExternalId:{ notIn:result.snapshotIds } },data:{ lifecycleStatus:'repealed',effectiveTo:new Date() } });
+        // Snapshot repeal is a business write: it must confirm run ownership
+        // in the same transaction instead of trusting the in-memory flag
+        // (B03) — a reclaimed executor must not repeal documents that a
+        // newer run still reports.
+        await this.withRunOwnership(run.id, tx => tx.document.updateMany({ where:{ sourceConnectorId:sourceId, lifecycleStatus:'current',sourceExternalId:{ notIn:result.snapshotIds } },data:{ lifecycleStatus:'repealed',effectiveTo:new Date() } }));
       }
 
       for (const change of result.changes) {
@@ -313,11 +344,12 @@ export class ConnectorService {
           break;
         }
         try {
-          const outcome = await this.ingestChange(source, change);
+          const outcome = await this.ingestChange(source, change, run.id);
           if (outcome === 'ingested') ingested += 1;
           else if (outcome === 'skipped') skipped += 1;
           if (outcome !== 'failed') processed.push(change.externalId);
         } catch (err) {
+          if (err instanceof RunLeaseLostError) throw err;
           failed += 1;
           this.logger.warn(
             `connector ${sourceId} change ${change.externalId} failed: ${
@@ -342,7 +374,14 @@ export class ConnectorService {
         };
       }
 
-      const status = failed > 0 ? 'failed' : 'success';
+      const failedTotal = failed + downloadFailures.length;
+      const failureDetail = [
+        failed > 0 ? `${failed} change(s) failed` : '',
+        downloadFailures.length
+          ? `${downloadFailures.length} object(s) failed to fetch: ${downloadFailures.slice(0, 5).map(item => `${item.externalId} (${item.error})`).join(', ')}${downloadFailures.length > 5 ? '…' : ''}`
+          : '',
+      ].filter(Boolean).join('; ') || null;
+      const status = failedTotal > 0 ? 'failed' : 'success';
       const finishedAt = new Date();
       const finalized = await withSystemWrite(this.prisma, async (tx) => {
         // CAS on (id, owner, still-running): a terminal write from a stale
@@ -354,18 +393,22 @@ export class ConnectorService {
             finishedAt,
             fetched,
             ingested,
-            failed,
-            detail: { processed, skipped } as never,
+            failed: failedTotal,
+            detail: { processed, skipped, ...(downloadFailures.length ? { downloadFailures } : {}) } as never,
           },
         });
         if (guard.count === 0) return false;
         await tx.connectorSource.update({
           where: { id: sourceId },
           data: {
-            // Retain the checkpoint until every change has been durably queued.
-            cursor: failed > 0 ? source.cursor : (result.nextCursor ?? source.cursor),
-            lastSyncAt: finishedAt,
-            lastError: failed > 0 ? `${failed} change(s) failed` : null,
+            // Retain the checkpoint until every change has been durably queued
+            // and every object was fetched (B04).
+            cursor: failedTotal > 0 ? source.cursor : (result.nextCursor ?? source.cursor),
+            // B06: lastSyncAt marks the last COMPLETE success. A failed or
+            // partial run records lastError instead, so freshness never
+            // interprets a failure timestamp as updated knowledge.
+            ...(status === 'success' ? { lastSyncAt: finishedAt } : {}),
+            lastError: failureDetail,
           },
         });
         return true;
@@ -390,8 +433,9 @@ export class ConnectorService {
         status,
         fetched,
         ingested,
-        failed,
+        failed: failedTotal,
         skipped,
+        ...(failureDetail ? { error: failureDetail } : {}),
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -411,7 +455,9 @@ export class ConnectorService {
         if (guard.count === 0) return false;
         await tx.connectorSource.update({
           where: { id: sourceId },
-          data: { lastError: message, lastSyncAt: new Date() },
+          // B06: a failed attempt must not read as updated knowledge — only
+          // lastError advances here; lastSyncAt keeps the last full success.
+          data: { lastError: message },
         });
         if ((source.config as any)?.syncAcl === true || process.env.CORE_EXTERNAL_ACL_REQUIRED === '1' || process.env.CORE_AUTH_ENFORCE === '1') {
           const docs = await tx.document.findMany({ where:{ sourceConnectorId:sourceId }, select:{ id:true } });
@@ -460,22 +506,47 @@ export class ConnectorService {
   }
 
   /**
+   * Run-ownership fence for connector business writes (B03). The lease
+   * heartbeat and the terminal CAS cannot undo document/ACL writes an
+   * executor already flushed after its run was reclaimed, so every business
+   * write runs in one transaction that first locks the run row (FOR UPDATE)
+   * and re-validates owner + status. The reclaimer's CAS update targets the
+   * same row, so reclaim and business writes serialize: whichever commits
+   * first wins, and a reclaimed executor fails this check instead of
+   * repealing documents or writing ACLs that a newer run contradicts.
+   * External HTTP and file handling stay outside this fence.
+   */
+  private async withRunOwnership<T>(runId: string, work: (tx: any) => Promise<T>): Promise<T> {
+    return withSystemWrite(this.prisma, async (tx) => {
+      const owned = await tx.$queryRaw`SELECT id FROM "ConnectorRun" WHERE id = ${runId}::uuid AND "ownerId" = ${this.ownerId} AND status = 'running' FOR UPDATE`;
+      if (!owned || !(owned as any).length) throw new RunLeaseLostError(runId);
+      return work(tx);
+    });
+  }
+
+  /**
    * 单条变更入库：按 sourceExternalId + contentHash 幂等，
    * 文档创建后走 IngestionService.enqueue 进入既有管线。
+   * 所有数据库写入经 withRunOwnership 在同一事务内校验运行所有权（B03）；
+   * 文件写入与队列入队保持在事务之外。
    */
   private async ingestChange(
     source: { id: string; kbId: string; kind: string; config?: any },
     change: ConnectorChange,
+    runId?: string,
   ): Promise<'ingested' | 'skipped' | 'failed'> {
+    const guarded = <T>(work: (tx: any) => Promise<T>): Promise<T> =>
+      runId ? this.withRunOwnership(runId, work) : withSystemWrite(this.prisma, work);
+
     if (change.deleted) {
-      await this.prisma.document.updateMany({
+      await guarded(tx => tx.document.updateMany({
         where: {
           kbId: source.kbId,
           sourceExternalId: change.externalId, sourceConnectorId: source.id,
           lifecycleStatus: 'current',
         },
         data: { lifecycleStatus: 'repealed', effectiveTo: new Date() },
-      });
+      }));
       return 'skipped';
     }
 
@@ -494,7 +565,7 @@ export class ConnectorService {
         ...(immutableVersionsEnabled() ? { ingestVersion: true, pendingContentHash: true } : {}) },
     });
     const enforceSourceAcl = (source.config as any)?.syncAcl === true || !!change.externalAcl || process.env.CORE_EXTERNAL_ACL_REQUIRED === '1' || process.env.CORE_AUTH_ENFORCE === '1';
-    if (existing && enforceSourceAcl) await withSystemWrite(this.prisma, tx => syncExternalAcl(tx, existing.id, source.config, change));
+    if (existing && enforceSourceAcl) await guarded(tx => syncExternalAcl(tx, existing.id, source.config, change));
 
     if (change.aclOnly) return 'skipped';
 
@@ -519,9 +590,9 @@ export class ConnectorService {
       const rawAbs = join(this.uploadRoot, existing.id, `input.${contentHash}.txt`);
       await mkdir(join(this.uploadRoot, existing.id), { recursive: true });
       await writeFile(rawAbs, content, 'utf8');
-      const updated = await this.prisma.document.update({ where: { id: existing.id }, data: {
+      const updated: any = await guarded(tx => tx.document.update({ where: { id: existing.id }, data: {
         ingestVersion: { increment: 1 }, pendingRawFileOid: rawAbs, pendingTitle: title, pendingContentHash: contentHash,
-      } });
+      } }));
       await this.ingestionService.enqueue(existing.id, 'connector-sync', updated.ingestVersion || updated.version, 3);
       return 'ingested';
     }
@@ -530,7 +601,7 @@ export class ConnectorService {
       await mkdir(join(this.uploadRoot, existing.id), { recursive: true });
       await writeFile(replacementPath, content, 'utf8');
       const nextVersion = (existing.version || 1) + 1;
-      await this.prisma.document.update({
+      await guarded(tx => tx.document.update({
         where: { id: existing.id },
         data: {
           title,
@@ -539,7 +610,7 @@ export class ConnectorService {
           version: nextVersion,
           status: 'parsing',
         },
-      });
+      }));
       await this.ingestionService.enqueue(
         existing.id,
         'connector-sync',
@@ -559,22 +630,24 @@ export class ConnectorService {
     await mkdir(join(this.uploadRoot, documentId), { recursive: true });
     await writeFile(rawAbs, content, 'utf8');
 
-    await this.prisma.document.create({
-      data: {
-        id: documentId,
-        kbId: source.kbId,
-        mdPath: join(documentId, 'content.md'),
-        title,
-        sourceType,
-        rawFileOid: rawAbs,
-        contentHash,
-        sourceExternalId: change.externalId, sourceConnectorId: source.id,
-        sourceCursor: null,
-        status: 'parsing',
-        ...(enforceSourceAcl ? { aclMode: 'restricted' } : {}),
-      },
+    await guarded(async tx => {
+      await tx.document.create({
+        data: {
+          id: documentId,
+          kbId: source.kbId,
+          mdPath: join(documentId, 'content.md'),
+          title,
+          sourceType,
+          rawFileOid: rawAbs,
+          contentHash,
+          sourceExternalId: change.externalId, sourceConnectorId: source.id,
+          sourceCursor: null,
+          status: 'parsing',
+          ...(enforceSourceAcl ? { aclMode: 'restricted' } : {}),
+        },
+      });
+      if (enforceSourceAcl) await syncExternalAcl(tx, documentId, source.config, change);
     });
-    if (enforceSourceAcl) await withSystemWrite(this.prisma, tx => syncExternalAcl(tx, documentId, source.config, change));
     await this.ingestionService.enqueue(documentId, 'connector-sync', 1, 3);
     return 'ingested';
   }
