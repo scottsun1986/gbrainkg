@@ -14,7 +14,10 @@
  * than papered over. The normalization must stay in sync with the migration's
  * backfill (regexp_replace(lower(btrim(name)), '\s+', ' ', 'g')).
  */
+export function normalizeEntityName(name: string): string {
+  return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
 export function entityIdentityKey(name: string, type: string): string {
-  const normalized = String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
-  return `${normalized}|${String(type || 'concept')}`;
+  return `${normalizeEntityName(name)}|${String(type || 'concept')}`;
 }

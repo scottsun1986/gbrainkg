@@ -2,7 +2,7 @@ import { createHash,randomUUID } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
 import { withServiceContext } from '../db/tenant-context.service';
 import { getRequestContext } from '../observability/request-context';
-import { entityIdentityKey } from './graph-identity';
+import { entityIdentityKey, normalizeEntityName } from './graph-identity';
 import type { ExtractedEntity,ExtractedRelation } from './graph-rag.service';
 import { graphDocumentChunkLimit } from './extraction-budget';
 const hash=(value:unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -26,12 +26,36 @@ async function replaceProjectionInputs(tx:any, artifactId:string, artifactKind:s
  * a shared spelling alone never asserts that two real-world entities are equal.
  * Nodes are identified by (normalized name, type) (F05), so a spelling used by
  * two kinds yields two nodes instead of one with a rewritten type; relation
- * endpoints resolve by name, preferring the node contributed by the relation's
- * own source document and otherwise deterministically (sorted key). */
+ * endpoints are resolved inside the relation's own source context before
+ * merging on (sourceEntityKey, targetEntityKey, relationType) (B05), so a
+ * cross-type homonym can no longer attach another document's provenance to an
+ * unrelated edge, and case variants of one entity keep their evidence. */
 export function graphProjection(shards:GraphShard[]) {
   const nodes=new Map<string,{ key:string;name:string;type:string;description:string;properties:any;inputs:GraphInput[] }>();
-  const edges=new Map<string,{ sourceName:string;targetName:string;sourceKey?:string;targetKey?:string;relationType:string;description:string;weight:number;provenance:any[];inputs:GraphInput[] }>();
+  const edges=new Map<string,{ sourceName:string;targetName:string;sourceKey:string;targetKey:string;relationType:string;description:string;weight:number;provenance:any[];inputs:GraphInput[] }>();
+  let unresolvedRelations=0;
   for (const shard of [...shards].sort((a,b)=>a.input.documentId.localeCompare(b.input.documentId))) {
+    // Shard-local identity index: normalized label -> entity keys contributed
+    // by THIS source document. Relation endpoints are resolved against it, so
+    // each source adjudicates its own spelling/kind before any cross-source
+    // merge happens.
+    const localKeysByLabel=new Map<string,string[]>();
+    for (const entity of shard.entities) {
+      if (!entity.name?.trim()) continue;
+      const type=entity.type || 'concept';
+      const key=entityIdentityKey(entity.name,type);
+      const label=normalizeEntityName(entity.name);
+      const list=localKeysByLabel.get(label) || [];
+      if (!list.includes(key)) list.push(key);
+      localKeysByLabel.set(label,list);
+    }
+    /** Unique in-context identity, or null when the label is absent/ambiguous.
+     * Sorting to the first node would silently adjudicate entity identity, so
+     * an ambiguous endpoint is skipped and counted instead (B05). */
+    const resolveLocalKey=(name:string):string|null=>{
+      const keys=localKeysByLabel.get(normalizeEntityName(name));
+      return keys && keys.length===1 ? keys[0] : null;
+    };
     for (const entity of shard.entities) {
       if (!entity.name?.trim()) continue;
       const type=entity.type || 'concept';
@@ -43,40 +67,25 @@ export function graphProjection(shards:GraphShard[]) {
       nodes.set(key,node);
     }
     for (const relation of shard.relations) {
-      const key=JSON.stringify([relation.sourceName,relation.targetName,relation.relationType]);
-      const edge=edges.get(key) || { sourceName:relation.sourceName,targetName:relation.targetName,relationType:relation.relationType,description:'',weight:0,provenance:[],inputs:[] };
+      const sourceKey=resolveLocalKey(relation.sourceName);
+      const targetKey=resolveLocalKey(relation.targetName);
+      if (!sourceKey || !targetKey) { unresolvedRelations++;continue; }
+      const key=JSON.stringify([sourceKey,targetKey,relation.relationType]);
+      const edge=edges.get(key) || { sourceName:relation.sourceName,targetName:relation.targetName,sourceKey,targetKey,relationType:relation.relationType,description:'',weight:0,provenance:[],inputs:[] };
       if (!edge.inputs.some(input=>input.documentId===shard.input.documentId)) edge.inputs.push(shard.input);
       edge.weight=Math.max(edge.weight,Math.max(0,Math.min(10,Number(relation.weight)||1)));
       edge.provenance.push({ documentId:shard.input.documentId,versionId:shard.input.versionId,chunkId:relation.chunkId || null,documentVersion:relation.documentVersion,snippet:relation.snippet || relation.description || '' });
       edges.set(key,edge);
     }
   }
-  const keysByName=new Map<string,string[]>();
-  for (const [key,node] of nodes) {
-    const list=keysByName.get(node.name) || [];
-    list.push(key);
-    keysByName.set(node.name,list);
-  }
-  const resolveKey=(name:string,inputDocId:string):string|null=>{
-    const keys=(keysByName.get(name) || []).slice().sort();
-    if (!keys.length) return null;
-    if (keys.length===1) return keys[0];
-    const fromDoc=keys.filter(candidate=>nodes.get(candidate)!.inputs.some(input=>input.documentId===inputDocId));
-    return fromDoc.length ? fromDoc[0] : keys[0];
-  };
   for (const node of nodes.values()) node.properties.projectionHash=hash([node.name,node.type,node.properties.sourceContexts,node.inputs]);
-  for (const [key,edge] of edges) {
-    const ownDoc=edge.inputs[0]?.documentId || '';
-    const sourceKey=resolveKey(edge.sourceName,ownDoc);
-    const targetKey=resolveKey(edge.targetName,ownDoc);
-    if (!sourceKey || !targetKey) { edges.delete(key);continue; }
-    edge.sourceKey=sourceKey;edge.targetKey=targetKey;
+  for (const edge of edges.values()) {
     // Endpoint context is also an actual input to interpreting an edge.
-    edge.inputs=[...new Map([...edge.inputs,...nodes.get(sourceKey)!.inputs,...nodes.get(targetKey)!.inputs].map(input=>[input.documentId,input])).values()].sort((a,b)=>a.documentId.localeCompare(b.documentId));
+    edge.inputs=[...new Map([...edge.inputs,...nodes.get(edge.sourceKey)!.inputs,...nodes.get(edge.targetKey)!.inputs].map(input=>[input.documentId,input])).values()].sort((a,b)=>a.documentId.localeCompare(b.documentId));
     const fingerprint=hash(edge);
     edge.provenance=edge.provenance.map(item=>({ ...item,projectionHash:fingerprint }));
   }
-  return { nodes:[...nodes.values()],edges:[...edges.values()] };
+  return { nodes:[...nodes.values()],edges:[...edges.values()],unresolvedRelations };
 }
 
 export async function reconcileIncrementalGraph(db:PrismaClient,kbId:string,identity:unknown,reusable:boolean,
